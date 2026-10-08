@@ -177,4 +177,6 @@ def prepare_volume_data(df):
     )
 
     data["ClsPric"] = pd.to_numeric(
-        data
+        data["ClsPric"],
+        errors="coerce",
+    )
