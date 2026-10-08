@@ -624,8 +624,8 @@ def write_layer_status_summary(
             continue
         values = frame[column]
         missing = values.isna()
-        if values.dtype == object:
-            missing = missing | values.astype(str).isin({"", "WAIT_FOR_DATA", "NO_DATA", "UNVERIFIED", "Insufficient Data"})
+        if pd.api.types.is_object_dtype(values.dtype) or pd.api.types.is_string_dtype(values.dtype):
+            missing = missing | values.astype("string").str.strip().isin({"", "WAIT_FOR_DATA", "NO_DATA", "UNVERIFIED", "Insufficient Data"})
         waiting = int(missing.sum())
         data_available = int(len(values) - waiting)
         if column == "V8ScoreCoveragePct":
