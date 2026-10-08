@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
 HISTORY_DAYS = 220
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
+BHAVCOPY_404_CACHE_DAYS = 2
 NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
 YAHOO_NIFTY_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
 
@@ -47,6 +48,28 @@ def download_bhavcopy(date_obj):
     )
 
     os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+    not_found_path = os.path.join(
+        DATA_CACHE_DIR,
+        f"bhavcopy_{date_str}.not_found"
+    )
+
+    cache_cutoff = (
+        datetime.now().date()
+        - timedelta(days=BHAVCOPY_404_CACHE_DAYS)
+    )
+
+    if (
+        os.path.exists(not_found_path)
+        and date_obj.date() <= cache_cutoff
+    ):
+
+        print(
+            f"Bhavcopy 404 cache hit: "
+            f"{date_obj.strftime('%Y-%m-%d')} "
+            "(no NSE file; skipping request)"
+        )
+
+        return None
 
     if os.path.exists(cache_path):
 
@@ -98,6 +121,32 @@ def download_bhavcopy(date_obj):
             f"Response size: "
             f"{len(response.content)} bytes"
         )
+
+        if response.status_code == 404:
+
+            if date_obj.date() <= cache_cutoff:
+
+                with open(
+                    not_found_path,
+                    "w",
+                    encoding="utf-8"
+                ) as marker:
+                    marker.write("HTTP 404")
+
+                print(
+                    f"Cached NSE 404 for "
+                    f"{date_obj.strftime('%Y-%m-%d')}; "
+                    "future runs will skip this old date."
+                )
+
+            else:
+
+                print(
+                    "Recent date returned HTTP 404; "
+                    "leaving it uncached in case NSE is delayed."
+                )
+
+            return None
 
         if response.status_code != 200:
             return None
