@@ -1287,6 +1287,59 @@ def calculate_atr(
 # TREND
 # ============================================================
 
+def prepare_history_by_symbol(
+    historical,
+    columns=None,
+):
+
+    if columns is None:
+        columns = [
+            "TckrSymb",
+            "Date",
+            "OpnPric",
+            "HghPric",
+            "LwPric",
+            "ClsPric",
+            "TtlTradgVol",
+        ]
+
+    frames = [
+        frame.loc[:, columns]
+        for frame in historical
+        if all(column in frame.columns for column in columns)
+    ]
+
+    if not frames:
+        return pd.DataFrame(columns=columns), {}
+
+    all_history = pd.concat(
+        frames,
+        ignore_index=True,
+        copy=False,
+    )
+
+    all_history["Date"] = pd.to_datetime(
+        all_history["Date"],
+        errors="coerce",
+    )
+
+    all_history = all_history.dropna(
+        subset=["TckrSymb", "Date"]
+    ).sort_values(
+        ["TckrSymb", "Date"],
+        kind="mergesort",
+    )
+
+    history_by_symbol = {
+        symbol: frame.reset_index(drop=True)
+        for symbol, frame in all_history.groupby(
+            "TckrSymb",
+            sort=False,
+        )
+    }
+
+    return all_history, history_by_symbol
+
 def calculate_trend(
     result,
     historical
@@ -1303,29 +1356,15 @@ def calculate_trend(
 
     trend_rows = []
 
+    _, history_by_symbol = prepare_history_by_symbol(
+        historical
+    )
+
     for symbol in result["TckrSymb"]:
 
-        frames = []
+        hist = history_by_symbol.get(symbol)
 
-        for df in historical:
-
-            temp = df[
-                df["TckrSymb"] == symbol
-            ][
-                [
-                    "Date",
-                    "OpnPric",
-                    "HghPric",
-                    "LwPric",
-                    "ClsPric",
-                    "TtlTradgVol",
-                ]
-            ].copy()
-
-            if len(temp) > 0:
-                frames.append(temp)
-
-        if not frames:
+        if hist is None or hist.empty:
 
             trend_rows.append({
                 "TckrSymb": symbol,
@@ -1340,14 +1379,7 @@ def calculate_trend(
 
             continue
 
-        hist = pd.concat(
-            frames,
-            ignore_index=True
-        )
-
-        hist = hist.sort_values(
-            "Date"
-        )
+        hist = hist.copy()
 
         close = pd.to_numeric(
             hist["ClsPric"],
@@ -1522,29 +1554,15 @@ def calculate_breakout_pullback(
 
     rows = []
 
+    _, history_by_symbol = prepare_history_by_symbol(
+        historical
+    )
+
     for symbol in result["TckrSymb"]:
 
-        frames = []
+        hist = history_by_symbol.get(symbol)
 
-        for df in historical:
-
-            temp = df[
-                df["TckrSymb"] == symbol
-            ][
-                [
-                    "Date",
-                    "OpnPric",
-                    "HghPric",
-                    "LwPric",
-                    "ClsPric",
-                    "TtlTradgVol",
-                ]
-            ].copy()
-
-            if len(temp) > 0:
-                frames.append(temp)
-
-        if not frames:
+        if hist is None or hist.empty:
 
             rows.append({
                 "TckrSymb": symbol,
@@ -1568,14 +1586,7 @@ def calculate_breakout_pullback(
 
             continue
 
-        hist = pd.concat(
-            frames,
-            ignore_index=True
-        )
-
-        hist = hist.sort_values(
-            "Date"
-        )
+        hist = hist.copy()
 
         if len(hist) < 20:
 
@@ -1993,17 +2004,8 @@ def calculate_support_resistance(
     # Build chronological history
     # --------------------------------------------------------
 
-    all_history = pd.concat(
-        historical,
-        ignore_index=True
-    )
-
-    all_history["Date"] = pd.to_datetime(
-        all_history["Date"]
-    )
-
-    all_history = all_history.sort_values(
-        "Date"
+    all_history, history_by_symbol = prepare_history_by_symbol(
+        historical
     )
 
     # --------------------------------------------------------
@@ -2056,18 +2058,23 @@ def calculate_support_resistance(
         )
     ]
 
+    previous_week_by_symbol = {
+        symbol: frame
+        for symbol, frame in previous_week_data.groupby(
+            "TckrSymb",
+            sort=False,
+        )
+    }
+
     # --------------------------------------------------------
     # Per stock
     # --------------------------------------------------------
 
     for symbol in result["TckrSymb"]:
 
-        stock = all_history[
-            all_history["TckrSymb"]
-            == symbol
-        ].sort_values("Date")
+        stock = history_by_symbol.get(symbol)
 
-        if len(stock) < 2:
+        if stock is None or len(stock) < 2:
 
             rows.append({
                 "TckrSymb": symbol,
@@ -2117,15 +2124,11 @@ def calculate_support_resistance(
         # Previous Week High / Low
         # ----------------------------------------------------
 
-        stock_previous_week = (
-            previous_week_data[
-                previous_week_data[
-                    "TckrSymb"
-                ] == symbol
-            ]
+        stock_previous_week = previous_week_by_symbol.get(
+            symbol
         )
 
-        if len(stock_previous_week) > 0:
+        if stock_previous_week is not None and len(stock_previous_week) > 0:
 
             pwh = float(
                 stock_previous_week[
