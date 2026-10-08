@@ -89,27 +89,21 @@ def send_telegram(message):
 def get_session():
     session = requests.Session()
     session.headers.update(HEADERS)
-
     return session
 
 
 # ============================================================
-# DOWNLOAD UDiFF BHAVCOPY
+# DOWNLOAD BHAVCOPY
 # ============================================================
 
 def download_bhavcopy(session, date):
 
     date_str = date.strftime("%Y%m%d")
-
-    url = BHAVCOPY_URL.format(
-        date=date_str
-    )
+    url = BHAVCOPY_URL.format(date=date_str)
 
     print(f"Trying NSE Bhavcopy: {date_str}")
-    print(f"URL: {url}")
 
     try:
-
         response = session.get(
             url,
             timeout=30,
@@ -122,10 +116,7 @@ def download_bhavcopy(session, date):
         )
 
         if response.status_code == 200:
-
             if len(response.content) > 1000:
-
-                # Validate ZIP
                 if zipfile.is_zipfile(
                     io.BytesIO(response.content)
                 ):
@@ -133,32 +124,59 @@ def download_bhavcopy(session, date):
 
                 print("Response is not a valid ZIP.")
 
-        elif response.status_code == 403:
-
-            print("NSE returned 403 Forbidden.")
-
         elif response.status_code == 404:
-
             print("Bhavcopy not found for this date.")
 
-        else:
+        elif response.status_code == 403:
+            print("NSE returned 403 Forbidden.")
 
+        else:
             print(
                 f"NSE returned HTTP "
                 f"{response.status_code}"
             )
 
     except Exception as e:
-
-        print(
-            f"Download error: {e}"
-        )
+        print(f"Download error: {e}")
 
     return None
 
 
 # ============================================================
-# FIND LATEST TRADING DAY
+# READ CSV FROM ZIP
+# ============================================================
+
+def read_bhavcopy(raw_data):
+
+    with zipfile.ZipFile(
+        io.BytesIO(raw_data)
+    ) as z:
+
+        files = z.namelist()
+
+        csv_files = [
+            f for f in files
+            if f.lower().endswith(".csv")
+        ]
+
+        if not csv_files:
+            raise RuntimeError(
+                "No CSV file found inside NSE ZIP."
+            )
+
+        csv_file = csv_files[0]
+
+        with z.open(csv_file) as f:
+            df = pd.read_csv(
+                f,
+                low_memory=False
+            )
+
+    return df
+
+
+# ============================================================
+# FIND LATEST BHAVCOPY
 # ============================================================
 
 def find_latest_bhavcopy(session):
@@ -178,15 +196,12 @@ def find_latest_bhavcopy(session):
         )
 
         if data:
-
             print(
                 f"Bhavcopy found: "
                 f"{check_date}"
             )
 
             return check_date, data
-
-        time.sleep(1)
 
     raise RuntimeError(
         "Could not download recent "
@@ -195,120 +210,48 @@ def find_latest_bhavcopy(session):
 
 
 # ============================================================
-# READ ZIP
+# PREPARE VOLUME DATA
 # ============================================================
 
-def read_bhavcopy(raw_data):
+def prepare_volume_data(df):
 
-    with zipfile.ZipFile(
-        io.BytesIO(raw_data)
-    ) as z:
-
-        files = z.namelist()
-
-        print("Files inside ZIP:")
-
-        for file_name in files:
-            print(f" - {file_name}")
-
-        csv_files = [
-            f for f in files
-            if f.lower().endswith(".csv")
-        ]
-
-        if not csv_files:
-
-            raise RuntimeError(
-                "No CSV file found inside NSE ZIP."
-            )
-
-        csv_file = csv_files[0]
-
-        print(
-            f"Reading CSV: {csv_file}"
-        )
-
-        with z.open(csv_file) as f:
-
-            df = pd.read_csv(
-                f,
-                low_memory=False
-            )
-
-    return df
-
-
-# ============================================================
-# CALCULATE VOLUME GAINERS
-# ============================================================
-
-def calculate_volume_gainers(df):
-
-    # Normalize column names
-    df.columns = [
-        str(col).strip()
-        for col in df.columns
-    ]
-
-    print("\nNSE columns detected:")
-
-    print(
-        df.columns.tolist()
-    )
-
-    # UDiFF columns
     required = [
         "TckrSymb",
-        "ClsPric",
         "TtlTradgVol",
     ]
 
     missing = [
-        col
-        for col in required
+        col for col in required
         if col not in df.columns
     ]
 
     if missing:
-
         raise RuntimeError(
-            "Required UDiFF columns missing: "
+            "Required columns missing: "
             + str(missing)
             + "\nAvailable columns: "
             + str(df.columns.tolist())
         )
-
-    # Convert numeric columns
-    df["ClsPric"] = pd.to_numeric(
-        df["ClsPric"],
-        errors="coerce"
-    )
 
     df["TtlTradgVol"] = pd.to_numeric(
         df["TtlTradgVol"],
         errors="coerce"
     )
 
-    # Remove invalid rows
     df = df.dropna(
         subset=[
             "TckrSymb",
-            "ClsPric",
             "TtlTradgVol",
         ]
     )
 
-    # Keep positive prices and volume
     df = df[
-        (df["ClsPric"] > 0)
-        &
-        (df["TtlTradgVol"] > 0)
+        df["TtlTradgVol"] > 0
     ]
 
     result = df[
         [
             "TckrSymb",
-            "ClsPric",
             "TtlTradgVol",
         ]
     ].copy()
@@ -316,154 +259,165 @@ def calculate_volume_gainers(df):
     result = result.rename(
         columns={
             "TckrSymb": "SYMBOL",
-            "ClsPric": "CLOSE",
             "TtlTradgVol": "VOLUME",
         }
     )
 
-    # Sort by EOD volume
-    result = result.sort_values(
-        "VOLUME",
-        ascending=False
-    )
-
-    result["VOLUME_RANK"] = range(
-        1,
-        len(result) + 1
-    )
-
-    return result.head(20)
+    return result
 
 
 # ============================================================
-# TELEGRAM MESSAGE
+# FIND PREVIOUS 20 TRADING DAYS
 # ============================================================
 
-def build_telegram_message(
-    trading_date,
-    gainers
+def get_previous_20_days(
+    session,
+    latest_date
 ):
 
-    lines = []
+    historical_data = []
 
-    lines.append(
-        "📊 NSE EOD VOLUME GAINER"
+    check_date = (
+        latest_date -
+        timedelta(days=1)
     )
 
-    lines.append(
-        f"Trading Date: "
-        f"{trading_date.strftime('%d-%b-%Y')}"
+    calendar_days_checked = 0
+
+    print(
+        "\nCollecting previous "
+        "20 trading days..."
     )
 
-    lines.append("")
+    while (
+        len(historical_data) < 20
+        and calendar_days_checked < 40
+    ):
 
-    lines.append(
-        "Top 20 by EOD Volume:"
-    )
-
-    lines.append("")
-
-    for _, row in gainers.iterrows():
-
-        symbol = row["SYMBOL"]
-
-        close = row["CLOSE"]
-
-        volume = int(
-            row["VOLUME"]
+        data = download_bhavcopy(
+            session,
+            check_date
         )
 
-        rank = int(
-            row["VOLUME_RANK"]
+        if data:
+
+            try:
+                df = read_bhavcopy(
+                    data
+                )
+
+                volume_df = (
+                    prepare_volume_data(
+                        df
+                    )
+                )
+
+                historical_data.append(
+                    (
+                        check_date,
+                        volume_df
+                    )
+                )
+
+                print(
+                    f"Historical day "
+                    f"{len(historical_data)}/20: "
+                    f"{check_date}"
+                )
+
+            except Exception as e:
+
+                print(
+                    f"Could not process "
+                    f"{check_date}: {e}"
+                )
+
+        check_date -= timedelta(days=1)
+        calendar_days_checked += 1
+
+    if len(historical_data) < 20:
+
+        raise RuntimeError(
+            "Could not collect 20 previous "
+            "trading days. "
+            f"Only found {len(historical_data)}."
         )
 
-        lines.append(
-            f"{rank}. {symbol} | "
-            f"Close ₹{close:.2f} | "
-            f"Vol {volume:,}"
-        )
-
-    lines.append("")
-
-    lines.append(
-        "⚠️ Screening layer only."
-    )
-
-    lines.append(
-        "Volume Gainer is NOT a BUY signal."
-    )
-
-    return "\n".join(lines)
+    return historical_data
 
 
 # ============================================================
-# MAIN
+# CALCULATE 20D AVERAGE VOLUME
 # ============================================================
 
-def main():
+def calculate_20d_average(
+    historical_data
+):
 
     print(
-        "Starting NSE EOD "
-        "Volume Gainer test..."
+        "\nCalculating 20D Average Volume..."
     )
 
-    session = get_session()
+    all_history = []
 
-    trading_date, raw_data = (
-        find_latest_bhavcopy(
-            session
+    for trading_date, df in historical_data:
+
+        temp = df.copy()
+
+        temp["DATE"] = trading_date
+
+        all_history.append(temp)
+
+    combined = pd.concat(
+        all_history,
+        ignore_index=True
+    )
+
+    stats = (
+        combined
+        .groupby("SYMBOL")["VOLUME"]
+        .agg(
+            AVG_20D="mean",
+            OBS_20D="count",
         )
+        .reset_index()
     )
 
-    print(
-        f"\nTrading date: "
-        f"{trading_date}"
-    )
+    return stats
 
-    print(
-        f"Downloaded bytes: "
-        f"{len(raw_data)}"
-    )
 
-    df = read_bhavcopy(
-        raw_data
-    )
+# ============================================================
+# CALCULATE CURRENT VOLUME GAINERS
+# ============================================================
 
-    print(
-        f"Rows received: "
-        f"{len(df)}"
-    )
+def calculate_volume_gainers(
+    df,
+    avg_20d
+):
 
-    gainers = (
-        calculate_volume_gainers(
-            df
+    required = [
+        "TckrSymb",
+        "ClsPric",
+        "TtlTradgVol",
+    ]
+
+    missing = [
+        col for col in required
+        if col not in df.columns
+    ]
+
+    if missing:
+        raise RuntimeError(
+            "Required current-day columns "
+            "missing: "
+            + str(missing)
+            + "\nAvailable columns: "
+            + str(df.columns.tolist())
         )
+
+    df["ClsPric"] = pd.to_numeric(
+        df["ClsPric"],
+        errors="coerce"
     )
 
-    print(
-        "\nTop 20 volume stocks:"
-    )
-
-    print(
-        gainers.to_string(
-            index=False
-        )
-    )
-
-    # Telegram
-    message = build_telegram_message(
-        trading_date,
-        gainers
-    )
-
-    print(
-        "\nSending result to Telegram..."
-    )
-
-    send_telegram(
-        message
-    )
-
-
-if __name__ == "__main__":
-    main()
+   
