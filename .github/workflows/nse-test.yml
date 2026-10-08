@@ -11,6 +11,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Restore Bhavcopy and Nifty history cache
+        uses: actions/cache@v4
+        with:
+          path: data/bhavcopy/
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
