@@ -3,16 +3,19 @@ import io
 import zipfile
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # NSE V8 MODULE A
 # EOD VOLUME + RVOL + 5D + PRICE/VOLUME + CLV
-# + TREND + BREAKOUT/PULLBACK + SUPPORT/RESISTANCE
+# + TREND + BREAKOUT/PULLBACK + SUPPORT/RESISTANCE + RELATIVE STRENGTH
 # ============================================================
 
 NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
 HISTORY_DAYS = 220
+DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
+NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
+YAHOO_NIFTY_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -38,6 +41,34 @@ session.headers.update(HEADERS)
 def download_bhavcopy(date_obj):
 
     date_str = date_obj.strftime("%Y%m%d")
+    cache_path = os.path.join(
+        DATA_CACHE_DIR,
+        f"bhavcopy_{date_str}.csv"
+    )
+
+    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+
+    if os.path.exists(cache_path):
+
+        try:
+
+            cached = pd.read_csv(cache_path)
+
+            if len(cached) > 0:
+
+                print(
+                    f"Bhavcopy cache hit: "
+                    f"{date_obj.strftime('%Y-%m-%d')}"
+                )
+
+                return cached
+
+        except Exception as e:
+
+            print(
+                f"Bhavcopy cache read error for "
+                f"{date_str}: {e}"
+            )
 
     url = (
         f"{NSE_BASE_URL}"
@@ -52,6 +83,7 @@ def download_bhavcopy(date_obj):
     print(f"URL: {url}")
 
     try:
+
         response = session.get(
             url,
             timeout=30
@@ -95,6 +127,9 @@ def download_bhavcopy(date_obj):
 
             with z.open(csv_name) as f:
                 df = pd.read_csv(f)
+
+        if len(df) > 0:
+            df.to_csv(cache_path, index=False)
 
         print(
             f"Rows downloaded: {len(df)}"
@@ -326,6 +361,308 @@ def collect_historical_days(
     print("=" * 60)
 
     return historical
+
+
+# ============================================================
+# NIFTY 50 HISTORY CACHE
+# ============================================================
+
+def fetch_nifty_index_history(
+    start_date,
+    end_date
+):
+
+    start_ts = int(
+        datetime.combine(
+            start_date,
+            datetime.min.time(),
+            tzinfo=timezone.utc
+        ).timestamp()
+    )
+
+    end_ts = int(
+        datetime.combine(
+            end_date + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=timezone.utc
+        ).timestamp()
+    )
+
+    response = session.get(
+        YAHOO_NIFTY_CHART_URL,
+        params={
+            "period1": start_ts,
+            "period2": end_ts,
+            "interval": "1d",
+        },
+        timeout=30,
+    )
+
+    response.raise_for_status()
+
+    payload = response.json()
+    chart = payload.get("chart", {})
+    chart_error = chart.get("error")
+
+    if chart_error:
+        raise RuntimeError(
+            f"Nifty index history API error: {chart_error}"
+        )
+
+    results = chart.get("result") or []
+
+    if not results:
+        raise RuntimeError(
+            "Nifty index history response was empty."
+        )
+
+    data = results[0]
+    timestamps = data.get("timestamp") or []
+    quote_sets = (
+        data.get("indicators", {})
+        .get("quote", [])
+    )
+
+    if not quote_sets:
+        raise RuntimeError(
+            "Nifty index close data was missing."
+        )
+
+    closes = quote_sets[0].get("close") or []
+    rows = []
+
+    for timestamp, close in zip(timestamps, closes):
+
+        if close is None:
+            continue
+
+        row_date = datetime.fromtimestamp(
+            int(timestamp),
+            tz=timezone.utc
+        ).date()
+
+        if start_date <= row_date <= end_date:
+            rows.append({
+                "Date": row_date.isoformat(),
+                "NiftyClose": float(close),
+            })
+
+    history = pd.DataFrame(rows)
+
+    if history.empty:
+        raise RuntimeError(
+            "Nifty index history contained no daily closes."
+        )
+
+    history["Date"] = pd.to_datetime(
+        history["Date"],
+        errors="coerce"
+    )
+
+    history["NiftyClose"] = pd.to_numeric(
+        history["NiftyClose"],
+        errors="coerce"
+    )
+
+    history = history.dropna(
+        subset=["Date", "NiftyClose"]
+    )
+
+    history = (
+        history
+        .drop_duplicates(subset=["Date"], keep="last")
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
+
+    return history
+
+
+def load_nifty_index_history(latest_date):
+
+    print(
+        "\nSTEP 12: Loading Nifty 50 history "
+        "and checking cache..."
+    )
+
+    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+
+    cached = pd.DataFrame(
+        columns=["Date", "NiftyClose"]
+    )
+
+    if os.path.exists(NIFTY_HISTORY_CACHE):
+
+        try:
+
+            cached = pd.read_csv(
+                NIFTY_HISTORY_CACHE
+            )
+
+            if (
+                "Date" in cached.columns
+                and "NiftyClose" in cached.columns
+            ):
+
+                cached["Date"] = pd.to_datetime(
+                    cached["Date"],
+                    errors="coerce"
+                )
+
+                cached["NiftyClose"] = pd.to_numeric(
+                    cached["NiftyClose"],
+                    errors="coerce"
+                )
+
+                cached = cached.dropna(
+                    subset=["Date", "NiftyClose"]
+                )
+
+                cached = (
+                    cached
+                    .drop_duplicates(
+                        subset=["Date"],
+                        keep="last"
+                    )
+                    .sort_values("Date")
+                    .reset_index(drop=True)
+                )
+
+            else:
+
+                cached = pd.DataFrame(
+                    columns=["Date", "NiftyClose"]
+                )
+
+        except Exception as e:
+
+            print(
+                f"Nifty history cache read error: {e}"
+            )
+
+            cached = pd.DataFrame(
+                columns=["Date", "NiftyClose"]
+            )
+
+    target_date = pd.Timestamp(
+        latest_date
+    ).normalize()
+
+    cached_asof = cached[
+        cached["Date"] <= target_date
+    ]
+
+    cache_is_current = (
+        len(cached_asof) >= 21
+        and not cached_asof.empty
+        and cached_asof["Date"].max() == target_date
+    )
+
+    if cache_is_current:
+
+        print(
+            f"Nifty history cache hit: "
+            f"{NIFTY_HISTORY_CACHE}"
+        )
+
+        return cached
+
+    fetch_start = (
+        pd.Timestamp(latest_date)
+        - pd.Timedelta(days=70)
+    ).date()
+
+    if not cached.empty:
+
+        last_cached_date = (
+            cached["Date"].max().date()
+        )
+
+        if last_cached_date < latest_date:
+            overlap_start = (
+                pd.Timestamp(last_cached_date)
+                - pd.Timedelta(days=5)
+            ).date()
+
+            fetch_start = max(
+                fetch_start,
+                overlap_start
+            )
+
+    print(
+        f"Downloading Nifty 50 daily history "
+        f"from {fetch_start} to {latest_date}..."
+    )
+
+    downloaded = fetch_nifty_index_history(
+        fetch_start,
+        latest_date
+    )
+
+    combined = pd.concat(
+        [cached, downloaded],
+        ignore_index=True
+    )
+
+    combined["Date"] = pd.to_datetime(
+        combined["Date"],
+        errors="coerce"
+    )
+
+    combined["NiftyClose"] = pd.to_numeric(
+        combined["NiftyClose"],
+        errors="coerce"
+    )
+
+    combined = combined.dropna(
+        subset=["Date", "NiftyClose"]
+    )
+
+    combined = (
+        combined
+        .drop_duplicates(
+            subset=["Date"],
+            keep="last"
+        )
+        .sort_values("Date")
+        .tail(260)
+        .reset_index(drop=True)
+    )
+
+    combined.to_csv(
+        NIFTY_HISTORY_CACHE,
+        index=False,
+        date_format="%Y-%m-%d"
+    )
+
+    aligned = combined[
+        combined["Date"] <= target_date
+    ]
+
+    if (
+        aligned.empty
+        or aligned["Date"].max() != target_date
+    ):
+
+        raise RuntimeError(
+            "Nifty history does not contain the latest NSE EOD date "
+            f"{target_date.date()}."
+        )
+
+    if len(aligned) < 21:
+
+        raise RuntimeError(
+            "At least 21 Nifty closes are required "
+            "to calculate a 20D return."
+        )
+
+    print(
+        f"Nifty history cached: "
+        f"{NIFTY_HISTORY_CACHE} "
+        f"({len(combined)} rows)"
+    )
+
+    return combined
 
 
 # ============================================================
@@ -2090,6 +2427,191 @@ def calculate_support_resistance(
 
 
 # ============================================================
+# RELATIVE STRENGTH VS NIFTY
+# ============================================================
+
+def calculate_relative_strength_nifty(
+    result,
+    historical,
+    nifty_history,
+    latest_date
+):
+
+    print(
+        "\nSTEP 13: Calculating Relative Strength vs Nifty..."
+    )
+
+    all_history = pd.concat(
+        historical,
+        ignore_index=True
+    )
+
+    all_history["Date"] = pd.to_datetime(
+        all_history["Date"],
+        errors="coerce"
+    )
+
+    all_history["ClsPric"] = pd.to_numeric(
+        all_history["ClsPric"],
+        errors="coerce"
+    )
+
+    history_by_symbol = {
+        symbol: frame.sort_values("Date")
+        for symbol, frame in all_history.groupby("TckrSymb")
+    }
+
+    nifty = nifty_history.copy()
+
+    nifty["Date"] = pd.to_datetime(
+        nifty["Date"],
+        errors="coerce"
+    )
+
+    nifty["NiftyClose"] = pd.to_numeric(
+        nifty["NiftyClose"],
+        errors="coerce"
+    )
+
+    nifty = nifty.dropna(
+        subset=["Date", "NiftyClose"]
+    )
+
+    nifty = (
+        nifty[
+            nifty["Date"]
+            <= pd.Timestamp(latest_date).normalize()
+        ]
+        .drop_duplicates(
+            subset=["Date"],
+            keep="last"
+        )
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
+
+    if len(nifty) < 21:
+
+        raise RuntimeError(
+            "Insufficient Nifty history for 20D return calculation."
+        )
+
+    nifty_last = nifty.iloc[-1]
+
+    if (
+        pd.Timestamp(nifty_last["Date"]).normalize()
+        != pd.Timestamp(latest_date).normalize()
+    ):
+
+        raise RuntimeError(
+            "Nifty history date does not match latest NSE EOD date."
+        )
+
+    nifty_base_close = float(
+        nifty["NiftyClose"].iloc[-21]
+    )
+
+    nifty_last_close = float(
+        nifty_last["NiftyClose"]
+    )
+
+    if nifty_base_close <= 0:
+
+        raise RuntimeError(
+            "Nifty 20D base close must be greater than zero."
+        )
+
+    nifty_return_20d = (
+        (nifty_last_close / nifty_base_close) - 1
+    ) * 100
+
+    stock_returns = []
+    nifty_returns = []
+    relative_strengths = []
+    classifications = []
+
+    def classify_relative_strength(value):
+
+        if pd.isna(value):
+            return "Insufficient Data"
+
+        if value >= 5:
+            return "Strong Outperformance"
+
+        if value >= 2:
+            return "Outperformance"
+
+        if value > -2:
+            return "Market Aligned"
+
+        if value > -5:
+            return "Underperformance"
+
+        return "Strong Underperformance"
+
+    for _, row in result.iterrows():
+
+        symbol = row["TckrSymb"]
+        current_close = pd.to_numeric(
+            pd.Series([row.get("ClsPric")]),
+            errors="coerce"
+        ).iloc[0]
+
+        stock_return_20d = float("nan")
+        relative_strength = float("nan")
+
+        symbol_history = history_by_symbol.get(symbol)
+
+        if (
+            symbol_history is not None
+            and len(symbol_history) >= 20
+            and pd.notna(current_close)
+            and current_close > 0
+        ):
+
+            base_close = pd.to_numeric(
+                symbol_history["ClsPric"].iloc[-20],
+                errors="coerce"
+            )
+
+            if pd.notna(base_close) and base_close > 0:
+
+                stock_return_20d = (
+                    (float(current_close) / float(base_close)) - 1
+                ) * 100
+
+                relative_strength = (
+                    stock_return_20d
+                    - nifty_return_20d
+                )
+
+        stock_returns.append(stock_return_20d)
+        nifty_returns.append(nifty_return_20d)
+        relative_strengths.append(relative_strength)
+        classifications.append(
+            classify_relative_strength(relative_strength)
+        )
+
+    result = result.copy()
+
+    result["StockReturn20D"] = stock_returns
+    result["NiftyReturn20D"] = nifty_returns
+    result["RelativeStrengthNifty"] = relative_strengths
+    result["RSNiftyClassification"] = classifications
+
+    valid_count = int(
+        result["RelativeStrengthNifty"].notna().sum()
+    )
+
+    print(
+        f"Relative Strength calculated for "
+        f"{valid_count}/{len(result)} symbols."
+    )
+
+    return result
+
+
+# ============================================================
 # DISPLAY TOP 20
 # ============================================================
 
@@ -2214,6 +2736,17 @@ def display_top20(result):
             f"{row['SRStatus']}"
         )
 
+        print(
+            f"   StockReturn20D="
+            f"{fmt(row['StockReturn20D'])}%"
+            f" | NiftyReturn20D="
+            f"{fmt(row['NiftyReturn20D'])}%"
+            f" | RelativeStrengthNifty="
+            f"{fmt(row['RelativeStrengthNifty'])}%"
+            f" | RSNiftyClassification="
+            f"{row['RSNiftyClassification']}"
+        )
+
 
 # ============================================================
 # TELEGRAM
@@ -2319,6 +2852,14 @@ def send_telegram(
             f"{row['SRStatus']}"
         )
 
+        lines.append(
+            f"20D RS vs Nifty: "
+            f"Stock {fmt(row['StockReturn20D'])}% | "
+            f"Nifty {fmt(row['NiftyReturn20D'])}% | "
+            f"RS {fmt(row['RelativeStrengthNifty'])}% | "
+            f"{row['RSNiftyClassification']}"
+        )
+
         lines.append("")
 
     message = "\n".join(
@@ -2383,7 +2924,7 @@ def main():
         "+ PRICE/VOLUME + CLV "
         "+ TREND "
         "+ BREAKOUT/PULLBACK "
-        "+ SUPPORT/RESISTANCE"
+        "+ SUPPORT/RESISTANCE + RELATIVE STRENGTH"
     )
 
     print(
@@ -2510,6 +3051,22 @@ def main():
     )
 
     # --------------------------------------------------------
+    # STEP 12
+    # RELATIVE STRENGTH VS NIFTY
+    # --------------------------------------------------------
+
+    nifty_history = load_nifty_index_history(
+        eod_date
+    )
+
+    result = calculate_relative_strength_nifty(
+        result,
+        historical,
+        nifty_history,
+        eod_date
+    )
+
+    # --------------------------------------------------------
     # DISPLAY
     # --------------------------------------------------------
 
@@ -2602,6 +3159,10 @@ def main():
 
     print(
         "12. Support / Resistance"
+    )
+
+    print(
+        "13. Relative Strength vs Nifty"
     )
 
     print(
