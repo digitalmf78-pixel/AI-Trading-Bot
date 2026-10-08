@@ -20,8 +20,9 @@ from v8_layers_14_41 import (
 NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
 HISTORY_DAYS = 220
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
-BHAVCOPY_404_CACHE_DAYS = 2
-NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
+BHAVCOPY_404_CACHE_DAYS = 2; NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
+NIFTY_HISTORY_MIN_BARS = 50
+NIFTY_HISTORY_LOOKBACK_DAYS = 140
 YAHOO_NIFTY_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -608,7 +609,7 @@ def load_nifty_index_history(latest_date):
     ]
 
     cache_is_current = (
-        len(cached_asof) >= 21
+        len(cached_asof) >= NIFTY_HISTORY_MIN_BARS
         and not cached_asof.empty
         and cached_asof["Date"].max() == target_date
     )
@@ -617,17 +618,17 @@ def load_nifty_index_history(latest_date):
 
         print(
             f"Nifty history cache hit: "
-            f"{NIFTY_HISTORY_CACHE}"
+            f"{NIFTY_HISTORY_CACHE} ({len(cached_asof)} closes through {target_date.date()})"
         )
 
         return cached
 
     fetch_start = (
         pd.Timestamp(latest_date)
-        - pd.Timedelta(days=70)
+        - pd.Timedelta(days=NIFTY_HISTORY_LOOKBACK_DAYS)
     ).date()
 
-    if not cached.empty:
+    if not cached.empty and len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
 
         last_cached_date = (
             cached["Date"].max().date()
@@ -704,11 +705,11 @@ def load_nifty_index_history(latest_date):
             f"{target_date.date()}."
         )
 
-    if len(aligned) < 21:
+    if len(aligned) < NIFTY_HISTORY_MIN_BARS:
 
         raise RuntimeError(
-            "At least 21 Nifty closes are required "
-            "to calculate a 20D return."
+            f"At least {NIFTY_HISTORY_MIN_BARS} Nifty closes are required "
+            "to calculate the 20D return and market regime."
         )
 
     print(
