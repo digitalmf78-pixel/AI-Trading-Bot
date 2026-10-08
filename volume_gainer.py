@@ -1,30 +1,17 @@
-import io
 import os
+import io
 import zipfile
+import requests
+import pandas as pd
 from datetime import datetime, timedelta
 
-import pandas as pd
-import requests
-
 
 # ============================================================
-# NSE SWING TRADING V8
-# MODULE A - EOD VOLUME ANALYSIS
-#
-# Current Bhavcopy
-# -> 20D Average Volume
-# -> RVOL
-# -> Previous 5 Days Volume
-# -> 60% Low Volume Rule
-# -> Price + Volume Relationship
-#
-# IMPORTANT:
-# This is still a SCREENING layer.
-# It is NOT a BUY signal.
+# NSE V8 MODULE A
+# EOD VOLUME + 20D AVG + RVOL + 5D + PRICE/VOLUME + CLV
 # ============================================================
 
-
-BHAVCOPY_URL = (
+NSE_BASE_URL = (
     "https://nsearchives.nseindia.com/content/cm/"
     "BhavCopy_NSE_CM_0_0_0_{date}_F_0000.csv.zip"
 )
@@ -32,22 +19,12 @@ BHAVCOPY_URL = (
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "(KHTML, like Gecko) "
-        "Chrome/120.0 Safari/537.36"
+        "AppleWebKit/537.36 Chrome/120 Safari/537.36"
     ),
     "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.nseindia.com/",
 }
-
-TELEGRAM_BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN"
-)
-
-TELEGRAM_CHAT_ID = os.getenv(
-    "TELEGRAM_CHAT_ID"
-)
 
 
 # ============================================================
@@ -55,999 +32,656 @@ TELEGRAM_CHAT_ID = os.getenv(
 # ============================================================
 
 def send_telegram(message):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-    print("")
-    print("=" * 60)
-    print("TELEGRAM")
-    print("=" * 60)
-
-    if not TELEGRAM_BOT_TOKEN:
-        print(
-            "TELEGRAM_BOT_TOKEN is not configured."
-        )
+    if not token or not chat_id:
+        print("Telegram secrets not configured.")
         return
 
-    if not TELEGRAM_CHAT_ID:
-        print(
-            "TELEGRAM_CHAT_ID is not configured."
-        )
-        return
-
-    url = (
-        "https://api.telegram.org/bot"
-        f"{TELEGRAM_BOT_TOKEN}"
-        "/sendMessage"
-    )
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
 
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": message,
     }
 
     try:
-
         response = requests.post(
             url,
             data=payload,
-            timeout=30,
+            timeout=20
         )
 
-        print(
-            "Telegram HTTP status:",
-            response.status_code,
-        )
+        print(f"Telegram HTTP status: {response.status_code}")
 
-        print(
-            "Telegram response:",
-            response.text[:500],
-        )
+        if response.status_code != 200:
+            print("Telegram response:", response.text[:500])
 
     except Exception as exc:
-
-        print(
-            "Telegram error:",
-            repr(exc),
-        )
+        print("Telegram error:", exc)
 
 
 # ============================================================
-# DOWNLOAD BHAVCOPY
+# DOWNLOAD NSE BHAVCOPY
 # ============================================================
 
 def download_bhavcopy(date_obj):
+    date_str = date_obj.strftime("%Y%m%d")
 
-    date_string = date_obj.strftime(
-        "%Y%m%d"
-    )
+    url = NSE_BASE_URL.format(date=date_str)
 
-    url = BHAVCOPY_URL.format(
-        date=date_string
-    )
-
-    print("")
-    print("-" * 60)
-    print(
-        "Downloading NSE Bhavcopy:",
-        date_obj.strftime("%Y-%m-%d"),
-    )
-    print("URL:", url)
+    print("\n" + "-" * 60)
+    print(f"Downloading NSE Bhavcopy: {date_obj.strftime('%Y-%m-%d')}")
+    print(f"URL: {url}")
 
     try:
-
         response = requests.get(
             url,
             headers=HEADERS,
-            timeout=60,
+            timeout=30
         )
 
-        print(
-            "HTTP status:",
-            response.status_code,
-        )
-
-        print(
-            "Response size:",
-            len(response.content),
-            "bytes",
-        )
+        print(f"HTTP status: {response.status_code}")
+        print(f"Response size: {len(response.content)} bytes")
 
         if response.status_code != 200:
             return None
 
-        if len(response.content) < 1000:
-            return None
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            names = z.namelist()
 
-        try:
+            if not names:
+                print("ZIP is empty.")
+                return None
 
-            with zipfile.ZipFile(
-                io.BytesIO(response.content)
-            ) as zip_file:
+            csv_name = names[0]
 
-                csv_files = [
-                    name
-                    for name in zip_file.namelist()
-                    if name.lower().endswith(".csv")
-                ]
+            print(f"Extracting CSV: {csv_name}")
 
-                if not csv_files:
-                    return None
+            with z.open(csv_name) as csv_file:
+                df = pd.read_csv(csv_file)
 
-                csv_name = csv_files[0]
-
-                print(
-                    "Extracting CSV:",
-                    csv_name,
-                )
-
-                with zip_file.open(
-                    csv_name
-                ) as csv_file:
-
-                    df = pd.read_csv(
-                        csv_file
-                    )
-
-        except zipfile.BadZipFile:
-
-            print(
-                "Downloaded file is not a valid ZIP."
-            )
-
-            return None
-
-        print(
-            "Rows downloaded:",
-            len(df),
-        )
-
-        print(
-            "Columns:",
-            list(df.columns)[:20],
-        )
+        print(f"Rows downloaded: {len(df)}")
+        print(f"Columns: {list(df.columns)}")
 
         return df
 
-    except requests.RequestException as exc:
-
-        print(
-            "NSE request error:",
-            repr(exc),
-        )
-
-        return None
-
     except Exception as exc:
+        print(f"Download/read error: {exc}")
+        return None
+
+
+# ============================================================
+# FIND LATEST AVAILABLE EOD BHAVCOPY
+# ============================================================
+
+def get_latest_bhavcopy():
+    print("\nSTEP 1: Searching for latest NSE EOD Bhavcopy...")
+
+    today = datetime.now().date()
+
+    for offset in range(0, 8):
+        check_date = today - timedelta(days=offset)
 
         print(
-            "Bhavcopy error:",
-            repr(exc),
+            f"\nTrying date: "
+            f"{check_date.strftime('%Y-%m-%d')}"
         )
 
-        return None
+        df = download_bhavcopy(
+            datetime.combine(check_date, datetime.min.time())
+        )
+
+        if df is not None and len(df) > 0:
+            print(
+                f"\nLatest available EOD date: "
+                f"{check_date.strftime('%Y-%m-%d')}"
+            )
+
+            return df, check_date
+
+    raise RuntimeError(
+        "Could not find NSE Bhavcopy in the last 7 days."
+    )
 
 
 # ============================================================
 # PREPARE CURRENT DATA
 # ============================================================
 
-def prepare_volume_data(df):
-
-    if df is None:
-        return None
-
-    if df.empty:
-        return None
-
+def prepare_current_data(df):
     required_columns = [
         "TckrSymb",
+        "OpnPric",
+        "HghPric",
+        "LwPric",
         "ClsPric",
         "PrvsClsgPric",
         "TtlTradgVol",
     ]
 
-    missing_columns = [
-        column
-        for column in required_columns
-        if column not in df.columns
+    missing = [
+        col for col in required_columns
+        if col not in df.columns
     ]
 
-    if missing_columns:
-
-        print(
-            "Missing required columns:",
-            missing_columns,
+    if missing:
+        raise RuntimeError(
+            f"Missing required columns: {missing}"
         )
 
-        return None
+    data = df[required_columns].copy()
 
-    data = df[
-        required_columns
-    ].copy()
+    numeric_columns = [
+        "OpnPric",
+        "HghPric",
+        "LwPric",
+        "ClsPric",
+        "PrvsClsgPric",
+        "TtlTradgVol",
+    ]
 
-    data["ClsPric"] = pd.to_numeric(
-        data["ClsPric"],
-        errors="coerce",
-    )
-
-    data["PrvsClsgPric"] = pd.to_numeric(
-        data["PrvsClsgPric"],
-        errors="coerce",
-    )
-
-    data["TtlTradgVol"] = pd.to_numeric(
-        data["TtlTradgVol"],
-        errors="coerce",
-    )
+    for col in numeric_columns:
+        data[col] = pd.to_numeric(
+            data[col],
+            errors="coerce"
+        )
 
     data = data.dropna(
-        subset=required_columns
+        subset=[
+            "TckrSymb",
+            "ClsPric",
+            "PrvsClsgPric",
+            "TtlTradgVol",
+        ]
     )
 
     data = data[
-        (data["ClsPric"] > 0)
-        &
-        (data["PrvsClsgPric"] > 0)
-        &
-        (data["TtlTradgVol"] > 0)
-    ].copy()
+        data["TtlTradgVol"] >= 0
+    ]
 
     data = data.drop_duplicates(
-        subset=["TckrSymb"]
+        subset=["TckrSymb"],
+        keep="last"
+    )
+
+    print(
+        f"Current valid symbols: {len(data)}"
     )
 
     return data
 
 
 # ============================================================
-# PREVIOUS 20 TRADING DAYS
+# COLLECT PREVIOUS 20 TRADING DAYS
 # ============================================================
 
-def get_previous_20_days(
-    current_date
-):
+def collect_previous_days(latest_date, days_needed=20):
+    print("\nSTEP 3: Collecting previous 20 trading days...")
 
-    print("")
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print("COLLECTING PREVIOUS 20 TRADING DAYS")
     print("=" * 60)
 
-    trading_days = []
+    historical = []
 
-    check_date = (
-        current_date
-        - timedelta(days=1)
-    )
+    check_date = latest_date - timedelta(days=1)
 
-    while len(trading_days) < 20:
+    max_days = 70
 
+    checked = 0
+
+    while (
+        len(historical) < days_needed
+        and checked < max_days
+    ):
         print(
-            f"Checking "
-            f"{check_date:%Y-%m-%d} | "
-            f"Found "
-            f"{len(trading_days)}/20"
+            f"\nChecking "
+            f"{check_date.strftime('%Y-%m-%d')} | "
+            f"Found {len(historical)}/{days_needed}"
         )
 
         df = download_bhavcopy(
-            check_date
+            datetime.combine(
+                check_date,
+                datetime.min.time()
+            )
         )
 
-        if df is not None:
+        if df is not None and len(df) > 0:
 
-            prepared = prepare_volume_data(
-                df
-            )
+            required = [
+                "TckrSymb",
+                "TtlTradgVol"
+            ]
 
-            if (
-                prepared is not None
-                and not prepared.empty
-            ):
+            if all(col in df.columns for col in required):
 
-                prepared["Date"] = (
-                    check_date.strftime(
-                        "%Y-%m-%d"
-                    )
+                hist = df[
+                    ["TckrSymb", "TtlTradgVol"]
+                ].copy()
+
+                hist["TtlTradgVol"] = pd.to_numeric(
+                    hist["TtlTradgVol"],
+                    errors="coerce"
                 )
 
-                trading_days.append(
-                    prepared
+                hist = hist.dropna(
+                    subset=[
+                        "TckrSymb",
+                        "TtlTradgVol"
+                    ]
                 )
+
+                hist = hist.drop_duplicates(
+                    subset=["TckrSymb"],
+                    keep="last"
+                )
+
+                hist["Date"] = check_date
+
+                historical.append(hist)
 
                 print(
-                    "Accepted trading day:",
-                    check_date.strftime(
-                        "%Y-%m-%d"
-                    ),
+                    f"Accepted trading day: "
+                    f"{check_date.strftime('%Y-%m-%d')}"
                 )
 
-        check_date -= timedelta(
-            days=1
-        )
+        check_date -= timedelta(days=1)
+        checked += 1
 
-        if (
-            current_date - check_date
-        ).days > 70:
-
-            print(
-                "ERROR: Could not collect "
-                "20 trading days."
-            )
-
-            break
-
-    print("")
     print(
-        "Previous trading days collected:",
-        len(trading_days),
+        f"\nPrevious trading days collected: "
+        f"{len(historical)}"
     )
 
-    return trading_days
+    if len(historical) < days_needed:
+        raise RuntimeError(
+            "Could not collect required 20 trading days."
+        )
+
+    return historical[:days_needed]
 
 
 # ============================================================
 # 20D AVERAGE VOLUME
 # ============================================================
 
-def calculate_20d_average(
-    previous_days
-):
+def calculate_20d_average(historical):
+    print("\nSTEP 4: Calculating 20D average volume...")
 
-    print("")
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print("CALCULATING 20D AVERAGE VOLUME")
     print("=" * 60)
 
-    if not previous_days:
-        return None
-
-    combined = pd.concat(
-        previous_days,
-        ignore_index=True,
+    all_history = pd.concat(
+        historical,
+        ignore_index=True
     )
 
-    average_volume = (
-        combined
-        .groupby("TckrSymb")[
-            "TtlTradgVol"
-        ]
+    avg_volume = (
+        all_history
+        .groupby("TckrSymb")["TtlTradgVol"]
         .mean()
-        .reset_index()
+        .rename("Avg20DVolume")
     )
-
-    average_volume.rename(
-        columns={
-            "TtlTradgVol":
-                "AVG_20D_VOLUME"
-        },
-        inplace=True,
-    )
-
-    average_volume = average_volume[
-        average_volume[
-            "AVG_20D_VOLUME"
-        ] > 0
-    ].copy()
 
     print(
-        "Symbols with 20D average:",
-        len(average_volume),
+        f"Symbols with 20D average: "
+        f"{len(avg_volume)}"
     )
 
-    return average_volume
+    return avg_volume
 
 
 # ============================================================
 # RVOL
 # ============================================================
 
-def calculate_rvol(
-    current_data,
-    average_volume
-):
+def calculate_rvol(current, avg_volume):
+    print("\nSTEP 5: Calculating RVOL...")
 
-    print("")
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print("CALCULATING RVOL")
     print("=" * 60)
 
-    result = current_data.merge(
-        average_volume,
-        on="TckrSymb",
-        how="left",
+    data = current.merge(
+        avg_volume,
+        left_on="TckrSymb",
+        right_index=True,
+        how="inner"
     )
 
-    result = result[
-        result["AVG_20D_VOLUME"] > 0
+    data = data[
+        data["Avg20DVolume"] > 0
     ].copy()
 
-    result["RVOL"] = (
-        result["TtlTradgVol"]
-        /
-        result["AVG_20D_VOLUME"]
-    )
-
-    result = result.dropna(
-        subset=[
-            "AVG_20D_VOLUME",
-            "RVOL",
-        ]
-    )
-
-    result = result.sort_values(
-        by="RVOL",
-        ascending=False,
-    ).reset_index(
-        drop=True
+    data["RVOL"] = (
+        data["TtlTradgVol"]
+        / data["Avg20DVolume"]
     )
 
     print(
-        "RVOL calculated for:",
-        len(result),
-        "symbols",
+        f"RVOL calculated for: {len(data)} symbols"
     )
 
-    return result
+    return data
 
 
 # ============================================================
 # 5-DAY VOLUME ANALYSIS
 # ============================================================
 
-def calculate_5d_volume_analysis(
-    candidates,
-    previous_days,
-    average_volume
-):
+def calculate_5d_volume(data, historical):
+    print("\nSTEP 6: Calculating 5-day volume analysis...")
 
-    print("")
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print("5-DAY VOLUME ANALYSIS")
     print("=" * 60)
 
-    if len(previous_days) < 5:
+    recent_days = historical[:5]
 
-        candidates[
-            "LowVolumeDays5D"
-        ] = 0
+    volume_maps = []
 
-        candidates[
-            "LowVolumePct5D"
-        ] = 0.0
+    for day in recent_days:
+        day_map = day.set_index(
+            "TckrSymb"
+        )["TtlTradgVol"]
 
-        candidates[
-            "60PctRule"
-        ] = False
+        volume_maps.append(day_map)
 
-        candidates[
-            "5DVolumePattern"
-        ] = "Insufficient data"
+    low_counts = []
+    low_percentages = []
+    patterns = []
 
-        return candidates
+    for symbol in data["TckrSymb"]:
 
-    last_5_days = previous_days[:5]
+        volumes = []
 
-    combined_5d = pd.concat(
-        last_5_days,
-        ignore_index=True,
-    )
+        for day_map in volume_maps:
+            value = day_map.get(symbol)
 
-    combined_5d = combined_5d.merge(
-        average_volume,
-        on="TckrSymb",
-        how="left",
-    )
+            if value is not None:
+                volumes.append(float(value))
 
-    combined_5d[
-        "VolumePct20D"
-    ] = (
-        combined_5d[
-            "TtlTradgVol"
-        ]
-        /
-        combined_5d[
-            "AVG_20D_VOLUME"
-        ]
-        *
-        100
-    )
+        avg20 = data.loc[
+            data["TckrSymb"] == symbol,
+            "Avg20DVolume"
+        ].iloc[0]
 
-    combined_5d[
-        "LowVolumeDay"
-    ] = (
-        combined_5d[
-            "TtlTradgVol"
-        ]
-        <
-        combined_5d[
-            "AVG_20D_VOLUME"
-        ]
-    )
-
-    low_volume_stats = (
-        combined_5d
-        .groupby("TckrSymb")[
-            "LowVolumeDay"
-        ]
-        .sum()
-        .reset_index()
-    )
-
-    low_volume_stats.rename(
-        columns={
-            "LowVolumeDay":
-                "LowVolumeDays5D"
-        },
-        inplace=True,
-    )
-
-    low_volume_stats[
-        "LowVolumePct5D"
-    ] = (
-        low_volume_stats[
-            "LowVolumeDays5D"
-        ]
-        /
-        5
-        *
-        100
-    )
-
-    low_volume_stats[
-        "60PctRule"
-    ] = (
-        low_volume_stats[
-            "LowVolumeDays5D"
-        ]
-        >= 3
-    )
-
-    candidates = candidates.merge(
-        low_volume_stats,
-        on="TckrSymb",
-        how="left",
-    )
-
-    # --------------------------------------------------------
-    # 5D PATTERN
-    # --------------------------------------------------------
-
-    pattern_rows = []
-
-    for symbol, group in combined_5d.groupby(
-        "TckrSymb"
-    ):
-
-        group = group.copy()
-
-        group["Date"] = pd.to_datetime(
-            group["Date"],
-            errors="coerce",
-        )
-
-        group = group.sort_values(
-            by="Date"
-        )
-
-        volumes = (
-            group[
-                "TtlTradgVol"
-            ]
-            .tolist()
-        )
-
-        if len(volumes) < 5:
-
-            pattern = (
-                "Insufficient data"
-            )
+        if len(volumes) == 0:
+            low_count = 0
+            low_pct = 0
+            pattern = "Insufficient data"
 
         else:
-
-            first_two_average = (
-                sum(volumes[:2])
-                /
-                2
+            low_count = sum(
+                v < avg20
+                for v in volumes
             )
 
-            last_two_average = (
-                sum(volumes[-2:])
-                /
-                2
-            )
+            low_pct = (
+                low_count / len(volumes)
+            ) * 100
 
-            if (
-                last_two_average
-                <
-                first_two_average * 0.80
-            ):
+            if len(volumes) >= 4:
 
-                pattern = "Contraction"
+                first_part = sum(
+                    volumes[:2]
+                ) / 2
 
-            elif (
-                last_two_average
-                >
-                first_two_average * 1.20
-            ):
+                last_part = sum(
+                    volumes[-2:]
+                ) / 2
 
-                pattern = "Expansion"
+                if first_part > 0:
+
+                    if last_part < first_part * 0.80:
+                        pattern = "Contraction"
+
+                    elif last_part > first_part * 1.20:
+                        pattern = "Expansion"
+
+                    else:
+                        pattern = "Mixed"
+
+                else:
+                    pattern = "Insufficient data"
 
             else:
+                pattern = "Insufficient data"
 
-                pattern = "Mixed"
+        low_counts.append(low_count)
+        low_percentages.append(low_pct)
+        patterns.append(pattern)
 
-        pattern_rows.append(
-            {
-                "TckrSymb": symbol,
-                "5DVolumePattern": pattern,
-            }
-        )
+    data["LowVolumeDays5D"] = low_counts
+    data["LowVolumePct5D"] = low_percentages
+    data["5DVolumePattern"] = patterns
 
-    pattern_df = pd.DataFrame(
-        pattern_rows
-    )
-
-    candidates = candidates.merge(
-        pattern_df,
-        on="TckrSymb",
-        how="left",
-    )
-
-    candidates[
+    data["60Rule"] = data[
         "LowVolumeDays5D"
-    ] = (
-        candidates[
-            "LowVolumeDays5D"
-        ]
-        .fillna(0)
-        .astype(int)
+    ].apply(
+        lambda x: "PASS" if x >= 3 else "NO"
     )
 
-    candidates[
-        "LowVolumePct5D"
-    ] = (
-        candidates[
-            "LowVolumePct5D"
-        ]
-        .fillna(0.0)
-    )
-
-    candidates[
-        "60PctRule"
-    ] = (
-        candidates[
-            "60PctRule"
-        ]
-        .fillna(False)
-        .astype(bool)
-    )
-
-    candidates[
-        "5DVolumePattern"
-    ] = (
-        candidates[
-            "5DVolumePattern"
-        ]
-        .fillna(
-            "Insufficient data"
-        )
-    )
-
-    return candidates
+    return data
 
 
 # ============================================================
 # PRICE + VOLUME RELATIONSHIP
-#
-# V8 SOURCE-OF-TRUTH RULE
-#
-# Price UP   + Volume UP   = Strong Bullish
-# Price UP   + Volume DOWN = Weak / Caution
-# Price DOWN + Volume UP   = Selling / Distribution
-# Price DOWN + Volume DOWN = Normal Pullback
-# Price FLAT + Volume UP   = Possible Accumulation / Event
-#
-# This classification is NOT a BUY signal.
 # ============================================================
 
-def calculate_price_volume_relationship(
-    candidates
-):
+def calculate_price_volume_relationship(data):
+    print(
+        "\nSTEP 7: Calculating "
+        "Price + Volume Relationship..."
+    )
 
-    print("")
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print("PRICE + VOLUME RELATIONSHIP")
     print("=" * 60)
 
-    result = candidates.copy()
-
-    # --------------------------------------------------------
-    # PRICE CHANGE %
-    # --------------------------------------------------------
-
-    result[
-        "PriceChangePct"
-    ] = (
+    data["PriceChangePct"] = (
         (
-            result["ClsPric"]
-            -
-            result["PrvsClsgPric"]
+            data["ClsPric"]
+            - data["PrvsClsgPric"]
         )
-        /
-        result["PrvsClsgPric"]
-        *
-        100
+        / data["PrvsClsgPric"]
+    ) * 100
+
+    def price_direction(value):
+
+        if value > 0.10:
+            return "Up"
+
+        if value < -0.10:
+            return "Down"
+
+        return "Flat"
+
+    data["PriceDirection"] = (
+        data["PriceChangePct"]
+        .apply(price_direction)
     )
 
-    # --------------------------------------------------------
-    # PRICE DIRECTION
-    #
-    # Flat = absolute change below 0.10%
-    # --------------------------------------------------------
+    data["VolumeDirection"] = data.apply(
+        lambda row:
+            "Up"
+            if row["TtlTradgVol"]
+            > row["Avg20DVolume"]
+            else "Down",
+        axis=1
+    )
 
-    result[
-        "PriceDirection"
-    ] = "Flat"
+    def relationship(row):
 
-    result.loc[
-        result["PriceChangePct"] > 0.10,
-        "PriceDirection"
-    ] = "Up"
+        price = row["PriceDirection"]
+        volume = row["VolumeDirection"]
 
-    result.loc[
-        result["PriceChangePct"] < -0.10,
-        "PriceDirection"
-    ] = "Down"
+        if price == "Up" and volume == "Up":
+            return "Strong Bullish"
 
-    # --------------------------------------------------------
-    # VOLUME DIRECTION
-    #
-    # Current volume compared with 20D average.
-    # Above average = Up
-    # Below average = Down
-    # --------------------------------------------------------
+        if price == "Up" and volume == "Down":
+            return "Weak / Caution"
 
-    result[
-        "VolumeDirection"
-    ] = "Down"
+        if price == "Down" and volume == "Up":
+            return "Selling / Distribution"
 
-    result.loc[
-        result["TtlTradgVol"]
-        >
-        result["AVG_20D_VOLUME"],
-        "VolumeDirection"
-    ] = "Up"
+        if price == "Down" and volume == "Down":
+            return "Normal Pullback"
 
-    # --------------------------------------------------------
-    # RELATIONSHIP CLASSIFICATION
-    # --------------------------------------------------------
+        if price == "Flat" and volume == "Up":
+            return "Possible Accumulation / Event"
 
-    result[
-        "PriceVolumeRelationship"
-    ] = "Unknown"
+        return "Low Activity / Neutral"
 
-    # Price UP + Volume UP
-    result.loc[
-        (
-            result["PriceDirection"] == "Up"
-        )
-        &
-        (
-            result["VolumeDirection"] == "Up"
-        ),
-        "PriceVolumeRelationship"
-    ] = "Strong Bullish"
+    data["PriceVolumeRelationship"] = data.apply(
+        relationship,
+        axis=1
+    )
 
-    # Price UP + Volume DOWN
-    result.loc[
-        (
-            result["PriceDirection"] == "Up"
-        )
-        &
-        (
-            result["VolumeDirection"] == "Down"
-        ),
-        "PriceVolumeRelationship"
-    ] = "Weak / Caution"
-
-    # Price DOWN + Volume UP
-    result.loc[
-        (
-            result["PriceDirection"] == "Down"
-        )
-        &
-        (
-            result["VolumeDirection"] == "Up"
-        ),
-        "PriceVolumeRelationship"
-    ] = "Selling / Distribution"
-
-    # Price DOWN + Volume DOWN
-    result.loc[
-        (
-            result["PriceDirection"] == "Down"
-        )
-        &
-        (
-            result["VolumeDirection"] == "Down"
-        ),
-        "PriceVolumeRelationship"
-    ] = "Normal Pullback"
-
-    # Price FLAT + Volume UP
-    result.loc[
-        (
-            result["PriceDirection"] == "Flat"
-        )
-        &
-        (
-            result["VolumeDirection"] == "Up"
-        ),
-        "PriceVolumeRelationship"
-    ] = "Possible Accumulation / Event"
-
-    # Price FLAT + Volume DOWN
-    result.loc[
-        (
-            result["PriceDirection"] == "Flat"
-        )
-        &
-        (
-            result["VolumeDirection"] == "Down"
-        ),
-        "PriceVolumeRelationship"
-    ] = "Low Activity / Neutral"
-
-    return result
+    return data
 
 
 # ============================================================
-# RVOL CLASSIFICATION
+# CLV / CANDLE QUALITY
 # ============================================================
 
-def get_rvol_classification(
-    rvol
-):
+def calculate_clv(data):
+    print("\nSTEP 8: Calculating CLV / Candle Quality...")
 
-    if rvol > 3:
-        return "Exceptional"
+    print("\n" + "=" * 60)
+    print("CLV / CANDLE QUALITY")
+    print("=" * 60)
 
-    if rvol >= 2:
-        return "Strong"
+    candle_range = (
+        data["HghPric"]
+        - data["LwPric"]
+    )
 
-    if rvol >= 1.5:
-        return "Good"
+    data["CLV"] = 0.0
 
-    if rvol >= 1:
-        return "Normal"
+    valid_range = candle_range > 0
 
-    return "Weak"
+    data.loc[valid_range, "CLV"] = (
+        (
+            data.loc[valid_range, "ClsPric"]
+            - data.loc[valid_range, "LwPric"]
+        )
+        / candle_range[valid_range]
+    )
+
+    def classify_clv(value):
+
+        if value > 0.75:
+            return "Strong"
+
+        if value >= 0.50:
+            return "Good"
+
+        if value >= 0.25:
+            return "Weak"
+
+        return "Very Weak"
+
+    data["CandleQuality"] = (
+        data["CLV"]
+        .apply(classify_clv)
+    )
+
+    print("CLV calculated successfully.")
+
+    return data
 
 
 # ============================================================
-# TELEGRAM MESSAGE
+# TOP RESULTS
 # ============================================================
 
-def create_telegram_message(
-    result,
-    current_date
-):
+def print_top_results(data):
 
-    lines = []
+    print("\n" + "=" * 80)
+    print("TOP 20 RVOL + 5D + PRICE/VOLUME + CLV")
+    print("=" * 80)
 
-    lines.append(
-        "📊 NSE V8 EOD VOLUME + PRICE ANALYSIS"
-    )
+    top = data.sort_values(
+        "RVOL",
+        ascending=False
+    ).head(20)
 
-    lines.append(
-        f"📅 {current_date:%d-%b-%Y}"
-    )
-
-    lines.append("")
-
-    lines.append(
-        "Volume + RVOL + 5D + Price/Volume"
-    )
-
-    lines.append(
-        "⚠️ Screening layer only"
-    )
-
-    lines.append(
-        "❌ NOT a BUY signal"
-    )
-
-    lines.append("")
-
-    for rank, (_, row) in enumerate(
-        result.head(20).iterrows(),
-        start=1,
+    for index, (_, row) in enumerate(
+        top.iterrows(),
+        start=1
     ):
 
-        symbol = str(
-            row["TckrSymb"]
+        print(
+            f"{index:02d}. "
+            f"{str(row['TckrSymb']):<16} "
+            f"Price={row['PriceChangePct']:+.2f}% | "
+            f"Vol={row['TtlTradgVol']:,.0f} | "
+            f"20D={row['Avg20DVolume']:,.0f} | "
+            f"RVOL={row['RVOL']:.2f}x | "
+            f"Low5D="
+            f"{int(row['LowVolumeDays5D'])}/5 "
+            f"({row['LowVolumePct5D']:.0f}%) | "
+            f"Pattern={row['5DVolumePattern']:<17} | "
+            f"P+V={row['PriceVolumeRelationship']:<30} | "
+            f"CLV={row['CLV']:.2f} | "
+            f"Candle={row['CandleQuality']:<10} | "
+            f"60%={row['60Rule']}"
         )
 
-        volume = int(
-            row["TtlTradgVol"]
+    return top
+
+
+# ============================================================
+# TELEGRAM SUMMARY
+# ============================================================
+
+def send_results_to_telegram(data, latest_date):
+
+    top = data.sort_values(
+        "RVOL",
+        ascending=False
+    ).head(20)
+
+    message_lines = [
+        "NSE V8 MODULE A",
+        "",
+        f"EOD Date: {latest_date}",
+        "Volume + RVOL + 5D + P/V + CLV",
+        "",
+        "TOP 20 RVOL:",
+    ]
+
+    for index, (_, row) in enumerate(
+        top.iterrows(),
+        start=1
+    ):
+
+        message_lines.append(
+            f"{index}. {row['TckrSymb']} | "
+            f"{row['PriceChangePct']:+.2f}% | "
+            f"RVOL {row['RVOL']:.2f}x | "
+            f"5D {int(row['LowVolumeDays5D'])}/5 | "
+            f"P+V {row['PriceVolumeRelationship']} | "
+            f"CLV {row['CLV']:.2f} "
+            f"({row['CandleQuality']})"
         )
 
-        average = int(
-            row["AVG_20D_VOLUME"]
-        )
+    message_lines.extend(
+        [
+            "",
+            "Note: Volume/RVOL/CLV are screening",
+            "and confirmation layers, NOT final BUY signals.",
+        ]
+    )
 
-        rvol = float(
-            row["RVOL"]
-        )
+    message = "\n".join(message_lines)
 
-        price_change = float(
-            row["PriceChangePct"]
-        )
-
-        low_days = int(
-            row["LowVolumeDays5D"]
-        )
-
-        low_pct = float(
-            row["LowVolumePct5D"]
-        )
-
-        pattern = str(
-            row["5DVolumePattern"]
-        )
-
-        relationship = str(
-            row["PriceVolumeRelationship"]
-        )
-
-        rule_status = (
-            "PASS"
-            if bool(
-                row["60PctRule"]
-            )
-            else "NO"
-        )
-
-        lines.append(
-            f"{rank}. {symbol}"
-        )
-
-        lines.append(
-            f"Price: {price_change:+.2f}%"
-        )
-
-        lines.append(
-            f"Vol: {volume:,}"
-        )
-
-        lines.append(
-            f"20D Avg: {average:,}"
-        )
-
-        lines.append(
-            f"RVOL: {rvol:.2f}x "
-            f"({get_rvol_classification(rvol)})"
-        )
-
-        lines.append(
-            f"5D Low Vol: "
-            f"{low_days}/5 "
-            f"({low_pct:.0f}%)"
-        )
-
-        lines.append(
-            f"5D Pattern: {pattern}"
-        )
-
-        lines.append(
-            f"Price + Volume: {relationship}"
-        )
-
-        lines.append(
-            f"60% Rule: {rule_status}"
-        )
-
-        lines.append("")
-
-    return "\n".join(lines)
+    send_telegram(message)
 
 
 # ============================================================
@@ -1056,369 +690,96 @@ def create_telegram_message(
 
 def main():
 
-    print("")
-    print("=" * 60)
+    print("\n" + "=" * 60)
+    print("NSE V8 MODULE A")
     print(
-        "NSE V8 MODULE A"
-    )
-    print(
-        "EOD VOLUME + 20D AVG + RVOL + 5D + PRICE/VOLUME"
+        "EOD VOLUME + 20D AVG + RVOL + "
+        "5D + PRICE/VOLUME + CLV"
     )
     print("=" * 60)
 
-    print(
-        "Python script started successfully."
-    )
+    print("\nPython script started successfully.")
 
-    # --------------------------------------------------------
     # STEP 1
-    # FIND LATEST EOD BHAVCOPY
-    # --------------------------------------------------------
+    current_raw, latest_date = get_latest_bhavcopy()
 
-    print("")
-    print(
-        "STEP 1: Searching for latest NSE EOD Bhavcopy..."
-    )
-
-    today = datetime.now()
-
-    current_df = None
-    current_date = None
-
-    for days_back in range(7):
-
-        test_date = (
-            today
-            -
-            timedelta(days=days_back)
-        )
-
-        print(
-            "Trying date:",
-            test_date.strftime(
-                "%Y-%m-%d"
-            ),
-        )
-
-        df = download_bhavcopy(
-            test_date
-        )
-
-        if df is not None:
-
-            current_df = df
-            current_date = test_date
-
-            print("")
-            print(
-                "Latest available EOD date:",
-                current_date.strftime(
-                    "%Y-%m-%d"
-                ),
-            )
-
-            break
-
-    if current_df is None:
-
-        print(
-            "ERROR: No NSE Bhavcopy found."
-        )
-
-        return
-
-    # --------------------------------------------------------
     # STEP 2
-    # CURRENT EOD DATA
-    # --------------------------------------------------------
+    print("\nSTEP 2: Preparing current EOD data...")
 
-    print("")
-    print(
-        "STEP 2: Preparing current EOD data..."
+    current = prepare_current_data(
+        current_raw
     )
 
-    current_data = prepare_volume_data(
-        current_df
-    )
-
-    if (
-        current_data is None
-        or current_data.empty
-    ):
-
-        print(
-            "ERROR: Current EOD data failed."
-        )
-
-        return
-
-    print(
-        "Current valid symbols:",
-        len(current_data),
-    )
-
-    # --------------------------------------------------------
     # STEP 3
-    # PREVIOUS 20 DAYS
-    # --------------------------------------------------------
-
-    print("")
-    print(
-        "STEP 3: Collecting previous "
-        "20 trading days..."
+    historical = collect_previous_days(
+        latest_date,
+        days_needed=20
     )
 
-    previous_days = (
-        get_previous_20_days(
-            current_date
-        )
-    )
-
-    if len(previous_days) < 20:
-
-        print(
-            "ERROR: Could not collect "
-            "20 trading days."
-        )
-
-        return
-
-    # --------------------------------------------------------
     # STEP 4
-    # 20D AVERAGE
-    # --------------------------------------------------------
-
-    print("")
-    print(
-        "STEP 4: Calculating 20D average volume..."
+    avg_volume = calculate_20d_average(
+        historical
     )
 
-    average_volume = (
-        calculate_20d_average(
-            previous_days
-        )
-    )
-
-    if (
-        average_volume is None
-        or average_volume.empty
-    ):
-
-        print(
-            "ERROR: 20D average failed."
-        )
-
-        return
-
-    # --------------------------------------------------------
     # STEP 5
-    # RVOL
-    # --------------------------------------------------------
-
-    print("")
-    print(
-        "STEP 5: Calculating RVOL..."
+    data = calculate_rvol(
+        current,
+        avg_volume
     )
 
-    result = calculate_rvol(
-        current_data,
-        average_volume,
-    )
-
-    if (
-        result is None
-        or result.empty
-    ):
-
-        print(
-            "ERROR: RVOL calculation failed."
-        )
-
-        return
-
-    # --------------------------------------------------------
     # STEP 6
-    # 5-DAY VOLUME
-    # --------------------------------------------------------
-
-    print("")
-    print(
-        "STEP 6: Calculating "
-        "5-day volume analysis..."
+    data = calculate_5d_volume(
+        data,
+        historical
     )
 
-    result = calculate_5d_volume_analysis(
-        result,
-        previous_days,
-        average_volume,
-    )
-
-    if (
-        result is None
-        or result.empty
-    ):
-
-        print(
-            "ERROR: 5-day analysis failed."
-        )
-
-        return
-
-    # --------------------------------------------------------
     # STEP 7
-    # PRICE + VOLUME RELATIONSHIP
-    # --------------------------------------------------------
-
-    print("")
-    print(
-        "STEP 7: Calculating "
-        "Price + Volume Relationship..."
+    data = calculate_price_volume_relationship(
+        data
     )
 
-    result = calculate_price_volume_relationship(
-        result
+    # STEP 8
+    data = calculate_clv(
+        data
     )
 
-    if (
-        result is None
-        or result.empty
-    ):
+    # TOP RESULTS
+    top = print_top_results(data)
 
-        print(
-            "ERROR: Price + Volume "
-            "analysis failed."
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # TOP 20
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 60)
-    print(
-        "TOP 20 RVOL + 5D + PRICE/VOLUME"
-    )
-    print("=" * 60)
-
-    for rank, (_, row) in enumerate(
-        result.head(20).iterrows(),
-        start=1,
-    ):
-
-        symbol = str(
-            row["TckrSymb"]
-        )
-
-        volume = int(
-            row["TtlTradgVol"]
-        )
-
-        average = int(
-            row["AVG_20D_VOLUME"]
-        )
-
-        rvol = float(
-            row["RVOL"]
-        )
-
-        price_change = float(
-            row["PriceChangePct"]
-        )
-
-        low_days = int(
-            row["LowVolumeDays5D"]
-        )
-
-        low_pct = float(
-            row["LowVolumePct5D"]
-        )
-
-        pattern = str(
-            row["5DVolumePattern"]
-        )
-
-        relationship = str(
-            row["PriceVolumeRelationship"]
-        )
-
-        rule_status = (
-            "PASS"
-            if bool(
-                row["60PctRule"]
-            )
-            else "NO"
-        )
-
-        print(
-            f"{rank:02d}. "
-            f"{symbol:<16} "
-            f"Price={price_change:+.2f}% | "
-            f"Vol={volume:,} | "
-            f"20D={average:,} | "
-            f"RVOL={rvol:.2f}x | "
-            f"Low5D={low_days}/5 "
-            f"({low_pct:.0f}%) | "
-            f"Pattern={pattern:<12} | "
-            f"P+V={relationship:<28} | "
-            f"60%={rule_status}"
-        )
-
-    # --------------------------------------------------------
     # TELEGRAM
-    # --------------------------------------------------------
-
-    print("")
-    print(
-        "STEP 8: Sending Telegram report..."
+    send_results_to_telegram(
+        data,
+        latest_date
     )
 
-    telegram_message = (
-        create_telegram_message(
-            result,
-            current_date,
-        )
-    )
-
-    send_telegram(
-        telegram_message
-    )
-
-    # --------------------------------------------------------
-    # COMPLETE
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 60)
-    print(
-        "MODULE A COMPLETED"
-    )
-    print(
-        "VOLUME + RVOL + 5D + PRICE/VOLUME"
-    )
+    print("\n" + "=" * 60)
+    print("MODULE A CURRENT STAGE COMPLETED")
     print("=" * 60)
 
     print(
-        "Current EOD date:",
-        current_date.strftime(
-            "%Y-%m-%d"
-        ),
+        f"EOD Date: {latest_date}"
     )
 
     print(
-        "Final symbols analyzed:",
-        len(result),
+        f"Final symbols: {len(data)}"
     )
 
     print(
-        "===== SCRIPT FINISHED SUCCESSFULLY ====="
+        "Layers completed:"
     )
 
+    print("1. NSE Bhavcopy")
+    print("2. 20D Average Volume")
+    print("3. RVOL")
+    print("4. 5D Volume Analysis")
+    print("5. 60% Low-Volume Rule")
+    print("6. Price + Volume Relationship")
+    print("7. CLV / Candle Quality")
 
-# ============================================================
-# PYTHON ENTRY POINT
-# ============================================================
+    print(
+        "\nPython exit code: 0"
+    )
+
 
 if __name__ == "__main__":
     main()
