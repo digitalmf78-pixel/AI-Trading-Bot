@@ -33,7 +33,7 @@ jobs:
           echo "----- Python version -----"
           python --version
 
-            - name: Test NSE Volume Gainer
+      - name: Test NSE Volume Gainer
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
