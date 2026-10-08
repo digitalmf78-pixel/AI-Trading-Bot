@@ -180,3 +180,5 @@ def prepare_volume_data(df):
         data["ClsPric"],
         errors="coerce",
     )
+    if __name__ == "__main__":
+    main()
