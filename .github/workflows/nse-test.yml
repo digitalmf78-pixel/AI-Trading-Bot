@@ -2,6 +2,12 @@ name: NSE Data Test
 
 on:
   workflow_dispatch:
+    inputs:
+      send_telegram:
+        description: Send the report to the configured Telegram chat
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   nse-test:
@@ -45,6 +51,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_TELEGRAM: ${{ inputs.send_telegram }}
         run: |
           echo "===== TEST START ====="
           echo "Current directory:"
@@ -58,5 +65,12 @@ jobs:
           echo "Compile check PASSED"
           echo "Starting Python..."
           python -u ./volume_gainer.py
-          echo "Python exit code: $?"
           echo "===== TEST END ====="
+
+      - name: Upload NSE V8 reports and input templates
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-v8-reports-${{ github.run_id }}
+          path: outputs/
+          if-no-files-found: warn
