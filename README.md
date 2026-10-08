@@ -48,4 +48,4 @@ The checkpoint specified the 3+1 rule and preferred R:R of at least 1:2 but did 
 
 ## GitHub Actions
 
-Run **Actions → NSE Data Test → Run workflow**. Telegram is off by default; turn on `send_telegram` only when a message is wanted. The job uploads report CSVs as an artifact. The workflow is manual and does not automatically run after a commit.
+Run **Actions → NSE Data Test → Run workflow**. Telegram is off by default; turn on `send_telegram` only when a message is wanted. GitHub Actions caches downloaded Bhavcopies and confirmed NSE 404 dates for reuse on later runs. The job uploads report CSVs and input templates as an artifact. The workflow is manual and does not automatically run after a commit.
