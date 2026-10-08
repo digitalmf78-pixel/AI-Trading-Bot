@@ -4,6 +4,12 @@ import zipfile
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from v8_layers_14_41 import (
+    monitor_positions,
+    run_eod_layers,
+    validate_next_day,
+    write_layer_status_summary,
+)
 
 # ============================================================
 # NSE V8 MODULE A
@@ -2796,6 +2802,16 @@ def display_top20(result):
             f"{row['RSNiftyClassification']}"
         )
 
+        if "EODWatchlistStatus" in row.index:
+            print(
+                f"   V8Score={fmt(row.get('V8Score'), 0)}/100"
+                f" | Sector={row.get('Sector', 'Unknown')}"
+                f" | News={row.get('NewsEvidenceStatus', 'WAIT_FOR_DATA')}"
+                f" | R:R={fmt(row.get('RiskReward'))}"
+                f" | Chase={row.get('ChaseStatus', 'WAIT_FOR_DATA')}"
+                f" | EOD={row.get('EODWatchlistStatus', 'WAIT_FOR_DATA')}"
+            )
+
 
 # ============================================================
 # TELEGRAM
@@ -2824,14 +2840,14 @@ def send_telegram(
 
         return
 
-    top = (
-        result
-        .sort_values(
-            by="RVOL",
-            ascending=False
+    if "EODWatchlistStatus" in result:
+        top = (
+            result[result["EODWatchlistStatus"] == "WATCH"]
+            .sort_values("V8Score", ascending=False)
+            .head(10)
         )
-        .head(10)
-    )
+    else:
+        top = result.head(0)
 
     lines = []
 
@@ -2844,13 +2860,16 @@ def send_telegram(
     )
 
     lines.append(
-        "Volume + RVOL + 5D + P/V "
-        "+ CLV + Trend "
-        "+ Breakout/Pullback "
-        "+ Support/Resistance"
+        "Analysis only. No automatic order is placed."
     )
 
     lines.append("")
+
+    if top.empty:
+        status_counts = result["EODWatchlistStatus"].value_counts().to_dict()
+        lines.append("No symbol passed the complete EOD watchlist gate.")
+        lines.append(f"Status counts: {status_counts}")
+        lines.append("Missing external evidence keeps candidates out of WATCH.")
 
     for _, row in top.iterrows():
 
@@ -2907,6 +2926,13 @@ def send_telegram(
             f"Nifty {fmt(row['NiftyReturn20D'])}% | "
             f"RS {fmt(row['RelativeStrengthNifty'])}% | "
             f"{row['RSNiftyClassification']}"
+        )
+
+        lines.append(
+            f"V8 Score: {row.get('V8Score', 'NA')}/100"
+            f" | Sector: {row.get('Sector', 'Unknown')}"
+            f" | News: {row.get('NewsEvidenceStatus', 'WAIT_FOR_DATA')}"
+            f" | R:R: {row.get('RiskReward', 'NA')}"
         )
 
         lines.append("")
@@ -3021,6 +3047,12 @@ def main():
         )
     )
 
+    # Keep the current session out of rolling-volume baselines, but include it
+    # for indicators and price-structure calculations that describe today's EOD.
+    current_history = current.copy()
+    current_history["Date"] = pd.Timestamp(eod_date)
+    analysis_history = historical + [current_history]
+
     # --------------------------------------------------------
     # STEP 4
     # --------------------------------------------------------
@@ -3073,7 +3105,7 @@ def main():
 
     result = calculate_trend(
         result,
-        historical
+        analysis_history
     )
 
     # --------------------------------------------------------
@@ -3083,7 +3115,7 @@ def main():
     result = (
         calculate_breakout_pullback(
             result,
-            historical
+            analysis_history
         )
     )
 
@@ -3095,7 +3127,7 @@ def main():
     result = (
         calculate_support_resistance(
             result,
-            historical
+            analysis_history
         )
     )
 
@@ -3116,6 +3148,56 @@ def main():
     )
 
     # --------------------------------------------------------
+    # STEPS 13–41: EOD scoring, next-day validation, positions
+    # --------------------------------------------------------
+
+    result = run_eod_layers(
+        result,
+        historical,
+        current,
+        nifty_history,
+        eod_date,
+    )
+
+    next_day_report = validate_next_day(
+        result,
+        eod_date,
+    )
+
+    position_report = monitor_positions(
+        result,
+        analysis_history,
+        eod_date,
+    )
+
+    layer_summary = write_layer_status_summary(
+        result,
+        next_day_report,
+        position_report,
+    )
+
+    print(
+        "\nV8 reports saved under outputs/:"
+    )
+
+    print(
+        f"EOD watchlist rows: {len(result)}"
+    )
+
+    print(
+        f"Next-day validator rows: {len(next_day_report)}"
+    )
+
+    print(
+        f"Open-position monitor rows: {len(position_report)}"
+    )
+
+    print(
+        f"Layers 14–41 waiting for data: "
+        f"{int((layer_summary['Result'] == 'WAIT_FOR_DATA').sum())}"
+    )
+
+    # --------------------------------------------------------
     # DISPLAY
     # --------------------------------------------------------
 
@@ -3127,10 +3209,18 @@ def main():
     # TELEGRAM
     # --------------------------------------------------------
 
-    send_telegram(
-        result,
-        eod_date
-    )
+    telegram_enabled = os.getenv(
+        "SEND_TELEGRAM",
+        "true"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    if telegram_enabled:
+        send_telegram(
+            result,
+            eod_date
+        )
+    else:
+        print("Telegram notification skipped (SEND_TELEGRAM is disabled).")
 
     # --------------------------------------------------------
     # COMPLETION
@@ -3159,59 +3249,11 @@ def main():
     )
 
     print(
-        "\nLayers completed:"
+        "\nLayer code paths 1–41 evaluated; per-layer data/result status is in outputs/*.csv."
     )
 
     print(
-        "1. NSE Bhavcopy"
-    )
-
-    print(
-        "2. 20D Average Volume"
-    )
-
-    print(
-        "3. RVOL"
-    )
-
-    print(
-        "4. 5D Volume Analysis"
-    )
-
-    print(
-        "5. 60% Low-Volume Rule"
-    )
-
-    print(
-        "6. Price + Volume Relationship"
-    )
-
-    print(
-        "7. CLV / Candle Quality"
-    )
-
-    print(
-        "8. Trend - EMA20/50/200"
-    )
-
-    print(
-        "9. RSI14"
-    )
-
-    print(
-        "10. ADX14"
-    )
-
-    print(
-        "11. Breakout / Pullback Detection"
-    )
-
-    print(
-        "12. Support / Resistance"
-    )
-
-    print(
-        "13. Relative Strength vs Nifty"
+        "WAIT_FOR_DATA and FAIL are not passing layers; review required before any trade."
     )
 
     print(

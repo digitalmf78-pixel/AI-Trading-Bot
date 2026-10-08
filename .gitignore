@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+data/bhavcopy/
+outputs/
+data/inputs/positions.csv
