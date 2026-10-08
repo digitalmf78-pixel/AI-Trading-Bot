@@ -36,6 +36,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 def send_telegram(message):
+
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram credentials not configured.")
         return
@@ -61,7 +62,7 @@ def send_telegram(message):
         print("Telegram response:", response.text[:500])
 
     except Exception as e:
-        print("Telegram error:", e)
+        print("Telegram error:", repr(e))
 
 
 # ============================================================
@@ -74,10 +75,12 @@ def download_bhavcopy(date_obj):
 
     url = BHAVCOPY_URL.format(date=date_str)
 
-    print(f"\nDownloading NSE Bhavcopy: {date_str}")
+    print("\n----------------------------------------")
+    print("Downloading NSE Bhavcopy:", date_str)
     print("URL:", url)
 
     try:
+
         response = requests.get(
             url,
             headers=HEADERS,
@@ -88,10 +91,11 @@ def download_bhavcopy(date_obj):
         print("File size:", len(response.content))
 
         if response.status_code != 200:
+            print("Bhavcopy not available.")
             return None
 
         if len(response.content) < 1000:
-            print("Response too small. Skipping.")
+            print("Response too small.")
             return None
 
         with zipfile.ZipFile(
@@ -108,12 +112,12 @@ def download_bhavcopy(date_obj):
             ]
 
             if not csv_files:
-                print("No CSV found inside ZIP.")
+                print("No CSV file found.")
                 return None
 
             csv_name = csv_files[0]
 
-            print("Reading:", csv_name)
+            print("Reading CSV:", csv_name)
 
             with z.open(csv_name) as f:
                 df = pd.read_csv(f)
@@ -124,7 +128,12 @@ def download_bhavcopy(date_obj):
         return df
 
     except Exception as e:
-        print("Bhavcopy download/read error:", repr(e))
+
+        print(
+            "Bhavcopy error:",
+            repr(e)
+        )
+
         return None
 
 
@@ -137,10 +146,35 @@ def prepare_volume_data(df):
     if df is None or df.empty:
         return None
 
-    required = [
+    required_columns = [
         "TckrSymb",
         "ClsPric",
         "TtlTradgVol",
     ]
 
-   
+    for column in required_columns:
+
+        if column not in df.columns:
+
+            print(
+                "Missing required column:",
+                column
+            )
+
+            return None
+
+    data = df[
+        [
+            "TckrSymb",
+            "ClsPric",
+            "TtlTradgVol",
+        ]
+    ].copy()
+
+    data["TtlTradgVol"] = pd.to_numeric(
+        data["TtlTradgVol"],
+        errors="coerce",
+    )
+
+    data["ClsPric"] = pd.to_numeric(
+        data
