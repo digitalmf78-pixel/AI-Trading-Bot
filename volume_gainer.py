@@ -8,8 +8,8 @@ import requests
 
 
 # ============================================================
-# NSE V8 - MODULE A
-# EOD VOLUME GAINER + 20D AVERAGE VOLUME + RVOL
+# NSE V8 MODULE A
+# EOD VOLUME GAINER + 20D AVG + RVOL + 5D VOLUME ANALYSIS
 # ============================================================
 
 BHAVCOPY_URL = (
@@ -20,9 +20,7 @@ BHAVCOPY_URL = (
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "(KHTML, like Gecko) "
-        "Chrome/120.0 Safari/537.36"
+        "AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
     ),
     "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9",
@@ -41,12 +39,8 @@ def send_telegram(message):
 
     print("\nSending Telegram message...")
 
-    if not TELEGRAM_BOT_TOKEN:
-        print("ERROR: TELEGRAM_BOT_TOKEN not configured.")
-        return
-
-    if not TELEGRAM_CHAT_ID:
-        print("ERROR: TELEGRAM_CHAT_ID not configured.")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram credentials not configured.")
         return
 
     url = (
@@ -54,55 +48,35 @@ def send_telegram(message):
         f"{TELEGRAM_BOT_TOKEN}/sendMessage"
     )
 
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-    }
-
     try:
-
         response = requests.post(
             url,
-            data=payload,
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message,
+            },
             timeout=30,
         )
 
-        print(
-            "Telegram HTTP status:",
-            response.status_code
-        )
-
-        print(
-            "Telegram response:",
-            response.text[:500]
-        )
+        print("Telegram HTTP status:", response.status_code)
+        print("Telegram response:", response.text[:500])
 
     except Exception as e:
-
-        print(
-            "Telegram error:",
-            repr(e)
-        )
+        print("Telegram error:", repr(e))
 
 
 # ============================================================
-# DOWNLOAD NSE BHAVCOPY
+# DOWNLOAD BHAVCOPY
 # ============================================================
 
 def download_bhavcopy(date_obj):
 
     date_str = date_obj.strftime("%Y%m%d")
 
-    url = BHAVCOPY_URL.format(
-        date=date_str
-    )
+    url = BHAVCOPY_URL.format(date=date_str)
 
     print("\n----------------------------------------")
-    print(
-        "Downloading NSE Bhavcopy:",
-        date_str
-    )
-    print("URL:", url)
+    print("Downloading NSE Bhavcopy:", date_str)
 
     try:
 
@@ -112,154 +86,65 @@ def download_bhavcopy(date_obj):
             timeout=60,
         )
 
-        print(
-            "HTTP status:",
-            response.status_code
-        )
-
-        print(
-            "Response size:",
-            len(response.content),
-            "bytes"
-        )
+        print("HTTP status:", response.status_code)
+        print("Response size:", len(response.content), "bytes")
 
         if response.status_code != 200:
-
-            print(
-                "Bhavcopy unavailable for:",
-                date_str
-            )
-
             return None
 
         if len(response.content) < 1000:
-
-            print(
-                "ERROR: Response is too small."
-            )
-
             return None
 
-        try:
+        with zipfile.ZipFile(
+            io.BytesIO(response.content)
+        ) as z:
 
-            zip_file = zipfile.ZipFile(
-                io.BytesIO(response.content)
-            )
+            csv_files = [
+                x for x in z.namelist()
+                if x.lower().endswith(".csv")
+            ]
 
-        except zipfile.BadZipFile:
+            if not csv_files:
+                print("No CSV found.")
+                return None
 
-            print(
-                "ERROR: Downloaded file is not a valid ZIP."
-            )
+            csv_name = csv_files[0]
 
-            return None
+            print("Reading:", csv_name)
 
-        files = zip_file.namelist()
+            with z.open(csv_name) as f:
+                df = pd.read_csv(f)
 
-        print(
-            "ZIP contents:",
-            files
-        )
-
-        csv_files = [
-            file_name
-            for file_name in files
-            if file_name.lower().endswith(".csv")
-        ]
-
-        if not csv_files:
-
-            print(
-                "ERROR: No CSV file found in ZIP."
-            )
-
-            return None
-
-        csv_name = csv_files[0]
-
-        print(
-            "Reading CSV:",
-            csv_name
-        )
-
-        with zip_file.open(csv_name) as csv_file:
-
-            df = pd.read_csv(
-                csv_file
-            )
-
-        print(
-            "Rows:",
-            len(df)
-        )
-
-        print(
-            "Columns:",
-            list(df.columns)
-        )
+        print("Rows:", len(df))
 
         return df
 
-    except requests.RequestException as e:
-
-        print(
-            "NSE request error:",
-            repr(e)
-        )
-
-        return None
-
     except Exception as e:
 
-        print(
-            "Bhavcopy processing error:",
-            repr(e)
-        )
+        print("Bhavcopy error:", repr(e))
 
         return None
 
 
 # ============================================================
-# PREPARE VOLUME DATA
+# PREPARE DATA
 # ============================================================
 
 def prepare_volume_data(df):
 
-    print(
-        "\nPreparing volume data..."
-    )
-
-    if df is None:
-
-        print(
-            "ERROR: DataFrame is None."
-        )
-
+    if df is None or df.empty:
         return None
 
-    if df.empty:
-
-        print(
-            "ERROR: DataFrame is empty."
-        )
-
-        return None
-
-    required_columns = [
+    required = [
         "TckrSymb",
         "ClsPric",
         "TtlTradgVol",
     ]
 
-    for column in required_columns:
+    for column in required:
 
         if column not in df.columns:
-
-            print(
-                "ERROR: Missing column:",
-                column
-            )
-
+            print("Missing column:", column)
             return None
 
     data = df[
@@ -294,84 +179,51 @@ def prepare_volume_data(df):
         (data["TtlTradgVol"] > 0)
     ]
 
-    print(
-        "Valid symbols:",
-        len(data)
-    )
-
     return data
 
 
 # ============================================================
-# FIND PREVIOUS 20 TRADING DAYS
+# GET PREVIOUS 20 TRADING DAYS
 # ============================================================
 
 def get_previous_20_days(current_date):
 
-    print("\n")
-    print("=" * 60)
+    print("\n========================================")
     print("COLLECTING PREVIOUS 20 TRADING DAYS")
-    print("=" * 60)
+    print("========================================")
 
     previous_days = []
 
-    check_date = (
-        current_date
-        - timedelta(days=1)
-    )
+    check_date = current_date - timedelta(days=1)
 
     attempts = 0
 
-    while (
-        len(previous_days) < 20
-        and
-        attempts < 50
-    ):
+    while len(previous_days) < 20 and attempts < 50:
 
-        date_text = check_date.strftime(
-            "%Y-%m-%d"
-        )
+        date_text = check_date.strftime("%Y-%m-%d")
 
         print(
-            f"\nChecking {date_text} "
-            f"| Trading days found: "
-            f"{len(previous_days)}/20"
+            f"Checking {date_text} | "
+            f"Found {len(previous_days)}/20"
         )
 
-        df = download_bhavcopy(
-            check_date
-        )
+        df = download_bhavcopy(check_date)
 
         if df is not None:
 
-            prepared = prepare_volume_data(
-                df
-            )
+            prepared = prepare_volume_data(df)
 
-            if (
-                prepared is not None
-                and
-                not prepared.empty
-            ):
+            if prepared is not None and not prepared.empty:
 
                 prepared["Date"] = date_text
 
-                previous_days.append(
-                    prepared
-                )
+                previous_days.append(prepared)
 
-                print(
-                    "Accepted:",
-                    date_text
-                )
+                print("Accepted:", date_text)
 
-        check_date -= timedelta(
-            days=1
-        )
-
+        check_date -= timedelta(days=1)
         attempts += 1
 
-    print("\n")
     print(
         "Previous trading days collected:",
         len(previous_days)
@@ -381,24 +233,12 @@ def get_previous_20_days(current_date):
 
 
 # ============================================================
-# CALCULATE 20D AVERAGE VOLUME
+# 20D AVERAGE VOLUME
 # ============================================================
 
-def calculate_20d_average(
-    previous_days
-):
-
-    print("\n")
-    print("=" * 60)
-    print("CALCULATING 20D AVERAGE VOLUME")
-    print("=" * 60)
+def calculate_20d_average(previous_days):
 
     if not previous_days:
-
-        print(
-            "ERROR: No previous-day data."
-        )
-
         return None
 
     combined = pd.concat(
@@ -408,58 +248,35 @@ def calculate_20d_average(
 
     avg_volume = (
         combined
-        .groupby("TckrSymb")[
-            "TtlTradgVol"
-        ]
+        .groupby("TckrSymb")["TtlTradgVol"]
         .mean()
         .reset_index()
     )
 
     avg_volume.rename(
         columns={
-            "TtlTradgVol":
-            "AVG_20D_VOLUME"
+            "TtlTradgVol": "AVG_20D_VOLUME"
         },
         inplace=True,
     )
 
     print(
-        "Symbols with 20D average:",
-        len(avg_volume)
+        "20D average calculated for:",
+        len(avg_volume),
+        "symbols"
     )
 
     return avg_volume
 
 
 # ============================================================
-# CALCULATE RVOL
+# RVOL
 # ============================================================
 
 def calculate_rvol(
     current_data,
-    avg_volume
+    avg_volume,
 ):
-
-    print("\n")
-    print("=" * 60)
-    print("CALCULATING RVOL")
-    print("=" * 60)
-
-    if current_data is None:
-
-        print(
-            "ERROR: Current data unavailable."
-        )
-
-        return None
-
-    if avg_volume is None:
-
-        print(
-            "ERROR: 20D average unavailable."
-        )
-
-        return None
 
     result = current_data.merge(
         avg_volume,
@@ -489,343 +306,37 @@ def calculate_rvol(
         ascending=False,
     )
 
-    print(
-        "RVOL calculated for:",
-        len(result),
-        "symbols"
-    )
-
     return result
 
 
 # ============================================================
-# RVOL CLASSIFICATION
+# 5-DAY VOLUME ANALYSIS
 # ============================================================
 
-def rvol_classification(
-    rvol
+def calculate_5d_volume_analysis(
+    candidates,
+    previous_days,
+    avg_volume,
 ):
 
-    if rvol > 3:
-
-        return "Exceptional"
-
-    elif rvol >= 2:
-
-        return "Strong"
-
-    elif rvol >= 1.5:
-
-        return "Good"
-
-    elif rvol >= 1:
-
-        return "Normal"
-
-    else:
-
-        return "Weak"
-
-
-# ============================================================
-# CREATE TELEGRAM MESSAGE
-# ============================================================
-
-def create_telegram_message(
-    result,
-    current_date
-):
-
-    top20 = result.head(20)
-
-    lines = []
-
-    lines.append(
-        "📊 NSE V8 EOD VOLUME GAINER + RVOL"
-    )
-
-    lines.append(
-        f"📅 {current_date.strftime('%d-%b-%Y')}"
-    )
-
-    lines.append("")
-
-    lines.append(
-        "⚠️ Screening layer only"
-    )
-
-    lines.append(
-        "❌ NOT a BUY signal"
-    )
-
-    lines.append("")
-
-    for rank, (_, row) in enumerate(
-        top20.iterrows(),
-        start=1
-    ):
-
-        symbol = str(
-            row["TckrSymb"]
-        )
-
-        volume = int(
-            row["TtlTradgVol"]
-        )
-
-        avg_volume = int(
-            row["AVG_20D_VOLUME"]
-        )
-
-        rvol = float(
-            row["RVOL"]
-        )
-
-        classification = (
-            rvol_classification(
-                rvol
-            )
-        )
-
-        lines.append(
-            f"{rank}. {symbol}"
-        )
-
-        lines.append(
-            f"Vol: {volume:,}"
-        )
-
-        lines.append(
-            f"20D Avg: {avg_volume:,}"
-        )
-
-        lines.append(
-            f"RVOL: {rvol:.2f}x "
-            f"({classification})"
-        )
-
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    print("")
+    print("\n")
     print("=" * 60)
-    print("NSE V8 MODULE A")
-    print("EOD VOLUME GAINER + 20D AVG + RVOL")
+    print("5-DAY VOLUME ANALYSIS")
     print("=" * 60)
-    print("")
-
-    print(
-        "Python script started successfully."
-    )
-
-    # --------------------------------------------------------
-    # FIND LATEST AVAILABLE BHAVCOPY
-    # --------------------------------------------------------
-
-    today = datetime.now()
-
-    current_df = None
-    current_date = None
-
-    print("")
-    print(
-        "Searching for latest NSE EOD Bhavcopy..."
-    )
-
-    for days_back in range(0, 7):
-
-        test_date = (
-            today
-            - timedelta(days=days_back)
-        )
-
-        df = download_bhavcopy(
-            test_date
-        )
-
-        if df is not None:
-
-            current_df = df
-            current_date = test_date
-
-            print("")
-            print(
-                "Latest available EOD date:",
-                current_date.strftime(
-                    "%Y-%m-%d"
-                )
-            )
-
-            break
-
-    if current_df is None:
-
-        print("")
-        print(
-            "ERROR: Could not find NSE Bhavcopy."
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # PREPARE CURRENT DATA
-    # --------------------------------------------------------
-
-    current_data = prepare_volume_data(
-        current_df
-    )
-
-    if current_data is None:
-
-        print(
-            "ERROR: Current data preparation failed."
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # PREVIOUS 20 DAYS
-    # --------------------------------------------------------
-
-    previous_days = (
-        get_previous_20_days(
-            current_date
-        )
-    )
 
     if not previous_days:
+        return candidates
 
-        print(
-            "ERROR: Previous trading data unavailable."
-        )
+    # Previous 5 trading days
+    last_5_days = previous_days[:5]
 
-        return
-
-    # --------------------------------------------------------
-    # 20D AVERAGE
-    # --------------------------------------------------------
-
-    avg_volume = (
-        calculate_20d_average(
-            previous_days
-        )
+    combined_5d = pd.concat(
+        last_5_days,
+        ignore_index=True,
     )
 
-    if avg_volume is None:
-
-        print(
-            "ERROR: 20D average calculation failed."
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # RVOL
-    # --------------------------------------------------------
-
-    result = calculate_rvol(
-        current_data,
-        avg_volume
-    )
-
-    if result is None:
-
-        print(
-            "ERROR: RVOL calculation failed."
-        )
-
-        return
-
-    if result.empty:
-
-        print(
-            "ERROR: RVOL result is empty."
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # TOP 20 RVOL
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 60)
-    print("TOP 20 RVOL")
-    print("=" * 60)
-
-    top20 = result.head(20)
-
-    for rank, (_, row) in enumerate(
-        top20.iterrows(),
-        start=1
-    ):
-
-        symbol = str(
-            row["TckrSymb"]
-        )
-
-        volume = int(
-            row["TtlTradgVol"]
-        )
-
-        avg_volume = int(
-            row["AVG_20D_VOLUME"]
-        )
-
-        rvol = float(
-            row["RVOL"]
-        )
-
-        category = (
-            rvol_classification(
-                rvol
-            )
-        )
-
-        print(
-            f"{rank:02d}. "
-            f"{symbol:<15} "
-            f"Vol={volume:,} "
-            f"20D={avg_volume:,} "
-            f"RVOL={rvol:.2f}x "
-            f"[{category}]"
-        )
-
-    # --------------------------------------------------------
-    # TELEGRAM
-    # --------------------------------------------------------
-
-    message = create_telegram_message(
-        result,
-        current_date
-    )
-
-    send_telegram(
-        message
-    )
-
-    # --------------------------------------------------------
-    # COMPLETE
-    # --------------------------------------------------------
-
-    print("")
-    print("=" * 60)
-    print("MODULE A VOLUME + RVOL COMPLETED")
-    print("=" * 60)
-    print("")
-
-
-# ============================================================
-# SCRIPT ENTRY POINT
-# ============================================================
-
-if __name__ == "__main__":
-    main()
+    # Merge 20D average
+    combined_5d = combined_5d.merge(
+        avg_volume,
+        on="TckrSymb",
+        how
