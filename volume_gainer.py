@@ -1315,7 +1315,7 @@ def prepare_history_by_symbol(
     all_history = pd.concat(
         frames,
         ignore_index=True,
-        copy=False,
+        
     )
 
     all_history["Date"] = pd.to_datetime(
