@@ -23,9 +23,11 @@ Columns: `Date,Sector,Close`. Provide at least 21 trading closes per sector, inc
 
 ### `data/inputs/news_evidence.csv`
 
-Columns: `TckrSymb,PublishedAt,Headline,Source,SourceType,URL,Impact,EventID`. Use ISO-8601 timestamps with timezone. Set `SourceType` to `primary`/`official` for an issuer, exchange, or regulator source; other publishers are secondary sources. `Impact` accepts `positive`, `negative`, or `neutral`. Use the same `EventID` for copies of the same event. Similar headlines are also grouped so copies across sites do not count as separate confirmations.
+Columns: `TckrSymb,PublishedAt,Headline,Source,SourceType,URL,Impact,EventID` (optional `SourceDomain` for RSS publishers). Use ISO-8601 timestamps with timezone. Set `SourceType` to `primary`/`official` for an issuer, exchange, or regulator source; other publishers are secondary sources. `Impact` accepts `positive`, `negative`, or `neutral`. Use the same `EventID` for copies of the same event. Similar headlines are also grouped so copies across sites do not count as separate confirmations.
 
 The 3+1 gate requires one event with at least three distinct secondary source domains and one distinct primary source domain. This is intentionally strict; unverified or missing news cannot pass.
+
+The daily RVOL Top 20 is also checked against NSE's public company-announcement and integrated-financial RSS feeds. Google News RSS is used only to discover secondary coverage. Automatic matches are written to `data/inputs/news_evidence_auto.csv`; the review report is `outputs/v8_catalyst_top20.csv`. A single NSE filing is marked as a verified event, while the separate 3+1 confirmation gate remains in force for a full V8 watchlist result. The Marathi impact label is a headline-based first pass; the linked filing is the source of truth, and timing alone does not prove that an announcement caused a price move.
 
 ### `data/inputs/intraday_bars.csv`
 
@@ -44,7 +46,7 @@ Columns: `TckrSymb,Quantity,AverageEntryPrice,InitialStop,Target,EntryDate,Thesi
 
 ## Current configurable rules
 
-The checkpoint specified the 3+1 rule and preferred R:R of at least 1:2 but did not specify detailed formulas or weights for every later layer. The current implementation uses conservative defaults in `v8_layers_14_41.py`: sector/Nifty relative thresholds of ±2%, EMA20/EMA50 market regime, delivery classifications at 25%/40%, a minimum V8 score of 70 with full score-input coverage, and a weighted score (trend 15, RS 15, sector 10, market 10, RVOL 10, volume 10, CLV 10, setup 10, delivery 5, accumulation 5). WATCH also requires the 3+1 news gate, no risk-off regime, a non-weak sector, no distribution classification, and at least 1:2 R:R. The chase filter flags a close more than 3% above the planned entry, over 2 ATR above EMA20, or up more than 8% on the day. Sector mapping/history and news evidence must be supplied; no live news-provider connector is configured. Review these assumptions before relying on the report. A volume label is only a price/volume inference, not proof of a real-world catalyst.
+The checkpoint specified the 3+1 rule and preferred R:R of at least 1:2 but did not specify detailed formulas or weights for every later layer. The current implementation uses conservative defaults in `v8_layers_14_41.py`: sector/Nifty relative thresholds of ±2%, EMA20/EMA50 market regime, delivery classifications at 25%/40%, a minimum V8 score of 70 with full score-input coverage, and a weighted score (trend 15, RS 15, sector 10, market 10, RVOL 10, volume 10, CLV 10, setup 10, delivery 5, accumulation 5). WATCH also requires the 3+1 news gate, no risk-off regime, a non-weak sector, no distribution classification, and at least 1:2 R:R. The chase filter flags a close more than 3% above the planned entry, over 2 ATR above EMA20, or up more than 8% on the day. Sector mapping/history still must be supplied. Review these assumptions before relying on the report. A volume label is only a price/volume inference, not proof of a real-world catalyst.
 
 ## GitHub Actions
 

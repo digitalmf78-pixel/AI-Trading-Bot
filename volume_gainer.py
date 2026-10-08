@@ -10,6 +10,11 @@ from v8_layers_14_41 import (
     validate_next_day,
     write_layer_status_summary,
 )
+from news_catalyst import (
+    collect_catalyst_news,
+    send_marathi_telegram,
+    write_catalyst_top20_report,
+)
 
 # ============================================================
 # NSE V8 MODULE A
@@ -20,7 +25,8 @@ from v8_layers_14_41 import (
 NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
 HISTORY_DAYS = 220
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
-BHAVCOPY_404_CACHE_DAYS = 2; NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
+BHAVCOPY_404_CACHE_DAYS = 2
+NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
 NIFTY_HISTORY_MIN_BARS = 50
 NIFTY_HISTORY_LOOKBACK_DAYS = 140
 YAHOO_NIFTY_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
@@ -618,7 +624,8 @@ def load_nifty_index_history(latest_date):
 
         print(
             f"Nifty history cache hit: "
-            f"{NIFTY_HISTORY_CACHE} ({len(cached_asof)} closes through {target_date.date()})"
+            f"{NIFTY_HISTORY_CACHE} "
+            f"({len(cached_asof)} closes through {target_date.date()})"
         )
 
         return cached
@@ -709,7 +716,8 @@ def load_nifty_index_history(latest_date):
 
         raise RuntimeError(
             f"At least {NIFTY_HISTORY_MIN_BARS} Nifty closes are required "
-            "to calculate the 20D return and market regime."
+            "to calculate the 20D return and market regime; "
+            f"found {len(aligned)}."
         )
 
     print(
@@ -3151,6 +3159,13 @@ def main():
         eod_date
     )
 
+    # Check the highest-RVOL 20 names against the official NSE RSS feeds and
+    # free secondary coverage before the news confirmation layers are scored.
+    auto_news, news_feed_status = collect_catalyst_news(
+        result,
+        eod_date,
+    )
+
     # --------------------------------------------------------
     # STEPS 13–41: EOD scoring, next-day validation, positions
     # --------------------------------------------------------
@@ -3161,6 +3176,12 @@ def main():
         current,
         nifty_history,
         eod_date,
+    )
+
+    write_catalyst_top20_report(
+        result,
+        eod_date,
+        auto_news,
     )
 
     next_day_report = validate_next_day(
@@ -3219,9 +3240,23 @@ def main():
     ).strip().lower() in {"1", "true", "yes", "on"}
 
     if telegram_enabled:
-        send_telegram(
+        manual_news_path = os.path.join("data", "inputs", "news_evidence.csv")
+        manual_news = (
+            pd.read_csv(manual_news_path)
+            if os.path.exists(manual_news_path)
+            else pd.DataFrame()
+        )
+        digest_news = pd.concat(
+            [frame for frame in [auto_news, manual_news] if not frame.empty],
+            ignore_index=True,
+        ) if not auto_news.empty or not manual_news.empty else pd.DataFrame()
+        send_marathi_telegram(
             result,
-            eod_date
+            eod_date,
+            digest_news,
+            news_feed_status,
+            TELEGRAM_BOT_TOKEN,
+            TELEGRAM_CHAT_ID,
         )
     else:
         print("Telegram notification skipped (SEND_TELEGRAM is disabled).")

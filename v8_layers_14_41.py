@@ -22,7 +22,7 @@ OUTPUT_DIR = Path("outputs")
 
 NEWS_COLUMNS = [
     "TckrSymb", "PublishedAt", "Headline", "Source", "SourceType",
-    "URL", "Impact", "EventID",
+    "URL", "Impact", "EventID", "SourceDomain",
 ]
 SECTOR_MAP_COLUMNS = ["TckrSymb", "Sector", "SectorIndexSymbol"]
 SECTOR_HISTORY_COLUMNS = ["Date", "Sector", "Close"]
@@ -102,9 +102,10 @@ def _first_number(row: pd.Series, names: list[str]) -> float:
 
 def _domain(row: pd.Series) -> str:
     url = _text(row.get("URL", ""))
+    explicit_domain = _text(row.get("SourceDomain", "")).lower().removeprefix("www.")
     source = _text(row.get("Source", "")).lower()
     host = urlparse(url).netloc.lower().removeprefix("www.") if url else ""
-    return host or re.sub(r"\s+", " ", source)
+    return explicit_domain or host or re.sub(r"\s+", " ", source)
 
 
 def _is_primary(row: pd.Series) -> bool:
@@ -154,6 +155,10 @@ def _news_for_symbol(
         "NewsPrimarySources": 0,
         "NewsNegativePrimary": False,
         "NewsCatalyst": "",
+        "NewsCatalystSource": "",
+        "NewsCatalystURL": "",
+        "NewsCatalystPublishedAt": "",
+        "NewsCatalystImpact": "neutral",
     }
     if news.empty or "TckrSymb" not in news.columns:
         return result
@@ -181,7 +186,9 @@ def _news_for_symbol(
     groups = _event_groups(rows)
     best_secondary = 0
     best_primary = 0
+    best_priority = (-1, -1, -1)
     catalyst = ""
+    catalyst_row = None
     for group in groups:
         primary_domains = {
             _domain(item) for item in group
@@ -191,10 +198,16 @@ def _news_for_symbol(
             _domain(item) for item in group
             if _domain(item) and not _is_primary(item)
         } - primary_domains
-        if len(secondary_domains) + len(primary_domains) > best_secondary + best_primary:
+        priority = (int(bool(primary_domains)), len(secondary_domains), len(primary_domains))
+        if priority > best_priority:
+            best_priority = priority
             best_secondary = len(secondary_domains)
             best_primary = len(primary_domains)
-            catalyst = _text(group[0].get("Headline", ""))
+            catalyst_row = next(
+                (item for item in group if _is_primary(item)),
+                group[0],
+            )
+            catalyst = _text(catalyst_row.get("Headline", ""))
 
     negative_primary = any(
         _is_primary(row)
@@ -220,7 +233,15 @@ def _news_for_symbol(
         ) >= 1
         for group in groups
     )
-    status = "CONFIRMED_3_PLUS_1" if confirmed else "UNVERIFIED"
+    has_primary_event = any(
+        any(_is_primary(item) and _domain(item) for item in group)
+        for group in groups
+    )
+    status = (
+        "CONFIRMED_3_PLUS_1" if confirmed
+        else "PRIMARY_CONFIRMED" if has_primary_event
+        else "UNVERIFIED"
+    )
     if negative_primary:
         status = "NEGATIVE_PRIMARY_NEWS"
     return {
@@ -229,6 +250,10 @@ def _news_for_symbol(
         "NewsPrimarySources": best_primary,
         "NewsNegativePrimary": negative_primary,
         "NewsCatalyst": catalyst,
+        "NewsCatalystSource": _text(catalyst_row.get("Source", "")) if catalyst_row is not None else "",
+        "NewsCatalystURL": _text(catalyst_row.get("URL", "")) if catalyst_row is not None else "",
+        "NewsCatalystPublishedAt": _text(catalyst_row.get("PublishedAt", "")) if catalyst_row is not None else "",
+        "NewsCatalystImpact": _text(catalyst_row.get("Impact", "neutral")) if catalyst_row is not None else "neutral",
     }
 
 
@@ -400,6 +425,9 @@ def run_eod_layers(
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
     sector_history = _read_csv(INPUT_DIR / "sector_history.csv", SECTOR_HISTORY_COLUMNS)
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
+    auto_news = _read_csv(INPUT_DIR / "news_evidence_auto.csv", NEWS_COLUMNS)
+    if not auto_news.empty:
+        news = pd.concat([news, auto_news], ignore_index=True)
 
     output = result.copy()
     sector = _sector_strength(output, sector_map, sector_history, eod_date)
@@ -463,7 +491,7 @@ def run_eod_layers(
     news_frame = pd.DataFrame(news_rows, index=output.index)
     output = pd.concat([output, news_frame], axis=1)
     output["NewsStatus"] = output["NewsEvidenceStatus"].map(
-        lambda value: "PASS" if value == "CONFIRMED_3_PLUS_1" else "FAIL" if value == "NEGATIVE_PRIMARY_NEWS" else "WAIT_FOR_DATA"
+        lambda value: "PASS" if value in {"CONFIRMED_3_PLUS_1", "PRIMARY_CONFIRMED"} else "FAIL" if value == "NEGATIVE_PRIMARY_NEWS" else "WAIT_FOR_DATA"
     )
 
     confirmations = []
@@ -481,7 +509,11 @@ def run_eod_layers(
             and row.get("NewsEvidenceStatus") == "CONFIRMED_3_PLUS_1"
             and not bool(row.get("NewsNegativePrimary"))
         )
-        confirmation_statuses.append("PASS" if confirmations_ok else "WAIT_FOR_DATA" if row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED"} else "FAIL")
+        confirmation_statuses.append(
+            "PASS" if confirmations_ok
+            else "WAIT_FOR_DATA" if row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED", "PRIMARY_CONFIRMED"}
+            else "FAIL"
+        )
     output["TechnicalConfirmations"] = confirmations
     output["Confirmation3Plus1"] = output["NewsEvidenceStatus"].eq("CONFIRMED_3_PLUS_1")
     output["MandatoryConfirmationStatus"] = confirmation_statuses
