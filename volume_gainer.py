@@ -267,17 +267,16 @@ def prepare_equity_data(df):
     ].copy()
 
     if "SctySrs" in data.columns:
-
-        equity = data[
-            data["SctySrs"]
-            .astype(str)
-            .isin(
-                ["EQ", "BE", "SM", "ST", "SZ"]
-            )
-        ].copy()
-
-        if len(equity) > 0:
-            data = equity
+        # The source file is a securities bhavcopy, not a pure common-stock list.
+        # Always apply the configured listed-equity series allowlist; never fall
+        # back to all instruments when the allowlist returns zero rows.
+        allowed_series = {"EQ", "BE", "SM", "ST", "SZ"}
+        data["SctySrs"] = data["SctySrs"].astype(str).str.strip().str.upper()
+        before_series_filter = len(data)
+        data = data[data["SctySrs"].isin(allowed_series)].copy()
+        print(
+            f"[UNIVERSE] Listed-equity series filter: {len(data)}/{before_series_filter} rows retained."
+        )
 
     data = data.drop_duplicates(
         subset=["TckrSymb"],
@@ -2645,6 +2644,138 @@ def calculate_relative_strength_nifty(
 
 
 # ============================================================
+# V8 CORE CANDIDATE SELECTION — AUDITABLE, NO FORCED FILL
+# ============================================================
+
+def select_top20_analysis_candidates(result, eod_date):
+    """Select up to 20 technical candidates after core EOD screens.
+
+    This is not the final buy list. A candidate must pass delivery, valid 20-session
+    RVOL data, a real Breakout/Pullback setup, a constructive trend/candle, non-negative
+    relative strength, and the setup-specific volume rules. Final sector/news/3+1,
+    risk/reward and chase gates remain in run_eod_layers().
+    """
+    if result is None or result.empty:
+        print("[CANDIDATE SCREEN] No rows available; no candidates selected.")
+        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+
+    frame = result.copy()
+    audit_rows = []
+    required_columns = [
+        "DeliveryFilterStatus", "RVOLStatus", "RVOL", "SetupType",
+        "TrendClassification", "CLV", "PriceVolumeRelationship",
+        "RelativeStrengthNifty", "LowVolumeDays5D", "BreakoutStatus",
+        "PullbackStatus", "SRSupport", "SRResistance", "PriceChangePct",
+    ]
+
+    for col in required_columns:
+        if col not in frame.columns:
+            frame[col] = pd.NA
+
+    for _, row in frame.iterrows():
+        reasons = []
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        delivery = str(row.get("DeliveryFilterStatus", "WAIT_FOR_DATA")).strip().upper()
+        rvol_status = str(row.get("RVOLStatus", "WAIT_FOR_DATA")).strip().upper()
+        setup = str(row.get("SetupType", "")).strip()
+        trend = str(row.get("TrendClassification", "")).strip()
+        pv = str(row.get("PriceVolumeRelationship", "")).strip()
+        breakout = str(row.get("BreakoutStatus", "")).strip()
+        pullback = str(row.get("PullbackStatus", "")).strip()
+        rvol = pd.to_numeric(pd.Series([row.get("RVOL")]), errors="coerce").iloc[0]
+        clv = pd.to_numeric(pd.Series([row.get("CLV")]), errors="coerce").iloc[0]
+        rs = pd.to_numeric(pd.Series([row.get("RelativeStrengthNifty")]), errors="coerce").iloc[0]
+        low_days = pd.to_numeric(pd.Series([row.get("LowVolumeDays5D")]), errors="coerce").iloc[0]
+        change = pd.to_numeric(pd.Series([row.get("PriceChangePct")]), errors="coerce").iloc[0]
+        support = pd.to_numeric(pd.Series([row.get("SRSupport")]), errors="coerce").iloc[0]
+        resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
+
+        if delivery != "PASS_GT_60_PERCENT":
+            reasons.append("DELIVERY_NOT_PASS_GT_60_PERCENT")
+        if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
+            reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
+        if setup not in {"Breakout", "Pullback"}:
+            reasons.append("NO_CONFIRMED_BREAKOUT_OR_PULLBACK_SETUP")
+        if not ("Bullish" in trend or "Improving" in trend):
+            reasons.append("TREND_NOT_BULLISH_OR_IMPROVING")
+        if pd.isna(clv) or clv < 0.50:
+            reasons.append("CANDLE_CLV_BELOW_0_50")
+        if pv == "Selling / Distribution":
+            reasons.append("PRICE_VOLUME_SHOWS_SELLING_DISTRIBUTION")
+        if pd.isna(rs):
+            reasons.append("RELATIVE_STRENGTH_WAIT_FOR_DATA")
+        elif rs < 0:
+            reasons.append("UNDERPERFORMS_NIFTY")
+        if pd.isna(support) or support <= 0 or pd.isna(resistance) or resistance <= 0:
+            reasons.append("SUPPORT_RESISTANCE_WAIT_FOR_DATA")
+
+        if setup == "Breakout":
+            if breakout not in {"Breakout", "Strong Breakout"}:
+                reasons.append("BREAKOUT_NOT_CONFIRMED")
+            if pd.isna(change) or change <= 0:
+                reasons.append("BREAKOUT_WITHOUT_POSITIVE_CLOSE_CHANGE")
+        elif setup == "Pullback":
+            if pullback not in {"Pullback", "Strong Pullback"}:
+                reasons.append("PULLBACK_NOT_CONFIRMED")
+            if pd.isna(low_days) or low_days < 3:
+                reasons.append("PULLBACK_LOW_VOLUME_RULE_FAILED_LT_3_OF_5")
+
+        selected = len(reasons) == 0
+        audit_rows.append({
+            "EODDate": str(eod_date),
+            "TckrSymb": symbol,
+            "DeliveryFilterStatus": delivery,
+            "RVOLStatus": rvol_status,
+            "RVOL": rvol,
+            "LowVolumeDays5D": low_days,
+            "PriceChangePct": change,
+            "CLV": clv,
+            "TrendClassification": trend,
+            "SetupType": setup,
+            "PriceVolumeRelationship": pv,
+            "RelativeStrengthNifty": rs,
+            "SRSupport": support,
+            "SRResistance": resistance,
+            "CandidateScreenStatus": "PASS" if selected else "REJECT",
+            "CandidateScreenReasons": "PASS_CORE_TECHNICAL_SCREEN" if selected else ";".join(reasons),
+        })
+
+    audit = pd.DataFrame(audit_rows)
+    selected_symbols = set(audit.loc[audit["CandidateScreenStatus"].eq("PASS"), "TckrSymb"].astype(str))
+    eligible = frame[frame["TckrSymb"].astype(str).str.strip().str.upper().isin(selected_symbols)].copy()
+    eligible["RVOL"] = pd.to_numeric(eligible["RVOL"], errors="coerce")
+    eligible["CLV"] = pd.to_numeric(eligible["CLV"], errors="coerce")
+    eligible["RelativeStrengthNifty"] = pd.to_numeric(eligible["RelativeStrengthNifty"], errors="coerce")
+    # RVOL remains the primary rank; candle quality and relative strength break ties.
+    eligible = eligible.sort_values(
+        ["RVOL", "CLV", "RelativeStrengthNifty"],
+        ascending=[False, False, False],
+        na_position="last",
+        kind="mergesort",
+    ).head(20).copy()
+    eligible["CandidateRank"] = range(1, len(eligible) + 1)
+
+    audit["CandidateRank"] = pd.NA
+    ranks = dict(zip(eligible["TckrSymb"].astype(str).str.upper(), eligible["CandidateRank"]))
+    audit.loc[audit["TckrSymb"].isin(ranks), "CandidateRank"] = audit.loc[audit["TckrSymb"].isin(ranks), "TckrSymb"].map(ranks)
+    audit.loc[audit["CandidateScreenStatus"].eq("PASS") & audit["CandidateRank"].isna(), "CandidateScreenStatus"] = "PASS_CORE_SCREEN_OUTSIDE_TOP20"
+    audit_path = os.path.join("data", "reports", f"v8_candidate_selection_audit_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv")
+    os.makedirs(os.path.dirname(audit_path), exist_ok=True)
+    audit.to_csv(audit_path, index=False)
+    os.makedirs("outputs", exist_ok=True)
+    eligible.to_csv(os.path.join("outputs", "v8_pre_news_top20_candidates.csv"), index=False)
+
+    counts = audit["CandidateScreenStatus"].value_counts().to_dict()
+    print("[CANDIDATE SCREEN] Audit: " + audit_path)
+    print(f"[CANDIDATE SCREEN] Technical pass before Top-20 cap: {len(selected_symbols)}")
+    print(f"[CANDIDATE SCREEN] Selected for detailed news/sector/EOD analysis: {len(eligible)} (maximum 20; no forced fill)")
+    print(f"[CANDIDATE SCREEN] Status counts: {counts}")
+    if eligible.empty:
+        print("[CANDIDATE SCREEN] No stock passed core technical gates; final shortlist will remain empty rather than force-filling.")
+    return eligible
+
+
+# ============================================================
 # DISPLAY TOP 20
 # ============================================================
 
@@ -2656,7 +2787,7 @@ def display_top20(result):
     )
 
     print(
-        "TOP 20 V8 CANDIDATES"
+        "TOP V8 TECHNICAL CANDIDATES (MAX 20)"
     )
 
     print(
@@ -3023,7 +3154,19 @@ def main():
         series_col="SctySrs",
         minimum_average=60.0,
     )
+    # delivery_filter.py publishes DeliveryStatus; later V8 layers require the
+    # explicit gate column DeliveryFilterStatus. Keep both names for compatibility.
+    if "DeliveryStatus" in current.columns:
+        current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
+    else:
+        current["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
     print(f"Symbols remaining after delivery filter: {len(current)}")
+    print(
+        "[DELIVERY GATE] PASS rows: "
+        f"{int(current['DeliveryFilterStatus'].eq('PASS_GT_60_PERCENT').sum())}; "
+        "non-PASS rows in pipeline: "
+        f"{int((~current['DeliveryFilterStatus'].eq('PASS_GT_60_PERCENT')).sum())}"
+    )
     if current.empty:
         print("No symbols qualified for the >60% five-session delivery rule. Stopping before volume/technical analysis.")
         print("Review data/reports/delivery_first_audit_*.csv; no watchlist will be force-filled.")
@@ -3140,8 +3283,13 @@ def main():
         eod_date
     )
 
-    # Check the highest-RVOL 20 names against the official NSE RSS feeds and
-    # free secondary coverage before the news confirmation layers are scored.
+    # Core technical screen: only eligible Breakout/Pullback candidates proceed
+    # to the costly news/sector/3+1 layers. The remaining universe is preserved
+    # in the selection audit, not mislabeled as a final watchlist.
+    result = select_top20_analysis_candidates(result, eod_date)
+
+    # Check only the selected technical candidates against official NSE RSS feeds
+    # and secondary coverage before news confirmation layers are scored.
     news_session_dates = [
         pd.to_datetime(frame["Date"], errors="coerce").dropna().iloc[0]
         for frame in historical[-4:]
