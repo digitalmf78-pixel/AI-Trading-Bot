@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import os
-import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -20,10 +19,6 @@ BASE_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_
 CACHE_DIR = Path("data/cache/delivery")
 AUDIT_DIR = Path("data/reports")
 MINIMUM_AVERAGE = 60.0
-# NSE may publish the full delivery report later than the UDiFF Bhavcopy.
-# Retry the current-session URL instead of treating a temporary 404 as permanent.
-DELIVERY_FETCH_RETRIES = max(1, int(os.getenv("DELIVERY_FETCH_RETRIES", "13")))
-DELIVERY_RETRY_SECONDS = max(1, int(os.getenv("DELIVERY_RETRY_SECONDS", "30")))
 REQUIRED_COLUMNS = {"SYMBOL", "SERIES", "DELIV_PER"}
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
@@ -61,30 +56,19 @@ def _read_cached_or_download(session: requests.Session, session_date: date) -> p
             pass
 
     url = BASE_URL.format(date=date_token)
-    content = None
-    for attempt in range(1, DELIVERY_FETCH_RETRIES + 1):
-        try:
-            response = session.get(url, timeout=25)
-        except requests.RequestException as exc:
-            print(f"[DELIVERY] Download error {session_date} (attempt {attempt}/{DELIVERY_FETCH_RETRIES}): {exc}")
-            response = None
-
-        if response is not None and response.status_code == 200:
-            candidate_content = response.content
-            if candidate_content and not candidate_content.lstrip().lower().startswith((b"<html", b"<!doctype")):
-                content = candidate_content
-                break
-            print(f"[DELIVERY] Invalid/HTML report for {session_date} (attempt {attempt}/{DELIVERY_FETCH_RETRIES})")
-        elif response is not None:
-            print(f"[DELIVERY] Report unavailable {session_date}: HTTP {response.status_code} (attempt {attempt}/{DELIVERY_FETCH_RETRIES})")
-
-        if attempt < DELIVERY_FETCH_RETRIES:
-            time.sleep(DELIVERY_RETRY_SECONDS)
-
-    if content is None:
-        print(f"[DELIVERY] Report still unavailable after {DELIVERY_FETCH_RETRIES} attempts: {session_date}")
+    try:
+        response = session.get(url, timeout=25)
+    except requests.RequestException as exc:
+        print(f"[DELIVERY] Download error {session_date}: {exc}")
         return None
 
+    if response.status_code != 200:
+        print(f"[DELIVERY] Report unavailable {session_date}: HTTP {response.status_code}")
+        return None
+    content = response.content
+    if not content or content.lstrip().lower().startswith((b"<html", b"<!doctype")):
+        print(f"[DELIVERY] Invalid/HTML report for {session_date}")
+        return None
     try:
         frame = _normalise_columns(pd.read_csv(io.BytesIO(content)))
     except Exception as exc:
@@ -149,47 +133,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     if symbol_col not in candidates.columns:
         raise ValueError(f"Candidate symbol column missing: {symbol_col}")
 
-    # The current EOD delivery report is mandatory. If NSE has not published it
-    # yet (or the 5-session history is incomplete), fail closed: audit every
-    # candidate as WAIT_FOR_DATA, return zero qualified candidates, and let the
-    # workflow finish normally so the audit artifact can be inspected.
-    try:
-        reports = sessions if sessions is not None else get_delivery_sessions(
-            asof_date, 5, session=http_session
-        )
-        if len({day for day, _ in reports}) < 5:
-            raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
-    except RuntimeError as exc:
-        if "WAIT_FOR_DATA" not in str(exc):
-            raise
-        print(f"[DELIVERY] {exc}")
-        audit = candidates.copy()
-        audit["DeliverySessions"] = 0
-        audit["AvgDelivery5D"] = float("nan")
-        audit["LatestDeliveryPct"] = float("nan")
-        audit["DeliveryStatus"] = "WAIT_FOR_DATA"
-        audit["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
-        AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-        audit_path = AUDIT_DIR / (
-            f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
-        )
-        audit.to_csv(audit_path, index=False)
-        # Continue technical analysis with these rows as ANALYSIS-ONLY candidates.
-        # The V8 scoring layer requires DeliveryFilterStatus == PASS_GT_60_PERCENT
-        # before a stock can enter the EOD shortlist. WAIT_FOR_DATA therefore
-        # keeps the scan productive without permitting a final trade candidate.
-        analysis_candidates = candidates.copy()
-        analysis_candidates["DeliverySessions"] = 0
-        analysis_candidates["AvgDelivery5D"] = float("nan")
-        analysis_candidates["LatestDeliveryPct"] = float("nan")
-        analysis_candidates["DeliveryStatus"] = "WAIT_FOR_DATA"
-        analysis_candidates["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
-        print(
-            "[DELIVERY] Required delivery data missing. Continuing V8 technical analysis "
-            "with candidates marked WAIT_FOR_DATA; final EOD shortlist remains blocked."
-        )
-        print(f"[DELIVERY] WAIT_FOR_DATA audit saved: {audit_path}")
-        return analysis_candidates, audit
+    reports = sessions if sessions is not None else get_delivery_sessions(asof_date, 5, session=http_session)
+    if len({day for day, _ in reports}) < 5:
+        raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
 
     pieces = []
     for report_date, raw in reports:
@@ -223,19 +169,11 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         avg = float(distinct["DELIV_PER"].mean()) if count == 5 else float("nan")
         by_date = {r["REPORT_DATE"]: float(r["DELIV_PER"]) for _, r in distinct.iterrows()}
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
-        delivery_status = (
-            "WAIT_FOR_DATA" if count != 5
-            else "PASS_GT_60_PERCENT" if avg > minimum_average
-            else "FILTERED_OUT_LE_60_PERCENT"
-        )
         record.update({
             "DeliverySessions": count,
             "AvgDelivery5D": avg,
             "LatestDeliveryPct": by_date.get(_parse_date(asof_date).isoformat(), float("nan")),
-            # DeliveryFilterStatus survives later V8 layers that use DeliveryStatus
-            # for a different, single-session delivery metric.
-            "DeliveryStatus": delivery_status,
-            "DeliveryFilterStatus": delivery_status,
+            "DeliveryStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GT_60_PERCENT" if avg > minimum_average else "FILTERED_OUT_LE_60_PERCENT"),
         })
         for i, (report_date, _) in enumerate(reports, start=1):
             record[f"Delivery_{report_date.isoformat()}"] = by_date.get(report_date.isoformat(), float("nan"))
