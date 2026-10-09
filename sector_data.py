@@ -56,8 +56,13 @@ HEADERS = {
 }
 NSE_HEADERS = {
     "User-Agent": HEADERS["User-Agent"],
-    "Accept": "text/csv,text/plain,*/*",
-    "Referer": "https://www.nseindia.com/all-reports",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+    "Referer": "https://www.nseindia.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 
@@ -251,18 +256,41 @@ OFFICIAL_SECTOR_TO_TRACKED_INDEX = {
 }
 
 
+def _warm_nse_session(session: requests.Session) -> None:
+    """Warm NSE's own browser session before using its JSON quote endpoint."""
+    for url in (
+        "https://www.nseindia.com/",
+        "https://www.nseindia.com/market-data/live-equity-market",
+    ):
+        try:
+            response = session.get(url, headers=NSE_HEADERS, timeout=12)
+            print(f"[SECTOR] NSE session warm-up: {url} -> HTTP {response.status_code}")
+            if response.status_code == 200:
+                # One successful page response is sufficient to seed NSE cookies.
+                break
+        except Exception as exc:
+            print(f"[SECTOR] NSE session warm-up failed for {url}: {exc}")
+
+
 def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
     """Fetch official NSE industryInfo for one shortlisted equity symbol."""
-    response = session.get(
-        NSE_QUOTE_URL,
-        params={"symbol": symbol},
-        headers={
-            **NSE_HEADERS,
-            "Accept": "application/json,text/plain,*/*",
-            "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
-        },
-        timeout=18,
-    )
+    headers = {
+        **NSE_HEADERS,
+        "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
+    }
+    response = None
+    for attempt in range(1, 3):
+        response = session.get(
+            NSE_QUOTE_URL,
+            params={"symbol": symbol},
+            headers=headers,
+            timeout=18,
+        )
+        if response.status_code not in {403, 429, 500, 502, 503, 504}:
+            break
+        print(f"[SECTOR] NSE quote {symbol}: HTTP {response.status_code} (attempt {attempt}/2)")
+        time.sleep(0.8 * attempt)
+    assert response is not None
     response.raise_for_status()
     payload = response.json()
     info = payload.get("industryInfo") or {}
@@ -385,6 +413,7 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
     # precedence; for shortlisted non-constituents, use official NSE equity quote
     # industryInfo and only explicit sector-to-index mappings.
     candidate_symbols = candidate_symbols or []
+    _warm_nse_session(session)
     targeted_mappings = _targeted_shortlist_mappings(
         session=session,
         candidate_symbols=candidate_symbols,
