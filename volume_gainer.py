@@ -11,6 +11,7 @@ from v8_layers_14_41 import (
     validate_next_day,
     write_layer_status_summary,
 )
+from sector_data import refresh_sector_inputs
 from news_catalyst import (
     collect_catalyst_news,
     send_marathi_telegram,
@@ -3306,6 +3307,24 @@ def main():
     # --------------------------------------------------------
     # STEPS 13–41: EOD scoring, next-day validation, positions
     # --------------------------------------------------------
+
+    # --------------------------------------------------------
+    # SECTOR DATA INTEGRATION
+    # Ensure sector_data.py runs before Layers 14–24 read the CSVs.
+    # Missing feeds remain WAIT_FOR_DATA; never fabricate confirmations.
+    # --------------------------------------------------------
+    print("\\nSTEP 13A: Refreshing official NSE sector mapping/history...")
+    try:
+        sector_refresh = refresh_sector_inputs(eod_date)
+        print(
+            "[SECTOR] Refresh result: "
+            f"mapping_rows={sector_refresh.get('mapping_rows', 0)}, "
+            f"history_rows={sector_refresh.get('history_rows', 0)}, "
+            f"exact_date_sectors={sector_refresh.get('sectors_with_asof', 0)}, "
+            f"constituent_feeds={sector_refresh.get('constituent_feeds', 0)}"
+        )
+    except Exception as exc:
+        print(f"[SECTOR] Refresh failed; sector layer must not pass: {exc}")
 
     result = run_eod_layers(
         result,
