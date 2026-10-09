@@ -138,7 +138,7 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     return list(root.findall("./channel/item"))
 
 
-def collect_catalyst_news(result: pd.DataFrame, eod_date) -> tuple[pd.DataFrame, dict[str, str]]:
+def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
     """Return official NSE filings plus secondary headlines for RVOL top 20."""
     if result.empty or "TckrSymb" not in result.columns:
         return pd.DataFrame(columns=NEWS_COLUMNS), {"NSE": "no candidates", "secondary": "not checked"}
@@ -149,9 +149,18 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date) -> tuple[pd.DataFrame,
     symbols = {str(value).strip().upper() for value in candidates["TckrSymb"]}
     names = _read_equity_master()
     try:
-        eod_day = pd.Timestamp(eod_date)
-        eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
-        cutoff = (eod_day.normalize() - pd.Timedelta(days=5)).to_pydatetime().astimezone(timezone.utc)
+        if session_dates:
+            # Use the oldest of the latest five actual NSE EOD sessions (current
+            # session + previous four), not a five-calendar-day approximation.
+            normalized_dates = [pd.Timestamp(value).normalize() for value in session_dates]
+            first_session = min(normalized_dates).tz_localize("Asia/Kolkata")
+            cutoff = first_session.to_pydatetime().astimezone(timezone.utc)
+        else:
+            # Backwards-compatible fallback for callers that do not supply the
+            # exchange-session calendar.
+            eod_day = pd.Timestamp(eod_date)
+            eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
+            cutoff = (eod_day.normalize() - pd.Timedelta(days=5)).to_pydatetime().astimezone(timezone.utc)
     except Exception:
         cutoff = datetime.now(timezone.utc) - timedelta(days=5)
     rows: list[dict[str, str]] = []
