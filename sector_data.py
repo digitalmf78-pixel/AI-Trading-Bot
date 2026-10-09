@@ -209,7 +209,150 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
     return rows, len(exact_sectors)
 
 
-def refresh_sector_inputs(asof_date: Any, force: bool = False) -> dict[str, Any]:
+
+
+# Official NSE equity quote classification for shortlisted stocks that are not
+# constituents of one of the tracked sector indices. This is a conservative
+# bridge: only explicit NSE sector labels with a corresponding tracked sector
+# benchmark are mapped. Unmatched labels remain unmapped/WAIT_FOR_DATA.
+NSE_QUOTE_URL = "https://www.nseindia.com/api/quote-equity"
+
+# Keys are normalized NSE Indices classification "sector" labels.
+# Values are the exact Sector labels used by SECTOR_INDICES / sector_history.
+OFFICIAL_SECTOR_TO_TRACKED_INDEX = {
+    "AUTO": ("Nifty Auto", "NIFTY AUTO"),
+    "AUTOMOBILES": ("Nifty Auto", "NIFTY AUTO"),
+    "BANKS": ("Nifty Bank", "NIFTY BANK"),
+    "FINANCIAL SERVICES": ("Nifty Financial Services", "NIFTY FINANCIAL SERVICES"),
+    "CONSUMER DURABLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
+    "FAST MOVING CONSUMER GOODS": ("Nifty FMCG", "NIFTY FMCG"),
+    "FMCG": ("Nifty FMCG", "NIFTY FMCG"),
+    "INFORMATION TECHNOLOGY": ("Nifty IT", "NIFTY IT"),
+    "IT": ("Nifty IT", "NIFTY IT"),
+    "MEDIA": ("Nifty Media", "NIFTY MEDIA"),
+    "MEDIA ENTERTAINMENT AND PUBLICATION": ("Nifty Media", "NIFTY MEDIA"),
+    "METALS AND MINING": ("Nifty Metal", "NIFTY METAL"),
+    "METAL": ("Nifty Metal", "NIFTY METAL"),
+    "PHARMACEUTICALS": ("Nifty Pharma", "NIFTY PHARMA"),
+    "PHARMACEUTICALS AND BIOTECHNOLOGY": ("Nifty Pharma", "NIFTY PHARMA"),
+    "HEALTHCARE": ("Nifty Healthcare", "NIFTY HEALTHCARE"),
+    "PSU BANKS": ("Nifty PSU Bank", "NIFTY PSU BANK"),
+    "REALTY": ("Nifty Realty", "NIFTY REALTY"),
+    "CONSUMER SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
+    "TELECOMMUNICATION": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    "TELECOMMUNICATIONS": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    "CAPITAL GOODS": ("Nifty Capital Goods", "NIFTY CAPITAL GOODS"),
+    "CHEMICALS": ("Nifty Chemicals", "NIFTY CHEMICALS"),
+    "POWER": ("Nifty Power", "NIFTY POWER"),
+    "OIL GAS AND CONSUMABLE FUELS": ("Nifty Oil and Gas", "NIFTY OIL & GAS"),
+    "OIL AND GAS": ("Nifty Oil and Gas", "NIFTY OIL & GAS"),
+    "INSURANCE": ("Nifty Insurance", "NIFTY INSURANCE"),
+    "PRIVATE BANKS": ("Nifty Private Bank", "NIFTY PRIVATE BANK"),
+}
+
+
+def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
+    """Fetch official NSE industryInfo for one shortlisted equity symbol."""
+    response = session.get(
+        NSE_QUOTE_URL,
+        params={"symbol": symbol},
+        headers={
+            **NSE_HEADERS,
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
+        },
+        timeout=18,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    info = payload.get("industryInfo") or {}
+    if not isinstance(info, dict):
+        return {"macro": "", "sector": "", "industry": "", "basicIndustry": ""}
+    return {
+        "macro": str(info.get("macro") or "").strip(),
+        "sector": str(info.get("sector") or "").strip(),
+        "industry": str(info.get("industry") or "").strip(),
+        "basicIndustry": str(info.get("basicIndustry") or "").strip(),
+    }
+
+
+def _targeted_shortlist_mappings(
+    session: requests.Session,
+    candidate_symbols: list[str],
+    existing_symbols: set[str],
+    asof: pd.Timestamp,
+) -> list[dict[str, str]]:
+    """Map only shortlisted non-constituents using official NSE sector classification."""
+    rows: list[dict[str, str]] = []
+    audit_rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_symbol in candidate_symbols:
+        symbol = _clean_symbol(raw_symbol)
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        if symbol in existing_symbols:
+            audit_rows.append({
+                "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
+                "MappingStatus": "INDEX_CONSTITUENT",
+                "NSEMacro": "", "NSESector": "", "NSEIndustry": "",
+                "NSEBasicIndustry": "", "MappedSector": "",
+                "SectorIndexSymbol": "", "Reason": "Already mapped from official tracked-index constituent feed",
+            })
+            continue
+        try:
+            info = _nse_quote_industry_classification(session, symbol)
+            norm_sector = _normalise_name(info["sector"])
+            mapped = OFFICIAL_SECTOR_TO_TRACKED_INDEX.get(norm_sector)
+            if mapped:
+                sector_label, index_symbol = mapped
+                rows.append({
+                    "TckrSymb": symbol,
+                    "Sector": sector_label,
+                    "SectorIndexSymbol": index_symbol,
+                })
+                status = "MAPPED_OFFICIAL_NSE_CLASSIFICATION"
+                reason = "Exact supported NSE industryInfo.sector label mapped to tracked sector benchmark"
+            else:
+                sector_label, index_symbol = "", ""
+                status = "WAIT_FOR_DATA"
+                reason = "NSE sector label has no explicit tracked-index mapping; no sector guessed"
+            audit_rows.append({
+                "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
+                "MappingStatus": status,
+                "NSEMacro": info["macro"], "NSESector": info["sector"],
+                "NSEIndustry": info["industry"], "NSEBasicIndustry": info["basicIndustry"],
+                "MappedSector": sector_label, "SectorIndexSymbol": index_symbol,
+                "Reason": reason,
+            })
+            print(
+                f"[SECTOR] Candidate classification {symbol}: "
+                f"NSE sector='{info['sector']}' -> {sector_label or 'WAIT_FOR_DATA'}"
+            )
+        except Exception as exc:
+            audit_rows.append({
+                "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
+                "MappingStatus": "WAIT_FOR_DATA",
+                "NSEMacro": "", "NSESector": "", "NSEIndustry": "",
+                "NSEBasicIndustry": "", "MappedSector": "",
+                "SectorIndexSymbol": "", "Reason": f"Official NSE quote lookup failed: {exc}",
+            })
+            print(f"[SECTOR] Candidate classification unavailable for {symbol}: {exc}")
+        time.sleep(0.18)
+
+    report_dir = Path("data") / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = report_dir / f"sector_candidate_mapping_{asof.strftime('%Y%m%d')}.csv"
+    pd.DataFrame(audit_rows, columns=[
+        "Date", "TckrSymb", "MappingStatus", "NSEMacro", "NSESector",
+        "NSEIndustry", "NSEBasicIndustry", "MappedSector", "SectorIndexSymbol", "Reason",
+    ]).to_csv(audit_path, index=False)
+    print(f"[SECTOR] Candidate mapping audit: {audit_path} ({len(audit_rows)} symbols)")
+    return rows
+
+
+
+def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols: list[str] | None = None) -> dict[str, Any]:
     """Refresh sector_map.csv and sector_history.csv for a specific EOD date."""
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     asof = pd.to_datetime(asof_date, errors="coerce")
@@ -237,6 +380,22 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False) -> dict[str, Any]
                     mappings.append(row)
                     seen_symbols.add(symbol)
         time.sleep(0.1)
+
+    # Shortlist-specific classification: tracked-index constituents above take
+    # precedence; for shortlisted non-constituents, use official NSE equity quote
+    # industryInfo and only explicit sector-to-index mappings.
+    candidate_symbols = candidate_symbols or []
+    targeted_mappings = _targeted_shortlist_mappings(
+        session=session,
+        candidate_symbols=candidate_symbols,
+        existing_symbols=seen_symbols,
+        asof=asof,
+    )
+    for row in targeted_mappings:
+        symbol = row["TckrSymb"]
+        if symbol not in seen_symbols:
+            mappings.append(row)
+            seen_symbols.add(symbol)
 
     new_map = pd.DataFrame(mappings, columns=MAP_COLUMNS)
     old_map = pd.DataFrame(columns=MAP_COLUMNS)
@@ -279,7 +438,8 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False) -> dict[str, Any]
     exact_history = history_frame[pd.to_datetime(history_frame["Date"], errors="coerce").dt.normalize().eq(asof)] if not history_frame.empty else pd.DataFrame()
     sectors_with_asof = int(exact_history["Sector"].nunique()) if not exact_history.empty else 0
     history_success = len({r["Sector"] for r in new_history_rows if r["Date"] == asof.strftime("%Y-%m-%d")})
-    print(f"[SECTOR] Mapping rows: {len(map_frame)}; constituent feeds: {successful_maps}/{len(SECTOR_INDICES)}")
+    targeted_count = len(targeted_mappings)
+    print(f"[SECTOR] Mapping rows: {len(map_frame)}; constituent feeds: {successful_maps}/{len(SECTOR_INDICES)}; targeted shortlist mappings added: {targeted_count}")
     print(f"[SECTOR] History rows: {len(history_frame)}; official NSE exact-date sector closes: {sectors_with_asof}; fresh archive sectors: {history_success}")
     if sectors_with_asof == 0:
         print("[SECTOR] No exact-date sector history available; SectorStrengthStatus remains WAIT_FOR_DATA")
@@ -289,6 +449,7 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False) -> dict[str, Any]
         "sectors_with_asof": sectors_with_asof,
         "fresh_archive_sectors": history_success,
         "constituent_feeds": successful_maps,
+        "targeted_shortlist_mappings": len(targeted_mappings),
         "reused": False,
     }
 
