@@ -174,9 +174,22 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
         )
         audit.to_csv(audit_path, index=False)
-        print(f"[DELIVERY] No candidates allowed through because required data is missing.")
+        # Continue technical analysis with these rows as ANALYSIS-ONLY candidates.
+        # The V8 scoring layer requires DeliveryFilterStatus == PASS_GT_60_PERCENT
+        # before a stock can enter the EOD shortlist. WAIT_FOR_DATA therefore
+        # keeps the scan productive without permitting a final trade candidate.
+        analysis_candidates = candidates.copy()
+        analysis_candidates["DeliverySessions"] = 0
+        analysis_candidates["AvgDelivery5D"] = float("nan")
+        analysis_candidates["LatestDeliveryPct"] = float("nan")
+        analysis_candidates["DeliveryStatus"] = "WAIT_FOR_DATA"
+        analysis_candidates["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
+        print(
+            "[DELIVERY] Required delivery data missing. Continuing V8 technical analysis "
+            "with candidates marked WAIT_FOR_DATA; final EOD shortlist remains blocked."
+        )
         print(f"[DELIVERY] WAIT_FOR_DATA audit saved: {audit_path}")
-        return candidates.iloc[0:0].copy(), audit
+        return analysis_candidates, audit
 
     pieces = []
     for report_date, raw in reports:
