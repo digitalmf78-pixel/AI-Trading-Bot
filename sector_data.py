@@ -220,6 +220,76 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
 # constituents of one of the tracked sector indices. This is a conservative
 # bridge: only explicit NSE sector labels with a corresponding tracked sector
 # benchmark are mapped. Unmatched labels remain unmapped/WAIT_FOR_DATA.
+NIFTY500_CONSTITUENTS_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
+
+# Exact official Industry labels -> tracked sector benchmark. This is a
+# conservative taxonomy bridge, not a claim that every mapped stock is itself
+# a constituent of that sector index. Unknown/ambiguous labels stay unmapped.
+INDUSTRY_TO_TRACKED_INDEX = {
+    "AUTO COMPONENTS": ("Nifty Auto", "NIFTY AUTO"),
+    "AUTOMOBILES": ("Nifty Auto", "NIFTY AUTO"),
+    "AUTOMOBILE AND AUTO COMPONENTS": ("Nifty Auto", "NIFTY AUTO"),
+    "BANKS": ("Nifty Bank", "NIFTY BANK"),
+    "PRIVATE BANKS": ("Nifty Private Bank", "NIFTY PRIVATE BANK"),
+    "PSU BANKS": ("Nifty PSU Bank", "NIFTY PSU BANK"),
+    "FINANCE": ("Nifty Financial Services", "NIFTY FINANCIAL SERVICES"),
+    "FINANCIAL SERVICES": ("Nifty Financial Services", "NIFTY FINANCIAL SERVICES"),
+    "NBFC": ("Nifty Financial Services", "NIFTY FINANCIAL SERVICES"),
+    "INSURANCE": ("Nifty Insurance", "NIFTY INSURANCE"),
+    "FAST MOVING CONSUMER GOODS": ("Nifty FMCG", "NIFTY FMCG"),
+    "FMCG": ("Nifty FMCG", "NIFTY FMCG"),
+    "IT - SOFTWARE": ("Nifty IT", "NIFTY IT"),
+    "INFORMATION TECHNOLOGY": ("Nifty IT", "NIFTY IT"),
+    "MEDIA": ("Nifty Media", "NIFTY MEDIA"),
+    "MEDIA ENTERTAINMENT AND PUBLICATION": ("Nifty Media", "NIFTY MEDIA"),
+    "METALS AND MINING": ("Nifty Metal", "NIFTY METAL"),
+    "METALS & MINING": ("Nifty Metal", "NIFTY METAL"),
+    "PHARMACEUTICALS": ("Nifty Pharma", "NIFTY PHARMA"),
+    "PHARMACEUTICALS AND BIOTECHNOLOGY": ("Nifty Pharma", "NIFTY PHARMA"),
+    "REALTY": ("Nifty Realty", "NIFTY REALTY"),
+    "CONSUMER DURABLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
+    "OIL GAS AND CONSUMABLE FUELS": ("Nifty Oil and Gas", "NIFTY OIL & GAS"),
+    "OIL, GAS AND CONSUMABLE FUELS": ("Nifty Oil and Gas", "NIFTY OIL & GAS"),
+    "HEALTHCARE": ("Nifty Healthcare", "NIFTY HEALTHCARE"),
+    "CAPITAL GOODS": ("Nifty Capital Goods", "NIFTY CAPITAL GOODS"),
+    "CHEMICALS": ("Nifty Chemicals", "NIFTY CHEMICALS"),
+    "CHEMICALS AND PETROCHEMICALS": ("Nifty Chemicals", "NIFTY CHEMICALS"),
+    "POWER": ("Nifty Power", "NIFTY POWER"),
+    "TELECOMMUNICATION": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    "TELECOMMUNICATIONS": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    "CONSUMER SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
+}
+
+
+def _download_nifty500_industries(session: requests.Session) -> dict[str, str]:
+    """Read official Nifty 500 Symbol/Industry classification; reject HTML/bad schemas."""
+    try:
+        response = session.get(NIFTY500_CONSTITUENTS_URL, headers=HEADERS, timeout=20)
+        response.raise_for_status()
+        content = response.content or b""
+        if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
+            print("[SECTOR] Nifty 500 industry fallback unavailable: non-CSV response")
+            return {}
+        frame = pd.read_csv(BytesIO(content))
+        cols = {str(c).strip().casefold(): c for c in frame.columns}
+        symbol_col = next((cols[k] for k in ("symbol", "ticker", "ticker symbol") if k in cols), None)
+        industry_col = next((cols[k] for k in ("industry", "basic industry") if k in cols), None)
+        if symbol_col is None or industry_col is None:
+            print(f"[SECTOR] Nifty 500 industry fallback schema missing Symbol/Industry: {list(frame.columns)}")
+            return {}
+        result = {}
+        for _, row in frame[[symbol_col, industry_col]].dropna().iterrows():
+            symbol = _clean_symbol(row[symbol_col])
+            industry = _normalise_name(row[industry_col])
+            if symbol and industry:
+                result[symbol] = industry
+        print(f"[SECTOR] Official Nifty 500 industry classifications loaded: {len(result)} symbols")
+        return result
+    except Exception as exc:
+        print(f"[SECTOR] Nifty 500 industry fallback unavailable: {exc}")
+        return {}
+
+
 NSE_QUOTE_URL = "https://www.nseindia.com/api/quote-equity"
 
 # Keys are normalized NSE Indices classification "sector" labels.
@@ -305,44 +375,53 @@ def _nse_quote_industry_classification(session: requests.Session, symbol: str) -
 
 
 def _targeted_shortlist_mappings(
-    session: requests.Session,
     candidate_symbols: list[str],
-    existing_symbols: set[str],
+    existing_mapping_by_symbol: dict[str, dict[str, str]],
+    nifty500_industries: dict[str, str],
     asof: pd.Timestamp,
 ) -> list[dict[str, str]]:
-    """Audit shortlist coverage without repeatedly calling NSE's blocked quote API.
+    """Map shortlist symbols from verified tracked-index membership or official Nifty 500 Industry.
 
-    Only symbols present in the successfully downloaded official tracked-index
-    constituent feeds are assigned a sector benchmark. Other symbols are kept
-    explicitly unmapped until a verified classification source is available.
-    This is deliberately conservative: it never infers a sector from a ticker.
+    The Industry fallback assigns a benchmark only for exact, explicitly mapped
+    official classification labels. It does not infer sector from ticker/company
+    name. Stocks outside these sources remain WAIT_FOR_DATA.
     """
     audit_rows: list[dict[str, str]] = []
+    mapping_rows: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw_symbol in candidate_symbols:
         symbol = _clean_symbol(raw_symbol)
         if not symbol or symbol in seen:
             continue
         seen.add(symbol)
-        if symbol in existing_symbols:
-            audit_rows.append({
-                "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
-                "MappingStatus": "INDEX_CONSTITUENT",
-                "NSEMacro": "", "NSESector": "", "NSEIndustry": "",
-                "NSEBasicIndustry": "", "MappedSector": "",
-                "SectorIndexSymbol": "",
-                "Reason": "Mapped from official tracked-index constituent feed",
-            })
+        existing = existing_mapping_by_symbol.get(symbol)
+        industry = nifty500_industries.get(symbol, "")
+        mapped = INDUSTRY_TO_TRACKED_INDEX.get(industry)
+        if existing:
+            sector = existing.get("Sector", "")
+            index_symbol = existing.get("SectorIndexSymbol", "")
+            status = "INDEX_CONSTITUENT"
+            reason = "Mapped from official tracked-sector index constituent CSV"
+        elif industry and mapped:
+            sector, index_symbol = mapped
+            status = "OFFICIAL_NIFTY500_INDUSTRY_MAPPED"
+            reason = f"Official Nifty 500 Industry='{industry}' mapped by exact taxonomy rule to tracked benchmark"
+            mapping_rows.append({"TckrSymb": symbol, "Sector": sector, "SectorIndexSymbol": index_symbol})
+            print(f"[SECTOR] Candidate classification {symbol}: {sector} via official Nifty 500 Industry='{industry}'")
         else:
-            audit_rows.append({
-                "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
-                "MappingStatus": "WAIT_FOR_DATA",
-                "NSEMacro": "", "NSESector": "", "NSEIndustry": "",
-                "NSEBasicIndustry": "", "MappedSector": "",
-                "SectorIndexSymbol": "",
-                "Reason": "Not present in refreshed tracked-index constituent feeds; NSE quote API returned HTTP 403 in latest run; no sector guessed",
-            })
-            print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA (no verified mapping; quote API retries disabled)")
+            sector, index_symbol = "", ""
+            status = "WAIT_FOR_DATA"
+            if industry:
+                reason = f"Official Nifty 500 Industry='{industry}' has no exact tracked benchmark mapping; no sector guessed"
+            else:
+                reason = "Not in refreshed tracked-sector constituent feeds or official Nifty 500 classification; no sector guessed"
+            print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
+        audit_rows.append({
+            "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
+            "MappingStatus": status, "NSEMacro": "", "NSESector": sector,
+            "NSEIndustry": industry, "NSEBasicIndustry": "", "MappedSector": sector,
+            "SectorIndexSymbol": index_symbol, "Reason": reason,
+        })
 
     report_dir = Path("data") / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -352,7 +431,8 @@ def _targeted_shortlist_mappings(
         "NSEIndustry", "NSEBasicIndustry", "MappedSector", "SectorIndexSymbol", "Reason",
     ]).to_csv(audit_path, index=False)
     print(f"[SECTOR] Candidate mapping audit: {audit_path} ({len(audit_rows)} symbols)")
-    return []
+    print(f"[SECTOR] Candidate sector mapping statuses: {pd.Series([r['MappingStatus'] for r in audit_rows]).value_counts().to_dict() if audit_rows else {}}")
+    return mapping_rows
 
 
 
@@ -385,14 +465,19 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
                     seen_symbols.add(symbol)
         time.sleep(0.1)
 
-    # Shortlist audit: use only verified tracked-index membership. The NSE
-    # quote endpoint returned HTTP 403 for all shortlisted symbols in the latest
-    # Actions run, so avoid repeated requests and leave unsupported symbols WAIT_FOR_DATA.
+    # Targeted shortlist mapping: first use exact official tracked-index
+    # membership; then fall back to the official Nifty 500 Industry column for
+    # an exact taxonomy-to-benchmark mapping. No NSE quote API retries and no
+    # ticker/name guessing.
     candidate_symbols = candidate_symbols or []
+    nifty500_industries = _download_nifty500_industries(session) if candidate_symbols else {}
+    existing_mapping_by_symbol = {
+        row["TckrSymb"]: row for row in mappings if row.get("TckrSymb")
+    }
     targeted_mappings = _targeted_shortlist_mappings(
-        session=session,
         candidate_symbols=candidate_symbols,
-        existing_symbols=seen_symbols,
+        existing_mapping_by_symbol=existing_mapping_by_symbol,
+        nifty500_industries=nifty500_industries,
         asof=asof,
     )
     for row in targeted_mappings:
