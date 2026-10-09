@@ -1,22 +1,17 @@
-
 name: NSE Data Test
 
 on:
   workflow_dispatch:
     inputs:
       send_telegram:
-        description: Send report to configured Telegram chat
+        description: Send the report to the configured Telegram chat
         required: false
         type: boolean
         default: false
 
-permissions:
-  contents: read
-
 jobs:
   nse-test:
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -24,9 +19,12 @@ jobs:
       - name: Restore Bhavcopy and Nifty history cache
         uses: actions/cache@v5
         with:
-          path: data/bhavcopy/
-          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+          key: nse-data-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
+            nse-data-${{ runner.os }}-${{ github.ref_name }}-
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
 
       - name: Setup Python
@@ -41,124 +39,41 @@ jobs:
 
       - name: Check repository files
         run: |
-          echo "===== CURRENT DIRECTORY ====="
-          pwd
-
           echo "===== REPOSITORY FILES ====="
-          ls -lah
-
-          echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py v8_layers_14_41.py news_catalyst.py; do
-            if [ -f "$f" ]; then
-              echo "FOUND: $f"
-            else
-              echo "MISSING: $f"
-            fi
-          done
-
+          ls -lh
           echo "===== PYTHON VERSION ====="
           python --version
+          echo "===== DELIVERY FILTER COMPILE ====="
+          python -m py_compile delivery_filter.py volume_gainer.py v8_layers_14_41.py news_catalyst.py
+          echo "Compile check PASSED"
 
       - name: Run NSE Volume Gainer
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: ${{ inputs.send_telegram }}
-        run: |
-          set -e
-
-          echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py
-          python -m py_compile v8_layers_14_41.py
-          python -m py_compile news_catalyst.py
-          echo "Compile check PASSED"
-
-          echo "===== STARTING NSE SCANNER ====="
-          python -u ./volume_gainer.py
-          echo "===== NSE SCANNER FINISHED ====="
+        run: python -u ./volume_gainer.py
 
       - name: Diagnose NSE V8 data files
         if: always()
         run: |
-          echo "===== INPUT CSV FILES ====="
+          echo "===== DELIVERY REPORTS ====="
+          if [ -d data/reports ]; then find data/reports -maxdepth 2 -type f -print; else echo "data/reports directory does not exist"; fi
+          echo "===== OUTPUT FILES ====="
+          if [ -d outputs ]; then find outputs -maxdepth 2 -type f -print; else echo "outputs directory does not exist"; fi
+          echo "===== DELIVERY AUDIT PREVIEW ====="
+          for f in data/reports/delivery_first_audit_*.csv; do
+            if [ -f "$f" ]; then echo "--- $f"; head -5 "$f"; fi
+          done
 
-          if [ -d data/inputs ]; then
-            for f in data/inputs/*.csv; do
-              if [ -f "$f" ]; then
-                echo ""
-                echo "===== FILE: $f ====="
-                echo "Line count:"
-                wc -l "$f"
-                echo "First 3 lines:"
-                head -3 "$f"
-              fi
-            done
-          else
-            echo "data/inputs directory does not exist"
-          fi
-
-          echo ""
-          echo "===== LAYER STATUS SUMMARY PREVIEW ====="
-          if [ -f outputs/v8_layer_status_summary.csv ]; then
-            head -12 outputs/v8_layer_status_summary.csv
-          else
-            echo "Layer status summary not found"
-          fi
-
-          echo ""
-          echo "===== EOD WATCHLIST PREVIEW ====="
-          if [ -f outputs/v8_eod_watchlist.csv ]; then
-            head -6 outputs/v8_eod_watchlist.csv
-          else
-            echo "EOD watchlist not found"
-          fi
-
-          echo ""
-          echo "===== NEXT DAY ENTRY PREVIEW ====="
-          if [ -f outputs/v8_next_day_entry.csv ]; then
-            head -6 outputs/v8_next_day_entry.csv
-          else
-            echo "Next day entry report not found"
-          fi
-
-          echo ""
-          echo "===== CATALYST TOP 20 PREVIEW ====="
-          if [ -f outputs/v8_catalyst_top20.csv ]; then
-            head -6 outputs/v8_catalyst_top20.csv
-          else
-            echo "Catalyst report not found"
-          fi
-
-          echo ""
-          echo "===== POSITION MONITOR PREVIEW ====="
-          if [ -f outputs/v8_position_monitor.csv ]; then
-            head -6 outputs/v8_position_monitor.csv
-          else
-            echo "Position monitor report not found"
-          fi
-
-          echo ""
-          echo "===== OUTPUT FILE LIST ====="
-          if [ -d outputs ]; then
-            find outputs -maxdepth 3 -type f -print
-          else
-            echo "outputs directory does not exist"
-          fi
-
-          echo ""
-          echo "===== BHAVCOPY CACHE SAMPLE ====="
-          if [ -d data/bhavcopy ]; then
-            find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print | head -20
-          else
-            echo "Bhavcopy cache directory does not exist"
-          fi
-
-      - name: Upload NSE V8 reports and input templates
+      - name: Upload NSE V8 reports and audit files
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: nse-v8-reports-${{ github.run_id }}
           path: |
-            outputs/
+            outputs/**
+            data/reports/**
             data/inputs/*.csv
           if-no-files-found: warn
+          compression-level: 6
