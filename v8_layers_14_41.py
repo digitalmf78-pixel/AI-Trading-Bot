@@ -487,7 +487,19 @@ def run_eod_layers(
         + pd.Timedelta(days=1)
         - pd.Timedelta(microseconds=1)
     ).tz_localize("Asia/Kolkata")
-    news_rows = [_news_for_symbol(news, symbol, eod_end_ist) for symbol in output["TckrSymb"]]
+    # Last five actual EOD sessions = current session plus previous four.
+    recent_session_dates = []
+    for session_frame in historical[-4:]:
+        if "Date" in session_frame.columns and not session_frame.empty:
+            parsed_date = pd.to_datetime(session_frame["Date"], errors="coerce").dropna()
+            if not parsed_date.empty:
+                recent_session_dates.append(parsed_date.iloc[0].normalize())
+    recent_session_dates.append(pd.Timestamp(eod_date).normalize())
+    news_start_ist = min(recent_session_dates).tz_localize("Asia/Kolkata")
+    news_rows = [
+        _news_for_symbol(news, symbol, eod_end_ist, start=news_start_ist)
+        for symbol in output["TckrSymb"]
+    ]
     news_frame = pd.DataFrame(news_rows, index=output.index)
     output = pd.concat([output, news_frame], axis=1)
     output["NewsStatus"] = output["NewsEvidenceStatus"].map(
