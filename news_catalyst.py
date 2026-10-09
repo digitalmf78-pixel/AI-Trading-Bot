@@ -150,12 +150,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         & candidates["TckrSymb"].str.lower().ne("nan")
     ].drop_duplicates(subset=["TckrSymb"]).copy()
 
-    # Enforce explicit shortlist gates when the upstream pipeline supplies them.
-    # The caller should pass screened candidates, not the full NSE universe.
-    if "DeliveryFilterStatus" in candidates.columns:
-        delivery_status = candidates["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
-        candidates = candidates[delivery_status.eq("PASS_GT_60_PERCENT")].copy()
-
+    # Delivery is optional confirmation in the master V8 specification; do not
+    # silently remove otherwise-valid technical candidates when delivery is <=60%
+    # or unavailable. The caller passes the technical shortlist, not the full universe.
     if "SetupType" in candidates.columns:
         setup = candidates["SetupType"].astype(str).str.upper().str.strip()
         candidates = candidates[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
@@ -165,15 +162,6 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         empty = pd.DataFrame(columns=NEWS_COLUMNS)
         empty.to_csv("data/inputs/news_evidence_auto.csv", index=False)
         return empty, {"NSE": "no shortlisted candidates", "secondary": "not checked"}
-
-    # Keep external news requests bounded: the pre-screen can contain hundreds
-    # of symbols, but only the highest-RVOL 20 technical candidates receive the
-    # costly catalyst check. The final V8 shortlist remains capped at 4+4+4.
-    if "RVOL" in candidates.columns:
-        candidates["RVOL"] = pd.to_numeric(candidates["RVOL"], errors="coerce")
-        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last").head(20).copy()
-    else:
-        candidates = candidates.head(20).copy()
 
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
@@ -290,7 +278,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         )
     Path("data/inputs").mkdir(parents=True, exist_ok=True)
     frame.to_csv("data/inputs/news_evidence_auto.csv", index=False)
-    print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} pre-screened RVOL Top-20 symbols.")
+    print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} top-volume symbols.")
     return frame, status
 
 
