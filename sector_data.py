@@ -115,25 +115,37 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
                 return cached
         except Exception:
             pass
-    url = f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{date_key}.csv"
-    try:
-        response = session.get(url, headers=NSE_HEADERS, timeout=20)
-        if response.status_code == 404:
-            # A missing weekday is usually an exchange holiday or not-yet-published file.
-            return pd.DataFrame()
-        response.raise_for_status()
-        content = response.content or b""
-        if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
-            print(f"[SECTOR] NSE index archive returned non-CSV for {day.date()}")
-            return pd.DataFrame()
-        frame = pd.read_csv(BytesIO(content))
-        if frame.empty:
-            return pd.DataFrame()
-        frame.to_csv(cache_path, index=False)
-        return frame
-    except Exception as exc:
-        print(f"[SECTOR] Index archive unavailable for {day.date()}: {exc}")
-        return pd.DataFrame()
+    # NSE has served this report on both archive hostnames. Try the documented
+    # archives host first, then the nsearchives alias as a fallback.
+    urls = [
+        f"https://archives.nseindia.com/content/indices/ind_close_all_{date_key}.csv",
+        f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{date_key}.csv",
+    ]
+    errors: list[str] = []
+    for url in urls:
+        try:
+            response = session.get(url, headers=NSE_HEADERS, timeout=25)
+            if response.status_code == 404:
+                # Try the alternate host before classifying the date as unavailable.
+                errors.append(f"HTTP 404 from {url.split('/')[2]}")
+                continue
+            response.raise_for_status()
+            content = response.content or b""
+            if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
+                errors.append(f"non-CSV response from {url.split('/')[2]}")
+                continue
+            frame = pd.read_csv(BytesIO(content))
+            if frame.empty:
+                errors.append(f"empty CSV from {url.split('/')[2]}")
+                continue
+            frame.to_csv(cache_path, index=False)
+            return frame
+        except Exception as exc:
+            errors.append(f"{url.split('/')[2]}: {exc}")
+    # 404 on both hosts commonly means a holiday or a report not yet published.
+    if errors and not all("HTTP 404" in item for item in errors):
+        print(f"[SECTOR] Index archive unavailable for {day.date()}: {'; '.join(errors)}")
+    return pd.DataFrame()
 
 
 def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> tuple[list[dict[str, Any]], int]:
@@ -154,7 +166,14 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
             cols = {str(c).strip().casefold(): c for c in frame.columns}
             name_col = next((cols[k] for k in ("index name", "index_name", "index") if k in cols), None)
             date_col = next((cols[k] for k in ("index date", "index_date", "date") if k in cols), None)
-            close_col = next((cols[k] for k in ("closing", "close", "closing value") if k in cols), None)
+            # NSE's documented archive header is usually "Closing Index Value".
+            # Accept older/alternate spellings as well.
+            close_col = next((cols[k] for k in (
+                "closing index value", "close index value", "closing value",
+                "close value", "closing", "close",
+            ) if k in cols), None)
+            if name_col is None or close_col is None:
+                print(f"[SECTOR] Unrecognized index CSV schema for {day.date()}: {list(frame.columns)}")
             if name_col is not None and close_col is not None:
                 for _, row in frame.iterrows():
                     norm = _normalise_name(row.get(name_col, ""))
