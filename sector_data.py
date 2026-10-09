@@ -188,7 +188,7 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
                     close = pd.to_numeric(row.get(close_col), errors="coerce")
                     if pd.isna(close) or float(close) <= 0:
                         continue
-                    date_value = pd.to_datetime(row.get(date_col), errors="coerce") if date_col is not None else pd.Timestamp(day)
+                    date_value = pd.to_datetime(row.get(date_col), errors="coerce", dayfirst=True) if date_col is not None else pd.Timestamp(day)
                     if pd.isna(date_value):
                         date_value = pd.Timestamp(day)
                     actual_date = pd.Timestamp(date_value).normalize()
@@ -310,8 +310,13 @@ def _targeted_shortlist_mappings(
     existing_symbols: set[str],
     asof: pd.Timestamp,
 ) -> list[dict[str, str]]:
-    """Map only shortlisted non-constituents using official NSE sector classification."""
-    rows: list[dict[str, str]] = []
+    """Audit shortlist coverage without repeatedly calling NSE's blocked quote API.
+
+    Only symbols present in the successfully downloaded official tracked-index
+    constituent feeds are assigned a sector benchmark. Other symbols are kept
+    explicitly unmapped until a verified classification source is available.
+    This is deliberately conservative: it never infers a sector from a ticker.
+    """
     audit_rows: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw_symbol in candidate_symbols:
@@ -325,48 +330,19 @@ def _targeted_shortlist_mappings(
                 "MappingStatus": "INDEX_CONSTITUENT",
                 "NSEMacro": "", "NSESector": "", "NSEIndustry": "",
                 "NSEBasicIndustry": "", "MappedSector": "",
-                "SectorIndexSymbol": "", "Reason": "Already mapped from official tracked-index constituent feed",
+                "SectorIndexSymbol": "",
+                "Reason": "Mapped from official tracked-index constituent feed",
             })
-            continue
-        try:
-            info = _nse_quote_industry_classification(session, symbol)
-            norm_sector = _normalise_name(info["sector"])
-            mapped = OFFICIAL_SECTOR_TO_TRACKED_INDEX.get(norm_sector)
-            if mapped:
-                sector_label, index_symbol = mapped
-                rows.append({
-                    "TckrSymb": symbol,
-                    "Sector": sector_label,
-                    "SectorIndexSymbol": index_symbol,
-                })
-                status = "MAPPED_OFFICIAL_NSE_CLASSIFICATION"
-                reason = "Exact supported NSE industryInfo.sector label mapped to tracked sector benchmark"
-            else:
-                sector_label, index_symbol = "", ""
-                status = "WAIT_FOR_DATA"
-                reason = "NSE sector label has no explicit tracked-index mapping; no sector guessed"
-            audit_rows.append({
-                "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
-                "MappingStatus": status,
-                "NSEMacro": info["macro"], "NSESector": info["sector"],
-                "NSEIndustry": info["industry"], "NSEBasicIndustry": info["basicIndustry"],
-                "MappedSector": sector_label, "SectorIndexSymbol": index_symbol,
-                "Reason": reason,
-            })
-            print(
-                f"[SECTOR] Candidate classification {symbol}: "
-                f"NSE sector='{info['sector']}' -> {sector_label or 'WAIT_FOR_DATA'}"
-            )
-        except Exception as exc:
+        else:
             audit_rows.append({
                 "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
                 "MappingStatus": "WAIT_FOR_DATA",
                 "NSEMacro": "", "NSESector": "", "NSEIndustry": "",
                 "NSEBasicIndustry": "", "MappedSector": "",
-                "SectorIndexSymbol": "", "Reason": f"Official NSE quote lookup failed: {exc}",
+                "SectorIndexSymbol": "",
+                "Reason": "Not present in refreshed tracked-index constituent feeds; NSE quote API returned HTTP 403 in latest run; no sector guessed",
             })
-            print(f"[SECTOR] Candidate classification unavailable for {symbol}: {exc}")
-        time.sleep(0.18)
+            print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA (no verified mapping; quote API retries disabled)")
 
     report_dir = Path("data") / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -376,7 +352,7 @@ def _targeted_shortlist_mappings(
         "NSEIndustry", "NSEBasicIndustry", "MappedSector", "SectorIndexSymbol", "Reason",
     ]).to_csv(audit_path, index=False)
     print(f"[SECTOR] Candidate mapping audit: {audit_path} ({len(audit_rows)} symbols)")
-    return rows
+    return []
 
 
 
@@ -409,11 +385,10 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
                     seen_symbols.add(symbol)
         time.sleep(0.1)
 
-    # Shortlist-specific classification: tracked-index constituents above take
-    # precedence; for shortlisted non-constituents, use official NSE equity quote
-    # industryInfo and only explicit sector-to-index mappings.
+    # Shortlist audit: use only verified tracked-index membership. The NSE
+    # quote endpoint returned HTTP 403 for all shortlisted symbols in the latest
+    # Actions run, so avoid repeated requests and leave unsupported symbols WAIT_FOR_DATA.
     candidate_symbols = candidate_symbols or []
-    _warm_nse_session(session)
     targeted_mappings = _targeted_shortlist_mappings(
         session=session,
         candidate_symbols=candidate_symbols,
