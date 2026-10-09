@@ -166,6 +166,15 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         empty.to_csv("data/inputs/news_evidence_auto.csv", index=False)
         return empty, {"NSE": "no shortlisted candidates", "secondary": "not checked"}
 
+    # Keep external news requests bounded: the pre-screen can contain hundreds
+    # of symbols, but only the highest-RVOL 20 technical candidates receive the
+    # costly catalyst check. The final V8 shortlist remains capped at 4+4+4.
+    if "RVOL" in candidates.columns:
+        candidates["RVOL"] = pd.to_numeric(candidates["RVOL"], errors="coerce")
+        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last").head(20).copy()
+    else:
+        candidates = candidates.head(20).copy()
+
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
     try:
@@ -281,7 +290,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         )
     Path("data/inputs").mkdir(parents=True, exist_ok=True)
     frame.to_csv("data/inputs/news_evidence_auto.csv", index=False)
-    print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} top-volume symbols.")
+    print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} pre-screened RVOL Top-20 symbols.")
     return frame, status
 
 
