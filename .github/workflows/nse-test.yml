@@ -1,13 +1,17 @@
+
 name: NSE Data Test
 
 on:
   workflow_dispatch:
     inputs:
       send_telegram:
-        description: Send the report to the configured Telegram chat
+        description: Send report to configured Telegram chat
         required: false
         type: boolean
         default: false
+
+permissions:
+  contents: read
 
 jobs:
   nse-test:
@@ -35,39 +39,84 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pandas
 
-      - name: Check Volume Gainer File
+      - name: Check repository files
         run: |
+          echo "===== CURRENT DIRECTORY ====="
           pwd
-          echo "----- Repository files -----"
-          ls -lh
-          echo "----- volume_gainer.py exists? -----"
-          ls -lh volume_gainer.py
-          echo "----- First 20 lines of volume_gainer.py -----"
-          head -20 volume_gainer.py
-          echo "----- Python version -----"
+
+          echo "===== REPOSITORY FILES ====="
+          ls -lah
+
+          echo "===== REQUIRED PYTHON FILES ====="
+          for f in volume_gainer.py v8_layers_14_41.py news_catalyst.py; do
+            if [ -f "$f" ]; then
+              echo "FOUND: $f"
+            else
+              echo "MISSING: $f"
+            fi
+          done
+
+          echo "===== PYTHON VERSION ====="
           python --version
 
-      - name: Test NSE Volume Gainer
+      - name: Run NSE Volume Gainer
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: ${{ inputs.send_telegram }}
         run: |
-          echo "===== TEST START ====="
-          echo "Current directory:"
-          pwd
-          echo "Python:"
-          python --version
-          echo "Checking file:"
-          ls -lh volume_gainer.py
-          echo "Running compile check..."
-          python -m py_compile volume_gainer.py
-          echo "Compile check PASSED"
-          echo "Starting Python..."
-          python -u ./volume_gainer.py
-          echo "===== TEST END ====="
+          set -e
 
-      - name: Upload NSE V8 reports and input templates
+          echo "===== PYTHON COMPILE CHECK ====="
+          python -m py_compile volume_gainer.py
+          python -m py_compile v8_layers_14_41.py
+          python -m py_compile news_catalyst.py
+          echo "Compile check PASSED"
+
+          echo "===== STARTING NSE SCANNER ====="
+          python -u ./volume_gainer.py
+          echo "===== NSE SCANNER FINISHED ====="
+
+      - name: Diagnose NSE V8 data files
+        if: always()
+        run: |
+          echo "===== INPUT CSV FILES ====="
+
+          if [ -d data/inputs ]; then
+            find data/inputs -maxdepth 1 -type f -name "*.csv" \
+              -print -exec wc -l {} \;
+
+            for f in data/inputs/*.csv; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "===== FILE: $f ====="
+                echo "--- First 3 lines ---"
+                head -3 "$f"
+              fi
+            done
+          else
+            echo "data/inputs directory does not exist"
+          fi
+
+          echo ""
+          echo "===== OUTPUT FILES ====="
+
+          if [ -d outputs ]; then
+            find outputs -maxdepth 3 -type f -print
+          else
+            echo "outputs directory does not exist"
+          fi
+
+          echo ""
+          echo "===== BHAVCOPY CACHE FILES ====="
+
+          if [ -d data/bhavcopy ]; then
+            find data/bhavcopy -maxdepth 3 -type f -print | head -100
+          else
+            echo "data/bhavcopy directory does not exist"
+          fi
+
+      - name: Upload NSE V8 reports and diagnostic files
         if: always()
         uses: actions/upload-artifact@v6
         with:
