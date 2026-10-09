@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -19,6 +20,10 @@ BASE_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_
 CACHE_DIR = Path("data/cache/delivery")
 AUDIT_DIR = Path("data/reports")
 MINIMUM_AVERAGE = 60.0
+# NSE may publish the full delivery report later than the UDiFF Bhavcopy.
+# Retry the current-session URL instead of treating a temporary 404 as permanent.
+DELIVERY_FETCH_RETRIES = max(1, int(os.getenv("DELIVERY_FETCH_RETRIES", "13")))
+DELIVERY_RETRY_SECONDS = max(1, int(os.getenv("DELIVERY_RETRY_SECONDS", "30")))
 REQUIRED_COLUMNS = {"SYMBOL", "SERIES", "DELIV_PER"}
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
@@ -56,19 +61,30 @@ def _read_cached_or_download(session: requests.Session, session_date: date) -> p
             pass
 
     url = BASE_URL.format(date=date_token)
-    try:
-        response = session.get(url, timeout=25)
-    except requests.RequestException as exc:
-        print(f"[DELIVERY] Download error {session_date}: {exc}")
+    content = None
+    for attempt in range(1, DELIVERY_FETCH_RETRIES + 1):
+        try:
+            response = session.get(url, timeout=25)
+        except requests.RequestException as exc:
+            print(f"[DELIVERY] Download error {session_date} (attempt {attempt}/{DELIVERY_FETCH_RETRIES}): {exc}")
+            response = None
+
+        if response is not None and response.status_code == 200:
+            candidate_content = response.content
+            if candidate_content and not candidate_content.lstrip().lower().startswith((b"<html", b"<!doctype")):
+                content = candidate_content
+                break
+            print(f"[DELIVERY] Invalid/HTML report for {session_date} (attempt {attempt}/{DELIVERY_FETCH_RETRIES})")
+        elif response is not None:
+            print(f"[DELIVERY] Report unavailable {session_date}: HTTP {response.status_code} (attempt {attempt}/{DELIVERY_FETCH_RETRIES})")
+
+        if attempt < DELIVERY_FETCH_RETRIES:
+            time.sleep(DELIVERY_RETRY_SECONDS)
+
+    if content is None:
+        print(f"[DELIVERY] Report still unavailable after {DELIVERY_FETCH_RETRIES} attempts: {session_date}")
         return None
 
-    if response.status_code != 200:
-        print(f"[DELIVERY] Report unavailable {session_date}: HTTP {response.status_code}")
-        return None
-    content = response.content
-    if not content or content.lstrip().lower().startswith((b"<html", b"<!doctype")):
-        print(f"[DELIVERY] Invalid/HTML report for {session_date}")
-        return None
     try:
         frame = _normalise_columns(pd.read_csv(io.BytesIO(content)))
     except Exception as exc:
