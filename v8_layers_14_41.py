@@ -334,14 +334,13 @@ def _market_regime(nifty_history: pd.DataFrame, asof) -> str:
 
 
 def _delivery_pct(row: pd.Series) -> float:
-    explicit = _first_number(row, ["DlvryPer", "DlvryPct", "DeliveryPct", "DeliverablePct", "DlvryToTradedQtyPer"])
-    if pd.notna(explicit):
-        return explicit
-    delivered = _first_number(row, ["TtlDlvryQnty", "TtlDlvryQty", "DlvryQty", "DeliveryQty", "DeliverableQty"])
-    traded = _first_number(row, ["TtlTradgVol", "TotalTradedQty", "Volume"])
-    if pd.notna(delivered) and pd.notna(traded) and traded > 0:
-        return 100 * delivered / traded
-    return float("nan")
+    """Return the five-session average delivery percentage from the first-stage gate.
+
+    Do not substitute a single-session delivery value here: V8 eligibility requires
+    five distinct EOD sessions and a strict average greater than 60 percent.
+    Missing first-stage evidence remains missing and is handled as WAIT_FOR_DATA.
+    """
+    return _num(row.get("AvgDelivery5D"))
 
 
 def _accumulation_score(frame: pd.DataFrame) -> float:
@@ -440,9 +439,22 @@ def run_eod_layers(
     delivery = output.apply(_delivery_pct, axis=1)
     output["DeliveryPct"] = delivery
     output["DeliveryClassification"] = delivery.map(
-        lambda value: "WAIT_FOR_DATA" if pd.isna(value) else "High Delivery" if value >= 40 else "Moderate Delivery" if value >= 25 else "Low Delivery"
+        lambda value: "WAIT_FOR_DATA" if pd.isna(value)
+        else "High Delivery" if value > 60
+        else "Moderate Delivery" if value >= 25
+        else "Low Delivery"
     )
-    output["DeliveryStatus"] = delivery.map(lambda value: "WAIT_FOR_DATA" if pd.isna(value) else "PASS")
+    # Trust only the explicit result of the first-stage five-session delivery gate.
+    # Do not infer PASS from one day's delivery percentage or from a non-missing value.
+    filter_status = output.get(
+        "DeliveryFilterStatus",
+        pd.Series("WAIT_FOR_DATA", index=output.index),
+    ).fillna("WAIT_FOR_DATA").astype(str)
+    output["DeliveryStatus"] = filter_status.map(
+        lambda value: "PASS" if value == "PASS_GT_60_PERCENT"
+        else "WAIT_FOR_DATA" if value == "WAIT_FOR_DATA"
+        else "FAIL"
+    )
 
     def volume_reason(row):
         rvol, change, clv = _num(row.get("RVOL")), _num(row.get("PriceChangePct")), _num(row.get("CLV"))
@@ -603,7 +615,8 @@ def run_eod_layers(
             and row.get("RiskRewardStatus") == "PASS"
             and row.get("ChaseStatus") == "CLEAR"
             and row.get("SetupType") in {"Breakout", "Pullback"}
-            and row.get("DeliveryClassification") != "Low Delivery"
+            and row.get("DeliveryFilterStatus") == "PASS_GT_60_PERCENT"
+            and row.get("DeliveryStatus") == "PASS"
             and row.get("AccumulationDistribution") != "Distribution"
             and volume_reason_ok
             and _num(row.get("V8Score")) >= 70
