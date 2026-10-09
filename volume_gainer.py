@@ -3315,7 +3315,10 @@ def main():
     # --------------------------------------------------------
     print("\\nSTEP 13A: Refreshing official NSE sector mapping/history...")
     try:
-        sector_refresh = refresh_sector_inputs(eod_date)
+        sector_refresh = refresh_sector_inputs(
+            eod_date,
+            candidate_symbols=result["TckrSymb"].astype(str).tolist() if "TckrSymb" in result.columns else [],
+        )
         print(
             "[SECTOR] Refresh result: "
             f"mapping_rows={sector_refresh.get('mapping_rows', 0)}, "
