@@ -133,9 +133,34 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     if symbol_col not in candidates.columns:
         raise ValueError(f"Candidate symbol column missing: {symbol_col}")
 
-    reports = sessions if sessions is not None else get_delivery_sessions(asof_date, 5, session=http_session)
-    if len({day for day, _ in reports}) < 5:
-        raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
+    # The current EOD delivery report is mandatory. If NSE has not published it
+    # yet (or the 5-session history is incomplete), fail closed: audit every
+    # candidate as WAIT_FOR_DATA, return zero qualified candidates, and let the
+    # workflow finish normally so the audit artifact can be inspected.
+    try:
+        reports = sessions if sessions is not None else get_delivery_sessions(
+            asof_date, 5, session=http_session
+        )
+        if len({day for day, _ in reports}) < 5:
+            raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
+    except RuntimeError as exc:
+        if "WAIT_FOR_DATA" not in str(exc):
+            raise
+        print(f"[DELIVERY] {exc}")
+        audit = candidates.copy()
+        audit["DeliverySessions"] = 0
+        audit["AvgDelivery5D"] = float("nan")
+        audit["LatestDeliveryPct"] = float("nan")
+        audit["DeliveryStatus"] = "WAIT_FOR_DATA"
+        audit["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
+        AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+        audit_path = AUDIT_DIR / (
+            f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
+        )
+        audit.to_csv(audit_path, index=False)
+        print(f"[DELIVERY] No candidates allowed through because required data is missing.")
+        print(f"[DELIVERY] WAIT_FOR_DATA audit saved: {audit_path}")
+        return candidates.iloc[0:0].copy(), audit
 
     pieces = []
     for report_date, raw in reports:
