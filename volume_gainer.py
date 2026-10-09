@@ -3,6 +3,7 @@ import io
 import zipfile
 import requests
 import pandas as pd
+from delivery_filter import apply_delivery_filter
 from datetime import datetime, timedelta, timezone
 from v8_layers_14_41 import (
     monitor_positions,
@@ -23,7 +24,7 @@ from news_catalyst import (
 # ============================================================
 
 NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
-HISTORY_DAYS = 220
+HISTORY_DAYS = 50
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
 BHAVCOPY_404_CACHE_DAYS = 2
 NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
@@ -342,12 +343,13 @@ def get_latest_eod():
 
 def collect_historical_days(
     latest_date,
-    days=HISTORY_DAYS
+    days=HISTORY_DAYS,
+    max_calendar_days=120,
 ):
 
     print(
         "\nSTEP 3: Collecting historical "
-        "220 trading days..."
+        f"{days} trading days..."
     )
 
     print("\n" + "=" * 60)
@@ -366,8 +368,10 @@ def collect_historical_days(
         - timedelta(days=1)
     )
 
-    while len(historical) < days:
+    attempted_days = 0
+    while len(historical) < days and attempted_days < max_calendar_days:
 
+        attempted_days += 1
         print(
             f"\nChecking {current_date} | "
             f"Found {len(historical)}/{days}"
@@ -410,6 +414,12 @@ def collect_historical_days(
                 )
 
         current_date -= timedelta(days=1)
+
+    if len(historical) < days:
+        raise RuntimeError(
+            f"WAIT_FOR_DATA: only {len(historical)}/{days} historical EOD sessions "
+            f"collected within {max_calendar_days} calendar days."
+        )
 
     historical.reverse()
 
@@ -736,47 +746,38 @@ def load_nifty_index_history(latest_date):
 def calculate_average_volume(
     historical
 ):
+    """Calculate the baseline from exactly the previous 20 complete EOD sessions.
 
-    print(
-        "\nSTEP 4: Calculating "
-        "20D Average Volume..."
-    )
+    The current EOD session is not included. A symbol needs a valid volume value
+    in all 20 sessions; otherwise its baseline is marked WAIT_FOR_DATA later.
+    """
+    print("\nSTEP 4: Calculating prior-20-session average volume...")
+    recent = historical[-20:]
+    if len(recent) < 20:
+        print(f"[RVOL] WAIT_FOR_DATA: only {len(recent)}/20 prior sessions available")
+        return pd.DataFrame(columns=["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"])
 
     frames = []
-
-    for df in historical:
-
-        temp = df[
-            ["TckrSymb", "TtlTradgVol"]
-        ].copy()
-
-        frames.append(temp)
+    for df in recent:
+        if not {"TckrSymb", "TtlTradgVol"}.issubset(df.columns):
+            continue
+        temp = df[["TckrSymb", "TtlTradgVol"]].copy()
+        temp["TtlTradgVol"] = pd.to_numeric(temp["TtlTradgVol"], errors="coerce")
+        temp = temp.dropna(subset=["TckrSymb", "TtlTradgVol"])
+        temp = temp[temp["TtlTradgVol"] >= 0]
+        frames.append(temp.drop_duplicates("TckrSymb", keep="last"))
 
     if not frames:
+        return pd.DataFrame(columns=["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"])
 
-        return pd.DataFrame()
-
-    all_volume = pd.concat(
-        frames,
-        ignore_index=True
-    )
-
-    avg_volume = (
-        all_volume
-        .groupby("TckrSymb")[
-            "TtlTradgVol"
-        ]
-        .mean()
-        .rename("AvgVolume20D")
-        .reset_index()
-    )
-
-    print(
-        f"20D average calculated for "
-        f"{len(avg_volume)} symbols"
-    )
-
-    return avg_volume
+    all_volume = pd.concat(frames, ignore_index=True)
+    summary = all_volume.groupby("TckrSymb")["TtlTradgVol"].agg(
+        AvgVolume20D="mean", AvgVolumeSessions="count"
+    ).reset_index()
+    # Keep incomplete rows for an explicit WAIT_FOR_DATA state; never infer PASS.
+    summary.loc[summary["AvgVolumeSessions"] != 20, "AvgVolume20D"] = float("nan")
+    print(f"[RVOL] Baselines: {len(summary)} symbols; complete 20-session baselines: {(summary['AvgVolumeSessions'] == 20).sum()}")
+    return summary
 
 
 # ============================================================
@@ -787,36 +788,18 @@ def calculate_rvol(
     current,
     avg_volume
 ):
-
-    print(
-        "\nSTEP 5: Calculating RVOL..."
+    print("\nSTEP 5: Calculating RVOL...")
+    result = current.merge(avg_volume, on="TckrSymb", how="left")
+    if "AvgVolumeSessions" not in result.columns:
+        result["AvgVolumeSessions"] = 0
+    result["AvgVolumeSessions"] = pd.to_numeric(result["AvgVolumeSessions"], errors="coerce").fillna(0).astype(int)
+    result["RVOL"] = result["TtlTradgVol"] / result["AvgVolume20D"]
+    result["DailyVolumePct20D"] = result["RVOL"] * 100
+    result["RVOLStatus"] = result.apply(
+        lambda row: "PASS" if row["AvgVolumeSessions"] == 20 and pd.notna(row["AvgVolume20D"]) and row["AvgVolume20D"] > 0 and pd.notna(row["RVOL"]) else "WAIT_FOR_DATA",
+        axis=1,
     )
-
-    result = current.merge(
-        avg_volume,
-        on="TckrSymb",
-        how="left"
-    )
-
-    result["RVOL"] = (
-        result["TtlTradgVol"]
-        / result["AvgVolume20D"]
-    )
-
-    result["DailyVolumePct20D"] = (
-        result["RVOL"] * 100
-    )
-
-    result = result[
-        result["AvgVolume20D"].notna()
-        & (result["AvgVolume20D"] > 0)
-    ].copy()
-
-    print(
-        f"RVOL calculated for "
-        f"{len(result)} symbols"
-    )
-
+    print(f"[RVOL] Calculated: {(result['RVOLStatus'] == 'PASS').sum()}; WAIT_FOR_DATA: {(result['RVOLStatus'] == 'WAIT_FOR_DATA').sum()}")
     return result
 
 
@@ -1359,8 +1342,7 @@ def calculate_trend(
     )
 
     print(
-        "EMA20 / EMA50 / EMA200 "
-        "+ RSI14 + ADX14"
+        "EMA20 / EMA50 + RSI14 + ADX14 (50-session history; no EMA200)"
     )
 
     trend_rows = []
@@ -1379,7 +1361,6 @@ def calculate_trend(
                 "TckrSymb": symbol,
                 "EMA20": float("nan"),
                 "EMA50": float("nan"),
-                "EMA200": float("nan"),
                 "RSI14": float("nan"),
                 "ADX14": float("nan"),
                 "TrendClassification":
@@ -1395,13 +1376,12 @@ def calculate_trend(
             errors="coerce"
         )
 
-        if len(hist) < 200:
+        if len(hist) < 50:
 
             trend_rows.append({
                 "TckrSymb": symbol,
                 "EMA20": float("nan"),
                 "EMA50": float("nan"),
-                "EMA200": float("nan"),
                 "RSI14": float("nan"),
                 "ADX14": float("nan"),
                 "TrendClassification":
@@ -1417,11 +1397,6 @@ def calculate_trend(
 
         hist["EMA50"] = close.ewm(
             span=50,
-            adjust=False
-        ).mean()
-
-        hist["EMA200"] = close.ewm(
-            span=200,
             adjust=False
         ).mean()
 
@@ -1449,10 +1424,6 @@ def calculate_trend(
             last["EMA50"]
         )
 
-        ema200 = float(
-            last["EMA200"]
-        )
-
         rsi = float(
             last["RSI14"]
         )
@@ -1464,7 +1435,6 @@ def calculate_trend(
         if (
             current_close > ema20
             and ema20 > ema50
-            and ema50 > ema200
             and rsi >= 50
             and adx >= 20
         ):
@@ -1476,7 +1446,6 @@ def calculate_trend(
         elif (
             current_close > ema20
             and ema20 > ema50
-            and ema50 > ema200
         ):
 
             trend = "Bullish Trend"
@@ -1484,7 +1453,6 @@ def calculate_trend(
         elif (
             current_close < ema20
             and ema20 < ema50
-            and ema50 < ema200
             and rsi < 50
             and adx >= 20
         ):
@@ -1496,7 +1464,6 @@ def calculate_trend(
         elif (
             current_close < ema20
             and ema20 < ema50
-            and ema50 < ema200
         ):
 
             trend = "Bearish Trend"
@@ -1523,7 +1490,6 @@ def calculate_trend(
             "TckrSymb": symbol,
             "EMA20": ema20,
             "EMA50": ema50,
-            "EMA200": ema200,
             "RSI14": rsi,
             "ADX14": adx,
             "TrendClassification": trend,
@@ -2744,8 +2710,6 @@ def display_top20(result):
             f"{fmt(row['EMA20'])}"
             f" | EMA50="
             f"{fmt(row['EMA50'])}"
-            f" | EMA200="
-            f"{fmt(row['EMA200'])}"
             f" | RSI="
             f"{fmt(row['RSI14'],1)}"
             f" | ADX="
@@ -3049,6 +3013,23 @@ def main():
     )
 
     # --------------------------------------------------------
+    # STEP 2A: DELIVERY-FIRST SHORTLIST (CURRENT DAY + PREVIOUS 4 SESSIONS)
+    # --------------------------------------------------------
+    print("\nSTEP 2A: Delivery-first shortlist (>60% average over 5 sessions)...")
+    current, delivery_audit = apply_delivery_filter(
+        current,
+        eod_date,
+        symbol_col="TckrSymb",
+        series_col="SctySrs",
+        minimum_average=60.0,
+    )
+    print(f"Symbols remaining after delivery filter: {len(current)}")
+    if current.empty:
+        print("No symbols qualified for the >60% five-session delivery rule. Stopping before volume/technical analysis.")
+        print("Review data/reports/delivery_first_audit_*.csv; no watchlist will be force-filled.")
+        return
+
+    # --------------------------------------------------------
     # STEP 3
     # --------------------------------------------------------
 
@@ -3161,9 +3142,17 @@ def main():
 
     # Check the highest-RVOL 20 names against the official NSE RSS feeds and
     # free secondary coverage before the news confirmation layers are scored.
+    news_session_dates = [
+        pd.to_datetime(frame["Date"], errors="coerce").dropna().iloc[0]
+        for frame in historical[-4:]
+        if "Date" in frame.columns and not frame.empty
+        and not pd.to_datetime(frame["Date"], errors="coerce").dropna().empty
+    ]
+    news_session_dates.append(pd.Timestamp(eod_date))
     auto_news, news_feed_status = collect_catalyst_news(
         result,
         eod_date,
+        session_dates=news_session_dates,
     )
 
     # --------------------------------------------------------
