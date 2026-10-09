@@ -20,7 +20,7 @@ from news_catalyst import (
 
 # ============================================================
 # NSE V8 MODULE A
-# EOD VOLUME + RVOL + 5D + PRICE/VOLUME + CLV
+# EOD VOLUME + 5D PRIMARY SHORTLIST + RVOL + PRICE/VOLUME + CLV
 # + TREND + BREAKOUT/PULLBACK + SUPPORT/RESISTANCE + RELATIVE STRENGTH
 # ============================================================
 
@@ -788,8 +788,13 @@ def calculate_rvol(
     current,
     avg_volume
 ):
-    print("\nSTEP 5: Calculating RVOL...")
-    result = current.merge(avg_volume, on="TckrSymb", how="left")
+    print("\nSTEP 6: Calculating RVOL for primary-shortlisted stocks...")
+    # The primary shortlist stage may already have attached the 20-session
+    # baseline before the 5-day filter. Avoid duplicate AvgVolume columns.
+    if {"AvgVolume20D", "AvgVolumeSessions"}.issubset(current.columns):
+        result = current.copy()
+    else:
+        result = current.merge(avg_volume, on="TckrSymb", how="left")
     if "AvgVolumeSessions" not in result.columns:
         result["AvgVolumeSessions"] = 0
     result["AvgVolumeSessions"] = pd.to_numeric(result["AvgVolumeSessions"], errors="coerce").fillna(0).astype(int)
@@ -813,7 +818,7 @@ def calculate_5d_volume(
 ):
 
     print(
-        "\nSTEP 6: 5D Volume Analysis..."
+        "\nSTEP 5: 5D Volume Analysis / 60% Primary Shortlist..."
     )
 
     recent = historical[-5:]
@@ -943,6 +948,83 @@ def calculate_5d_volume(
     )
 
     return result
+
+
+def prepare_primary_shortlist(result, eod_date):
+    """Audit the five-day volume context before RVOL ranking.
+
+    Master-spec rule: >=3/5 low-volume days is supportive for accumulation,
+    pullback and pre-breakout setups, but is NOT a universal hard filter because
+    genuine breakouts can show current volume expansion. Incomplete 5-day or
+    20-day history remains WAIT_FOR_DATA and cannot proceed to RVOL ranking.
+    """
+    if result is None or result.empty:
+        print("[PRIMARY SHORTLIST] No rows available after 5-day volume analysis.")
+        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+
+    frame = result.copy()
+    avg_sessions = pd.to_numeric(frame.get("AvgVolumeSessions", pd.Series(index=frame.index, dtype=float)), errors="coerce")
+    low_days = pd.to_numeric(frame.get("LowVolumeDays5D", pd.Series(index=frame.index, dtype=float)), errors="coerce")
+    pattern = frame.get("VolumePattern5D", pd.Series("Insufficient", index=frame.index)).astype(str)
+    enough_5d = pattern.ne("Insufficient")
+    enough_20d = avg_sessions.eq(20)
+    complete = enough_5d & enough_20d & low_days.notna()
+
+    frame["LowVolume60Pass"] = low_days.ge(3)
+    frame["LowVolumeRuleStatus"] = [
+        "SUPPORTIVE_60_PERCENT" if pd.notna(days) and days >= 3
+        else "CONTEXT_ONLY_BELOW_60_PERCENT" if pd.notna(days)
+        else "WAIT_FOR_DATA"
+        for days in low_days
+    ]
+    frame["PrimaryShortlistStatus"] = ["PASS" if ok else "WAIT_FOR_DATA" for ok in complete]
+    frame["PrimaryShortlistReason"] = [
+        "5D_AND_20D_VOLUME_HISTORY_AVAILABLE; 60_PERCENT_RULE_IS_SETUP_CONTEXT" if ok
+        else "INSUFFICIENT_5D_OR_20D_VOLUME_HISTORY"
+        for ok in complete
+    ]
+
+    audit_cols = [
+        col for col in ["TckrSymb", "AvgVolumeSessions", "LowVolumeDays5D", "LowVolumePct5D",
+                        "VolumePattern5D", "LowVolume60Pass", "LowVolumeRuleStatus",
+                        "PrimaryShortlistStatus", "PrimaryShortlistReason"]
+        if col in frame.columns
+    ]
+    audit = frame[audit_cols].copy()
+    audit.insert(0, "EODDate", str(eod_date))
+    primary = frame.loc[complete].copy()
+
+    os.makedirs(os.path.join("data", "reports"), exist_ok=True)
+    audit_path = os.path.join("data", "reports", f"v8_primary_shortlist_5d_volume_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv")
+    audit.to_csv(audit_path, index=False)
+    print(
+        f"[PRIMARY SHORTLIST] History-valid={len(primary)}; "
+        f"60% supportive={int(frame['LowVolume60Pass'].fillna(False).sum())}; "
+        f"WAIT_FOR_DATA={int((~complete).sum())}. Audit: {audit_path}"
+    )
+    return primary
+
+
+def select_top20_by_rvol(result, eod_date):
+    """Cap the post-primary-shortlist candidates at 20 before deeper analysis."""
+    if result is None or result.empty:
+        print("[TOP 20] Primary shortlist is empty; no detailed analysis candidates.")
+        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+
+    frame = result.copy()
+    if "RVOL" not in frame.columns:
+        frame["RVOL"] = pd.NA
+    frame["RVOL"] = pd.to_numeric(frame["RVOL"], errors="coerce")
+    if "RVOLStatus" not in frame.columns:
+        frame["RVOLStatus"] = "WAIT_FOR_DATA"
+    frame = frame[frame["RVOLStatus"].astype(str).eq("PASS") & frame["RVOL"].notna() & (frame["RVOL"] > 0)].copy()
+    frame = frame.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort").head(20).copy()
+    frame["PrimaryCandidateRank"] = range(1, len(frame) + 1)
+    out_path = os.path.join("outputs", "v8_primary_shortlist_top20.csv")
+    os.makedirs("outputs", exist_ok=True)
+    frame.to_csv(out_path, index=False)
+    print(f"[TOP 20] Detailed-analysis candidates={len(frame)} (max 20), saved: {out_path}")
+    return frame
 
 
 # ============================================================
@@ -2651,10 +2733,10 @@ def calculate_relative_strength_nifty(
 def select_top20_analysis_candidates(result, eod_date):
     """Select up to 20 technical candidates after core EOD screens.
 
-    This is not the final buy list. A candidate must pass delivery, valid 20-session
-    RVOL data, a real Breakout/Pullback setup, a constructive trend/candle, non-negative
-    relative strength, and the setup-specific volume rules. Final sector/news/3+1,
-    risk/reward and chase gates remain in run_eod_layers().
+    Delivery is an optional confirmation, never a universal hard gate. A candidate
+    must have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
+    trend/candle, non-negative relative strength, and setup-specific volume rules.
+    Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
     """
     if result is None or result.empty:
         print("[CANDIDATE SCREEN] No rows available; no candidates selected.")
@@ -2691,8 +2773,8 @@ def select_top20_analysis_candidates(result, eod_date):
         support = pd.to_numeric(pd.Series([row.get("SRSupport")]), errors="coerce").iloc[0]
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
-        if delivery != "PASS_GT_60_PERCENT":
-            reasons.append("DELIVERY_NOT_PASS_GT_60_PERCENT")
+        # Delivery is recorded as context only. The master V8 specification says
+        # unavailable delivery must not automatically reject a stock.
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
@@ -3145,33 +3227,58 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 2A: DELIVERY-FIRST SHORTLIST (CURRENT DAY + PREVIOUS 4 SESSIONS)
+    # STEP 2A: OPTIONAL DELIVERY EVIDENCE (CURRENT + PREVIOUS 4 SESSIONS)
     # --------------------------------------------------------
-    print("\nSTEP 2A: Delivery-first shortlist (>60% average over 5 sessions)...")
-    current, delivery_audit = apply_delivery_filter(
-        current,
-        eod_date,
-        symbol_col="TckrSymb",
-        series_col="SctySrs",
-        minimum_average=60.0,
+    # Master-spec alignment: delivery supports accumulation analysis but is not a
+    # universal eligibility gate. Preserve the entire eligible equity universe;
+    # attach delivery metrics when the official reports are available.
+    print("\nSTEP 2A: Collecting optional five-session delivery evidence...")
+    try:
+        _delivery_qualified_unused, delivery_audit = apply_delivery_filter(
+            current,
+            eod_date,
+            symbol_col="TckrSymb",
+            series_col="SctySrs",
+            minimum_average=60.0,
+        )
+        if delivery_audit is not None and not delivery_audit.empty:
+            metric_cols = [
+                col for col in delivery_audit.columns
+                if col in {"TckrSymb", "SctySrs", "DeliverySessions", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus"}
+                or col.startswith("Delivery_")
+            ]
+            metrics = delivery_audit[metric_cols].drop_duplicates(
+                subset=[col for col in ["TckrSymb", "SctySrs"] if col in metric_cols], keep="last"
+            )
+            join_cols = [col for col in ["TckrSymb", "SctySrs"] if col in current.columns and col in metrics.columns]
+            metric_only = [col for col in metrics.columns if col not in join_cols and col not in current.columns]
+            current = current.merge(metrics[join_cols + metric_only], on=join_cols, how="left")
+        current["DeliveryStatus"] = current.get(
+            "DeliveryStatus", pd.Series("WAIT_FOR_DATA", index=current.index)
+        ).fillna("WAIT_FOR_DATA").astype(str)
+        for optional_col in ["DeliverySessions", "AvgDelivery5D", "LatestDeliveryPct"]:
+            if optional_col not in current.columns:
+                current[optional_col] = pd.NA
+        delivery_values = pd.to_numeric(current["AvgDelivery5D"], errors="coerce")
+        print(
+            "[DELIVERY] Optional evidence attached: "
+            f"available={int(delivery_values.notna().sum())}; "
+            f"WAIT_FOR_DATA={int(delivery_values.isna().sum())}. "
+            "No symbol removed by delivery threshold."
+        )
+    except Exception as exc:
+        print(f"[DELIVERY] Optional data unavailable; continuing without delivery confirmation: {exc}")
+        current["DeliverySessions"] = 0
+        current["AvgDelivery5D"] = pd.NA
+        current["LatestDeliveryPct"] = pd.NA
+        current["DeliveryStatus"] = "WAIT_FOR_DATA"
+    # Keep legacy field names for report compatibility; downstream V8 logic treats
+    # these as evidence labels, not a pass/fail screening gate.
+    current["DeliveryFilterStatus"] = current["DeliveryStatus"].map(
+        lambda value: "PASS_GT_60_PERCENT" if value == "PASS_GT_60_PERCENT"
+        else "FILTERED_OUT_LE_60_PERCENT" if value == "FILTERED_OUT_LE_60_PERCENT"
+        else "WAIT_FOR_DATA"
     )
-    # delivery_filter.py publishes DeliveryStatus; later V8 layers require the
-    # explicit gate column DeliveryFilterStatus. Keep both names for compatibility.
-    if "DeliveryStatus" in current.columns:
-        current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
-    else:
-        current["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
-    print(f"Symbols remaining after delivery filter: {len(current)}")
-    print(
-        "[DELIVERY GATE] PASS rows: "
-        f"{int(current['DeliveryFilterStatus'].eq('PASS_GT_60_PERCENT').sum())}; "
-        "non-PASS rows in pipeline: "
-        f"{int((~current['DeliveryFilterStatus'].eq('PASS_GT_60_PERCENT')).sum())}"
-    )
-    if current.empty:
-        print("No symbols qualified for the >60% five-session delivery rule. Stopping before volume/technical analysis.")
-        print("Review data/reports/delivery_first_audit_*.csv; no watchlist will be force-filled.")
-        return
 
     # --------------------------------------------------------
     # STEP 3
@@ -3201,32 +3308,24 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 5
+    # STEP 5: PRIMARY SHORTLIST — 5 prior sessions, >=60% low-volume days
     # --------------------------------------------------------
-
-    result = calculate_rvol(
-        current,
-        avg_volume
-    )
-
-    # --------------------------------------------------------
-    # STEP 6
-    # --------------------------------------------------------
-
-    result = calculate_5d_volume(
-        result,
-        historical
-    )
+    # Attach the prior-20-session baseline for the 5-day check. Do not calculate
+    # or use current-session RVOL to create the primary shortlist.
+    result = current.merge(avg_volume, on="TckrSymb", how="left")
+    result = calculate_5d_volume(result, historical)
+    result = prepare_primary_shortlist(result, eod_date)
 
     # --------------------------------------------------------
-    # STEP 7
+    # STEP 6: CURRENT RVOL — only for primary-shortlisted symbols
     # --------------------------------------------------------
+    result = calculate_rvol(result, avg_volume)
+    result = select_top20_by_rvol(result, eod_date)
 
-    result = (
-        calculate_price_volume_relationship(
-            result
-        )
-    )
+    # --------------------------------------------------------
+    # STEP 7: PRICE + VOLUME — only the selected Top 20
+    # --------------------------------------------------------
+    result = calculate_price_volume_relationship(result)
 
     # --------------------------------------------------------
     # STEP 8
@@ -3255,6 +3354,17 @@ def main():
             analysis_history
         )
     )
+    # The 60% low-volume-days rule is setup-specific: mandatory for pullbacks,
+    # useful context for accumulation/pre-breakout, but not a universal breakout veto.
+    if "LowVolumeDays5D" in result.columns:
+        low_days = pd.to_numeric(result["LowVolumeDays5D"], errors="coerce")
+        setup_values = result.get("SetupType", pd.Series("", index=result.index)).astype(str)
+        result["LowVolumeRuleStatus"] = [
+            ("PASS" if pd.notna(days) and days >= 3 else "FAIL") if setup == "Pullback"
+            else "NOT_REQUIRED_BREAKOUT" if setup == "Breakout"
+            else ("SUPPORTIVE" if pd.notna(days) and days >= 3 else "CONTEXT_ONLY")
+            for setup, days in zip(setup_values, low_days)
+        ]
 
     # --------------------------------------------------------
     # STEP 11
