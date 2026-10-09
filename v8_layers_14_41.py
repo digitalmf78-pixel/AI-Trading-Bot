@@ -421,6 +421,13 @@ def run_eod_layers(
 ) -> pd.DataFrame:
     """Evaluate layers 14–24 and save the EOD watchlist report."""
     create_input_templates()
+    # Populate sector membership/history before evaluating Layer 14. Missing or
+    # failed downloads are not treated as a pass; downstream logic keeps WAIT_FOR_DATA.
+    try:
+        from sector_data import refresh_sector_inputs
+        refresh_sector_inputs(eod_date)
+    except Exception as exc:
+        print(f"[SECTOR] Automatic refresh failed; Layer 14 will use available inputs: {exc}")
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
     sector_history = _read_csv(INPUT_DIR / "sector_history.csv", SECTOR_HISTORY_COLUMNS)
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
