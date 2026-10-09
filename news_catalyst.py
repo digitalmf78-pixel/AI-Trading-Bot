@@ -139,20 +139,45 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
 
 
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Return official NSE filings plus secondary headlines for RVOL top 20."""
+    """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
     if result.empty or "TckrSymb" not in result.columns:
         return pd.DataFrame(columns=NEWS_COLUMNS), {"NSE": "no candidates", "secondary": "not checked"}
 
     candidates = result.copy()
-    candidates["RVOL"] = pd.to_numeric(candidates.get("RVOL"), errors="coerce")
-    candidates = candidates.sort_values("RVOL", ascending=False).head(20)
-    symbols = {str(value).strip().upper() for value in candidates["TckrSymb"]}
+    candidates["TckrSymb"] = candidates["TckrSymb"].astype(str).str.strip().str.upper()
+    candidates = candidates[
+        candidates["TckrSymb"].ne("")
+        & candidates["TckrSymb"].str.lower().ne("nan")
+    ].drop_duplicates(subset=["TckrSymb"]).copy()
+
+    # Enforce explicit shortlist gates when the upstream pipeline supplies them.
+    # The caller should pass screened candidates, not the full NSE universe.
+    if "DeliveryFilterStatus" in candidates.columns:
+        delivery_status = candidates["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
+        candidates = candidates[delivery_status.eq("PASS_GT_60_PERCENT")].copy()
+
+    if "SetupType" in candidates.columns:
+        setup = candidates["SetupType"].astype(str).str.upper().str.strip()
+        candidates = candidates[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
+
+    if candidates.empty:
+        Path("data/inputs").mkdir(parents=True, exist_ok=True)
+        empty = pd.DataFrame(columns=NEWS_COLUMNS)
+        empty.to_csv("data/inputs/news_evidence_auto.csv", index=False)
+        return empty, {"NSE": "no shortlisted candidates", "secondary": "not checked"}
+
+    symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
     try:
         if session_dates:
             # Use the oldest of the latest five actual NSE EOD sessions (current
             # session + previous four), not a five-calendar-day approximation.
-            normalized_dates = [pd.Timestamp(value).normalize() for value in session_dates]
+            normalized_dates = []
+            for value in session_dates:
+                session_day = pd.Timestamp(value)
+                if session_day.tzinfo is not None:
+                    session_day = session_day.tz_convert("Asia/Kolkata").tz_localize(None)
+                normalized_dates.append(session_day.normalize())
             first_session = min(normalized_dates).tz_localize("Asia/Kolkata")
             cutoff = first_session.to_pydatetime().astimezone(timezone.utc)
         else:
@@ -160,9 +185,10 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             # exchange-session calendar.
             eod_day = pd.Timestamp(eod_date)
             eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
-            cutoff = (eod_day.normalize() - pd.Timedelta(days=5)).to_pydatetime().astimezone(timezone.utc)
+            # Fallback retrieval buffer; exact session_dates take precedence.
+            cutoff = (eod_day.normalize() - pd.Timedelta(days=10)).to_pydatetime().astimezone(timezone.utc)
     except Exception:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=5)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=10)
     rows: list[dict[str, str]] = []
     status = {"NSE": "available", "secondary": "available"}
     nse_successes = 0
@@ -212,7 +238,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     secondary_successes = 0
     for symbol in sorted(symbols):
         try:
-            query = f'"{symbol}" NSE India stock when:5d'
+            query = f'"{symbol}" NSE India stock when:10d'
             items = _rss_items(GOOGLE_RSS_URL, {
                 "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
             })
