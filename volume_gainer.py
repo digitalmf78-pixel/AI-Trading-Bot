@@ -951,55 +951,74 @@ def calculate_5d_volume(
 
 
 def prepare_primary_shortlist(result, eod_date):
-    """Audit the five-day volume context before RVOL ranking.
+    """Build the V8 primary shortlist using the mandatory 3-of-5 low-volume rule.
 
-    Master-spec rule: >=3/5 low-volume days is supportive for accumulation,
-    pullback and pre-breakout setups, but is NOT a universal hard filter because
-    genuine breakouts can show current volume expansion. Incomplete 5-day or
-    20-day history remains WAIT_FOR_DATA and cannot proceed to RVOL ranking.
+    A stock qualifies only when all five prior sessions and all 20 baseline
+    sessions are available AND at least 3 of the previous 5 sessions had volume
+    below that stock's prior-20-session average. Missing history is WAIT_FOR_DATA;
+    fewer than 3 low-volume days is FILTERED_OUT, not passed to RVOL ranking.
     """
     if result is None or result.empty:
         print("[PRIMARY SHORTLIST] No rows available after 5-day volume analysis.")
         return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
 
     frame = result.copy()
-    avg_sessions = pd.to_numeric(frame.get("AvgVolumeSessions", pd.Series(index=frame.index, dtype=float)), errors="coerce")
-    low_days = pd.to_numeric(frame.get("LowVolumeDays5D", pd.Series(index=frame.index, dtype=float)), errors="coerce")
-    pattern = frame.get("VolumePattern5D", pd.Series("Insufficient", index=frame.index)).astype(str)
+    avg_sessions = pd.to_numeric(
+        frame.get("AvgVolumeSessions", pd.Series(index=frame.index, dtype=float)),
+        errors="coerce",
+    )
+    low_days = pd.to_numeric(
+        frame.get("LowVolumeDays5D", pd.Series(index=frame.index, dtype=float)),
+        errors="coerce",
+    )
+    pattern = frame.get(
+        "VolumePattern5D", pd.Series("Insufficient", index=frame.index)
+    ).astype(str)
     enough_5d = pattern.ne("Insufficient")
     enough_20d = avg_sessions.eq(20)
     complete = enough_5d & enough_20d & low_days.notna()
+    rule_pass = low_days.ge(3)
+    eligible = complete & rule_pass
 
     frame["LowVolume60Pass"] = low_days.ge(3)
     frame["LowVolumeRuleStatus"] = [
-        "SUPPORTIVE_60_PERCENT" if pd.notna(days) and days >= 3
-        else "CONTEXT_ONLY_BELOW_60_PERCENT" if pd.notna(days)
+        "PASS_3_OF_5_OR_MORE" if is_complete and days >= 3
+        else "FILTERED_OUT_LT_3_OF_5" if is_complete and pd.notna(days)
         else "WAIT_FOR_DATA"
-        for days in low_days
+        for is_complete, days in zip(complete, low_days)
     ]
-    frame["PrimaryShortlistStatus"] = ["PASS" if ok else "WAIT_FOR_DATA" for ok in complete]
+    frame["PrimaryShortlistStatus"] = [
+        "PASS" if is_eligible else "FILTERED_OUT_LT_3_OF_5" if is_complete
+        else "WAIT_FOR_DATA"
+        for is_eligible, is_complete in zip(eligible, complete)
+    ]
     frame["PrimaryShortlistReason"] = [
-        "5D_AND_20D_VOLUME_HISTORY_AVAILABLE; 60_PERCENT_RULE_IS_SETUP_CONTEXT" if ok
+        "PASS_5D_HISTORY_20D_BASELINE_AND_AT_LEAST_3_LOW_VOLUME_DAYS" if is_eligible
+        else "LOW_VOLUME_DAYS_BELOW_3_OF_5" if is_complete
         else "INSUFFICIENT_5D_OR_20D_VOLUME_HISTORY"
-        for ok in complete
+        for is_eligible, is_complete in zip(eligible, complete)
     ]
 
     audit_cols = [
-        col for col in ["TckrSymb", "AvgVolumeSessions", "LowVolumeDays5D", "LowVolumePct5D",
-                        "VolumePattern5D", "LowVolume60Pass", "LowVolumeRuleStatus",
-                        "PrimaryShortlistStatus", "PrimaryShortlistReason"]
-        if col in frame.columns
+        col for col in [
+            "TckrSymb", "AvgVolumeSessions", "LowVolumeDays5D", "LowVolumePct5D",
+            "VolumePattern5D", "LowVolume60Pass", "LowVolumeRuleStatus",
+            "PrimaryShortlistStatus", "PrimaryShortlistReason",
+        ] if col in frame.columns
     ]
     audit = frame[audit_cols].copy()
     audit.insert(0, "EODDate", str(eod_date))
-    primary = frame.loc[complete].copy()
+    primary = frame.loc[eligible].copy()
 
     os.makedirs(os.path.join("data", "reports"), exist_ok=True)
-    audit_path = os.path.join("data", "reports", f"v8_primary_shortlist_5d_volume_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv")
+    audit_path = os.path.join(
+        "data", "reports",
+        f"v8_primary_shortlist_5d_volume_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv",
+    )
     audit.to_csv(audit_path, index=False)
     print(
-        f"[PRIMARY SHORTLIST] History-valid={len(primary)}; "
-        f"60% supportive={int(frame['LowVolume60Pass'].fillna(False).sum())}; "
+        f"[PRIMARY SHORTLIST] Eligible={len(primary)}; "
+        f"filtered (<3/5)={int((complete & ~rule_pass).sum())}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. Audit: {audit_path}"
     )
     return primary
@@ -3308,7 +3327,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 5: PRIMARY SHORTLIST — 5 prior sessions, >=60% low-volume days
+    # STEP 5: PRIMARY SHORTLIST — mandatory >=3/5 low-volume days
     # --------------------------------------------------------
     # Attach the prior-20-session baseline for the 5-day check. Do not calculate
     # or use current-session RVOL to create the primary shortlist.
@@ -3354,15 +3373,13 @@ def main():
             analysis_history
         )
     )
-    # The 60% low-volume-days rule is setup-specific: mandatory for pullbacks,
-    # useful context for accumulation/pre-breakout, but not a universal breakout veto.
+    # The mandatory >=3/5 low-volume-days gate was already applied before RVOL.
+    # Keep this field as an audit trace for the selected Top-20 candidates.
     if "LowVolumeDays5D" in result.columns:
         low_days = pd.to_numeric(result["LowVolumeDays5D"], errors="coerce")
         setup_values = result.get("SetupType", pd.Series("", index=result.index)).astype(str)
         result["LowVolumeRuleStatus"] = [
-            ("PASS" if pd.notna(days) and days >= 3 else "FAIL") if setup == "Pullback"
-            else "NOT_REQUIRED_BREAKOUT" if setup == "Breakout"
-            else ("SUPPORTIVE" if pd.notna(days) and days >= 3 else "CONTEXT_ONLY")
+            "PASS" if pd.notna(days) and days >= 3 else "FAIL"
             for setup, days in zip(setup_values, low_days)
         ]
 
