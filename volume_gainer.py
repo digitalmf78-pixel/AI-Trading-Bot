@@ -2843,38 +2843,41 @@ def select_top20_analysis_candidates(result, eod_date):
         })
 
     audit = pd.DataFrame(audit_rows)
-    selected_symbols = set(audit.loc[audit["CandidateScreenStatus"].eq("PASS"), "TckrSymb"].astype(str))
-    eligible = frame[frame["TckrSymb"].astype(str).str.strip().str.upper().isin(selected_symbols)].copy()
-    eligible["RVOL"] = pd.to_numeric(eligible["RVOL"], errors="coerce")
-    eligible["CLV"] = pd.to_numeric(eligible["CLV"], errors="coerce")
-    eligible["RelativeStrengthNifty"] = pd.to_numeric(eligible["RelativeStrengthNifty"], errors="coerce")
-    # RVOL remains the primary rank; candle quality and relative strength break ties.
-    eligible = eligible.sort_values(
+    # Keep all RVOL Top-20 rows flowing through sector/news/3+1 evidence collection.
+    # The technical screen is recorded as a hard final eligibility gate, not an
+    # early data-collection gate; otherwise rejected rows never receive evidence
+    # and the audit cannot explain missing sector/news data across the shortlist.
+    audit["TckrSymb"] = audit["TckrSymb"].astype(str).str.strip().str.upper()
+    frame["TckrSymb"] = frame["TckrSymb"].astype(str).str.strip().str.upper()
+    audit_map = audit.set_index("TckrSymb")[["CandidateScreenStatus", "CandidateScreenReasons"]]
+    frame = frame.merge(audit_map, left_on="TckrSymb", right_index=True, how="left")
+    frame["CoreTechnicalScreenStatus"] = frame["CandidateScreenStatus"]
+    frame["CoreTechnicalScreenReasons"] = frame["CandidateScreenReasons"]
+    frame["RVOL"] = pd.to_numeric(frame["RVOL"], errors="coerce")
+    frame["CLV"] = pd.to_numeric(frame["CLV"], errors="coerce")
+    frame["RelativeStrengthNifty"] = pd.to_numeric(frame["RelativeStrengthNifty"], errors="coerce")
+    frame = frame.sort_values(
         ["RVOL", "CLV", "RelativeStrengthNifty"],
-        ascending=[False, False, False],
-        na_position="last",
-        kind="mergesort",
+        ascending=[False, False, False], na_position="last", kind="mergesort",
     ).head(20).copy()
-    eligible["CandidateRank"] = range(1, len(eligible) + 1)
+    frame["CandidateRank"] = range(1, len(frame) + 1)
 
-    audit["CandidateRank"] = pd.NA
-    ranks = dict(zip(eligible["TckrSymb"].astype(str).str.upper(), eligible["CandidateRank"]))
-    audit.loc[audit["TckrSymb"].isin(ranks), "CandidateRank"] = audit.loc[audit["TckrSymb"].isin(ranks), "TckrSymb"].map(ranks)
+    ranks = dict(zip(frame["TckrSymb"].astype(str).str.upper(), frame["CandidateRank"]))
+    audit["CandidateRank"] = audit["TckrSymb"].map(ranks)
     audit.loc[audit["CandidateScreenStatus"].eq("PASS") & audit["CandidateRank"].isna(), "CandidateScreenStatus"] = "PASS_CORE_SCREEN_OUTSIDE_TOP20"
     audit_path = os.path.join("data", "reports", f"v8_candidate_selection_audit_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv")
     os.makedirs(os.path.dirname(audit_path), exist_ok=True)
     audit.to_csv(audit_path, index=False)
     os.makedirs("outputs", exist_ok=True)
-    eligible.to_csv(os.path.join("outputs", "v8_pre_news_top20_candidates.csv"), index=False)
+    frame.to_csv(os.path.join("outputs", "v8_pre_news_top20_candidates.csv"), index=False)
 
     counts = audit["CandidateScreenStatus"].value_counts().to_dict()
+    passed = int(audit["CandidateScreenStatus"].eq("PASS").sum())
     print("[CANDIDATE SCREEN] Audit: " + audit_path)
-    print(f"[CANDIDATE SCREEN] Technical pass before Top-20 cap: {len(selected_symbols)}")
-    print(f"[CANDIDATE SCREEN] Selected for detailed news/sector/EOD analysis: {len(eligible)} (maximum 20; no forced fill)")
+    print(f"[CANDIDATE SCREEN] Core technical pass within RVOL Top-20: {passed}/{len(frame)}")
+    print(f"[CANDIDATE SCREEN] Continuing all Top-20 into news/sector/EOD evidence analysis: {len(frame)} (max 20; no forced fill)")
     print(f"[CANDIDATE SCREEN] Status counts: {counts}")
-    if eligible.empty:
-        print("[CANDIDATE SCREEN] No stock passed core technical gates; final shortlist will remain empty rather than force-filling.")
-    return eligible
+    return frame
 
 
 # ============================================================
