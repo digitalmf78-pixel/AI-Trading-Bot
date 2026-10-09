@@ -83,14 +83,13 @@ jobs:
           echo "===== INPUT CSV FILES ====="
 
           if [ -d data/inputs ]; then
-            find data/inputs -maxdepth 1 -type f -name "*.csv" \
-              -print -exec wc -l {} \;
-
             for f in data/inputs/*.csv; do
               if [ -f "$f" ]; then
                 echo ""
                 echo "===== FILE: $f ====="
-                echo "--- First 3 lines ---"
+                echo "Line count:"
+                wc -l "$f"
+                echo "First 3 lines:"
                 head -3 "$f"
               fi
             done
@@ -99,8 +98,47 @@ jobs:
           fi
 
           echo ""
-          echo "===== OUTPUT FILES ====="
+          echo "===== LAYER STATUS SUMMARY PREVIEW ====="
+          if [ -f outputs/v8_layer_status_summary.csv ]; then
+            head -12 outputs/v8_layer_status_summary.csv
+          else
+            echo "Layer status summary not found"
+          fi
 
+          echo ""
+          echo "===== EOD WATCHLIST PREVIEW ====="
+          if [ -f outputs/v8_eod_watchlist.csv ]; then
+            head -6 outputs/v8_eod_watchlist.csv
+          else
+            echo "EOD watchlist not found"
+          fi
+
+          echo ""
+          echo "===== NEXT DAY ENTRY PREVIEW ====="
+          if [ -f outputs/v8_next_day_entry.csv ]; then
+            head -6 outputs/v8_next_day_entry.csv
+          else
+            echo "Next day entry report not found"
+          fi
+
+          echo ""
+          echo "===== CATALYST TOP 20 PREVIEW ====="
+          if [ -f outputs/v8_catalyst_top20.csv ]; then
+            head -6 outputs/v8_catalyst_top20.csv
+          else
+            echo "Catalyst report not found"
+          fi
+
+          echo ""
+          echo "===== POSITION MONITOR PREVIEW ====="
+          if [ -f outputs/v8_position_monitor.csv ]; then
+            head -6 outputs/v8_position_monitor.csv
+          else
+            echo "Position monitor report not found"
+          fi
+
+          echo ""
+          echo "===== OUTPUT FILE LIST ====="
           if [ -d outputs ]; then
             find outputs -maxdepth 3 -type f -print
           else
@@ -108,15 +146,14 @@ jobs:
           fi
 
           echo ""
-          echo "===== BHAVCOPY CACHE FILES ====="
-
+          echo "===== BHAVCOPY CACHE SAMPLE ====="
           if [ -d data/bhavcopy ]; then
-            find data/bhavcopy -maxdepth 3 -type f -print | head -100
+            find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print | head -20
           else
-            echo "data/bhavcopy directory does not exist"
+            echo "Bhavcopy cache directory does not exist"
           fi
 
-      - name: Upload NSE V8 reports and diagnostic files
+      - name: Upload NSE V8 reports and input templates
         if: always()
         uses: actions/upload-artifact@v6
         with:
