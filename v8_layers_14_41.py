@@ -109,8 +109,13 @@ def _domain(row: pd.Series) -> str:
 
 
 def _is_primary(row: pd.Series) -> bool:
+    """Treat a row as primary only when its label and URL/domain are credible."""
     kind = _text(row.get("SourceType", "")).lower()
-    return kind in {"primary", "official", "exchange", "regulator", "company"}
+    if kind not in {"primary", "official", "exchange", "regulator", "company"}:
+        return False
+    url = _text(row.get("URL", ""))
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc) and bool(_domain(row))
 
 
 def _headline_key(value) -> str:
@@ -214,25 +219,10 @@ def _news_for_symbol(
         and str(row.get("Impact", "")).strip().lower() in {"negative", "adverse"}
         for _, row in rows.iterrows()
     )
-    confirmed = any(
-        len(
-            {
-                _domain(item) for item in group
-                if _domain(item) and not _is_primary(item)
-            }
-            - {
-                _domain(item) for item in group
-                if _domain(item) and _is_primary(item)
-            }
-        ) >= 3
-        and len(
-            {
-                _domain(item) for item in group
-                if _domain(item) and _is_primary(item)
-            }
-        ) >= 1
-        for group in groups
-    )
+    # Multiple publishers of one event are not independent strategy confirmations.
+    # The 3 categories are evaluated later: catalyst/news, price+volume, sector context.
+    # This function only resolves whether the event has a valid primary source.
+    confirmed = False
     has_primary_event = any(
         any(_is_primary(item) and _domain(item) for item in group)
         for group in groups
@@ -421,13 +411,6 @@ def run_eod_layers(
 ) -> pd.DataFrame:
     """Evaluate layers 14–24 and save the EOD watchlist report."""
     create_input_templates()
-    # Populate sector membership/history before evaluating Layer 14. Missing or
-    # failed downloads are not treated as a pass; downstream logic keeps WAIT_FOR_DATA.
-    try:
-        from sector_data import refresh_sector_inputs
-        refresh_sector_inputs(eod_date)
-    except Exception as exc:
-        print(f"[SECTOR] Automatic refresh failed; Layer 14 will use available inputs: {exc}")
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
     sector_history = _read_csv(INPUT_DIR / "sector_history.csv", SECTOR_HISTORY_COLUMNS)
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
@@ -535,14 +518,29 @@ def run_eod_layers(
             _num(row.get("CLV")) >= 0.60 if pd.notna(_num(row.get("CLV"))) else False,
         ])
         confirmations.append(int(technical))
+        # Mandatory 3+1: independent categories are (1) catalyst/news,
+        # (2) price+volume evidence (3 of 4 configured indicators), and
+        # (3) sector context; +1 is a verified primary-source record.
+        primary_source_verified = row.get("NewsEvidenceStatus") in {"PRIMARY_CONFIRMED", "CONFIRMED_3_PLUS_1"}
+        catalyst_present = bool(_text(row.get("NewsCatalyst"))) and primary_source_verified
+        sector_confirmed = row.get("SectorStrengthStatus") == "PASS"
+        technical_confirmed = technical >= 3
         confirmations_ok = (
-            technical >= 3
-            and row.get("NewsEvidenceStatus") == "CONFIRMED_3_PLUS_1"
+            catalyst_present and technical_confirmed and sector_confirmed
             and not bool(row.get("NewsNegativePrimary"))
+        )
+        missing_confirmation_data = (
+            row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED"}
+            or row.get("SectorStrengthStatus") == "WAIT_FOR_DATA"
+            or pd.isna(_num(row.get("RVOL")))
+            or pd.isna(_num(row.get("CLV")))
+            or pd.isna(_num(row.get("RelativeStrengthNifty")))
+            or not _text(row.get("TrendClassification"))
+            or not _text(row.get("NewsCatalyst"))
         )
         confirmation_statuses.append(
             "PASS" if confirmations_ok
-            else "WAIT_FOR_DATA" if row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED", "PRIMARY_CONFIRMED"}
+            else "WAIT_FOR_DATA" if missing_confirmation_data
             else "FAIL"
         )
     output["TechnicalConfirmations"] = confirmations
@@ -634,9 +632,49 @@ def run_eod_layers(
         lambda value: "PASS" if value == "WATCH" else value
     )
 
+    # Publish the agreed maximum 4 Primary + 4 Secondary + 4 Watchlist.
+    # Primary/Secondary contain only fully eligible WATCH rows; Watchlist is
+    # reserved for plausible candidates awaiting data/confirmation, never hard fails.
+    output["EODCategory"] = "NOT_SHORTLISTED"
+    ranked = output.copy()
+    ranked["V8Score"] = pd.to_numeric(ranked["V8Score"], errors="coerce")
+    ranked = ranked.sort_values(["V8Score", "RVOL"], ascending=[False, False], na_position="last")
+    eligible = ranked[ranked["EODWatchlistStatus"].eq("WATCH")]
+    primary_symbols = eligible.head(4)["TckrSymb"].astype(str).tolist()
+    remaining_eligible = eligible[~eligible["TckrSymb"].astype(str).isin(primary_symbols)]
+    secondary_symbols = remaining_eligible.head(4)["TckrSymb"].astype(str).tolist()
+
+    pending = ranked[
+        ranked["EODWatchlistStatus"].eq("WAIT_FOR_DATA")
+        & ranked["SetupType"].isin({"Breakout", "Pullback"})
+        & ranked["DeliveryFilterStatus"].eq("PASS_GT_60_PERCENT")
+        & ranked["ChaseStatus"].eq("CLEAR")
+        & (pd.to_numeric(ranked["V8Score"], errors="coerce") >= 50)
+        & ~ranked["AccumulationDistribution"].astype(str).eq("Distribution")
+        & ~ranked["NewsEvidenceStatus"].eq("NEGATIVE_PRIMARY_NEWS")
+    ]
+    watch_symbols = pending[
+        ~pending["TckrSymb"].astype(str).isin(primary_symbols + secondary_symbols)
+    ].head(4)["TckrSymb"].astype(str).tolist()
+
+    output.loc[output["TckrSymb"].astype(str).isin(primary_symbols), "EODCategory"] = "PRIMARY"
+    output.loc[output["TckrSymb"].astype(str).isin(secondary_symbols), "EODCategory"] = "SECONDARY"
+    output.loc[output["TckrSymb"].astype(str).isin(watch_symbols), "EODCategory"] = "WATCHLIST"
+
+    shortlist = output[output["EODCategory"].isin({"PRIMARY", "SECONDARY", "WATCHLIST"})].copy()
+    category_order = {"PRIMARY": 0, "SECONDARY": 1, "WATCHLIST": 2}
+    shortlist["_category_order"] = shortlist["EODCategory"].map(category_order)
+    shortlist = shortlist.sort_values(["_category_order", "V8Score"], ascending=[True, False]).drop(columns=["_category_order"])
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output.sort_values(["EODWatchlistStatus", "V8Score"], ascending=[True, False]).to_csv(
         OUTPUT_DIR / "v8_eod_watchlist.csv", index=False
+    )
+    shortlist.to_csv(OUTPUT_DIR / "v8_eod_shortlist.csv", index=False)
+    print(
+        "EOD shortlist tiers: "
+        f"Primary={len(primary_symbols)}, Secondary={len(secondary_symbols)}, "
+        f"Watchlist={len(watch_symbols)} (max 4 each; no forced fill)."
     )
     return output
 
