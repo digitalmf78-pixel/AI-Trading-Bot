@@ -1,0 +1,36 @@
+name: NSE Data Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nse-data-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy
+
+      - name: Compile Python Modules
+        run: |
+          python -m py_compile nse_bhavcopy_test.py
+          python -m py_compile volume_gainer.py
+          python -m py_compile delivery_filter.py
+          python -m py_compile news_catalyst.py
+          python -m py_compile v8_layers_14_41.py
+
+      - name: Run NSE Bhavcopy Test
+        run: python nse_bhavcopy_test.py
