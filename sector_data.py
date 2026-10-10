@@ -290,6 +290,40 @@ def _download_nifty500_industries(session: requests.Session) -> dict[str, str]:
         return {}
 
 
+# Official NSE list of securities available for trading in ETF segment.
+# ETFs are not ordinary operating companies and must not receive a company-sector
+# mapping from the quote/industry fallback. Their underlying index is handled
+# separately only when a verified scheme-to-index mapping is available.
+NSE_ETF_SECURITIES_URL = "https://nsearchives.nseindia.com/content/equities/eq_etfseclist.csv"
+
+
+def _download_official_etf_symbols(session: requests.Session) -> set[str]:
+    """Return symbols in NSE's official ETF securities CSV; fail closed on bad data."""
+    try:
+        response = session.get(
+            NSE_ETF_SECURITIES_URL,
+            headers={**HEADERS, "Referer": "https://www.nseindia.com/static/market-data/securities-available-for-trading"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        content = response.content or b""
+        if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
+            print("[SECTOR] Official ETF list unavailable: non-CSV response")
+            return set()
+        frame = pd.read_csv(BytesIO(content))
+        cols = {str(c).strip().casefold(): c for c in frame.columns}
+        symbol_col = next((cols[k] for k in ("symbol", "trading symbol", "ticker", "ticker symbol") if k in cols), None)
+        if symbol_col is None:
+            print(f"[SECTOR] Official ETF list schema missing Symbol column: {list(frame.columns)}")
+            return set()
+        symbols = {_clean_symbol(value) for value in frame[symbol_col].tolist()} - {""}
+        print(f"[SECTOR] Official NSE ETF symbols loaded: {len(symbols)}")
+        return symbols
+    except Exception as exc:
+        print(f"[SECTOR] Official ETF list unavailable: {exc}")
+        return set()
+
+
 NSE_QUOTE_URL = "https://www.nseindia.com/api/quote-equity"
 
 # Keys are normalized NSE Indices classification "sector" labels.
@@ -380,6 +414,7 @@ def _targeted_shortlist_mappings(
     nifty500_industries: dict[str, str],
     asof: pd.Timestamp,
     nse_classifications: dict[str, dict[str, str]] | None = None,
+    etf_symbols: set[str] | None = None,
 ) -> list[dict[str, str]]:
     """Map shortlist symbols using official index membership, NSE quote sector,
     or an exact official Nifty 500 Industry-to-benchmark rule.
@@ -388,6 +423,7 @@ def _targeted_shortlist_mappings(
     WAIT_FOR_DATA and never become PASS.
     """
     nse_classifications = nse_classifications or {}
+    etf_symbols = {_clean_symbol(symbol) for symbol in (etf_symbols or set())} - {""}
     audit_rows: list[dict[str, str]] = []
     mapping_rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -406,8 +442,16 @@ def _targeted_shortlist_mappings(
         nse_industry = _normalise_name(nse_info.get("industry", ""))
         basic_industry = _normalise_name(nse_info.get("basicIndustry", ""))
 
-        # Official tracked-index membership is the strongest mapping evidence.
-        if existing:
+        # ETFs need scheme/underlying-index evidence, not company-industry mapping.
+        if symbol in etf_symbols:
+            sector, index_symbol = "", ""
+            status = "ETF_UNDERLYING_INDEX_REQUIRED"
+            reason = (
+                "Symbol appears in the official NSE ETF securities list; ordinary company-sector "
+                "mapping skipped until the ETF scheme's underlying index is verified"
+            )
+        # Official tracked-index membership is the strongest mapping evidence for equities.
+        elif existing:
             sector = existing.get("Sector", "")
             index_symbol = existing.get("SectorIndexSymbol", "")
             status = "INDEX_CONSTITUENT"
@@ -529,6 +573,7 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
     # label cannot already map to a tracked benchmark.
     candidate_symbols = candidate_symbols or []
     nifty500_industries = _download_nifty500_industries(session) if candidate_symbols else {}
+    etf_symbols = _download_official_etf_symbols(session) if candidate_symbols else set()
     existing_mapping_by_symbol = {
         row["TckrSymb"]: row for row in mappings if row.get("TckrSymb")
     }
@@ -537,7 +582,7 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
     quote_candidates = []
     for raw_symbol in candidate_symbols:
         symbol = _clean_symbol(raw_symbol)
-        if not symbol or symbol in existing_mapping_by_symbol:
+        if not symbol or symbol in existing_mapping_by_symbol or symbol in etf_symbols:
             continue
         if INDUSTRY_TO_TRACKED_INDEX.get(nifty500_industries.get(symbol, "")):
             continue
@@ -563,6 +608,7 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
         nifty500_industries=nifty500_industries,
         asof=asof,
         nse_classifications=nse_classifications,
+        etf_symbols=etf_symbols,
     )
     for row in targeted_mappings:
         symbol = row["TckrSymb"]
@@ -577,6 +623,11 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
             candidate = pd.read_csv(MAP_PATH)
             if set(MAP_COLUMNS).issubset(candidate.columns):
                 old_map = candidate[MAP_COLUMNS]
+                # A current official ETF-list match overrides stale cached company-sector rows.
+                if etf_symbols and not old_map.empty:
+                    old_map = old_map[
+                        ~old_map["TckrSymb"].map(_clean_symbol).isin(etf_symbols)
+                    ]
         except Exception:
             pass
     # Fresh official membership takes precedence; cached rows only fill symbols absent from refresh.
