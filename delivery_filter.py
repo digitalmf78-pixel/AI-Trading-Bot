@@ -1,7 +1,7 @@
 """NSE EOD five-session delivery-first shortlist filter.
 
 Rule: average Delivery % across the latest EOD session plus the previous four
-available NSE trading-session reports must be strictly above 60% to qualify.
+available NSE trading-session reports must be greater than or equal to 60% to qualify.
 Missing/invalid reports or fewer than five distinct sessions never PASS.
 """
 from __future__ import annotations
@@ -126,7 +126,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     """Return qualifying candidates and full per-symbol audit.
 
     Qualifies only if five distinct valid reports have a valid delivery percentage
-    for the exact SYMBOL+SERIES and their arithmetic mean is strictly > threshold.
+    for the exact SYMBOL+SERIES and their arithmetic mean is >= threshold.
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()
@@ -173,7 +173,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliverySessions": count,
             "AvgDelivery5D": avg,
             "LatestDeliveryPct": by_date.get(_parse_date(asof_date).isoformat(), float("nan")),
-            "DeliveryStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GT_60_PERCENT" if avg > minimum_average else "FILTERED_OUT_LE_60_PERCENT"),
+            "DeliveryStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GE_60_PERCENT" if avg >= minimum_average else "FILTERED_OUT_LT_60_PERCENT"),
         })
         for i, (report_date, _) in enumerate(reports, start=1):
             record[f"Delivery_{report_date.isoformat()}"] = by_date.get(report_date.isoformat(), float("nan"))
@@ -183,11 +183,11 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     audit_path = AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
     audit.to_csv(audit_path, index=False)
-    qualified = audit[audit["DeliveryStatus"] == "PASS_GT_60_PERCENT"].copy()
+    qualified = audit[audit["DeliveryStatus"] == "PASS_GE_60_PERCENT"].copy()
     print(f"[DELIVERY] Candidates checked: {len(audit)}")
-    print(f"[DELIVERY] Qualified (>{minimum_average:.1f}%): {len(qualified)}")
+    print(f"[DELIVERY] Qualified (>={minimum_average:.1f}%): {len(qualified)}")
     print(f"[DELIVERY] WAIT_FOR_DATA: {(audit['DeliveryStatus'] == 'WAIT_FOR_DATA').sum()}")
-    print(f"[DELIVERY] Filtered out (<= {minimum_average:.1f}%): {(audit['DeliveryStatus'] == 'FILTERED_OUT_LE_60_PERCENT').sum()}")
+    print(f"[DELIVERY] Filtered out (<{minimum_average:.1f}%): {(audit['DeliveryStatus'] == 'FILTERED_OUT_LT_60_PERCENT').sum()}")
     print(f"[DELIVERY] Audit saved: {audit_path}")
 
     # Restore original candidate columns plus audit metrics.
