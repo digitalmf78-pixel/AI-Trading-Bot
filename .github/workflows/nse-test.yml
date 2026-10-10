@@ -51,4 +51,3 @@ jobs:
           path: diagnostics/nse-test.log
           if-no-files-found: warn
           retention-days: 7
-```
