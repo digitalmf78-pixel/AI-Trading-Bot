@@ -90,6 +90,14 @@ def _text(value) -> str:
         return ""
     return str(value).strip()
 
+def _flag(value) -> bool:
+    """Parse boolean-like CSV values without treating NaN or 'False' as true."""
+    if isinstance(value, bool):
+        return value
+    if value is None or pd.isna(value):
+        return False
+    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
 
 def _first_number(row: pd.Series, names: list[str]) -> float:
     for name in names:
@@ -108,9 +116,40 @@ def _domain(row: pd.Series) -> str:
     return explicit_domain or host or re.sub(r"\s+", " ", source)
 
 
+TRUSTED_PRIMARY_DOMAIN_SUFFIXES = (
+    "nseindia.com", "bseindia.com", "sebi.gov.in", "mca.gov.in", "rbi.org.in",
+)
+
+
+def _host_from_url(value: str) -> str:
+    host = urlparse(_text(value)).netloc.lower().split(":", 1)[0].removeprefix("www.")
+    return host
+
+
+def _trusted_official_domain(domain: str) -> bool:
+    domain = _text(domain).lower().split(":", 1)[0].removeprefix("www.").rstrip(".")
+    return bool(domain) and any(
+        domain == suffix or domain.endswith("." + suffix)
+        for suffix in TRUSTED_PRIMARY_DOMAIN_SUFFIXES
+    )
+
+
 def _is_primary(row: pd.Series) -> bool:
+    """Only trust recognized official domains or explicitly verified issuer URLs.
+
+    A `SourceType=primary` label alone is not proof of source authenticity.
+    Exchange/regulator feeds must use a trusted official domain. A manually
+    reviewed issuer source may use `company_verified`/`issuer_verified` only
+    when SourceDomain matches the URL host.
+    """
     kind = _text(row.get("SourceType", "")).lower()
-    return kind in {"primary", "official", "exchange", "regulator", "company"}
+    domain = _domain(row)
+    url_host = _host_from_url(_text(row.get("URL", "")))
+    if kind in {"primary", "official", "exchange", "regulator", "company"}:
+        return _trusted_official_domain(domain) or _trusted_official_domain(url_host)
+    if kind in {"company_verified", "issuer_verified"}:
+        return bool(url_host and domain and domain == url_host)
+    return False
 
 
 def _headline_key(value) -> str:
@@ -144,12 +183,12 @@ def _event_groups(rows: pd.DataFrame) -> list[list[pd.Series]]:
 
 
 def _independent_confirmation_evaluation(row: pd.Series) -> tuple[int, str, str]:
-    """Evaluate 3 independent evidence categories plus one primary source.
+    """Require 3 independent evidence categories PLUS a verified primary source.
 
-    PRICE_VOLUME is one category (bullish trend plus at least two supporting
-    metrics); sector and accumulation/distribution are separate categories.
-    A verified primary-source catalyst is mandatory and is not replaced by
-    multiple secondary publishers repeating the same event.
+    The source-verification requirement is a separate gate and does not count
+    as one of the three confirmations. Categories are PRICE_VOLUME, SECTOR,
+    ACCUMULATION_DISTRIBUTION, and CATALYST. Repeated articles about one event
+    remain one catalyst category, regardless of publisher count.
     """
     rs = _num(row.get("RelativeStrengthNifty"))
     rvol = _num(row.get("RVOL"))
@@ -172,20 +211,31 @@ def _independent_confirmation_evaluation(row: pd.Series) -> tuple[int, str, str]
         row.get("AccumulationDistributionStatus") == "PASS"
         and row.get("AccumulationDistribution") == "Accumulation"
     )
-    primary_ok = row.get("NewsEvidenceStatus") == "PRIMARY_CONFIRMED"
+    catalyst_ok = (
+        row.get("NewsEvidenceStatus") == "PRIMARY_CONFIRMED"
+        and bool(_text(row.get("NewsCatalyst", "")))
+        and not _flag(row.get("NewsNegativePrimary"))
+    )
+    primary_source_verified = _flag(row.get("NewsPrimarySourceVerified", False))
     categories = {
         "PRICE_VOLUME": bool(price_volume),
         "SECTOR": bool(sector_ok),
         "ACCUMULATION_DISTRIBUTION": bool(ad_ok),
-        "CATALYST_PRIMARY_SOURCE": bool(primary_ok),
+        "CATALYST": bool(catalyst_ok),
     }
     count = sum(categories.values())
     labels = ";".join(name for name, passed in categories.items() if passed)
-    if count >= 3 and primary_ok and not bool(row.get("NewsNegativePrimary")):
+
+    if _flag(row.get("NewsNegativePrimary")) or row.get("NewsEvidenceStatus") == "NEGATIVE_PRIMARY_NEWS":
+        status = "FAIL"
+    elif count >= 3 and primary_source_verified:
         status = "PASS"
-    elif row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED", "PRIMARY_CONFIRMED"} or any(
-        row.get(field) == "WAIT_FOR_DATA"
-        for field in ("SectorStrengthStatus", "AccumulationDistributionStatus")
+    elif (
+        row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED"}
+        or not primary_source_verified
+        or any(row.get(field) == "WAIT_FOR_DATA" for field in (
+            "SectorStrengthStatus", "AccumulationDistributionStatus"
+        ))
     ):
         status = "WAIT_FOR_DATA"
     else:
@@ -203,6 +253,7 @@ def _news_for_symbol(
         "NewsEvidenceStatus": "NO_DATA",
         "NewsIndependentSources": 0,
         "NewsPrimarySources": 0,
+        "NewsPrimarySourceVerified": False,
         "NewsNegativePrimary": False,
         "NewsCatalyst": "",
         "NewsCatalystSource": "",
@@ -272,13 +323,15 @@ def _news_for_symbol(
         any(_is_primary(item) and _domain(item) for item in group)
         for group in groups
     )
-    status = "PRIMARY_CONFIRMED" if has_primary_event else "UNVERIFIED"
+    primary_verified = bool(has_primary_event)
+    status = "PRIMARY_CONFIRMED" if primary_verified else "UNVERIFIED"
     if negative_primary:
         status = "NEGATIVE_PRIMARY_NEWS"
     return {
         "NewsEvidenceStatus": status,
         "NewsIndependentSources": best_secondary,
         "NewsPrimarySources": best_primary,
+        "NewsPrimarySourceVerified": primary_verified,
         "NewsNegativePrimary": negative_primary,
         "NewsCatalyst": catalyst,
         "NewsCatalystSource": _text(catalyst_row.get("Source", "")) if catalyst_row is not None else "",
@@ -785,9 +838,26 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
     bars = _normalize_bars(_read_csv(INPUT_DIR / "intraday_bars.csv", INTRADAY_COLUMNS))
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
-    candidates = eod_result[eod_result["SetupType"].isin([
-        "Breakout", "Pullback", "Pre-Breakout", "Possible Pullback",
-    ])].copy()
+    # Fail closed: next-day review must only process final EOD WATCH candidates.
+    # A technical setup alone is not sufficient to enter the next-day pipeline.
+    required_gate_columns = {
+        "EODWatchlistStatus", "EODLayerStatus", "MandatoryConfirmationStatus",
+        "DeliveryFilterStatus", "CandidateScreenStatus", "SetupType",
+    }
+    if eod_result.empty or not required_gate_columns.issubset(eod_result.columns):
+        candidates = eod_result.iloc[0:0].copy()
+    else:
+        eligible = (
+            eod_result["EODWatchlistStatus"].astype(str).eq("WATCH")
+            & eod_result["EODLayerStatus"].astype(str).eq("PASS")
+            & eod_result["MandatoryConfirmationStatus"].astype(str).eq("PASS")
+            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GE_60_PERCENT")
+            & eod_result["CandidateScreenStatus"].astype(str).eq("PASS")
+        )
+        setup_ok = eod_result["SetupType"].astype(str).isin([
+            "Breakout", "Pullback", "Pre-Breakout", "Possible Pullback",
+        ])
+        candidates = eod_result[eligible & setup_ok].copy()
     if bars.empty:
         rows = [{"TckrSymb": symbol, "NextDayStatus": "WAIT_FOR_DATA", "NextDayReason": "intraday_bars.csv missing or empty"} for symbol in candidates["TckrSymb"]]
         report = pd.DataFrame(rows, columns=NEXT_DAY_REPORT_COLUMNS)
