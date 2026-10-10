@@ -143,6 +143,56 @@ def _event_groups(rows: pd.DataFrame) -> list[list[pd.Series]]:
     return groups
 
 
+def _independent_confirmation_evaluation(row: pd.Series) -> tuple[int, str, str]:
+    """Evaluate 3 independent evidence categories plus one primary source.
+
+    PRICE_VOLUME is one category (bullish trend plus at least two supporting
+    metrics); sector and accumulation/distribution are separate categories.
+    A verified primary-source catalyst is mandatory and is not replaced by
+    multiple secondary publishers repeating the same event.
+    """
+    rs = _num(row.get("RelativeStrengthNifty"))
+    rvol = _num(row.get("RVOL"))
+    clv = _num(row.get("CLV"))
+    price_volume = (
+        "Bullish" in str(row.get("TrendClassification", ""))
+        and sum([
+            pd.notna(rs) and rs >= 2,
+            pd.notna(rvol) and rvol >= 1.5,
+            pd.notna(clv) and clv >= 0.60,
+        ]) >= 2
+    )
+    sector_strength = _num(row.get("SectorStrengthNifty"))
+    sector_ok = (
+        row.get("SectorStrengthStatus") == "PASS"
+        and pd.notna(sector_strength)
+        and sector_strength >= 0
+    )
+    ad_ok = (
+        row.get("AccumulationDistributionStatus") == "PASS"
+        and row.get("AccumulationDistribution") == "Accumulation"
+    )
+    primary_ok = row.get("NewsEvidenceStatus") == "PRIMARY_CONFIRMED"
+    categories = {
+        "PRICE_VOLUME": bool(price_volume),
+        "SECTOR": bool(sector_ok),
+        "ACCUMULATION_DISTRIBUTION": bool(ad_ok),
+        "CATALYST_PRIMARY_SOURCE": bool(primary_ok),
+    }
+    count = sum(categories.values())
+    labels = ";".join(name for name, passed in categories.items() if passed)
+    if count >= 3 and primary_ok and not bool(row.get("NewsNegativePrimary")):
+        status = "PASS"
+    elif row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED", "PRIMARY_CONFIRMED"} or any(
+        row.get(field) == "WAIT_FOR_DATA"
+        for field in ("SectorStrengthStatus", "AccumulationDistributionStatus")
+    ):
+        status = "WAIT_FOR_DATA"
+    else:
+        status = "FAIL"
+    return int(count), labels, status
+
+
 def _news_for_symbol(
     news: pd.DataFrame,
     symbol: str,
@@ -214,34 +264,15 @@ def _news_for_symbol(
         and str(row.get("Impact", "")).strip().lower() in {"negative", "adverse"}
         for _, row in rows.iterrows()
     )
-    confirmed = any(
-        len(
-            {
-                _domain(item) for item in group
-                if _domain(item) and not _is_primary(item)
-            }
-            - {
-                _domain(item) for item in group
-                if _domain(item) and _is_primary(item)
-            }
-        ) >= 3
-        and len(
-            {
-                _domain(item) for item in group
-                if _domain(item) and _is_primary(item)
-            }
-        ) >= 1
-        for group in groups
-    )
+    # News is one evidence category only. Three secondary publishers covering
+    # the same event must never manufacture three independent strategy confirmations.
+    # The 3+1 rule is evaluated below using independent price/volume, sector,
+    # accumulation/distribution, and primary-source catalyst categories.
     has_primary_event = any(
         any(_is_primary(item) and _domain(item) for item in group)
         for group in groups
     )
-    status = (
-        "CONFIRMED_3_PLUS_1" if confirmed
-        else "PRIMARY_CONFIRMED" if has_primary_event
-        else "UNVERIFIED"
-    )
+    status = "PRIMARY_CONFIRMED" if has_primary_event else "UNVERIFIED"
     if negative_primary:
         status = "NEGATIVE_PRIMARY_NEWS"
     return {
@@ -337,7 +368,7 @@ def _delivery_pct(row: pd.Series) -> float:
     """Return the five-session average delivery percentage from the first-stage gate.
 
     Do not substitute a single-session delivery value here: V8 eligibility requires
-    five distinct EOD sessions and a strict average greater than 60 percent.
+    five distinct EOD sessions and an average of at least 60 percent (exactly 60 percent passes).
     Missing first-stage evidence remains missing and is handled as WAIT_FOR_DATA.
     """
     return _num(row.get("AvgDelivery5D"))
@@ -412,35 +443,6 @@ def _score_row(row: pd.Series) -> tuple[int, int]:
     return score, available
 
 
-
-
-def _is_final_watch_eligible(row: pd.Series, volume_reason_ok: bool) -> bool:
-    """Single authoritative gate for final EOD WATCH status."""
-    delivery_avg = _num(row.get("AvgDelivery5D", row.get("DeliveryPct")))
-    delivery_sessions = _num(row.get("DeliverySessions"))
-    delivery_gate_pass = (
-        row.get("DeliveryFilterStatus") == "PASS_GE_60_PERCENT"
-        and pd.notna(delivery_avg) and delivery_avg >= 60.0
-        and pd.notna(delivery_sessions) and int(delivery_sessions) == 5
-    )
-    return bool(
-        row.get("CoreTechnicalScreenStatus") == "PASS"
-        and row.get("MandatoryConfirmationStatus") == "PASS"
-        and row.get("MarketRegime") != "RISK_OFF"
-        and row.get("SectorStrengthStatus") == "PASS"
-        and row.get("RiskRewardStatus") == "PASS"
-        and row.get("ChaseStatus") == "CLEAR"
-        and row.get("SetupType") in {"Breakout", "Pullback"}
-        and delivery_gate_pass
-        and row.get("AccumulationDistribution") != "Distribution"
-        and volume_reason_ok
-        and pd.notna(_num(row.get("V8ScoreCoveragePct")))
-        and _num(row.get("V8ScoreCoveragePct")) >= 100
-        and pd.notna(_num(row.get("V8Score")))
-        and _num(row.get("V8Score")) >= 70
-    )
-
-
 def run_eod_layers(
     result: pd.DataFrame,
     historical: list[pd.DataFrame],
@@ -469,7 +471,7 @@ def run_eod_layers(
     output["DeliveryPct"] = delivery
     output["DeliveryClassification"] = delivery.map(
         lambda value: "WAIT_FOR_DATA" if pd.isna(value)
-        else "High Delivery" if value >= 60
+        else "High Delivery" if value > 60
         else "Moderate Delivery" if value >= 25
         else "Low Delivery"
     )
@@ -547,28 +549,17 @@ def run_eod_layers(
         lambda value: "PASS" if value in {"CONFIRMED_3_PLUS_1", "PRIMARY_CONFIRMED"} else "FAIL" if value == "NEGATIVE_PRIMARY_NEWS" else "WAIT_FOR_DATA"
     )
 
-    confirmations = []
+    confirmation_counts = []
+    confirmation_categories = []
     confirmation_statuses = []
     for _, row in output.iterrows():
-        technical = sum([
-            "Bullish" in str(row.get("TrendClassification", "")),
-            _num(row.get("RelativeStrengthNifty")) >= 2 if pd.notna(_num(row.get("RelativeStrengthNifty"))) else False,
-            _num(row.get("RVOL")) >= 1.5 if pd.notna(_num(row.get("RVOL"))) else False,
-            _num(row.get("CLV")) >= 0.60 if pd.notna(_num(row.get("CLV"))) else False,
-        ])
-        confirmations.append(int(technical))
-        confirmations_ok = (
-            technical >= 3
-            and row.get("NewsEvidenceStatus") == "CONFIRMED_3_PLUS_1"
-            and not bool(row.get("NewsNegativePrimary"))
-        )
-        confirmation_statuses.append(
-            "PASS" if confirmations_ok
-            else "WAIT_FOR_DATA" if row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED", "PRIMARY_CONFIRMED"}
-            else "FAIL"
-        )
-    output["TechnicalConfirmations"] = confirmations
-    output["Confirmation3Plus1"] = output["NewsEvidenceStatus"].eq("CONFIRMED_3_PLUS_1")
+        count, categories, status = _independent_confirmation_evaluation(row)
+        confirmation_counts.append(count)
+        confirmation_categories.append(categories)
+        confirmation_statuses.append(status)
+    output["TechnicalConfirmations"] = confirmation_counts
+    output["IndependentConfirmationCategories"] = confirmation_categories
+    output["Confirmation3Plus1"] = [status == "PASS" for status in confirmation_statuses]
     output["MandatoryConfirmationStatus"] = confirmation_statuses
 
     score_coverage = output.apply(_score_row, axis=1)
@@ -637,7 +628,19 @@ def run_eod_layers(
             continue
         rvol = _num(row.get("RVOL"))
         volume_reason_ok = not (pd.notna(rvol) and rvol >= 1.5) or row.get("VolumeReason") == "Demand-led"
-        eligible = _is_final_watch_eligible(row, volume_reason_ok)
+        eligible = (
+            row.get("MandatoryConfirmationStatus") == "PASS"
+            and row.get("MarketRegime") != "RISK_OFF"
+            and row.get("SectorStrengthStatus") == "PASS"
+            and row.get("RiskRewardStatus") == "PASS"
+            and row.get("ChaseStatus") == "CLEAR"
+            and row.get("SetupType") in {"Breakout", "Pullback"}
+            and row.get("DeliveryFilterStatus") == "PASS_GE_60_PERCENT"
+            and row.get("DeliveryStatus") == "PASS"
+            and row.get("AccumulationDistribution") != "Distribution"
+            and volume_reason_ok
+            and _num(row.get("V8Score")) >= 70
+        )
         watch_statuses.append("WATCH" if eligible else "SKIP")
     output["EODWatchlistStatus"] = watch_statuses
     output["EODLayerStatus"] = output["EODWatchlistStatus"].map(
@@ -782,18 +785,9 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
     bars = _normalize_bars(_read_csv(INPUT_DIR / "intraday_bars.csv", INTRADAY_COLUMNS))
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
-    # Next-day validation is downstream of the FINAL EOD watchlist.
-    # Do not promote delivery-pass or technical-rejected rows into next-day checks.
-    required_candidate_cols = {"EODWatchlistStatus", "CoreTechnicalScreenStatus", "DeliveryFilterStatus"}
-    if not required_candidate_cols.issubset(eod_result.columns):
-        candidates = eod_result.iloc[0:0].copy()
-    else:
-        candidates = eod_result[
-            eod_result["EODWatchlistStatus"].astype(str).eq("WATCH")
-            & eod_result["CoreTechnicalScreenStatus"].astype(str).eq("PASS")
-            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GE_60_PERCENT")
-            & eod_result["SetupType"].isin(["Breakout", "Pullback"])
-        ].copy()
+    candidates = eod_result[eod_result["SetupType"].isin([
+        "Breakout", "Pullback", "Pre-Breakout", "Possible Pullback",
+    ])].copy()
     if bars.empty:
         rows = [{"TckrSymb": symbol, "NextDayStatus": "WAIT_FOR_DATA", "NextDayReason": "intraday_bars.csv missing or empty"} for symbol in candidates["TckrSymb"]]
         report = pd.DataFrame(rows, columns=NEXT_DAY_REPORT_COLUMNS)
