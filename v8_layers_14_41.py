@@ -85,14 +85,6 @@ def _num(value) -> float:
         return float("nan")
 
 
-def _bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None or (not isinstance(value, str) and pd.isna(value)):
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "y"}
-
-
 def _text(value) -> str:
     if value is None or pd.isna(value):
         return ""
@@ -342,9 +334,11 @@ def _market_regime(nifty_history: pd.DataFrame, asof) -> str:
 
 
 def _delivery_pct(row: pd.Series) -> float:
-    """Return verified five-session average delivery, if available; otherwise NaN.
+    """Return the five-session average delivery percentage from the first-stage gate.
 
-    Delivery is supportive evidence, not a hard eligibility gate.
+    Do not substitute a single-session delivery value here: V8 eligibility requires
+    five distinct EOD sessions and a strict average greater than 60 percent.
+    Missing first-stage evidence remains missing and is handled as WAIT_FOR_DATA.
     """
     return _num(row.get("AvgDelivery5D"))
 
@@ -365,92 +359,86 @@ def _accumulation_score(frame: pd.DataFrame) -> float:
 
 
 def _score_row(row: pd.Series) -> tuple[int, int]:
-    """Master-spec 100-point score with explicit coverage accounting.
-
-    The master table's listed weights sum to 95 (although it labels the total
-    100). Preserve each listed weight, then normalize the earned score and data
-    coverage to a 100-point scale so the specified score bands remain usable.
-    Missing evidence is not scored as a pass.
-    """
     score = 0
     available = 0
-
-    # 1. Price action (15)
-    change = _num(row.get("PriceChangePct"))
-    pv = str(row.get("PriceVolumeRelationship", ""))
-    clv = _num(row.get("CLV"))
-    rvol = _num(row.get("RVOL"))
-    if pd.notna(change):
-        available += 15
-        if change > 0.5 and pd.notna(rvol) and rvol >= 1.5 and pv not in {"Selling / Distribution", "Price Down + Volume Up"}:
-            score += 15
-        elif change > 0 and pv not in {"Selling / Distribution", "Price Down + Volume Up"}:
-            score += 10
-        elif change >= -0.5:
-            score += 5
-
-    # 2. Volume / RVOL (15)
-    if pd.notna(rvol):
-        available += 15
-        score += 15 if rvol >= 2 else 12 if rvol >= 1.5 else 8 if rvol >= 1.0 else 3 if rvol >= 0.75 else 0
-
-    # 3. Trend (10)
+    weights = {
+        "trend": 15, "rs": 15, "sector": 10, "market": 10,
+        "rvol": 10, "volume": 10, "clv": 10, "setup": 10,
+        "delivery": 5, "ad": 5,
+    }
     trend = str(row.get("TrendClassification", ""))
-    if trend not in {"", "Insufficient Data", "nan", "WAIT_FOR_DATA"}:
-        available += 10
-        score += 10 if "Bullish" in trend else 7 if "Improving" in trend else 3 if "Neutral" in trend else 0
-
-    # 4. Breakout / pullback structure (15)
-    setup = str(row.get("SetupType", ""))
-    breakout = str(row.get("BreakoutStatus", ""))
-    pullback = str(row.get("PullbackStatus", ""))
-    if setup not in {"", "Insufficient Data", "nan", "WAIT_FOR_DATA"}:
-        available += 15
-        if setup == "Breakout" and breakout in {"Breakout", "Strong Breakout"}:
-            score += 15
-        elif setup == "Pullback" and pullback in {"Pullback", "Strong Pullback"}:
-            score += 15
-        elif setup in {"Pre-Breakout", "Possible Pullback"}:
+    if trend not in {"", "Insufficient Data", "nan"}:
+        available += weights["trend"]
+        if "Bullish" in trend:
+            score += weights["trend"]
+        elif "Improving" in trend:
             score += 8
-
-    # 5. Candle quality (10)
-    if pd.notna(clv):
-        available += 10
-        score += 10 if clv >= 0.75 else 7 if clv >= 0.60 else 4 if clv >= 0.50 else 0
-
-    # 6. Relative strength (10)
     rs = _num(row.get("RelativeStrengthNifty"))
     if pd.notna(rs):
-        available += 10
-        score += 10 if rs >= 5 else 8 if rs >= 2 else 5 if rs > 0 else 2 if rs > -2 else 0
-
-    # 7. Sector strength (5)
+        available += weights["rs"]
+        score += weights["rs"] if rs >= 5 else 11 if rs >= 2 else 7 if rs > -2 else 2 if rs > -5 else 0
     sector = _num(row.get("SectorStrengthNifty"))
     if pd.notna(sector):
-        available += 5
-        score += 5 if sector >= 2 else 3 if sector > -2 else 0
-
-    # 8. Market regime (5)
+        available += weights["sector"]
+        score += weights["sector"] if sector >= 2 else 6 if sector > -2 else 0
     regime = str(row.get("MarketRegime", ""))
     if regime in {"RISK_ON", "RISK_OFF", "MIXED"}:
-        available += 5
-        score += 5 if regime == "RISK_ON" else 2 if regime == "MIXED" else 0
-
-    # 9. Delivery (5, optional if unavailable)
+        available += weights["market"]
+        score += 10 if regime == "RISK_ON" else 4 if regime == "MIXED" else 0
+    rvol = _num(row.get("RVOL"))
+    if pd.notna(rvol):
+        available += weights["rvol"]
+        score += 10 if rvol >= 2 else 7 if rvol >= 1.5 else 4 if rvol >= 1.2 else 0
+    reason = str(row.get("VolumeReason", ""))
+    if reason not in {"", "Insufficient Data"}:
+        available += weights["volume"]
+        score += 10 if reason == "Demand-led" else 5 if reason == "Balanced / unclear" else 0
+    clv = _num(row.get("CLV"))
+    if pd.notna(clv):
+        available += weights["clv"]
+        score += 10 if clv >= 0.75 else 7 if clv >= 0.60 else 4 if clv >= 0.5 else 0
+    setup = str(row.get("SetupType", ""))
+    if setup not in {"", "Insufficient Data"}:
+        available += weights["setup"]
+        score += 10 if setup in {"Breakout", "Pullback"} else 5 if setup == "Pre-Breakout" else 3 if setup == "Possible Pullback" else 0
     delivery = _num(row.get("DeliveryPct"))
     if pd.notna(delivery):
-        available += 5
-        score += 5 if delivery >= 60 else 3 if delivery >= 40 else 1 if delivery >= 25 else 0
+        available += weights["delivery"]
+        score += 5 if delivery >= 40 else 3 if delivery >= 25 else 0
+    ad = _num(row.get("AccumulationDistribution20D"))
+    if pd.notna(ad):
+        available += weights["ad"]
+        score += 5 if ad >= 0.20 else 3 if ad > 0 else 0
+    return score, available
 
-    # 10. Catalyst (5): count only evidence backed by a primary/reliable source.
-    news_status = str(row.get("NewsEvidenceStatus", ""))
-    negative_primary = _bool(row.get("NewsNegativePrimary", False))
-    impact = str(row.get("NewsCatalystImpact", "neutral")).strip().lower()
-    if news_status in {"PRIMARY_CONFIRMED", "CONFIRMED_3_PLUS_1", "NEGATIVE_PRIMARY_NEWS"}:
-        available += 5
-        score += 5 if impact in {"positive", "bullish", "positive / bullish"} and not negative_primary else 3 if not negative_primary else 0
 
-    return round(score * 100 / 95), round(available * 100 / 95)
+
+
+def _is_final_watch_eligible(row: pd.Series, volume_reason_ok: bool) -> bool:
+    """Single authoritative gate for final EOD WATCH status."""
+    delivery_avg = _num(row.get("AvgDelivery5D", row.get("DeliveryPct")))
+    delivery_sessions = _num(row.get("DeliverySessions"))
+    delivery_gate_pass = (
+        row.get("DeliveryFilterStatus") == "PASS_GE_60_PERCENT"
+        and pd.notna(delivery_avg) and delivery_avg >= 60.0
+        and pd.notna(delivery_sessions) and int(delivery_sessions) == 5
+    )
+    return bool(
+        row.get("CoreTechnicalScreenStatus") == "PASS"
+        and row.get("MandatoryConfirmationStatus") == "PASS"
+        and row.get("MarketRegime") != "RISK_OFF"
+        and row.get("SectorStrengthStatus") == "PASS"
+        and row.get("RiskRewardStatus") == "PASS"
+        and row.get("ChaseStatus") == "CLEAR"
+        and row.get("SetupType") in {"Breakout", "Pullback"}
+        and delivery_gate_pass
+        and row.get("AccumulationDistribution") != "Distribution"
+        and volume_reason_ok
+        and pd.notna(_num(row.get("V8ScoreCoveragePct")))
+        and _num(row.get("V8ScoreCoveragePct")) >= 100
+        and pd.notna(_num(row.get("V8Score")))
+        and _num(row.get("V8Score")) >= 70
+    )
 
 
 def run_eod_layers(
@@ -481,14 +469,20 @@ def run_eod_layers(
     output["DeliveryPct"] = delivery
     output["DeliveryClassification"] = delivery.map(
         lambda value: "WAIT_FOR_DATA" if pd.isna(value)
-        else "High Delivery" if value > 60
+        else "High Delivery" if value >= 60
         else "Moderate Delivery" if value >= 25
         else "Low Delivery"
     )
-    # Delivery is an optional evidence layer. A verified five-session average is
-    # DATA_AVAILABLE whether above or below 60%; it is never a universal hard gate.
-    output["DeliveryStatus"] = delivery.map(
-        lambda value: "WAIT_FOR_DATA" if pd.isna(value) else "DATA_AVAILABLE"
+    # Trust only the explicit result of the first-stage five-session delivery gate.
+    # Do not infer PASS from one day's delivery percentage or from a non-missing value.
+    filter_status = output.get(
+        "DeliveryFilterStatus",
+        pd.Series("WAIT_FOR_DATA", index=output.index),
+    ).fillna("WAIT_FOR_DATA").astype(str)
+    output["DeliveryStatus"] = filter_status.map(
+        lambda value: "PASS" if value == "PASS_GE_60_PERCENT"
+        else "WAIT_FOR_DATA" if value == "WAIT_FOR_DATA"
+        else "FAIL"
     )
 
     def volume_reason(row):
@@ -556,39 +550,25 @@ def run_eod_layers(
     confirmations = []
     confirmation_statuses = []
     for _, row in output.iterrows():
-        # Three independent evidence categories, plus one separately verified
-        # primary source. Repeated news articles are never counted as three signals.
-        change = _num(row.get("PriceChangePct"))
-        rvol_value = _num(row.get("RVOL"))
-        price_volume_ok = (
-            (pd.notna(change) and change > 0 and pd.notna(rvol_value) and rvol_value >= 1.5)
-            or str(row.get("PriceVolumeRelationship", "")) == "Strong Bullish"
+        technical = sum([
+            "Bullish" in str(row.get("TrendClassification", "")),
+            _num(row.get("RelativeStrengthNifty")) >= 2 if pd.notna(_num(row.get("RelativeStrengthNifty"))) else False,
+            _num(row.get("RVOL")) >= 1.5 if pd.notna(_num(row.get("RVOL"))) else False,
+            _num(row.get("CLV")) >= 0.60 if pd.notna(_num(row.get("CLV"))) else False,
+        ])
+        confirmations.append(int(technical))
+        confirmations_ok = (
+            technical >= 3
+            and row.get("NewsEvidenceStatus") == "CONFIRMED_3_PLUS_1"
+            and not bool(row.get("NewsNegativePrimary"))
         )
-        setup_value = str(row.get("SetupType", ""))
-        trend_value = str(row.get("TrendClassification", ""))
-        technical_structure_ok = setup_value in {"Breakout", "Pullback"} and ("Bullish" in trend_value or "Improving" in trend_value)
-        rs_value = _num(row.get("RelativeStrengthNifty"))
-        sector_value = _num(row.get("SectorStrengthNifty"))
-        sector_rs_ok = pd.notna(rs_value) and rs_value > 0 and pd.notna(sector_value) and sector_value > -2
-        delivery_value = _num(row.get("DeliveryPct"))
-        delivery_ok = pd.notna(delivery_value) and delivery_value >= 40
-        market_value = str(row.get("MarketRegime", ""))
-        market_ok = market_value in {"RISK_ON", "MIXED"}
-        catalyst_value = str(row.get("NewsEvidenceStatus", "")) in {"PRIMARY_CONFIRMED", "CONFIRMED_3_PLUS_1"} and not bool(row.get("NewsNegativePrimary"))
-        independent = [price_volume_ok, technical_structure_ok, sector_rs_ok, delivery_ok, market_ok, catalyst_value]
-        independent_count = sum(bool(value) for value in independent)
-        confirmations.append(int(independent_count))
-        primary_source_verified = str(row.get("NewsEvidenceStatus", "")) in {"PRIMARY_CONFIRMED", "CONFIRMED_3_PLUS_1"}
-        negative_primary = _bool(row.get("NewsNegativePrimary")) or str(row.get("NewsEvidenceStatus", "")) == "NEGATIVE_PRIMARY_NEWS"
-        confirmations_ok = independent_count >= 3 and primary_source_verified and not negative_primary
         confirmation_statuses.append(
             "PASS" if confirmations_ok
-            else "WAIT_FOR_DATA" if str(row.get("NewsEvidenceStatus", "")) in {"NO_DATA", "UNVERIFIED"} or row.get("SectorStrengthStatus") == "WAIT_FOR_DATA"
+            else "WAIT_FOR_DATA" if row.get("NewsEvidenceStatus") in {"NO_DATA", "UNVERIFIED", "PRIMARY_CONFIRMED"}
             else "FAIL"
         )
     output["TechnicalConfirmations"] = confirmations
-    output["IndependentConfirmations"] = confirmations
-    output["Confirmation3Plus1"] = [status == "PASS" for status in confirmation_statuses]
+    output["Confirmation3Plus1"] = output["NewsEvidenceStatus"].eq("CONFIRMED_3_PLUS_1")
     output["MandatoryConfirmationStatus"] = confirmation_statuses
 
     score_coverage = output.apply(_score_row, axis=1)
@@ -646,36 +626,18 @@ def run_eod_layers(
 
     watch_statuses = []
     for _, row in output.iterrows():
-        # The Top-20 receives complete evidence collection, but a failed core
-        # technical screen can never become a final EOD WATCH candidate.
-        core_screen = str(row.get("CoreTechnicalScreenStatus", "PASS")).strip().upper()
-        if core_screen not in {"PASS", "PASS_CORE_SCREEN_OUTSIDE_TOP20"}:
-            watch_statuses.append("SKIP")
-            continue
         score_coverage = _num(row.get("V8ScoreCoveragePct"))
         required_data = [
             row.get("SectorStrengthStatus"), row.get("MarketRegimeStatus"),
-            row.get("AccumulationDistributionStatus"), row.get("NewsStatus"),
-            row.get("RiskRewardStatus"),
+            row.get("DeliveryStatus"), row.get("AccumulationDistributionStatus"),
+            row.get("NewsStatus"), row.get("RiskRewardStatus"),
         ]
-        # Missing optional delivery data may reduce coverage by 5 points, but
-        # does not reject an otherwise complete setup.
-        if "WAIT_FOR_DATA" in required_data or pd.isna(score_coverage) or score_coverage < 95:
+        if "WAIT_FOR_DATA" in required_data or pd.isna(score_coverage) or score_coverage < 100:
             watch_statuses.append("WAIT_FOR_DATA")
             continue
         rvol = _num(row.get("RVOL"))
         volume_reason_ok = not (pd.notna(rvol) and rvol >= 1.5) or row.get("VolumeReason") == "Demand-led"
-        eligible = (
-            row.get("MandatoryConfirmationStatus") == "PASS"
-            and row.get("MarketRegime") != "RISK_OFF"
-            and row.get("SectorStrengthStatus") == "PASS"
-            and row.get("RiskRewardStatus") == "PASS"
-            and row.get("ChaseStatus") == "CLEAR"
-            and row.get("SetupType") in {"Breakout", "Pullback"}
-            and row.get("AccumulationDistribution") != "Distribution"
-            and volume_reason_ok
-            and _num(row.get("V8Score")) >= 70
-        )
+        eligible = _is_final_watch_eligible(row, volume_reason_ok)
         watch_statuses.append("WATCH" if eligible else "SKIP")
     output["EODWatchlistStatus"] = watch_statuses
     output["EODLayerStatus"] = output["EODWatchlistStatus"].map(
@@ -820,9 +782,18 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
     bars = _normalize_bars(_read_csv(INPUT_DIR / "intraday_bars.csv", INTRADAY_COLUMNS))
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
-    candidates = eod_result[eod_result["SetupType"].isin([
-        "Breakout", "Pullback", "Pre-Breakout", "Possible Pullback",
-    ])].copy()
+    # Next-day validation is downstream of the FINAL EOD watchlist.
+    # Do not promote delivery-pass or technical-rejected rows into next-day checks.
+    required_candidate_cols = {"EODWatchlistStatus", "CoreTechnicalScreenStatus", "DeliveryFilterStatus"}
+    if not required_candidate_cols.issubset(eod_result.columns):
+        candidates = eod_result.iloc[0:0].copy()
+    else:
+        candidates = eod_result[
+            eod_result["EODWatchlistStatus"].astype(str).eq("WATCH")
+            & eod_result["CoreTechnicalScreenStatus"].astype(str).eq("PASS")
+            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GE_60_PERCENT")
+            & eod_result["SetupType"].isin(["Breakout", "Pullback"])
+        ].copy()
     if bars.empty:
         rows = [{"TckrSymb": symbol, "NextDayStatus": "WAIT_FOR_DATA", "NextDayReason": "intraday_bars.csv missing or empty"} for symbol in candidates["TckrSymb"]]
         report = pd.DataFrame(rows, columns=NEXT_DAY_REPORT_COLUMNS)
