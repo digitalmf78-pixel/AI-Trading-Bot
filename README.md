@@ -1,53 +1,48 @@
-# AI Trading Bot — NSE Swing Trading V8
+# NSE Swing Trading System V8
 
-This repository calculates an end-of-day research watchlist and optional next-day / open-position reviews. It **does not place orders**. Scores never override the V8 confirmation gate, and unavailable inputs produce `WAIT_FOR_DATA` rather than a trade signal.
+This repository generates an end-of-day (EOD) research shortlist and optional next-session/open-position reviews. It does **not** place orders. A score never overrides a mandatory gate, and missing or unverified evidence must remain `WAIT_FOR_DATA`.
 
-## Layers
+## V8 flow
 
-- Layers 1–13: NSE Bhavcopy, volume/price studies, indicators, support/resistance, and relative strength vs Nifty.
-- Layers 14–24: sector and market context, delivery/volume inference, accumulation/distribution, verified news gate, score, risk/reward, chase filter, and EOD watchlist.
-- Layers 25–34: next-session gap and opening checks, intraday VWAP/RVOL/RSI, index confirmation, breakout confirmation, and entry review.
-- Layers 35–41: supplied-position review, thesis/news/selling-pressure checks, target/trailing-stop management, and HOLD/CAUTION/REDUCE/EXIT review labels.
+1. Download NSE EOD Bhavcopy and rank the RVOL Top 20 using the previous 20 full sessions as the RVOL baseline (the current session is excluded from that baseline).
+2. Apply the five-valid-session Average Delivery filter: **average Delivery % >= 60.00% passes; below 60% rejects; fewer than five valid distinct sessions means `WAIT_FOR_DATA`.**
+3. Apply price/volume, trend, breakout/pullback, support/resistance, relative-strength and market-context checks.
+4. Require the 3+1 confirmation gate: at least **three independent evidence categories** plus a **separately verified primary/reliable source**. Categories may include price/volume, sector strength, accumulation/distribution and a real catalyst/news event. Multiple publishers repeating the same event remain one catalyst category.
+5. Produce an EOD `WATCH` only when all required gates, score coverage, risk/reward and chase checks pass.
+6. Run next-session opening checks only for final EOD `WATCH` candidates. Missing intraday data stays `WAIT_FOR_DATA`; no rejected or incomplete EOD candidate should enter this stage.
 
-The later layers are implemented in `v8_layers_14_41.py`. Inputs are optional CSVs under `data/inputs/`; the program creates header-only templates when they are absent. It writes reports to `outputs/`.
+## Primary-source handling
 
-## Input files
+`SourceType=primary` by itself is not enough. Official/exchange/regulator records must use a recognized official domain (for example, NSE/BSE or a regulator domain). A manually reviewed issuer website may use `SourceType=company_verified` or `issuer_verified` when `SourceDomain` matches the URL host. A source that cannot be verified remains unverified. An NSE RSS item is attributed to the official NSE feed as the publisher; its item URL is the linked filing.
 
-### `data/inputs/sector_map.csv`
+## Input CSVs
 
-Columns: `TckrSymb,Sector,SectorIndexSymbol`. One row per stock. `SectorIndexSymbol` must match the index symbol used in `intraday_bars.csv`.
+- `data/inputs/sector_map.csv`: `TckrSymb,Sector,SectorIndexSymbol`
+- `data/inputs/sector_history.csv`: `Date,Sector,Close`; at least 21 distinct EOD closes including the target EOD date are needed for a 20-session return.
+- `data/inputs/news_evidence.csv`: `TckrSymb,PublishedAt,Headline,Source,SourceType,URL,Impact,EventID,SourceDomain`
+- `data/inputs/intraday_bars.csv`: `Symbol,Datetime,Open,High,Low,Close,Volume`; use 5-minute or finer bars and include stocks, Nifty, and verified sector index symbols.
+- `data/inputs/positions.csv`: `TckrSymb,Quantity,AverageEntryPrice,InitialStop,Target,EntryDate,Thesis`
 
-### `data/inputs/sector_history.csv`
-
-Columns: `Date,Sector,Close`. Provide at least 21 trading closes per sector, including the EOD date, for the 20-session sector return.
-
-### `data/inputs/news_evidence.csv`
-
-Columns: `TckrSymb,PublishedAt,Headline,Source,SourceType,URL,Impact,EventID` (optional `SourceDomain` for RSS publishers). Use ISO-8601 timestamps with timezone. Set `SourceType` to `primary`/`official` for an issuer, exchange, or regulator source; other publishers are secondary sources. `Impact` accepts `positive`, `negative`, or `neutral`. Use the same `EventID` for copies of the same event. Similar headlines are also grouped so copies across sites do not count as separate confirmations.
-
-The 3+1 gate requires one event with at least three distinct secondary source domains and one distinct primary source domain. This is intentionally strict; unverified or missing news cannot pass.
-
-The daily RVOL Top 20 is also checked against NSE's public company-announcement and integrated-financial RSS feeds. Google News RSS is used only to discover secondary coverage. Automatic matches are written to `data/inputs/news_evidence_auto.csv`; the review report is `outputs/v8_catalyst_top20.csv`. A single NSE filing is marked as a verified event, while the separate 3+1 confirmation gate remains in force for a full V8 watchlist result. The Marathi impact label is a headline-based first pass; the linked filing is the source of truth, and timing alone does not prove that an announcement caused a price move.
-
-### `data/inputs/intraday_bars.csv`
-
-Columns: `Symbol,Datetime,Open,High,Low,Close,Volume`. Include the candidate stocks, Nifty bars identified as `NIFTY50` (or `NIFTY`/`^NSEI`), and sector index symbols. For opening RVOL, include at least five previous sessions of bars for the same symbol at the corresponding time of day, plus the next-session bars. Bars should be 5-minute or finer and timestamps should include a timezone.
-
-### `data/inputs/positions.csv`
-
-Columns: `TckrSymb,Quantity,AverageEntryPrice,InitialStop,Target,EntryDate,Thesis`. One row per open position. Do not put real holdings or account details in a public GitHub repository; use a private local checkout or a private storage mechanism.
+Missing sector membership or exact-date sector history is not guessed: it remains `WAIT_FOR_DATA`. An ETF is not assigned to an unrelated sector index simply because its name sounds similar.
 
 ## Reports
 
-- `outputs/v8_eod_watchlist.csv`: per-symbol factor values, score, data coverage, and `WATCH`, `SKIP`, or `WAIT_FOR_DATA` status.
-- `outputs/v8_next_day_entry.csv`: opening validation results; `ENTRY_ELIGIBLE_REVIEW` still requires a person's review.
-- `outputs/v8_position_monitor.csv`: HOLD/CAUTION/REDUCE/EXIT review labels; no broker action is sent.
-- `outputs/v8_layer_status_summary.csv`: layer-by-layer input availability for Layers 14–41.
+- `outputs/v8_rvol_top20_delivery_audit.csv`: RVOL Top 20 with five-session delivery audit.
+- `outputs/v8_eod_watchlist.csv`: per-symbol EOD gates, score, coverage and status.
+- `outputs/v8_catalyst_top20.csv`: catalyst/source audit; OHLCV patterns are not proof of a real-world cause.
+- `outputs/v8_next_day_entry.csv`: opening validation. `ENTRY_ELIGIBLE_REVIEW` still requires human review.
+- `outputs/v8_position_monitor.csv`: supplied-position review labels only; no broker action is sent.
+- `outputs/v8_layer_status_summary.csv`: layer-by-layer data availability for Layers 14–41.
 
-## Current configurable rules
+## Tests and GitHub Actions
 
-The checkpoint specified the 3+1 rule and preferred R:R of at least 1:2 but did not specify detailed formulas or weights for every later layer. The current implementation uses conservative defaults in `v8_layers_14_41.py`: sector/Nifty relative thresholds of ±2%, EMA20/EMA50 market regime, delivery classifications at 25%/40%, a minimum V8 score of 70 with full score-input coverage, and a weighted score (trend 15, RS 15, sector 10, market 10, RVOL 10, volume 10, CLV 10, setup 10, delivery 5, accumulation 5). WATCH also requires the 3+1 news gate, no risk-off regime, a non-weak sector, no distribution classification, and at least 1:2 R:R. The chase filter flags a close more than 3% above the planned entry, over 2 ATR above EMA20, or up more than 8% on the day. Sector mapping/history still must be supplied. Review these assumptions before relying on the report. A volume label is only a price/volume inference, not proof of a real-world catalyst.
+Run local regression tests with:
 
-## GitHub Actions
+```bash
+python -m py_compile delivery_filter.py news_catalyst.py v8_layers_14_41.py test_v8_regression.py
+python test_v8_regression.py
+```
 
-Run **Actions → NSE Data Test → Run workflow**. Telegram is off by default; turn on `send_telegram` only when a message is wanted. GitHub Actions caches downloaded Bhavcopies and confirmed NSE 404 dates for reuse on later runs. The job uploads report CSVs and input templates as an artifact. The workflow is manual and does not automatically run after a commit.
+The additive workflow in `.github/workflows/v8-regression.yml` runs these checks on push, pull requests and manual dispatch. The normal `NSE Data Test` workflow remains the end-to-end scan and uploads its reports as an artifact.
+
+The exact formulas/weights not defined by the master specification are conservative implementation defaults. Do not treat generated watchlists as financial advice or automatic orders. Verify the primary filing, liquidity, risk and current market context before any human decision.
