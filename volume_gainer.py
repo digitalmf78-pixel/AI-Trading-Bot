@@ -951,12 +951,13 @@ def calculate_5d_volume(
 
 
 def prepare_primary_shortlist(result, eod_date):
-    """Build the V8 primary shortlist using the mandatory 3-of-5 low-volume rule.
+    """Keep candidates with complete volume history; delivery is the requested gate.
 
-    A stock qualifies only when all five prior sessions and all 20 baseline
-    sessions are available AND at least 3 of the previous 5 sessions had volume
-    below that stock's prior-20-session average. Missing history is WAIT_FOR_DATA;
-    fewer than 3 low-volume days is FILTERED_OUT, not passed to RVOL ranking.
+    The user-confirmed selection rule is average delivery percentage greater than
+    or equal to 60% over the latest five valid sessions. A 3-of-5 low-volume rule is
+    NOT used as a filter or setup requirement. Five-session volume-pattern and
+    prior-20-session baseline data are still validated for reliable RVOL/analysis.
+    Incomplete history remains WAIT_FOR_DATA.
     """
     if result is None or result.empty:
         print("[PRIMARY SHORTLIST] No rows available after 5-day volume analysis.")
@@ -967,36 +968,24 @@ def prepare_primary_shortlist(result, eod_date):
         frame.get("AvgVolumeSessions", pd.Series(index=frame.index, dtype=float)),
         errors="coerce",
     )
-    low_days = pd.to_numeric(
-        frame.get("LowVolumeDays5D", pd.Series(index=frame.index, dtype=float)),
-        errors="coerce",
-    )
     pattern = frame.get(
         "VolumePattern5D", pd.Series("Insufficient", index=frame.index)
     ).astype(str)
     enough_5d = pattern.ne("Insufficient")
     enough_20d = avg_sessions.eq(20)
-    complete = enough_5d & enough_20d & low_days.notna()
-    rule_pass = low_days.ge(3)
-    eligible = complete & rule_pass
+    complete = enough_5d & enough_20d
 
-    frame["LowVolume60Pass"] = low_days.ge(3)
-    frame["LowVolumeRuleStatus"] = [
-        "PASS_3_OF_5_OR_MORE" if is_complete and days >= 3
-        else "FILTERED_OUT_LT_3_OF_5" if is_complete and pd.notna(days)
-        else "WAIT_FOR_DATA"
-        for is_complete, days in zip(complete, low_days)
-    ]
+    # Keep legacy audit columns for compatibility, but do not use low-volume
+    # day counts as a filter or as a required setup condition.
+    frame["LowVolume60Pass"] = pd.NA
+    frame["LowVolumeRuleStatus"] = "NOT_USED_DELIVERY_PERCENTAGE_IS_THE_REQUIRED_VOLUME_SELECTION_GATE"
     frame["PrimaryShortlistStatus"] = [
-        "PASS" if is_eligible else "FILTERED_OUT_LT_3_OF_5" if is_complete
-        else "WAIT_FOR_DATA"
-        for is_eligible, is_complete in zip(eligible, complete)
+        "PASS" if is_complete else "WAIT_FOR_DATA" for is_complete in complete
     ]
     frame["PrimaryShortlistReason"] = [
-        "PASS_5D_HISTORY_20D_BASELINE_AND_AT_LEAST_3_LOW_VOLUME_DAYS" if is_eligible
-        else "LOW_VOLUME_DAYS_BELOW_3_OF_5" if is_complete
-        else "INSUFFICIENT_5D_OR_20D_VOLUME_HISTORY"
-        for is_eligible, is_complete in zip(eligible, complete)
+        "PASS_COMPLETE_5D_AND_PRIOR_20D_HISTORY_DELIVERY_GATE_APPLIED_AFTER_RVOL_TOP20"
+        if is_complete else "WAIT_INSUFFICIENT_5D_OR_PRIOR_20D_VOLUME_HISTORY"
+        for is_complete in complete
     ]
 
     audit_cols = [
@@ -1008,7 +997,7 @@ def prepare_primary_shortlist(result, eod_date):
     ]
     audit = frame[audit_cols].copy()
     audit.insert(0, "EODDate", str(eod_date))
-    primary = frame.loc[eligible].copy()
+    primary = frame.loc[complete].copy()
 
     os.makedirs(os.path.join("data", "reports"), exist_ok=True)
     audit_path = os.path.join(
@@ -1017,9 +1006,10 @@ def prepare_primary_shortlist(result, eod_date):
     )
     audit.to_csv(audit_path, index=False)
     print(
-        f"[PRIMARY SHORTLIST] Eligible={len(primary)}; "
-        f"filtered (<3/5)={int((complete & ~rule_pass).sum())}; "
-        f"WAIT_FOR_DATA={int((~complete).sum())}. Audit: {audit_path}"
+        f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
+        f"WAIT_FOR_DATA={int((~complete).sum())}. "
+        "Low-volume 3/5 rule is NOT USED. AvgDelivery5D >= 60% gate runs after RVOL Top 20. "
+        f"Audit: {audit_path}"
     )
     return primary
 
@@ -2753,7 +2743,7 @@ def select_top20_analysis_candidates(result, eod_date):
     """Select up to 20 technical candidates after core EOD screens.
 
     Delivery has already been applied as a mandatory pre-analysis gate: only candidates
-    with five valid sessions and AvgDelivery5D > 60.00% reach this screen. A candidate
+    with five valid sessions and AvgDelivery5D >= 60.00% reach this screen. A candidate
     must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
     trend/candle, non-negative relative strength, and setup-specific volume rules.
     Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
@@ -2794,8 +2784,8 @@ def select_top20_analysis_candidates(result, eod_date):
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
         # Defensive audit check: the mandatory delivery gate must already have passed.
-        if delivery != "PASS_GT_60_PERCENT":
-            reasons.append("DELIVERY_AVERAGE_NOT_STRICTLY_ABOVE_60_OR_DATA_MISSING")
+        if delivery != "PASS_GE_60_PERCENT":
+            reasons.append("DELIVERY_AVERAGE_BELOW_60_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
@@ -2821,8 +2811,6 @@ def select_top20_analysis_candidates(result, eod_date):
         elif setup == "Pullback":
             if pullback not in {"Pullback", "Strong Pullback"}:
                 reasons.append("PULLBACK_NOT_CONFIRMED")
-            if pd.isna(low_days) or low_days < 3:
-                reasons.append("PULLBACK_LOW_VOLUME_RULE_FAILED_LT_3_OF_5")
 
         selected = len(reasons) == 0
         audit_rows.append({
@@ -3256,7 +3244,7 @@ def main():
     # Do not add placeholder delivery columns here: apply_delivery_filter uses
     # existing candidate columns as-is, so pre-created placeholders could mask
     # the verified audit values. Delivery data is fetched only for RVOL Top 20.
-    print("[DELIVERY] Full-universe scan skipped; strict delivery gate runs after RVOL Top 20.")
+    print("[DELIVERY] Full-universe scan skipped; delivery gate runs after RVOL Top 20.")
 
     # --------------------------------------------------------
     # STEP 3
@@ -3286,10 +3274,10 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 5: PRIMARY SHORTLIST — mandatory >=3/5 low-volume days
+    # STEP 5: PRIMARY SHORTLIST — complete history only
     # --------------------------------------------------------
-    # Attach the prior-20-session baseline for the 5-day check. Do not calculate
-    # or use current-session RVOL to create the primary shortlist.
+    # The user's required selection gate is AvgDelivery5D >= 60%, applied
+    # after RVOL Top 20. Do not use a 3/5 low-volume rule as a filter or setup gate.
     result = current.merge(avg_volume, on="TckrSymb", how="left")
     result = calculate_5d_volume(result, historical)
     result = prepare_primary_shortlist(result, eod_date)
@@ -3304,9 +3292,9 @@ def main():
     # STEP 6A: MANDATORY FIVE-SESSION DELIVERY GATE — RVOL TOP 20 ONLY
     # --------------------------------------------------------
     # Strict rule: arithmetic average Delivery % across the latest five distinct
-    # valid NSE sessions must be > 60.00. Exactly 60.00 or below is rejected.
+    # valid NSE sessions must be >= 60.00. Values below 60.00 are rejected.
     # Missing/invalid per-symbol history is WAIT_FOR_DATA and does not pass.
-    print("\nSTEP 6A: Applying strict five-session delivery gate to RVOL Top 20...")
+    print("\nSTEP 6A: Applying five-session delivery gate to RVOL Top 20...")
     if result.empty:
         result["DeliverySessions"] = pd.Series(dtype="Int64")
         result["AvgDelivery5D"] = pd.Series(dtype="float64")
@@ -3342,12 +3330,12 @@ def main():
             if not result.empty:
                 result["DeliveryFilterStatus"] = result["DeliveryStatus"].astype(str)
             else:
-                print("[DELIVERY] No RVOL Top 20 stock passed AvgDelivery5D > 60.00%; no candidate will proceed.")
+                print("[DELIVERY] No RVOL Top 20 stock passed AvgDelivery5D >= 60.00%; no candidate will proceed.")
             print(f"[DELIVERY] Qualified candidates passed to price/volume analysis: {len(result)}")
         except Exception as exc:
             # Fail closed: unavailable official delivery history must never be
             # interpreted as a pass or allow unverified candidates to proceed.
-            print(f"[DELIVERY] WAIT_FOR_DATA: strict delivery gate could not be verified: {exc}")
+            print(f"[DELIVERY] WAIT_FOR_DATA: delivery gate could not be verified: {exc}")
             result = result.iloc[0:0].copy()
             result["DeliverySessions"] = pd.Series(dtype="Int64")
             result["AvgDelivery5D"] = pd.Series(dtype="float64")
@@ -3387,15 +3375,11 @@ def main():
             analysis_history
         )
     )
-    # The mandatory >=3/5 low-volume-days gate was already applied before RVOL.
-    # Keep this field as an audit trace for the selected Top-20 candidates.
+    # LowVolumeDays5D may remain as descriptive data only. It is not a selection
+    # condition; the mandatory five-session AvgDelivery5D >= 60% gate is the user's
+    # requested volume-related eligibility rule.
     if "LowVolumeDays5D" in result.columns:
-        low_days = pd.to_numeric(result["LowVolumeDays5D"], errors="coerce")
-        setup_values = result.get("SetupType", pd.Series("", index=result.index)).astype(str)
-        result["LowVolumeRuleStatus"] = [
-            "PASS" if pd.notna(days) and days >= 3 else "FAIL"
-            for setup, days in zip(setup_values, low_days)
-        ]
+        result["LowVolumeRuleStatus"] = "NOT_USED_DELIVERY_PERCENTAGE_IS_THE_REQUIRED_VOLUME_SELECTION_GATE"
 
     # --------------------------------------------------------
     # STEP 11
