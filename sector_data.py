@@ -379,48 +379,103 @@ def _targeted_shortlist_mappings(
     existing_mapping_by_symbol: dict[str, dict[str, str]],
     nifty500_industries: dict[str, str],
     asof: pd.Timestamp,
+    nse_classifications: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
-    """Map shortlist symbols from verified tracked-index membership or official Nifty 500 Industry.
+    """Map shortlist symbols using official index membership, NSE quote sector,
+    or an exact official Nifty 500 Industry-to-benchmark rule.
 
-    The Industry fallback assigns a benchmark only for exact, explicitly mapped
-    official classification labels. It does not infer sector from ticker/company
-    name. Stocks outside these sources remain WAIT_FOR_DATA.
+    No sector is inferred from a ticker/company name. Unknown labels remain
+    WAIT_FOR_DATA and never become PASS.
     """
+    nse_classifications = nse_classifications or {}
     audit_rows: list[dict[str, str]] = []
     mapping_rows: list[dict[str, str]] = []
     seen: set[str] = set()
+
     for raw_symbol in candidate_symbols:
         symbol = _clean_symbol(raw_symbol)
         if not symbol or symbol in seen:
             continue
         seen.add(symbol)
+
         existing = existing_mapping_by_symbol.get(symbol)
         industry = nifty500_industries.get(symbol, "")
-        mapped = INDUSTRY_TO_TRACKED_INDEX.get(industry)
+        nse_info = nse_classifications.get(symbol, {})
+        macro = _normalise_name(nse_info.get("macro", ""))
+        nse_sector = _normalise_name(nse_info.get("sector", ""))
+        nse_industry = _normalise_name(nse_info.get("industry", ""))
+        basic_industry = _normalise_name(nse_info.get("basicIndustry", ""))
+
+        # Official tracked-index membership is the strongest mapping evidence.
         if existing:
             sector = existing.get("Sector", "")
             index_symbol = existing.get("SectorIndexSymbol", "")
             status = "INDEX_CONSTITUENT"
             reason = "Mapped from official tracked-sector index constituent CSV"
-        elif industry and mapped:
-            sector, index_symbol = mapped
-            status = "OFFICIAL_NIFTY500_INDUSTRY_MAPPED"
-            reason = f"Official Nifty 500 Industry='{industry}' mapped by exact taxonomy rule to tracked benchmark"
-            mapping_rows.append({"TckrSymb": symbol, "Sector": sector, "SectorIndexSymbol": index_symbol})
-            print(f"[SECTOR] Candidate classification {symbol}: {sector} via official Nifty 500 Industry='{industry}'")
         else:
-            sector, index_symbol = "", ""
-            status = "WAIT_FOR_DATA"
-            if industry:
-                reason = f"Official Nifty 500 Industry='{industry}' has no exact tracked benchmark mapping; no sector guessed"
+            official_sector_mapping = OFFICIAL_SECTOR_TO_TRACKED_INDEX.get(nse_sector)
+            industry_mapping = INDUSTRY_TO_TRACKED_INDEX.get(industry)
+
+            if official_sector_mapping:
+                sector, index_symbol = official_sector_mapping
+                status = "OFFICIAL_NSE_SECTOR_MAPPED"
+                reason = (
+                    f"Official NSE quote sector='{nse_sector}' mapped to tracked benchmark; "
+                    f"macro='{macro}', industry='{nse_industry}', basicIndustry='{basic_industry}'"
+                )
+                mapping_rows.append({
+                    "TckrSymb": symbol, "Sector": sector,
+                    "SectorIndexSymbol": index_symbol,
+                })
+                print(f"[SECTOR] Candidate classification {symbol}: {sector} via official NSE sector='{nse_sector}'")
+            elif industry_mapping:
+                sector, index_symbol = industry_mapping
+                status = "OFFICIAL_NIFTY500_INDUSTRY_MAPPED"
+                reason = (
+                    f"Official Nifty 500 Industry='{industry}' mapped by exact taxonomy rule "
+                    "to tracked benchmark"
+                )
+                mapping_rows.append({
+                    "TckrSymb": symbol, "Sector": sector,
+                    "SectorIndexSymbol": index_symbol,
+                })
+                print(f"[SECTOR] Candidate classification {symbol}: {sector} via official Nifty 500 Industry='{industry}'")
             else:
-                reason = "Not in refreshed tracked-sector constituent feeds or official Nifty 500 classification; no sector guessed"
-            print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
+                sector, index_symbol = "", ""
+                status = "WAIT_FOR_DATA"
+                labels = [
+                    label for label in (
+                        f"NSE sector='{nse_sector}'" if nse_sector else "",
+                        f"NSE industry='{nse_industry}'" if nse_industry else "",
+                        f"Nifty 500 Industry='{industry}'" if industry else "",
+                    ) if label
+                ]
+                if labels:
+                    reason = (
+                        "Official classification found but no exact tracked benchmark mapping: "
+                        + "; ".join(labels)
+                        + "; no sector guessed"
+                    )
+                else:
+                    reason = (
+                        "Not found in refreshed tracked-sector constituent feeds, official NSE "
+                        "quote classification, or official Nifty 500 classification; no sector guessed"
+                    )
+                print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
+
+        # Preserve the official NSE labels in the audit even when Nifty 500
+        # Industry was the source that supplied the benchmark mapping.
         audit_rows.append({
-            "Date": asof.strftime("%Y-%m-%d"), "TckrSymb": symbol,
-            "MappingStatus": status, "NSEMacro": "", "NSESector": sector,
-            "NSEIndustry": industry, "NSEBasicIndustry": "", "MappedSector": sector,
-            "SectorIndexSymbol": index_symbol, "Reason": reason,
+            "Date": asof.strftime("%Y-%m-%d"),
+            "TckrSymb": symbol,
+            "MappingStatus": status,
+            "NSEMacro": macro,
+            "NSESector": nse_sector,
+            "NSEIndustry": nse_industry or industry,
+            "NSEBasicIndustry": basic_industry,
+            "MappedSector": sector,
+            "SectorIndexSymbol": index_symbol,
+            "Reason": reason,
         })
 
     report_dir = Path("data") / "reports"
@@ -431,7 +486,10 @@ def _targeted_shortlist_mappings(
         "NSEIndustry", "NSEBasicIndustry", "MappedSector", "SectorIndexSymbol", "Reason",
     ]).to_csv(audit_path, index=False)
     print(f"[SECTOR] Candidate mapping audit: {audit_path} ({len(audit_rows)} symbols)")
-    print(f"[SECTOR] Candidate sector mapping statuses: {pd.Series([r['MappingStatus'] for r in audit_rows]).value_counts().to_dict() if audit_rows else {}}")
+    print(
+        "[SECTOR] Candidate sector mapping statuses: "
+        f"{pd.Series([r['MappingStatus'] for r in audit_rows]).value_counts().to_dict() if audit_rows else {}}"
+    )
     return mapping_rows
 
 
@@ -465,20 +523,46 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
                     seen_symbols.add(symbol)
         time.sleep(0.1)
 
-    # Targeted shortlist mapping: first use exact official tracked-index
-    # membership; then fall back to the official Nifty 500 Industry column for
-    # an exact taxonomy-to-benchmark mapping. No NSE quote API retries and no
-    # ticker/name guessing.
+    # Targeted shortlist mapping: tracked-index membership first, then official
+    # NSE quote sector classification, then the exact official Nifty 500 Industry
+    # taxonomy fallback. NSE quote data is requested only when the Nifty 500
+    # label cannot already map to a tracked benchmark.
     candidate_symbols = candidate_symbols or []
     nifty500_industries = _download_nifty500_industries(session) if candidate_symbols else {}
     existing_mapping_by_symbol = {
         row["TckrSymb"]: row for row in mappings if row.get("TckrSymb")
     }
+
+    nse_classifications: dict[str, dict[str, str]] = {}
+    quote_candidates = []
+    for raw_symbol in candidate_symbols:
+        symbol = _clean_symbol(raw_symbol)
+        if not symbol or symbol in existing_mapping_by_symbol:
+            continue
+        if INDUSTRY_TO_TRACKED_INDEX.get(nifty500_industries.get(symbol, "")):
+            continue
+        quote_candidates.append(symbol)
+
+    if quote_candidates:
+        _warm_nse_session(session)
+        for symbol in quote_candidates:
+            try:
+                info = _nse_quote_industry_classification(session, symbol)
+                if any(str(value or "").strip() for value in info.values()):
+                    nse_classifications[symbol] = info
+                else:
+                    print(f"[SECTOR] NSE quote classification empty for {symbol}")
+            except Exception as exc:
+                # A failed quote must not break the refresh or create a guessed mapping.
+                print(f"[SECTOR] NSE quote classification unavailable for {symbol}: {exc}")
+            time.sleep(0.25)
+
     targeted_mappings = _targeted_shortlist_mappings(
         candidate_symbols=candidate_symbols,
         existing_mapping_by_symbol=existing_mapping_by_symbol,
         nifty500_industries=nifty500_industries,
         asof=asof,
+        nse_classifications=nse_classifications,
     )
     for row in targeted_mappings:
         symbol = row["TckrSymb"]
