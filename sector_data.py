@@ -296,6 +296,33 @@ def _download_nifty500_industries(session: requests.Session) -> dict[str, str]:
 # separately only when a verified scheme-to-index mapping is available.
 NSE_ETF_SECURITIES_URL = "https://nsearchives.nseindia.com/content/equities/eq_etfseclist.csv"
 
+# Reviewed ETF scheme-to-benchmark evidence. Keep this list small and source-backed;
+# never infer an ETF benchmark from the ticker alone. BANKADD is confirmed by DSP
+# as tracking the Nifty Bank Index. INSUREIETF is an ICICI Prudential BSE Insurance
+# ETF; this module currently stores Nifty sector index history, not BSE Insurance
+# index history, so it must remain unmapped rather than being mislabeled Nifty Insurance.
+VERIFIED_ETF_UNDERLYING_INDEX = {
+    "BANKADD": {
+        "sector": "Nifty Bank",
+        "index_symbol": "NIFTY BANK",
+        "status": "ETF_UNDERLYING_INDEX_VERIFIED",
+        "reason": (
+            "Verified DSP Nifty Bank ETF; official DSP scheme page states the underlying index is "
+            "Nifty Bank Index. Official source: "
+            "https://www.dspim.com/invest/mutual-fund-schemes/exchange-traded-funds/nifty-bank-etf/dsnbe-direct-growth"
+        ),
+    },
+}
+VERIFIED_ETF_UNSUPPORTED = {
+    "INSUREIETF": (
+        "ETF_UNDERLYING_INDEX_UNSUPPORTED",
+        "Official NSE listing identifies ICICI Prudential BSE Insurance ETF; this module tracks "
+        "Nifty sector indices and has no verified BSE Insurance index history. Do not map it to "
+        "Nifty Insurance. Official NSE quote: "
+        "https://www.nseindia.com/get-quote/equity/INSUREIETF/ICICI-Prudential-BSE-Insurance-ETF",
+    ),
+}
+
 
 def _download_official_etf_symbols(session: requests.Session) -> set[str]:
     """Return symbols in NSE's official ETF securities CSV; fail closed on bad data."""
@@ -443,12 +470,25 @@ def _targeted_shortlist_mappings(
         basic_industry = _normalise_name(nse_info.get("basicIndustry", ""))
 
         # ETFs need scheme/underlying-index evidence, not company-industry mapping.
-        if symbol in etf_symbols:
+        if symbol in etf_symbols and symbol in VERIFIED_ETF_UNDERLYING_INDEX:
+            reviewed = VERIFIED_ETF_UNDERLYING_INDEX[symbol]
+            sector, index_symbol = reviewed["sector"], reviewed["index_symbol"]
+            status, reason = reviewed["status"], reviewed["reason"]
+            mapping_rows.append({
+                "TckrSymb": symbol, "Sector": sector,
+                "SectorIndexSymbol": index_symbol,
+            })
+            print(f"[SECTOR] ETF benchmark verified {symbol}: {sector} ({index_symbol})")
+        elif symbol in etf_symbols and symbol in VERIFIED_ETF_UNSUPPORTED:
+            status, reason = VERIFIED_ETF_UNSUPPORTED[symbol]
+            sector, index_symbol = "", ""
+            print(f"[SECTOR] ETF benchmark unsupported {symbol}: {reason}")
+        elif symbol in etf_symbols:
             sector, index_symbol = "", ""
             status = "ETF_UNDERLYING_INDEX_REQUIRED"
             reason = (
                 "Symbol appears in the official NSE ETF securities list; ordinary company-sector "
-                "mapping skipped until the ETF scheme's underlying index is verified"
+                "mapping skipped until a verified scheme-to-underlying-index mapping is available"
             )
         # Official tracked-index membership is the strongest mapping evidence for equities.
         elif existing:
