@@ -126,16 +126,33 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     """Return qualifying candidates and full per-symbol audit.
 
     Qualifies only if five distinct valid reports have a valid delivery percentage
-    for the exact SYMBOL+SERIES and their arithmetic mean is >= threshold.
+    for the exact SYMBOL+SERIES and their arithmetic mean is greater than or equal to threshold.
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()
     if symbol_col not in candidates.columns:
         raise ValueError(f"Candidate symbol column missing: {symbol_col}")
 
-    reports = sessions if sessions is not None else get_delivery_sessions(asof_date, 5, session=http_session)
-    if len({day for day, _ in reports}) < 5:
-        raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
+    try:
+        reports = sessions if sessions is not None else get_delivery_sessions(asof_date, 5, session=http_session)
+        if len({day for day, _ in reports}) < 5:
+            raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
+    except RuntimeError as exc:
+        if "WAIT_FOR_DATA" not in str(exc):
+            raise
+        print(f"[DELIVERY] {exc}")
+        audit = candidates.copy()
+        audit["DeliverySessions"] = 0
+        audit["AvgDelivery5D"] = float("nan")
+        audit["LatestDeliveryPct"] = float("nan")
+        audit["DeliveryStatus"] = "WAIT_FOR_DATA"
+        audit["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
+        AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+        audit_path = AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
+        audit.to_csv(audit_path, index=False)
+        print("[DELIVERY] No candidates allowed through because required data is missing.")
+        print(f"[DELIVERY] WAIT_FOR_DATA audit saved: {audit_path}")
+        return candidates.iloc[0:0].copy(), audit
 
     pieces = []
     for report_date, raw in reports:
@@ -174,6 +191,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "AvgDelivery5D": avg,
             "LatestDeliveryPct": by_date.get(_parse_date(asof_date).isoformat(), float("nan")),
             "DeliveryStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GE_60_PERCENT" if avg >= minimum_average else "FILTERED_OUT_LT_60_PERCENT"),
+            "DeliveryFilterStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GE_60_PERCENT" if avg >= minimum_average else "FILTERED_OUT_LT_60_PERCENT"),
         })
         for i, (report_date, _) in enumerate(reports, start=1):
             record[f"Delivery_{report_date.isoformat()}"] = by_date.get(report_date.isoformat(), float("nan"))
@@ -187,7 +205,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     print(f"[DELIVERY] Candidates checked: {len(audit)}")
     print(f"[DELIVERY] Qualified (>={minimum_average:.1f}%): {len(qualified)}")
     print(f"[DELIVERY] WAIT_FOR_DATA: {(audit['DeliveryStatus'] == 'WAIT_FOR_DATA').sum()}")
-    print(f"[DELIVERY] Filtered out (<{minimum_average:.1f}%): {(audit['DeliveryStatus'] == 'FILTERED_OUT_LT_60_PERCENT').sum()}")
+    print(f"[DELIVERY] Filtered out (< {minimum_average:.1f}%): {(audit['DeliveryStatus'] == 'FILTERED_OUT_LT_60_PERCENT').sum()}")
     print(f"[DELIVERY] Audit saved: {audit_path}")
 
     # Restore original candidate columns plus audit metrics.
