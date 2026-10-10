@@ -1,3 +1,4 @@
+```yaml
 name: NSE Data Test
 
 on:
@@ -32,5 +33,23 @@ jobs:
           python -m py_compile news_catalyst.py
           python -m py_compile v8_layers_14_41.py
 
-      - name: Run NSE Bhavcopy Test
-        run: python nse_bhavcopy_test.py
+      - name: Run NSE Test and Save Log
+        id: nse_test
+        shell: bash
+        run: |
+          mkdir -p diagnostics
+          set +e
+          python -u nse_bhavcopy_test.py 2>&1 | tee diagnostics/nse-test.log
+          test_status=${PIPESTATUS[0]}
+          echo "exit_code=$test_status" >> "$GITHUB_OUTPUT"
+          exit "$test_status"
+
+      - name: Upload NSE Test Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-data-test-diagnostics
+          path: diagnostics/nse-test.log
+          if-no-files-found: error
+          retention-days: 7
+```
