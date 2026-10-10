@@ -150,9 +150,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         & candidates["TckrSymb"].str.lower().ne("nan")
     ].drop_duplicates(subset=["TckrSymb"]).copy()
 
-    # Delivery is optional confirmation in the master V8 specification; do not
-    # silently remove otherwise-valid technical candidates when delivery is <=60%
-    # or unavailable. The caller passes the technical shortlist, not the full universe.
+    # Enforce explicit shortlist gates when the upstream pipeline supplies them.
+    # The caller should pass screened candidates, not the full NSE universe.
     if "SetupType" in candidates.columns:
         setup = candidates["SetupType"].astype(str).str.upper().str.strip()
         candidates = candidates[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
@@ -222,7 +221,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                     "URL": link or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
                     "Impact": _impact(title + " " + description),
                     "EventID": "",
-                    "SourceDomain": _source_domain(link) or "archives.nseindia.com",
+                    "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
                 })
 
     if nse_successes == 0:
