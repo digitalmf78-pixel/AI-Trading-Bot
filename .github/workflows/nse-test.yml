@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   nse-data-test:
+    name: NSE API Diagnostic
     runs-on: ubuntu-latest
 
     steps:
@@ -33,23 +34,22 @@ jobs:
           python -m py_compile news_catalyst.py
           python -m py_compile v8_layers_14_41.py
 
-      - name: Run NSE Test and Save Log
-        id: nse_test
+      - name: Run NSE Test and Save Diagnostics
         shell: bash
         run: |
           mkdir -p diagnostics
           set +e
           python -u nse_bhavcopy_test.py 2>&1 | tee diagnostics/nse-test.log
-          test_status=${PIPESTATUS[0]}
-          echo "exit_code=$test_status" >> "$GITHUB_OUTPUT"
-          exit "$test_status"
+          result=${PIPESTATUS[0]}
+          echo "NSE test exit code: ${result}" | tee -a diagnostics/nse-test.log
+          exit "$result"
 
-      - name: Upload NSE Test Log
+      - name: Upload NSE Test Diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nse-data-test-diagnostics
           path: diagnostics/nse-test.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 ```
