@@ -1,79 +1,40 @@
-name: NSE Data Test
+name: NSE V8 Regression Tests
 
 on:
   workflow_dispatch:
-    inputs:
-      send_telegram:
-        description: Send the report to the configured Telegram chat
-        required: false
-        type: boolean
-        default: false
+  push:
+    paths:
+      - "delivery_filter.py"
+      - "news_catalyst.py"
+      - "v8_layers_14_41.py"
+      - "sector_data.py"
+      - "test_v8_regression.py"
+      - ".github/workflows/v8-regression.yml"
+  pull_request:
+    paths:
+      - "delivery_filter.py"
+      - "news_catalyst.py"
+      - "v8_layers_14_41.py"
+      - "sector_data.py"
+      - "test_v8_regression.py"
+      - ".github/workflows/v8-regression.yml"
+
+permissions:
+  contents: read
 
 jobs:
-  nse-test:
+  regression:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Restore Bhavcopy and Nifty history cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            data/bhavcopy/
-            data/cache/delivery/
-          key: nse-data-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            nse-data-${{ runner.os }}-${{ github.ref_name }}-
-            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
-
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests pandas
-
-      - name: Check repository files
-        run: |
-          echo "===== REPOSITORY FILES ====="
-          ls -lh
-          echo "===== PYTHON VERSION ====="
-          python --version
-          echo "===== DELIVERY FILTER COMPILE ====="
-          python -m py_compile delivery_filter.py volume_gainer.py v8_layers_14_41.py news_catalyst.py
-          echo "Compile check PASSED"
-
-      - name: Run NSE Volume Gainer
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TELEGRAM: ${{ inputs.send_telegram }}
-        run: python -u ./volume_gainer.py
-
-      - name: Diagnose NSE V8 data files
-        if: always()
-        run: |
-          echo "===== DELIVERY REPORTS ====="
-          if [ -d data/reports ]; then find data/reports -maxdepth 2 -type f -print; else echo "data/reports directory does not exist"; fi
-          echo "===== OUTPUT FILES ====="
-          if [ -d outputs ]; then find outputs -maxdepth 2 -type f -print; else echo "outputs directory does not exist"; fi
-          echo "===== DELIVERY AUDIT PREVIEW ====="
-          for f in data/reports/delivery_first_audit_*.csv; do
-            if [ -f "$f" ]; then echo "--- $f"; head -5 "$f"; fi
-          done
-
-      - name: Upload NSE V8 reports and audit files
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: nse-v8-reports-${{ github.run_id }}
-          path: |
-            outputs/**
-            data/reports/**
-            data/inputs/*.csv
-          if-no-files-found: warn
-          compression-level: 6
+        run: python -m pip install --upgrade pip pandas requests
+      - name: Compile V8 modules
+        run: python -m py_compile delivery_filter.py news_catalyst.py sector_data.py v8_layers_14_41.py
+      - name: Run V8 regression tests
+        run: python test_v8_regression.py
