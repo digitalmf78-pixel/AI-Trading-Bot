@@ -1,40 +1,36 @@
-name: NSE V8 Regression Tests
+name: NSE Data Test
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "delivery_filter.py"
-      - "news_catalyst.py"
-      - "v8_layers_14_41.py"
-      - "sector_data.py"
-      - "test_v8_regression.py"
-      - ".github/workflows/v8-regression.yml"
-  pull_request:
-    paths:
-      - "delivery_filter.py"
-      - "news_catalyst.py"
-      - "v8_layers_14_41.py"
-      - "sector_data.py"
-      - "test_v8_regression.py"
-      - ".github/workflows/v8-regression.yml"
 
 permissions:
   contents: read
 
 jobs:
-  regression:
-    runs-on: ubuntu-24.04
+  nse-data-test:
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip pandas requests
-      - name: Compile V8 modules
-        run: python -m py_compile delivery_filter.py news_catalyst.py sector_data.py v8_layers_14_41.py
-      - name: Run V8 regression tests
-        run: python test_v8_regression.py
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy
+
+      - name: Compile Python Modules
+        run: |
+          python -m py_compile nse_bhavcopy_test.py
+          python -m py_compile volume_gainer.py
+          python -m py_compile delivery_filter.py
+          python -m py_compile news_catalyst.py
+          python -m py_compile v8_layers_14_41.py
+
+      - name: Run NSE Bhavcopy Test
+        run: python nse_bhavcopy_test.py
