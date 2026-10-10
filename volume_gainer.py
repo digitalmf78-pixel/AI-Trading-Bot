@@ -2752,8 +2752,9 @@ def calculate_relative_strength_nifty(
 def select_top20_analysis_candidates(result, eod_date):
     """Select up to 20 technical candidates after core EOD screens.
 
-    Delivery is an optional confirmation, never a universal hard gate. A candidate
-    must have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
+    Delivery has already been applied as a mandatory pre-analysis gate: only candidates
+    with five valid sessions and AvgDelivery5D > 60.00% reach this screen. A candidate
+    must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
     trend/candle, non-negative relative strength, and setup-specific volume rules.
     Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
     """
@@ -2792,8 +2793,9 @@ def select_top20_analysis_candidates(result, eod_date):
         support = pd.to_numeric(pd.Series([row.get("SRSupport")]), errors="coerce").iloc[0]
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
-        # Delivery is recorded as context only. The master V8 specification says
-        # unavailable delivery must not automatically reject a stock.
+        # Defensive audit check: the mandatory delivery gate must already have passed.
+        if delivery != "PASS_GT_60_PERCENT":
+            reasons.append("DELIVERY_AVERAGE_NOT_STRICTLY_ABOVE_60_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
@@ -3249,58 +3251,12 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 2A: OPTIONAL DELIVERY EVIDENCE (CURRENT + PREVIOUS 4 SESSIONS)
+    # STEP 2A: DELIVERY SCREEN DEFERRED UNTIL AFTER RVOL TOP 20
     # --------------------------------------------------------
-    # Master-spec alignment: delivery supports accumulation analysis but is not a
-    # universal eligibility gate. Preserve the entire eligible equity universe;
-    # attach delivery metrics when the official reports are available.
-    print("\nSTEP 2A: Collecting optional five-session delivery evidence...")
-    try:
-        _delivery_qualified_unused, delivery_audit = apply_delivery_filter(
-            current,
-            eod_date,
-            symbol_col="TckrSymb",
-            series_col="SctySrs",
-            minimum_average=60.0,
-        )
-        if delivery_audit is not None and not delivery_audit.empty:
-            metric_cols = [
-                col for col in delivery_audit.columns
-                if col in {"TckrSymb", "SctySrs", "DeliverySessions", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus"}
-                or col.startswith("Delivery_")
-            ]
-            metrics = delivery_audit[metric_cols].drop_duplicates(
-                subset=[col for col in ["TckrSymb", "SctySrs"] if col in metric_cols], keep="last"
-            )
-            join_cols = [col for col in ["TckrSymb", "SctySrs"] if col in current.columns and col in metrics.columns]
-            metric_only = [col for col in metrics.columns if col not in join_cols and col not in current.columns]
-            current = current.merge(metrics[join_cols + metric_only], on=join_cols, how="left")
-        current["DeliveryStatus"] = current.get(
-            "DeliveryStatus", pd.Series("WAIT_FOR_DATA", index=current.index)
-        ).fillna("WAIT_FOR_DATA").astype(str)
-        for optional_col in ["DeliverySessions", "AvgDelivery5D", "LatestDeliveryPct"]:
-            if optional_col not in current.columns:
-                current[optional_col] = pd.NA
-        delivery_values = pd.to_numeric(current["AvgDelivery5D"], errors="coerce")
-        print(
-            "[DELIVERY] Optional evidence attached: "
-            f"available={int(delivery_values.notna().sum())}; "
-            f"WAIT_FOR_DATA={int(delivery_values.isna().sum())}. "
-            "No symbol removed by delivery threshold."
-        )
-    except Exception as exc:
-        print(f"[DELIVERY] Optional data unavailable; continuing without delivery confirmation: {exc}")
-        current["DeliverySessions"] = 0
-        current["AvgDelivery5D"] = pd.NA
-        current["LatestDeliveryPct"] = pd.NA
-        current["DeliveryStatus"] = "WAIT_FOR_DATA"
-    # Keep legacy field names for report compatibility; downstream V8 logic treats
-    # these as evidence labels, not a pass/fail screening gate.
-    current["DeliveryFilterStatus"] = current["DeliveryStatus"].map(
-        lambda value: "PASS_GT_60_PERCENT" if value == "PASS_GT_60_PERCENT"
-        else "FILTERED_OUT_LE_60_PERCENT" if value == "FILTERED_OUT_LE_60_PERCENT"
-        else "WAIT_FOR_DATA"
-    )
+    # Do not add placeholder delivery columns here: apply_delivery_filter uses
+    # existing candidate columns as-is, so pre-created placeholders could mask
+    # the verified audit values. Delivery data is fetched only for RVOL Top 20.
+    print("[DELIVERY] Full-universe scan skipped; strict delivery gate runs after RVOL Top 20.")
 
     # --------------------------------------------------------
     # STEP 3
@@ -3345,7 +3301,62 @@ def main():
     result = select_top20_by_rvol(result, eod_date)
 
     # --------------------------------------------------------
-    # STEP 7: PRICE + VOLUME — only the selected Top 20
+    # STEP 6A: MANDATORY FIVE-SESSION DELIVERY GATE — RVOL TOP 20 ONLY
+    # --------------------------------------------------------
+    # Strict rule: arithmetic average Delivery % across the latest five distinct
+    # valid NSE sessions must be > 60.00. Exactly 60.00 or below is rejected.
+    # Missing/invalid per-symbol history is WAIT_FOR_DATA and does not pass.
+    print("\nSTEP 6A: Applying strict five-session delivery gate to RVOL Top 20...")
+    if result.empty:
+        result["DeliverySessions"] = pd.Series(dtype="Int64")
+        result["AvgDelivery5D"] = pd.Series(dtype="float64")
+        result["LatestDeliveryPct"] = pd.Series(dtype="float64")
+        result["DeliveryStatus"] = pd.Series(dtype="object")
+        result["DeliveryFilterStatus"] = pd.Series(dtype="object")
+        print("[DELIVERY] RVOL Top 20 is empty; delivery gate has no candidates to evaluate.")
+    else:
+        try:
+            # Drop any legacy/stale delivery fields before filtering so the
+            # verified five-session audit values cannot be masked by old columns.
+            stale_delivery_cols = [
+                col for col in result.columns
+                if col in {"DeliverySessions", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus"}
+                or str(col).startswith("Delivery_")
+            ]
+            delivery_input = result.drop(columns=stale_delivery_cols, errors="ignore").copy()
+            delivery_qualified, delivery_audit = apply_delivery_filter(
+                delivery_input,
+                eod_date,
+                symbol_col="TckrSymb",
+                series_col="SctySrs",
+                minimum_average=60.0,
+            )
+            if delivery_audit is not None and not delivery_audit.empty:
+                delivery_audit_path = os.path.join(
+                    "outputs", "v8_rvol_top20_delivery_audit.csv"
+                )
+                os.makedirs("outputs", exist_ok=True)
+                delivery_audit.to_csv(delivery_audit_path, index=False)
+                print(f"[DELIVERY] RVOL Top 20 audit saved: {delivery_audit_path}")
+            result = delivery_qualified.copy()
+            if not result.empty:
+                result["DeliveryFilterStatus"] = result["DeliveryStatus"].astype(str)
+            else:
+                print("[DELIVERY] No RVOL Top 20 stock passed AvgDelivery5D > 60.00%; no candidate will proceed.")
+            print(f"[DELIVERY] Qualified candidates passed to price/volume analysis: {len(result)}")
+        except Exception as exc:
+            # Fail closed: unavailable official delivery history must never be
+            # interpreted as a pass or allow unverified candidates to proceed.
+            print(f"[DELIVERY] WAIT_FOR_DATA: strict delivery gate could not be verified: {exc}")
+            result = result.iloc[0:0].copy()
+            result["DeliverySessions"] = pd.Series(dtype="Int64")
+            result["AvgDelivery5D"] = pd.Series(dtype="float64")
+            result["LatestDeliveryPct"] = pd.Series(dtype="float64")
+            result["DeliveryStatus"] = pd.Series(dtype="object")
+            result["DeliveryFilterStatus"] = pd.Series(dtype="object")
+
+    # --------------------------------------------------------
+    # STEP 7: PRICE + VOLUME — only delivery-qualified Top 20
     # --------------------------------------------------------
     result = calculate_price_volume_relationship(result)
 
