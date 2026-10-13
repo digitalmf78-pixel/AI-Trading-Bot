@@ -4,10 +4,12 @@ Run: python test_v8_regression.py
 from datetime import date, timedelta
 from pathlib import Path
 import tempfile
+import os
 
 import pandas as pd
 
 import delivery_filter as delivery
+import sector_data
 import v8_layers_14_41 as layers
 
 
@@ -79,6 +81,45 @@ def test_untrusted_domain_cannot_be_primary_just_because_of_label():
     assert layers._is_primary(official) is True
 
 
+
+def test_sector_mapping_uses_exact_official_nse_industry_fallbacks():
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp)
+            rows = sector_data._targeted_shortlist_mappings(
+                candidate_symbols=["ABC", "UNKNOWN"],
+                existing_mapping_by_symbol={},
+                nifty500_industries={},
+                asof=pd.Timestamp("2026-10-13"),
+                nse_classifications={
+                    "ABC": {
+                        "macro": "HEALTHCARE",
+                        "sector": "",
+                        "industry": "PHARMACEUTICALS",
+                        "basicIndustry": "PHARMACEUTICALS",
+                    },
+                    "UNKNOWN": {
+                        "macro": "",
+                        "sector": "",
+                        "industry": "UNMAPPED INDUSTRY",
+                        "basicIndustry": "UNMAPPED INDUSTRY",
+                    },
+                },
+                etf_symbols=set(),
+            )
+            assert rows == [{
+                "TckrSymb": "ABC",
+                "Sector": "Nifty Pharma",
+                "SectorIndexSymbol": "NIFTY PHARMA",
+            }], rows
+            audit = pd.read_csv("data/reports/sector_candidate_mapping_20261013.csv")
+            status = dict(zip(audit["TckrSymb"], audit["MappingStatus"]))
+            assert status["ABC"] == "OFFICIAL_NSE_INDUSTRY_MAPPED", status
+            assert status["UNKNOWN"] == "WAIT_FOR_DATA", status
+        finally:
+            os.chdir(old_cwd)
+
 def test_delivery_average_exactly_60_percent_passes():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
@@ -144,6 +185,7 @@ if __name__ == "__main__":
         test_3_confirmations_plus_separate_primary_source_gate,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
+        test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
         test_delivery_average_exactly_60_percent_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
         test_next_day_pipeline_only_receives_final_watch_candidates,
