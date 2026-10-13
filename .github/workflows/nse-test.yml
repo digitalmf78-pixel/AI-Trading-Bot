@@ -21,10 +21,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Restore Bhavcopy and Nifty history cache
+      - name: Restore NSE, delivery, and sector history caches
         uses: actions/cache@v5
         with:
-          path: data/bhavcopy/
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
           key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
@@ -71,7 +76,14 @@ jobs:
           python -m py_compile volume_gainer.py
           python -m py_compile v8_layers_14_41.py
           python -m py_compile news_catalyst.py
+          python -m py_compile sector_data.py
+          python -m py_compile delivery_filter.py
+          python -m py_compile nse_bhavcopy_test.py
+          python -m py_compile nifty500_api_test.py
           echo "Compile check PASSED"
+
+          echo "===== V8 REGRESSION TESTS ====="
+          python -u test_v8_regression.py
 
           echo "===== STARTING NSE SCANNER ====="
           python -u ./volume_gainer.py
@@ -138,6 +150,22 @@ jobs:
           fi
 
           echo ""
+          echo ""
+          echo "===== SECTOR / DATA REPORTS ====="
+          if [ -d data/reports ]; then
+            find data/reports -maxdepth 2 -type f -print
+            for f in data/reports/sector_candidate_mapping_*.csv data/reports/delivery_first_audit_*.csv; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "===== FILE: $f ====="
+                head -12 "$f"
+              fi
+            done
+          else
+            echo "data/reports directory does not exist"
+          fi
+
+          echo ""
           echo "===== OUTPUT FILE LIST ====="
           if [ -d outputs ]; then
             find outputs -maxdepth 3 -type f -print
@@ -161,4 +189,5 @@ jobs:
           path: |
             outputs/
             data/inputs/*.csv
+            data/reports/
           if-no-files-found: warn
