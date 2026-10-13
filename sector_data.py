@@ -498,7 +498,24 @@ def _targeted_shortlist_mappings(
             reason = "Mapped from official tracked-sector index constituent CSV"
         else:
             official_sector_mapping = OFFICIAL_SECTOR_TO_TRACKED_INDEX.get(nse_sector)
-            industry_mapping = INDUSTRY_TO_TRACKED_INDEX.get(industry)
+
+            # Use exact official classification labels in a conservative order.
+            # The previous implementation ignored NSE's own `industry` and
+            # `basicIndustry` fields and only checked the Nifty 500 `Industry`
+            # value. That left valid official classifications unmapped whenever
+            # the symbol was outside Nifty 500 or the Nifty 500 file was stale.
+            industry_mapping = None
+            industry_mapping_source = ""
+            for source_name, source_value in (
+                ("NSE industry", nse_industry),
+                ("NSE basicIndustry", basic_industry),
+                ("Nifty 500 Industry", industry),
+            ):
+                candidate_mapping = INDUSTRY_TO_TRACKED_INDEX.get(source_value)
+                if candidate_mapping:
+                    industry_mapping = candidate_mapping
+                    industry_mapping_source = source_name
+                    break
 
             if official_sector_mapping:
                 sector, index_symbol = official_sector_mapping
@@ -514,16 +531,25 @@ def _targeted_shortlist_mappings(
                 print(f"[SECTOR] Candidate classification {symbol}: {sector} via official NSE sector='{nse_sector}'")
             elif industry_mapping:
                 sector, index_symbol = industry_mapping
-                status = "OFFICIAL_NIFTY500_INDUSTRY_MAPPED"
+                status = {
+                    "NSE industry": "OFFICIAL_NSE_INDUSTRY_MAPPED",
+                    "NSE basicIndustry": "OFFICIAL_NSE_BASIC_INDUSTRY_MAPPED",
+                    "Nifty 500 Industry": "OFFICIAL_NIFTY500_INDUSTRY_MAPPED",
+                }.get(industry_mapping_source, "OFFICIAL_INDUSTRY_MAPPED")
+                source_value = {
+                    "NSE industry": nse_industry,
+                    "NSE basicIndustry": basic_industry,
+                    "Nifty 500 Industry": industry,
+                }.get(industry_mapping_source, industry)
                 reason = (
-                    f"Official Nifty 500 Industry='{industry}' mapped by exact taxonomy rule "
-                    "to tracked benchmark"
+                    f"Official {industry_mapping_source}='{source_value}' mapped by exact taxonomy "
+                    "rule to tracked benchmark"
                 )
                 mapping_rows.append({
                     "TckrSymb": symbol, "Sector": sector,
                     "SectorIndexSymbol": index_symbol,
                 })
-                print(f"[SECTOR] Candidate classification {symbol}: {sector} via official Nifty 500 Industry='{industry}'")
+                print(f"[SECTOR] Candidate classification {symbol}: {sector} via {industry_mapping_source}='{source_value}'")
             else:
                 sector, index_symbol = "", ""
                 status = "WAIT_FOR_DATA"
@@ -531,6 +557,7 @@ def _targeted_shortlist_mappings(
                     label for label in (
                         f"NSE sector='{nse_sector}'" if nse_sector else "",
                         f"NSE industry='{nse_industry}'" if nse_industry else "",
+                        f"NSE basicIndustry='{basic_industry}'" if basic_industry else "",
                         f"Nifty 500 Industry='{industry}'" if industry else "",
                     ) if label
                 ]
