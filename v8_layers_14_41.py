@@ -99,6 +99,62 @@ def _flag(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes", "y"}
 
 
+def _risk_reward_plan(row: pd.Series, historical_records: list[pd.Series] | None = None) -> dict:
+    """Calculate R:R only from observed structure; never manufacture price targets.
+
+    Entry uses the configured entry-zone high (or close only when no valid zone exists).
+    Targets are the nearest distinct observed resistance/highs above entry, so a nearby
+    resistance below EntryZoneHigh does not automatically force WAIT_FOR_DATA when a
+    higher documented level exists. Missing structural targets remain missing.
+    """
+    price = _num(row.get("ClsPric"))
+    entry = _num(row.get("EntryZoneHigh"))
+    if pd.isna(entry) or entry <= 0:
+        entry = price
+
+    support = _num(row.get("SRSupport"))
+    swing_low = _first_number(row, ["RecentSwingLow", "SRSwingLow"])
+    atr = _num(row.get("ATR14"))
+    records = historical_records or []
+    if pd.isna(atr) or atr <= 0:
+        true_ranges = []
+        previous_close = float("nan")
+        for record in records[-20:]:
+            high = _num(record.get("HghPric"))
+            low = _num(record.get("LwPric"))
+            close = _num(record.get("ClsPric"))
+            if pd.isna(high) or pd.isna(low) or pd.isna(close):
+                continue
+            true_ranges.append(high - low if pd.isna(previous_close) else max(high - low, abs(high - previous_close), abs(low - previous_close)))
+            previous_close = close
+        if true_ranges:
+            atr = sum(true_ranges[-14:]) / len(true_ranges[-14:])
+
+    stop_candidates = [
+        value for value in [support, swing_low, price - 1.5 * atr if pd.notna(atr) else float("nan")]
+        if pd.notna(value) and pd.notna(entry) and 0 < value < entry
+    ]
+    stop = max(stop_candidates) if stop_candidates else float("nan")
+    risk = entry - stop if pd.notna(entry) and pd.notna(stop) and entry > stop else float("nan")
+
+    # Use only observed price structure; do not synthesize Entry + 2R targets.
+    observed_highs = [
+        _num(row.get(name)) for name in
+        ["SRResistance", "BreakoutLevel", "SRSwingHigh", "SR20DHigh", "SR50DHigh", "High50D", "PDH", "PWH"]
+    ]
+    observed_highs.extend(_num(record.get("HghPric")) for record in records[-50:])
+    levels = sorted({round(float(value), 8) for value in observed_highs
+                     if pd.notna(value) and pd.notna(entry) and value > entry})
+    target1 = levels[0] if levels else float("nan")
+    target2 = levels[1] if len(levels) > 1 else float("nan")
+
+    reward = target1 - entry if pd.notna(target1) and pd.notna(entry) else float("nan")
+    rr = reward / risk if pd.notna(reward) and pd.notna(risk) and risk > 0 else float("nan")
+    status = "WAIT_FOR_DATA" if pd.isna(rr) else "PASS" if rr >= 2.0 else "FAIL"
+    return {"entry": entry, "stop": stop, "target1": target1, "target2": target2,
+            "risk": risk, "reward": reward, "rr": rr, "status": status}
+
+
 def _first_number(row: pd.Series, names: list[str]) -> float:
     for name in names:
         if name in row.index:
@@ -535,7 +591,7 @@ def run_eod_layers(
         pd.Series("WAIT_FOR_DATA", index=output.index),
     ).fillna("WAIT_FOR_DATA").astype(str)
     output["DeliveryStatus"] = filter_status.map(
-        lambda value: "PASS" if value == "PASS_GE_60_PERCENT"
+        lambda value: "PASS" if value == "PASS_GT_60_PERCENT"
         else "WAIT_FOR_DATA" if value == "WAIT_FOR_DATA"
         else "FAIL"
     )
@@ -620,40 +676,24 @@ def run_eod_layers(
     output["V8ScoreCoveragePct"] = [item[1] for item in score_coverage]
 
     rr_values, rr_status, rr_targets, rr_stops, chase_values = [], [], [], [], []
+    rr_entries, rr_targets2, rr_risks, rr_rewards = [], [], [], []
     hist_by_symbol = {}
-    for frame in historical[-19:] + [current_dated]:
+    for frame in historical[-49:] + [current_dated]:
         for symbol, group in frame.groupby("TckrSymb"):
             hist_by_symbol.setdefault(str(symbol), []).append(group.iloc[-1])
     for _, row in output.iterrows():
+        plan = _risk_reward_plan(row, hist_by_symbol.get(str(row.get("TckrSymb")), []))
+        rr_values.append(plan["rr"])
+        rr_status.append(plan["status"])
+        rr_targets.append(plan["target1"])
+        rr_targets2.append(plan["target2"])
+        rr_stops.append(plan["stop"])
+        rr_entries.append(plan["entry"])
+        rr_risks.append(plan["risk"])
+        rr_rewards.append(plan["reward"])
         price = _num(row.get("ClsPric"))
-        support = _num(row.get("SRSupport"))
-        resistance = _num(row.get("SRResistance"))
+        entry = plan["entry"]
         atr = _num(row.get("ATR14"))
-        if pd.isna(atr) or atr <= 0:
-            records = hist_by_symbol.get(str(row.get("TckrSymb")), [])
-            ranges = []
-            prev_close = float("nan")
-            for record in records:
-                high, low, close = _num(record.get("HghPric")), _num(record.get("LwPric")), _num(record.get("ClsPric"))
-                if pd.isna(high) or pd.isna(low) or pd.isna(close):
-                    continue
-                tr = high - low if pd.isna(prev_close) else max(high - low, abs(high - prev_close), abs(low - prev_close))
-                ranges.append(tr)
-                prev_close = close
-            atr = sum(ranges[-14:]) / min(len(ranges[-14:]), 14) if ranges else float("nan")
-        stop_candidates = [value for value in [support, price - 1.5 * atr if pd.notna(atr) else float("nan")] if pd.notna(value) and pd.notna(price) and 0 < value < price]
-        stop = max(stop_candidates) if stop_candidates else float("nan")
-        entry = _num(row.get("EntryZoneHigh"))
-        if pd.isna(entry) or entry <= 0:
-            entry = price
-        risk = entry - stop if pd.notna(stop) else float("nan")
-        known_target = resistance if pd.notna(resistance) and resistance > entry else float("nan")
-        target = known_target if pd.notna(known_target) else entry + 2 * risk if pd.notna(risk) and risk > 0 else float("nan")
-        rr = (target - entry) / risk if pd.notna(target) and pd.notna(risk) and risk > 0 else float("nan")
-        rr_values.append(rr)
-        rr_targets.append(target)
-        rr_stops.append(stop)
-        rr_status.append("WAIT_FOR_DATA" if pd.isna(rr) else "PASS" if rr >= 2 else "FAIL")
         ema20 = _num(row.get("EMA20"))
         extended = (
             (pd.notna(price) and pd.notna(entry) and price > entry * 1.03)
@@ -661,9 +701,13 @@ def run_eod_layers(
             or (_num(row.get("PriceChangePct")) > 8 if pd.notna(_num(row.get("PriceChangePct"))) else False)
         )
         chase_values.append("CHASE" if extended else "CLEAR" if pd.notna(price) else "WAIT_FOR_DATA")
-    output["EntryPricePlan"] = output["EntryZoneHigh"]
+    output["EntryPricePlan"] = rr_entries
     output["StopLossPlan"] = rr_stops
     output["TargetPricePlan"] = rr_targets
+    output["Target1PricePlan"] = rr_targets
+    output["Target2PricePlan"] = rr_targets2
+    output["RiskAmount"] = rr_risks
+    output["RewardAmount"] = rr_rewards
     output["RiskReward"] = rr_values
     output["RiskRewardStatus"] = rr_status
     output["ChaseStatus"] = chase_values
@@ -688,7 +732,7 @@ def run_eod_layers(
             and row.get("RiskRewardStatus") == "PASS"
             and row.get("ChaseStatus") == "CLEAR"
             and row.get("SetupType") in {"Breakout", "Pullback"}
-            and row.get("DeliveryFilterStatus") == "PASS_GE_60_PERCENT"
+            and row.get("DeliveryFilterStatus") == "PASS_GT_60_PERCENT"
             and row.get("DeliveryStatus") == "PASS"
             and row.get("AccumulationDistribution") != "Distribution"
             and volume_reason_ok
@@ -851,7 +895,7 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
             eod_result["EODWatchlistStatus"].astype(str).eq("WATCH")
             & eod_result["EODLayerStatus"].astype(str).eq("PASS")
             & eod_result["MandatoryConfirmationStatus"].astype(str).eq("PASS")
-            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GE_60_PERCENT")
+            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GT_60_PERCENT")
             & eod_result["CandidateScreenStatus"].astype(str).eq("PASS")
         )
         setup_ok = eod_result["SetupType"].astype(str).isin([
