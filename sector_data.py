@@ -29,7 +29,7 @@ HISTORY_COLUMNS = ["Date", "Sector", "Close"]
 SECTOR_INDICES = [
     ("Nifty Auto", ["ind_niftyautolist.csv", "ind_niftyauto_list.csv"], "Nifty Auto", "NIFTY AUTO"),
     ("Nifty Bank", ["ind_niftybanklist.csv", "ind_niftybank_list.csv"], "Nifty Bank", "NIFTY BANK"),
-    ("Nifty Financial Services", ["ind_niftyfinancialserviceslist.csv", "ind_niftyfinancialservices_list.csv"], "Nifty Financial Services", "NIFTY FINANCIAL SERVICES"),
+    ("Nifty Financial Services", ["ind_niftyfinancelist.csv", "ind_niftyfinancialserviceslist.csv", "ind_niftyfinancialservices_list.csv"], "Nifty Financial Services", "NIFTY FINANCIAL SERVICES"),
     ("Nifty FMCG", ["ind_niftyfmcglist.csv", "ind_niftyfmcg_list.csv"], "Nifty FMCG", "NIFTY FMCG"),
     ("Nifty IT", ["ind_niftyitlist.csv", "ind_niftyit_list.csv"], "Nifty IT", "NIFTY IT"),
     ("Nifty Media", ["ind_niftymedialist.csv", "ind_niftymedia_list.csv"], "Nifty Media", "NIFTY MEDIA"),
@@ -46,7 +46,7 @@ SECTOR_INDICES = [
     ("Nifty Private Bank", ["ind_nifty_privatebanklist.csv", "ind_nifty_privatebank_list.csv", "ind_niftyprivatebanklist.csv"], "Nifty Private Bank", "NIFTY PRIVATE BANK"),
     ("Nifty Insurance", ["ind_niftyinsurancelist.csv", "ind_niftyinsurance_list.csv"], "Nifty Insurance", "NIFTY INSURANCE"),
     ("Nifty Consumer Services", ["ind_niftyconsumerserviceslist.csv", "ind_niftyconsumerservices_list.csv"], "Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
-    ("Nifty Telecommunications", ["ind_niftytelecommunicationslist.csv", "ind_niftytelecomlist.csv", "ind_niftytelecom_list.csv"], "Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    ("Nifty Telecommunications", ["ind_niftyTelecommunications_list.csv", "ind_niftytelecommunications_list.csv", "ind_niftytelecommunicationslist.csv", "ind_niftytelecomlist.csv", "ind_niftytelecom_list.csv"], "Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
 ]
 
 HEADERS = {
