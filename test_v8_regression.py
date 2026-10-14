@@ -227,13 +227,14 @@ def test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejecti
         "NewsEvidenceStatus": "NO_DATA", "MandatoryConfirmationStatus": "WAIT_FOR_DATA",
         "IndependentConfirmationCategories": "PRICE_VOLUME", "NewsPrimarySourceVerified": False,
         "V8Score": 50, "EntryPricePlan": 110.0, "StopLossPlan": 100.0,
-        "TargetPricePlan": 125.0, "RiskReward": 1.5, "ChaseStatus": "CLEAR",
+        "TargetPricePlan": 125.0, "Target1PricePlan": 115.0, "Target2PricePlan": 120.0,
+        "RiskReward": 1.5, "ChaseStatus": "CLEAR",
         "EODWatchlistStatus": "WAIT_FOR_DATA", "EODLayerStatus": "WAIT_FOR_DATA",
         "CandidateScreenReasons": "SECTOR_WAIT_FOR_DATA",
     }
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {"NSE": "available", "secondary": "available"})
     text = "\n".join(lines)
-    for expected in ("ABC", "5D Change", "Average Delivery", "EMA44", "NOT_NEAR_EMA44", "does not reject", "WAIT_FOR_DATA"):
+    for expected in ("ABC", "5D Change", "Average Delivery", "EMA44", "NOT_NEAR_EMA44", "does not reject", "WAIT_FOR_DATA", "Target 1 ₹115.00", "Target 2 ₹120.00"):
         assert expected in text, expected
 
 def test_next_day_pipeline_only_receives_final_watch_candidates():

@@ -409,7 +409,7 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
             lines.append(f"   Source URL: {chosen.get('URL', '')}")
 
         lines.append(f"9) Confirmation: 3+1 {row.get('MandatoryConfirmationStatus', 'WAIT_FOR_DATA')} | Evidence categories {row.get('IndependentConfirmationCategories', 'NA')} | Primary source verified {row.get('NewsPrimarySourceVerified', 'WAIT_FOR_DATA')}")
-        lines.append(f"10) Risk/Reward: V8 Score {val(row, 'V8Score', 0)}/100 | Entry ₹{val(row, 'EntryPricePlan')} | Stop ₹{val(row, 'StopLossPlan')} | Target 1 ₹{val(row, 'Target1PricePlan', row.get('TargetPricePlan'))} | Target 2 ₹{val(row, 'Target2PricePlan')} | Risk ₹{val(row, 'RiskAmount')} | Reward ₹{val(row, 'RewardAmount')} | R:R {val(row, 'RiskReward')} ({row.get('RiskRewardStatus', 'WAIT_FOR_DATA')}) | Chase {row.get('ChaseStatus', 'WAIT_FOR_DATA')}")
+        lines.append(f"10) Risk/Reward: V8 Score {val(row, 'V8Score', 0)}/100 | Entry ₹{val(row, 'EntryPricePlan')} | Stop ₹{val(row, 'StopLossPlan')} | Target 1 ₹{(val(row, 'Target1PricePlan') if pd.notna(pd.to_numeric(pd.Series([row.get('Target1PricePlan')]), errors='coerce').iloc[0]) else val(row, 'TargetPricePlan'))} | Target 2 ₹{val(row, 'Target2PricePlan')} | Risk ₹{val(row, 'RiskAmount')} | Reward ₹{val(row, 'RewardAmount')} | R:R {val(row, 'RiskReward')} ({row.get('RiskRewardStatus', 'WAIT_FOR_DATA')}) | Chase {row.get('ChaseStatus', 'WAIT_FOR_DATA')}")
         lines.append(f"FINAL V8 STATUS: {row.get('EODWatchlistStatus', 'WAIT_FOR_DATA')} | Layer status: {row.get('EODLayerStatus', 'WAIT_FOR_DATA')}")
         lines.append(f"Reason: {row.get('CandidateScreenReasons', row.get('EODLayerReason', 'Check detailed CSV for layer-specific reasons'))}")
         lines.append("")
