@@ -100,7 +100,13 @@ def _flag(value) -> bool:
 
 
 def _risk_reward_plan(row: pd.Series, historical_records: list[pd.Series] | None = None) -> dict:
-    """Build a structure-based plan; never manufacture a target just to force 2R."""
+    """Calculate R:R only from observed structure; never manufacture price targets.
+
+    Entry uses the configured entry-zone high (or close only when no valid zone exists).
+    Targets are the nearest distinct observed resistance/highs above entry, so a nearby
+    resistance below EntryZoneHigh does not automatically force WAIT_FOR_DATA when a
+    higher documented level exists. Missing structural targets remain missing.
+    """
     price = _num(row.get("ClsPric"))
     entry = _num(row.get("EntryZoneHigh"))
     if pd.isna(entry) or entry <= 0:
@@ -124,17 +130,23 @@ def _risk_reward_plan(row: pd.Series, historical_records: list[pd.Series] | None
         if true_ranges:
             atr = sum(true_ranges[-14:]) / len(true_ranges[-14:])
 
-    stop_candidates = [value for value in [support, swing_low, price - 1.5 * atr if pd.notna(atr) else float("nan")]
-                       if pd.notna(value) and pd.notna(entry) and 0 < value < entry]
+    stop_candidates = [
+        value for value in [support, swing_low, price - 1.5 * atr if pd.notna(atr) else float("nan")]
+        if pd.notna(value) and pd.notna(entry) and 0 < value < entry
+    ]
     stop = max(stop_candidates) if stop_candidates else float("nan")
     risk = entry - stop if pd.notna(entry) and pd.notna(stop) and entry > stop else float("nan")
 
-    resistance = _num(row.get("SRResistance"))
-    target1 = resistance if pd.notna(resistance) and pd.notna(entry) and resistance > entry else float("nan")
-    target2_candidates = [_first_number(row, ["SRSwingHigh"]), _first_number(row, ["SR50DHigh"]), _first_number(row, ["High50D"])]
-    target2_candidates.extend(_num(record.get("HghPric")) for record in records[-50:])
-    target2_candidates = [value for value in target2_candidates if pd.notna(value) and pd.notna(target1) and value > target1]
-    target2 = min(target2_candidates) if target2_candidates else float("nan")
+    # Use only observed price structure; do not synthesize Entry + 2R targets.
+    observed_highs = [
+        _num(row.get(name)) for name in
+        ["SRResistance", "BreakoutLevel", "SRSwingHigh", "SR20DHigh", "SR50DHigh", "High50D", "PDH", "PWH"]
+    ]
+    observed_highs.extend(_num(record.get("HghPric")) for record in records[-50:])
+    levels = sorted({round(float(value), 8) for value in observed_highs
+                     if pd.notna(value) and pd.notna(entry) and value > entry})
+    target1 = levels[0] if levels else float("nan")
+    target2 = levels[1] if len(levels) > 1 else float("nan")
 
     reward = target1 - entry if pd.notna(target1) and pd.notna(entry) else float("nan")
     rr = reward / risk if pd.notna(reward) and pd.notna(risk) and risk > 0 else float("nan")

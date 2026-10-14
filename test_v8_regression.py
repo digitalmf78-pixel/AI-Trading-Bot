@@ -274,6 +274,18 @@ def test_risk_reward_uses_actual_resistance_and_reports_target2_separately():
     assert abs(plan["rr"] - (10.0 / 3.0)) < 1e-9 and plan["status"] == "PASS"
 
 
+
+def test_risk_reward_uses_next_observed_level_when_near_resistance_is_below_entry():
+    row = pd.Series({"ClsPric": 100.5, "EntryZoneHigh": 101.0, "SRSupport": 95.0,
+                     "SRResistance": 100.8, "BreakoutLevel": 100.8,
+                     "SRSwingHigh": 106.0, "SR20DHigh": 104.0, "SR50DHigh": 110.0,
+                     "ATR14": 2.0})
+    plan = layers._risk_reward_plan(row, [])
+    assert plan["entry"] == 101.0
+    assert plan["target1"] == 104.0 and plan["target2"] == 106.0
+    assert plan["status"] in {"PASS", "FAIL"}
+    assert abs(plan["rr"] - (3.0 / 3.5)) < 1e-9
+
 def test_source_code_uses_strict_greater_than_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
     assert "PASS_GT_60_PERCENT" in source
@@ -447,6 +459,7 @@ if __name__ == "__main__":
         test_source_code_uses_strict_greater_than_60_delivery_status,
         test_risk_reward_does_not_invent_target_when_resistance_missing,
         test_risk_reward_uses_actual_resistance_and_reports_target2_separately,
+        test_risk_reward_uses_next_observed_level_when_near_resistance_is_below_entry,
         test_breakout_requires_strong_clv_above_075,
         test_pullback_requires_volume_contraction_and_bullish_reversal,
         test_negative_relative_strength_is_warning_not_standalone_rejection,
