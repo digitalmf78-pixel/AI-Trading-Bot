@@ -1,14 +1,7 @@
-
 name: NSE Data Test
 
 on:
   workflow_dispatch:
-    inputs:
-      send_telegram:
-        description: Send report to configured Telegram chat
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -68,9 +61,12 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TELEGRAM: ${{ inputs.send_telegram }}
+          SEND_TELEGRAM: "true"
         run: |
           set -e
+
+          echo "===== TELEGRAM SETTING ====="
+          echo "SEND_TELEGRAM=true"
 
           echo "===== PYTHON COMPILE CHECK ====="
           python -m py_compile volume_gainer.py
@@ -149,7 +145,6 @@ jobs:
             echo "Position monitor report not found"
           fi
 
-          echo ""
           echo ""
           echo "===== SECTOR / DATA REPORTS ====="
           if [ -d data/reports ]; then
