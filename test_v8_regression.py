@@ -5,8 +5,11 @@ from datetime import date, timedelta
 from pathlib import Path
 import tempfile
 import os
+from unittest.mock import patch
 
 import pandas as pd
+import requests
+import news_catalyst
 
 import delivery_filter as delivery
 import sector_data
@@ -181,6 +184,23 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         assert report.iloc[0]["NextDayStatus"] == "WAIT_FOR_DATA"  # bars are absent
 
 
+
+def test_telegram_network_failure_does_not_crash_scanner():
+    # GitHub Actions can occasionally have no route to api.telegram.org. The
+    # scanner must log the undelivered notification without losing completed reports.
+    with patch("news_catalyst.requests.post", side_effect=requests.ConnectionError("network unreachable")) as post_mock, \
+         patch("news_catalyst.time.sleep", return_value=None):
+        news_catalyst.send_marathi_telegram(
+            pd.DataFrame(), "2026-10-13", pd.DataFrame(), {}, "test-token", "test-chat"
+        )
+    assert post_mock.call_count == 3, post_mock.call_count
+
+
+def test_scanner_display_does_not_label_percent_change_as_price():
+    source = Path("volume_gainer.py").read_text(encoding="utf-8")
+    assert 'f" Change="' in source
+    assert 'f" Price="' not in source
+
 def test_source_code_uses_strict_greater_than_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
     assert "PASS_GT_60_PERCENT" in source
@@ -202,6 +222,8 @@ if __name__ == "__main__":
         test_delivery_average_exactly_60_percent_rejects,
         test_delivery_below_60_rejects_and_incomplete_waits,
         test_next_day_pipeline_only_receives_final_watch_candidates,
+        test_telegram_network_failure_does_not_crash_scanner,
+        test_scanner_display_does_not_label_percent_change_as_price,
         test_source_code_uses_strict_greater_than_60_delivery_status,
     ]
     for test in tests:

@@ -2918,7 +2918,7 @@ def display_top20(result):
         print(
             f"\n{i}. "
             f"{row['TckrSymb']:<15}"
-            f" Price="
+            f" Change="
             f"{fmt(row['PriceChangePct'])}%"
             f" | RVOL="
             f"{fmt(row['RVOL'])}x"

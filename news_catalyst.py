@@ -11,6 +11,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
 import re
+import time
 import xml.etree.ElementTree as ET
 
 import pandas as pd
@@ -416,12 +417,51 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
         current += addition
     if current:
         chunks.append(current.rstrip())
+    # Telegram is an external notification channel, not the source of truth for
+    # the scanner reports. Retry transient failures, but do not crash the EOD
+    # workflow after the CSV/report artifacts have already been written.
+    # A failed send is logged explicitly; it is never reported as delivered.
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     for index, chunk in enumerate(chunks, start=1):
         text = f"भाग {index}/{len(chunks)}\n{chunk}" if len(chunks) > 1 else chunk
-        response = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
-            timeout=20,
-        )
-        print(f"Marathi Telegram digest part {index}/{len(chunks)}: HTTP {response.status_code}")
-        response.raise_for_status()
+        delivered = False
+        for attempt in range(1, 4):
+            try:
+                response = requests.post(
+                    url,
+                    data={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+                    timeout=20,
+                )
+                print(
+                    f"Marathi Telegram digest part {index}/{len(chunks)}: "
+                    f"HTTP {response.status_code} (attempt {attempt}/3)"
+                )
+                response.raise_for_status()
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                if isinstance(payload, dict) and payload.get("ok") is False:
+                    raise requests.RequestException("Telegram API returned ok=false")
+                delivered = True
+                break
+            except requests.RequestException as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                # Do not retry permanent client errors; do retry rate limits,
+                # server errors and connection/time-out failures.
+                permanent_client_error = (
+                    status_code is not None and 400 <= status_code < 500 and status_code != 429
+                )
+                print(
+                    f"Marathi Telegram digest part {index}/{len(chunks)} not delivered "
+                    f"(attempt {attempt}/3; error={type(exc).__name__}; "
+                    f"HTTP={status_code if status_code is not None else 'network'})."
+                )
+                if attempt >= 3 or permanent_client_error:
+                    break
+                time.sleep(attempt)
+        if not delivered:
+            print(
+                f"WARNING: Telegram digest part {index}/{len(chunks)} FAILED after retries. "
+                "Scanner reports remain saved; notification was NOT delivered."
+            )
