@@ -333,11 +333,9 @@ def _download_nifty500_industries(session: requests.Session) -> dict[str, str]:
 # separately only when a verified scheme-to-index mapping is available.
 NSE_ETF_SECURITIES_URL = "https://nsearchives.nseindia.com/content/equities/eq_etfseclist.csv"
 
-# Reviewed ETF scheme-to-benchmark evidence. Keep this list small and source-backed;
-# never infer an ETF benchmark from the ticker alone. BANKADD is confirmed by DSP
-# as tracking the Nifty Bank Index. INSUREIETF is an ICICI Prudential BSE Insurance
-# ETF; this module currently stores Nifty sector index history, not BSE Insurance
-# index history, so it must remain unmapped rather than being mislabeled Nifty Insurance.
+# Reviewed ETF scheme-to-benchmark evidence. Never infer an ETF benchmark from
+# its ticker alone. Only ETFs whose verified underlying benchmark is one of the
+# tracked Nifty sector indices may be mapped into sector strength.
 VERIFIED_ETF_UNDERLYING_INDEX = {
     "BANKADD": {
         "sector": "Nifty Bank",
@@ -357,6 +355,20 @@ VERIFIED_ETF_UNSUPPORTED = {
         "Nifty sector indices and has no verified BSE Insurance index history. Do not map it to "
         "Nifty Insurance. Official NSE quote: "
         "https://www.nseindia.com/get-quote/equity/INSUREIETF/ICICI-Prudential-BSE-Insurance-ETF",
+    ),
+    "AONELIQUID": (
+        "ETF_UNDERLYING_INDEX_UNSUPPORTED",
+        "Official Angel One AMC product note identifies Angel One Nifty 1D Rate Liquid ETF and "
+        "Nifty 1D Rate Index as its benchmark. This is a liquid/rate benchmark, not a tracked Nifty "
+        "sector index, so it must not be mapped to a company sector. Official source: "
+        "https://cms.angelonemf.com/amc-cms/wp-content/uploads/formidable/23/Product-Note-Angel-One-Nifty-1D-Rate-Liquid-ETF-Growth-Dec-2025.pdf",
+    ),
+    "HDFCBSE500": (
+        "ETF_UNDERLYING_INDEX_UNSUPPORTED",
+        "Official HDFC AMC scheme page identifies HDFCBSE500 as tracking the BSE 500 Index (TRI). "
+        "This module stores Nifty sector index history and has no BSE 500 index history, so do not "
+        "assign this ETF to an arbitrary Nifty sector. Official source: "
+        "https://www.hdfcfund.com/explore/mutual-funds/hdfc-bse-500-etf/regular",
     ),
 }
 
