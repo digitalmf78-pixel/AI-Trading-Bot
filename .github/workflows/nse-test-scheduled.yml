@@ -1,7 +1,11 @@
+
 name: NSE Data Test
 
 on:
   workflow_dispatch:
+  schedule:
+    # 14:30 UTC = 20:00 IST, Monday through Friday (after NSE EOD data is usually available).
+    - cron: "30 14 * * 1-5"
 
 permissions:
   contents: read
@@ -64,9 +68,6 @@ jobs:
           SEND_TELEGRAM: "true"
         run: |
           set -e
-
-          echo "===== TELEGRAM SETTING ====="
-          echo "SEND_TELEGRAM=true"
 
           echo "===== PYTHON COMPILE CHECK ====="
           python -m py_compile volume_gainer.py
@@ -145,6 +146,7 @@ jobs:
             echo "Position monitor report not found"
           fi
 
+          echo ""
           echo ""
           echo "===== SECTOR / DATA REPORTS ====="
           if [ -d data/reports ]; then
