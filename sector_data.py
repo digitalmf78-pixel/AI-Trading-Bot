@@ -109,7 +109,13 @@ def _download_constituents(session: requests.Session, sector: str, filenames: li
 
 
 def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> pd.DataFrame:
-    """Load one official NSE all-indices EOD CSV, cached by date."""
+    """Load one official NSE all-indices EOD CSV, with explicit archive diagnostics.
+
+    A 404 can mean a holiday or an unpublished report, so both official archive
+    hosts are tried. Every outcome is logged to distinguish 404s from access,
+    server, HTML/challenge, and CSV-schema problems. Existing cache files are
+    preserved and are never deleted by this diagnostic change.
+    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     date_key = day.strftime("%d%m%Y")
     cache_path = CACHE_DIR / f"ind_close_all_{date_key}.csv"
@@ -117,39 +123,70 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
         try:
             cached = pd.read_csv(cache_path)
             if not cached.empty:
+                print(
+                    f"[SECTOR][ARCHIVE] CACHE_HIT date={day.date()} "
+                    f"rows={len(cached)} columns={list(cached.columns)}"
+                )
                 return cached
-        except Exception:
-            pass
-    # NSE has served this report on both archive hostnames. Try the documented
-    # archives host first, then the nsearchives alias as a fallback.
+            print(f"[SECTOR][ARCHIVE] CACHE_EMPTY date={day.date()} path={cache_path}")
+        except Exception as exc:
+            print(f"[SECTOR][ARCHIVE] CACHE_READ_ERROR date={day.date()} error={exc}")
+
     urls = [
         f"https://archives.nseindia.com/content/indices/ind_close_all_{date_key}.csv",
         f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{date_key}.csv",
     ]
     errors: list[str] = []
     for url in urls:
+        host = url.split('/')[2]
         try:
             response = session.get(url, headers=NSE_HEADERS, timeout=25)
-            if response.status_code == 404:
-                # Try the alternate host before classifying the date as unavailable.
-                errors.append(f"HTTP 404 from {url.split('/')[2]}")
-                continue
-            response.raise_for_status()
             content = response.content or b""
-            if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
-                errors.append(f"non-CSV response from {url.split('/')[2]}")
+            content_type = response.headers.get("Content-Type", "(missing)")
+            preview = content[:100].decode("utf-8", "replace").replace("\r", " ").replace("\n", " ")
+            print(
+                f"[SECTOR][ARCHIVE] FETCH date={day.date()} host={host} "
+                f"status={response.status_code} content_type={content_type!r} "
+                f"bytes={len(content)} preview={preview!r}"
+            )
+            if response.status_code == 404:
+                errors.append(f"HTTP 404 from {host}")
                 continue
-            frame = pd.read_csv(BytesIO(content))
+            if response.status_code != 200:
+                errors.append(f"HTTP {response.status_code} from {host}")
+                continue
+            if (
+                not content
+                or b"<html" in content[:1500].lower()
+                or b"<!doctype html" in content[:1500].lower()
+            ):
+                errors.append(f"HTTP 200 but non-CSV/HTML response from {host}")
+                continue
+            try:
+                frame = pd.read_csv(BytesIO(content))
+            except Exception as exc:
+                errors.append(f"CSV parse error from {host}: {exc}")
+                continue
             if frame.empty:
-                errors.append(f"empty CSV from {url.split('/')[2]}")
+                errors.append(f"empty CSV from {host}")
                 continue
+            print(
+                f"[SECTOR][ARCHIVE] CSV_OK date={day.date()} host={host} "
+                f"rows={len(frame)} columns={list(frame.columns)}"
+            )
             frame.to_csv(cache_path, index=False)
             return frame
         except Exception as exc:
-            errors.append(f"{url.split('/')[2]}: {exc}")
-    # 404 on both hosts commonly means a holiday or a report not yet published.
-    if errors and not all("HTTP 404" in item for item in errors):
-        print(f"[SECTOR] Index archive unavailable for {day.date()}: {'; '.join(errors)}")
+            errors.append(f"{host}: {type(exc).__name__}: {exc}")
+            print(f"[SECTOR][ARCHIVE] REQUEST_ERROR date={day.date()} host={host} error={type(exc).__name__}: {exc}")
+
+    if errors and all("HTTP 404" in item for item in errors):
+        print(
+            f"[SECTOR][ARCHIVE] DATE_UNAVAILABLE date={day.date()} "
+            "both official archive hosts returned HTTP 404 (holiday, unpublished report, or unavailable date)"
+        )
+    elif errors:
+        print(f"[SECTOR][ARCHIVE] FETCH_FAILED date={day.date()} details={' ; '.join(errors)}")
     return pd.DataFrame()
 
 
