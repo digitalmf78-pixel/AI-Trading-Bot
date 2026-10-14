@@ -256,6 +256,24 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         assert report.iloc[0]["NextDayStatus"] == "WAIT_FOR_DATA"  # bars are absent
 
 
+def test_risk_reward_does_not_invent_target_when_resistance_missing():
+    row = pd.Series({"ClsPric": 100.0, "EntryZoneHigh": 100.0, "SRSupport": 95.0,
+                     "SRResistance": float("nan"), "ATR14": 2.0, "SRSwingLow": 94.0})
+    plan = layers._risk_reward_plan(row, [])
+    assert plan["stop"] == 97.0  # tighter valid ATR stop is above support
+    assert pd.isna(plan["target1"]) and pd.isna(plan["rr"])
+    assert plan["status"] == "WAIT_FOR_DATA"
+
+
+def test_risk_reward_uses_actual_resistance_and_reports_target2_separately():
+    row = pd.Series({"ClsPric": 100.0, "EntryZoneHigh": 100.0, "SRSupport": 95.0,
+                     "SRResistance": 110.0, "SRSwingHigh": 120.0, "ATR14": 2.0})
+    plan = layers._risk_reward_plan(row, [])
+    assert plan["entry"] == 100.0 and plan["stop"] == 97.0
+    assert plan["target1"] == 110.0 and plan["target2"] == 120.0
+    assert abs(plan["rr"] - (10.0 / 3.0)) < 1e-9 and plan["status"] == "PASS"
+
+
 def test_source_code_uses_strict_greater_than_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
     assert "PASS_GT_60_PERCENT" in source
@@ -427,6 +445,8 @@ if __name__ == "__main__":
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
         test_next_day_pipeline_only_receives_final_watch_candidates,
         test_source_code_uses_strict_greater_than_60_delivery_status,
+        test_risk_reward_does_not_invent_target_when_resistance_missing,
+        test_risk_reward_uses_actual_resistance_and_reports_target2_separately,
         test_breakout_requires_strong_clv_above_075,
         test_pullback_requires_volume_contraction_and_bullish_reversal,
         test_negative_relative_strength_is_warning_not_standalone_rejection,
