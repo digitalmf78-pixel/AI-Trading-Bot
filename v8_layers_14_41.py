@@ -535,7 +535,7 @@ def run_eod_layers(
         pd.Series("WAIT_FOR_DATA", index=output.index),
     ).fillna("WAIT_FOR_DATA").astype(str)
     output["DeliveryStatus"] = filter_status.map(
-        lambda value: "PASS" if value == "PASS_GE_60_PERCENT"
+        lambda value: "PASS" if value == "PASS_GT_60_PERCENT"
         else "WAIT_FOR_DATA" if value == "WAIT_FOR_DATA"
         else "FAIL"
     )
@@ -688,7 +688,7 @@ def run_eod_layers(
             and row.get("RiskRewardStatus") == "PASS"
             and row.get("ChaseStatus") == "CLEAR"
             and row.get("SetupType") in {"Breakout", "Pullback"}
-            and row.get("DeliveryFilterStatus") == "PASS_GE_60_PERCENT"
+            and row.get("DeliveryFilterStatus") == "PASS_GT_60_PERCENT"
             and row.get("DeliveryStatus") == "PASS"
             and row.get("AccumulationDistribution") != "Distribution"
             and volume_reason_ok
@@ -851,7 +851,7 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
             eod_result["EODWatchlistStatus"].astype(str).eq("WATCH")
             & eod_result["EODLayerStatus"].astype(str).eq("PASS")
             & eod_result["MandatoryConfirmationStatus"].astype(str).eq("PASS")
-            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GE_60_PERCENT")
+            & eod_result["DeliveryFilterStatus"].astype(str).eq("PASS_GT_60_PERCENT")
             & eod_result["CandidateScreenStatus"].astype(str).eq("PASS")
         )
         setup_ok = eod_result["SetupType"].astype(str).isin([

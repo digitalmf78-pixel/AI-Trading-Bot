@@ -120,20 +120,32 @@ def test_sector_mapping_uses_exact_official_nse_industry_fallbacks():
         finally:
             os.chdir(old_cwd)
 
-def test_delivery_average_exactly_60_percent_passes():
+def test_delivery_average_above_60_percent_passes():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
         dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
-        values = [50.0, 55.0, 60.0, 65.0, 70.0]  # average = exactly 60
+        values = [50.0, 55.0, 60.0, 65.0, 70.1]  # average = 60.02, strictly above 60
         sessions = []
         for day, value in zip(dates, values):
             sessions.append((day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])))
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-        assert abs(audit.iloc[0]["AvgDelivery5D"] - 60.0) < 1e-9
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GT_60_PERCENT"
+        assert abs(audit.iloc[0]["AvgDelivery5D"] - 60.02) < 1e-9
 
+
+def test_delivery_average_exactly_60_percent_rejects():
+    with tempfile.TemporaryDirectory() as tmp:
+        delivery.AUDIT_DIR = Path(tmp)
+        dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
+        values = [50.0, 55.0, 60.0, 65.0, 70.0]  # average = exactly 60
+        sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
+        candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
+        qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
+        assert qualified.empty
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LE_60_PERCENT"
+        assert abs(audit.iloc[0]["AvgDelivery5D"] - 60.0) < 1e-9
 
 def test_delivery_below_60_rejects_and_incomplete_waits():
     with tempfile.TemporaryDirectory() as tmp:
@@ -143,7 +155,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert qualified.empty
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LE_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
         assert audit.iloc[0]["DeliveryFilterStatus"] == "WAIT_FOR_DATA"
@@ -157,7 +169,7 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         base = {
             "SetupType": "Breakout", "EODWatchlistStatus": "WATCH",
             "EODLayerStatus": "PASS", "MandatoryConfirmationStatus": "PASS",
-            "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "CandidateScreenStatus": "PASS",
+            "DeliveryFilterStatus": "PASS_GT_60_PERCENT", "CandidateScreenStatus": "PASS",
         }
         rows = [
             {"TckrSymb": "GOOD", **base},
@@ -169,15 +181,15 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         assert report.iloc[0]["NextDayStatus"] == "WAIT_FOR_DATA"  # bars are absent
 
 
-def test_source_code_has_no_legacy_strict_delivery_status():
+def test_source_code_uses_strict_greater_than_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
-    assert "PASS_GE_60_PERCENT" in source
-    assert "PASS_GT_60_PERCENT" not in source
-    assert "FILTERED_OUT_LT_60_PERCENT" in source
-    assert "FILTERED_OUT_LE_60_PERCENT" not in source
+    assert "PASS_GT_60_PERCENT" in source
+    assert "PASS_GE_60_PERCENT" not in source
+    assert "FILTERED_OUT_LE_60_PERCENT" in source
+    assert "FILTERED_OUT_LT_60_PERCENT" not in source
     layer_source = Path("v8_layers_14_41.py").read_text(encoding="utf-8")
-    assert "PASS_GE_60_PERCENT" in layer_source
-    assert "PASS_GT_60_PERCENT" not in layer_source
+    assert "PASS_GT_60_PERCENT" in layer_source
+    assert "PASS_GE_60_PERCENT" not in layer_source
 
 
 if __name__ == "__main__":
@@ -186,10 +198,11 @@ if __name__ == "__main__":
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
-        test_delivery_average_exactly_60_percent_passes,
+        test_delivery_average_above_60_percent_passes,
+        test_delivery_average_exactly_60_percent_rejects,
         test_delivery_below_60_rejects_and_incomplete_waits,
         test_next_day_pipeline_only_receives_final_watch_candidates,
-        test_source_code_has_no_legacy_strict_delivery_status,
+        test_source_code_uses_strict_greater_than_60_delivery_status,
     ]
     for test in tests:
         test()

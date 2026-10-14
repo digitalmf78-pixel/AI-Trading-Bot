@@ -1008,7 +1008,7 @@ def prepare_primary_shortlist(result, eod_date):
     print(
         f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. "
-        "Low-volume 3/5 rule is NOT USED. AvgDelivery5D >= 60% gate runs after RVOL Top 20. "
+        "Low-volume 3/5 rule is NOT USED. AvgDelivery5D > 60% gate runs after RVOL Top 20. "
         f"Audit: {audit_path}"
     )
     return primary
@@ -2743,7 +2743,7 @@ def select_top20_analysis_candidates(result, eod_date):
     """Select up to 20 technical candidates after core EOD screens.
 
     Delivery has already been applied as a mandatory pre-analysis gate: only candidates
-    with five valid sessions and AvgDelivery5D >= 60.00% reach this screen. A candidate
+    with five valid sessions and AvgDelivery5D > 60.00% reach this screen. A candidate
     must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
     trend/candle, non-negative relative strength, and setup-specific volume rules.
     Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
@@ -2784,7 +2784,7 @@ def select_top20_analysis_candidates(result, eod_date):
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
         # Defensive audit check: the mandatory delivery gate must already have passed.
-        if delivery != "PASS_GE_60_PERCENT":
+        if delivery != "PASS_GT_60_PERCENT":
             reasons.append("DELIVERY_AVERAGE_BELOW_60_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
@@ -3276,7 +3276,7 @@ def main():
     # --------------------------------------------------------
     # STEP 5: PRIMARY SHORTLIST — complete history only
     # --------------------------------------------------------
-    # The user's required selection gate is AvgDelivery5D >= 60%, applied
+    # The user's required selection gate is AvgDelivery5D > 60%, applied
     # after RVOL Top 20. Do not use a 3/5 low-volume rule as a filter or setup gate.
     result = current.merge(avg_volume, on="TckrSymb", how="left")
     result = calculate_5d_volume(result, historical)
@@ -3292,7 +3292,7 @@ def main():
     # STEP 6A: MANDATORY FIVE-SESSION DELIVERY GATE — RVOL TOP 20 ONLY
     # --------------------------------------------------------
     # Strict rule: arithmetic average Delivery % across the latest five distinct
-    # valid NSE sessions must be >= 60.00. Values below 60.00 are rejected.
+    # valid NSE sessions must be strictly > 60.00. Values at or below 60.00 are rejected.
     # Missing/invalid per-symbol history is WAIT_FOR_DATA and does not pass.
     print("\nSTEP 6A: Applying five-session delivery gate to RVOL Top 20...")
     if result.empty:
@@ -3330,7 +3330,7 @@ def main():
             if not result.empty:
                 result["DeliveryFilterStatus"] = result["DeliveryStatus"].astype(str)
             else:
-                print("[DELIVERY] No RVOL Top 20 stock passed AvgDelivery5D >= 60.00%; no candidate will proceed.")
+                print("[DELIVERY] No RVOL Top 20 stock passed AvgDelivery5D > 60.00%; no candidate will proceed.")
             print(f"[DELIVERY] Qualified candidates passed to price/volume analysis: {len(result)}")
         except Exception as exc:
             # Fail closed: unavailable official delivery history must never be
@@ -3376,7 +3376,7 @@ def main():
         )
     )
     # LowVolumeDays5D may remain as descriptive data only. It is not a selection
-    # condition; the mandatory five-session AvgDelivery5D >= 60% gate is the user's
+    # condition; the mandatory five-session AvgDelivery5D > 60% gate is the user's
     # requested volume-related eligibility rule.
     if "LowVolumeDays5D" in result.columns:
         result["LowVolumeRuleStatus"] = "NOT_USED_DELIVERY_PERCENTAGE_IS_THE_REQUIRED_VOLUME_SELECTION_GATE"

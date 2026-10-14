@@ -5,7 +5,7 @@ This repository generates an end-of-day (EOD) research shortlist and optional ne
 ## V8 flow
 
 1. Download NSE EOD Bhavcopy and rank the RVOL Top 20 using the previous 20 full sessions as the RVOL baseline (the current session is excluded from that baseline).
-2. Apply the five-valid-session Average Delivery filter: **average Delivery % >= 60.00% passes; below 60% rejects; fewer than five valid distinct sessions means `WAIT_FOR_DATA`.**
+2. Apply the five-valid-session Average Delivery filter: **average Delivery % > 60.00% passes; 60.00% or below rejects; fewer than five valid distinct sessions means `WAIT_FOR_DATA`.**
 3. Apply price/volume, trend, breakout/pullback, support/resistance, relative-strength and market-context checks.
 4. Require the 3+1 confirmation gate: at least **three independent evidence categories** plus a **separately verified primary/reliable source**. Categories may include price/volume, sector strength, accumulation/distribution and a real catalyst/news event. Multiple publishers repeating the same event remain one catalyst category.
 5. Produce an EOD `WATCH` only when all required gates, score coverage, risk/reward and chase checks pass.
@@ -43,6 +43,6 @@ python -m py_compile delivery_filter.py news_catalyst.py v8_layers_14_41.py test
 python test_v8_regression.py
 ```
 
-The additive workflow in `.github/workflows/v8-regression.yml` runs these checks on push, pull requests and manual dispatch. The normal `NSE Data Test` workflow remains the end-to-end scan and uploads its reports as an artifact.
+The `NSE Data Test` workflow runs these regression checks before the end-to-end scan and uploads the reports as an artifact. It is manually triggerable from GitHub Actions; the separate Telegram Bot Test workflow is preserved.
 
 The exact formulas/weights not defined by the master specification are conservative implementation defaults. Do not treat generated watchlists as financial advice or automatic orders. Verify the primary filing, liquidity, risk and current market context before any human decision.
