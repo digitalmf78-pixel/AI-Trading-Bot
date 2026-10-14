@@ -1,0 +1,19 @@
+NSE V8 Technical Screening Fix — Test Results
+Date: 2026-10-14
+
+Scope of this local patch:
+- Confirmed breakout requires CLV strictly > 0.75.
+- Confirmed pullback requires a bullish trend, controlled correction near EMA20/EMA44, RVOL <= 1.5, at least 3 of 5 low-volume days, and a bullish reversal candle.
+- Incomplete pullback patterns remain informational as Possible Pullback, not confirmed setups.
+- Negative Relative Strength vs Nifty is recorded as a warning and remains part of score/ranking; it is not a standalone hard rejection.
+- Missing Relative Strength remains WAIT/Reject for missing required data.
+- EMA44 proximity remains descriptive only and is not a rejection gate.
+- Delivery threshold and Delivery Filter files are unchanged.
+
+Validation:
+- Python compile check: PASS
+- Regression tests: 17/17 PASS
+- Test suite covers existing delivery, sector/news, empty-shortlist, EMA44 and next-day gates plus new breakout/pullback/relative-strength rules.
+
+Important limitation:
+- These are local code/regression tests only. The patch has NOT been applied to GitHub and a fresh GitHub Actions workflow has NOT yet been run.

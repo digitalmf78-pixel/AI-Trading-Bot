@@ -267,6 +267,152 @@ def test_source_code_uses_strict_greater_than_60_delivery_status():
     assert "PASS_GE_60_PERCENT" not in layer_source
 
 
+def _technical_history_for_setup(last_close=120.0, last_open=119.0, last_high=120.5, last_low=118.5, last_volume=3000):
+    dates = pd.bdate_range("2026-07-01", periods=60)
+    close = [100.0 + i * 0.32 for i in range(59)]
+    # Make the prior 20-session resistance level predictable.
+    rows = []
+    for i, day in enumerate(dates[:-1]):
+        c = close[i]
+        rows.append({
+            "TckrSymb": "ABC", "Date": day,
+            "OpnPric": c - 0.1, "HghPric": c + 0.5,
+            "LwPric": c - 0.5, "ClsPric": c,
+            "TtlTradgVol": 1000,
+        })
+    rows.append({
+        "TckrSymb": "ABC", "Date": dates[-1],
+        "OpnPric": last_open, "HghPric": last_high,
+        "LwPric": last_low, "ClsPric": last_close,
+        "TtlTradgVol": last_volume,
+    })
+    return pd.DataFrame(rows)
+
+
+def test_breakout_requires_strong_clv_above_075():
+    history = _technical_history_for_setup(
+        last_close=119.9, last_open=119.0, last_high=120.5, last_low=118.5, last_volume=3000
+    )
+    candidate = pd.DataFrame([{
+        "TckrSymb": "ABC", "EMA20": 118.0, "EMA44": 115.0,
+        "TrendClassification": "Bullish Trend", "LowVolumeDays5D": 1,
+    }])
+    result = scanner.calculate_breakout_pullback(candidate, [history])
+    row = result.iloc[0]
+    assert row["BreakoutStatus"] != "Breakout" and row["BreakoutStatus"] != "Strong Breakout", row.to_dict()
+    assert row["SetupType"] in {"Pre-Breakout", "No Clear Setup"}, row.to_dict()
+
+
+def test_pullback_requires_volume_contraction_and_bullish_reversal():
+    dates = pd.bdate_range("2026-07-01", periods=60)
+    closes = [108.0] * 59
+    closes[49] = 110.0  # recent high in the previous 20 sessions
+    closes[58] = 106.6  # prior close below today's bullish reversal close
+    rows = []
+    for i, day in enumerate(dates[:-1]):
+        c = closes[i]
+        rows.append({
+            "TckrSymb": "ABC", "Date": day,
+            "OpnPric": c - 0.1, "HghPric": c + (0.5 if i == 49 else 0.2),
+            "LwPric": c - 0.5, "ClsPric": c, "TtlTradgVol": 1000,
+        })
+    rows.append({
+        "TckrSymb": "ABC", "Date": dates[-1],
+        "OpnPric": 106.5, "HghPric": 107.8, "LwPric": 105.8,
+        "ClsPric": 107.0, "TtlTradgVol": 1000,
+    })
+    history = pd.DataFrame(rows)
+    candidate = pd.DataFrame([{
+        "TckrSymb": "ABC", "EMA20": 106.8, "EMA44": 106.7,
+        "TrendClassification": "Bullish Trend", "LowVolumeDays5D": 3,
+    }])
+    result = scanner.calculate_breakout_pullback(candidate, [history])
+    row = result.iloc[0]
+    assert row["PullbackStatus"] == "Strong Pullback", row.to_dict()
+    assert row["SetupType"] == "Pullback", row.to_dict()
+
+    # Without the required three low-volume days, it remains informational only.
+    candidate.loc[0, "LowVolumeDays5D"] = 2
+    result = scanner.calculate_breakout_pullback(candidate, [history])
+    row = result.iloc[0]
+    assert row["PullbackStatus"] == "Possible Pullback", row.to_dict()
+    assert row["SetupType"] == "Possible Pullback", row.to_dict()
+
+    # A red candle is not a confirmed bullish reversal even when volume contracts.
+    candidate.loc[0, "LowVolumeDays5D"] = 3
+    bearish_history = history.copy()
+    bearish_history.loc[bearish_history.index[-1], "OpnPric"] = 107.2
+    result = scanner.calculate_breakout_pullback(candidate, [bearish_history])
+    row = result.iloc[0]
+    assert row["PullbackStatus"] == "Possible Pullback", row.to_dict()
+    assert row["SetupType"] == "Possible Pullback", row.to_dict()
+
+
+def test_negative_relative_strength_is_warning_not_standalone_rejection():
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp)
+            row = {
+                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+                "RVOLStatus": "PASS", "RVOL": 2.0, "SetupType": "Breakout",
+                "TrendClassification": "Bullish Trend", "CLV": 0.80,
+                "PriceVolumeRelationship": "Positive", "RelativeStrengthNifty": -0.5,
+                "LowVolumeDays5D": 1, "BreakoutStatus": "Breakout",
+                "PullbackStatus": "No Pullback", "SRSupport": 100.0,
+                "SRResistance": 120.0, "PriceChangePct": 1.0,
+            }
+            selected = scanner.select_top20_analysis_candidates(pd.DataFrame([row]), "2026-10-14")
+            assert selected.iloc[0]["CandidateScreenStatus"] == "PASS", selected.to_dict("records")
+            assert "UNDERPERFORMS_NIFTY_SCORE_PENALTY" in selected.iloc[0]["CandidateScreenWarnings"]
+            assert "UNDERPERFORMS_NIFTY" not in selected.iloc[0]["CandidateScreenReasons"]
+        finally:
+            os.chdir(old_cwd)
+
+
+
+def test_mixed_improving_trend_does_not_confirm_core_setup():
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp)
+            row = {
+                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+                "RVOLStatus": "PASS", "RVOL": 2.0, "SetupType": "Breakout",
+                "TrendClassification": "Mixed / Improving", "CLV": 0.80,
+                "PriceVolumeRelationship": "Positive", "RelativeStrengthNifty": 1.0,
+                "LowVolumeDays5D": 1, "BreakoutStatus": "Breakout",
+                "PullbackStatus": "No Pullback", "SRSupport": 100.0,
+                "SRResistance": 120.0, "PriceChangePct": 1.0,
+            }
+            selected = scanner.select_top20_analysis_candidates(pd.DataFrame([row]), "2026-10-14")
+            assert selected.iloc[0]["CandidateScreenStatus"] == "REJECT", selected.to_dict("records")
+            assert "TREND_NOT_BULLISH" in selected.iloc[0]["CandidateScreenReasons"]
+        finally:
+            os.chdir(old_cwd)
+
+
+def test_breakout_selector_rejects_clv_equal_to_075():
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp)
+            row = {
+                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+                "RVOLStatus": "PASS", "RVOL": 2.0, "SetupType": "Breakout",
+                "TrendClassification": "Bullish Trend", "CLV": 0.75,
+                "PriceVolumeRelationship": "Positive", "RelativeStrengthNifty": 1.0,
+                "LowVolumeDays5D": 1, "BreakoutStatus": "Breakout",
+                "PullbackStatus": "No Pullback", "SRSupport": 100.0,
+                "SRResistance": 120.0, "PriceChangePct": 1.0,
+            }
+            selected = scanner.select_top20_analysis_candidates(pd.DataFrame([row]), "2026-10-14")
+            assert selected.iloc[0]["CandidateScreenStatus"] == "REJECT", selected.to_dict("records")
+            assert "BREAKOUT_CANDLE_NOT_STRONG_CLV_NOT_GT_0_75" in selected.iloc[0]["CandidateScreenReasons"]
+        finally:
+            os.chdir(old_cwd)
+
+
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
@@ -281,6 +427,11 @@ if __name__ == "__main__":
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
         test_next_day_pipeline_only_receives_final_watch_candidates,
         test_source_code_uses_strict_greater_than_60_delivery_status,
+        test_breakout_requires_strong_clv_above_075,
+        test_pullback_requires_volume_contraction_and_bullish_reversal,
+        test_negative_relative_strength_is_warning_not_standalone_rejection,
+        test_mixed_improving_trend_does_not_confirm_core_setup,
+        test_breakout_selector_rejects_clv_equal_to_075,
     ]
     for test in tests:
         test()

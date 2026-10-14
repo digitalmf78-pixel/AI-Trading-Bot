@@ -1644,6 +1644,14 @@ def calculate_breakout_pullback(
             hist["ClsPric"].iloc[-1]
         )
 
+        current_open = float(
+            hist["OpnPric"].iloc[-1]
+        ) if "OpnPric" in hist.columns and pd.notna(hist["OpnPric"].iloc[-1]) else float("nan")
+
+        previous_close = float(
+            hist["ClsPric"].iloc[-2]
+        ) if len(hist) >= 2 and pd.notna(hist["ClsPric"].iloc[-2]) else float("nan")
+
         current_high = float(
             hist["HghPric"].iloc[-1]
         )
@@ -1718,13 +1726,14 @@ def calculate_breakout_pullback(
         # ----------------------------
         # BREAKOUT
         # ----------------------------
-
+        # Master V8 rule: a confirmed breakout requires a strong closing candle
+        # (CLV strictly greater than 0.75), not merely a close in the upper half.
         breakout = False
 
         if (
             current_close > high20
             and current_rvol >= 2.0
-            and clv >= 0.50
+            and clv > 0.75
         ):
 
             breakout = True
@@ -1732,7 +1741,7 @@ def calculate_breakout_pullback(
         elif (
             current_close > high50
             and current_rvol >= 1.5
-            and clv >= 0.50
+            and clv > 0.75
         ):
 
             breakout = True
@@ -1741,7 +1750,7 @@ def calculate_breakout_pullback(
             current_close > high20
             and current_close > high50
             and current_rvol >= 2.0
-            and clv >= 0.75
+            and clv > 0.75
         ):
 
             breakout_status = (
@@ -1856,17 +1865,14 @@ def calculate_breakout_pullback(
             <= 15.0
         )
 
-        pullback = (
-            (
-                "Bullish" in trend_text
-                or "Improving" in trend_text
-            )
-            and controlled_pullback
-            and (
-                near_ema20
-                or near_ema44
-            )
-            and current_rvol <= 1.5
+        # Explicit bullish reversal candle confirmation for a pullback:
+        # current close > open, current close > previous close, and CLV > 0.50.
+        bullish_reversal_candle = (
+            pd.notna(current_open)
+            and pd.notna(previous_close)
+            and current_close > current_open
+            and current_close > previous_close
+            and clv > 0.50
         )
 
         low_volume_days = result.loc[
@@ -1885,32 +1891,24 @@ def calculate_breakout_pullback(
             else 0
         )
 
-        if (
-            pullback
-            and low_days >= 3
-        ):
+        pullback_structure = (
+            ("Bullish" in trend_text)
+            and controlled_pullback
+            and (near_ema20 or near_ema44)
+            and current_rvol <= 1.5
+        )
 
-            pullback_status = (
-                "Strong Pullback"
-            )
-
-        elif pullback:
-
-            pullback_status = (
-                "Pullback"
-            )
+        # A confirmed pullback needs both volume contraction (>=3 of 5 days
+        # below the 20-session average) and a bullish reversal candle.
+        if pullback_structure and low_days >= 3 and bullish_reversal_candle:
+            pullback_status = "Strong Pullback"
 
         elif (
             controlled_pullback
-            and (
-                near_ema20
-                or near_ema44
-            )
+            and (near_ema20 or near_ema44)
         ):
-
-            pullback_status = (
-                "Possible Pullback"
-            )
+            # Keep incomplete structures informational; never treat them as confirmed.
+            pullback_status = "Possible Pullback"
 
         else:
 
@@ -2724,7 +2722,8 @@ def select_top20_analysis_candidates(result, eod_date):
     Delivery has already been applied as a mandatory pre-analysis gate: only candidates
     with five valid sessions and AvgDelivery5D > 60.00% reach this screen. A candidate
     must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
-    trend/candle, non-negative relative strength, and setup-specific volume rules.
+    trend/candle and setup-specific volume rules. Negative relative strength is
+    retained as a scoring/ranking warning, not a standalone hard rejection.
     Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
     """
     if result is None or result.empty:
@@ -2746,6 +2745,7 @@ def select_top20_analysis_candidates(result, eod_date):
 
     for _, row in frame.iterrows():
         reasons = []
+        warnings = []
         symbol = str(row.get("TckrSymb", "")).strip().upper()
         delivery = str(row.get("DeliveryFilterStatus", "WAIT_FOR_DATA")).strip().upper()
         rvol_status = str(row.get("RVOLStatus", "WAIT_FOR_DATA")).strip().upper()
@@ -2769,16 +2769,18 @@ def select_top20_analysis_candidates(result, eod_date):
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
             reasons.append("NO_CONFIRMED_BREAKOUT_OR_PULLBACK_SETUP")
-        if not ("Bullish" in trend or "Improving" in trend):
-            reasons.append("TREND_NOT_BULLISH_OR_IMPROVING")
-        if pd.isna(clv) or clv < 0.50:
-            reasons.append("CANDLE_CLV_BELOW_0_50")
+        if "Bullish" not in trend:
+            reasons.append("TREND_NOT_BULLISH")
+        if setup == "Breakout" and (pd.isna(clv) or clv <= 0.75):
+            reasons.append("BREAKOUT_CANDLE_NOT_STRONG_CLV_NOT_GT_0_75")
+        elif setup == "Pullback" and (pd.isna(clv) or clv <= 0.50):
+            reasons.append("PULLBACK_CANDLE_CLV_NOT_GT_0_50")
         if pv == "Selling / Distribution":
             reasons.append("PRICE_VOLUME_SHOWS_SELLING_DISTRIBUTION")
         if pd.isna(rs):
             reasons.append("RELATIVE_STRENGTH_WAIT_FOR_DATA")
         elif rs < 0:
-            reasons.append("UNDERPERFORMS_NIFTY")
+            warnings.append("UNDERPERFORMS_NIFTY_SCORE_PENALTY")
         if pd.isna(support) or support <= 0 or pd.isna(resistance) or resistance <= 0:
             reasons.append("SUPPORT_RESISTANCE_WAIT_FOR_DATA")
 
@@ -2809,6 +2811,7 @@ def select_top20_analysis_candidates(result, eod_date):
             "SRResistance": resistance,
             "CandidateScreenStatus": "PASS" if selected else "REJECT",
             "CandidateScreenReasons": "PASS_CORE_TECHNICAL_SCREEN" if selected else ";".join(reasons),
+            "CandidateScreenWarnings": ";".join(warnings) if warnings else "NONE",
         })
 
     audit = pd.DataFrame(audit_rows)
@@ -2818,10 +2821,13 @@ def select_top20_analysis_candidates(result, eod_date):
     # and the audit cannot explain missing sector/news data across the shortlist.
     audit["TckrSymb"] = audit["TckrSymb"].astype(str).str.strip().str.upper()
     frame["TckrSymb"] = frame["TckrSymb"].astype(str).str.strip().str.upper()
-    audit_map = audit.set_index("TckrSymb")[["CandidateScreenStatus", "CandidateScreenReasons"]]
+    audit_map = audit.set_index("TckrSymb")[[
+        "CandidateScreenStatus", "CandidateScreenReasons", "CandidateScreenWarnings"
+    ]]
     frame = frame.merge(audit_map, left_on="TckrSymb", right_index=True, how="left")
     frame["CoreTechnicalScreenStatus"] = frame["CandidateScreenStatus"]
     frame["CoreTechnicalScreenReasons"] = frame["CandidateScreenReasons"]
+    frame["CoreTechnicalScreenWarnings"] = frame["CandidateScreenWarnings"]
     frame["RVOL"] = pd.to_numeric(frame["RVOL"], errors="coerce")
     frame["CLV"] = pd.to_numeric(frame["CLV"], errors="coerce")
     frame["RelativeStrengthNifty"] = pd.to_numeric(frame["RelativeStrengthNifty"], errors="coerce")
