@@ -164,6 +164,22 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
 
 
 
+def test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps():
+    # Delivery data can be legitimately unavailable. An empty shortlist must
+    # not crash EMA44, breakout/pullback, or support/resistance merges.
+    empty = pd.DataFrame(columns=[
+        "TckrSymb", "ClsPric", "HghPric", "LwPric", "OpnPric",
+        "TtlTradgVol", "PriceChangePct", "RVOL", "AvgVolume20D",
+    ])
+    historical = []
+    trend = scanner.calculate_trend(empty.copy(), historical)
+    assert trend.empty and "EMA44" in trend.columns and "TckrSymb" in trend.columns
+    setup = scanner.calculate_breakout_pullback(trend.copy(), historical)
+    assert setup.empty and "BreakoutStatus" in setup.columns and "TckrSymb" in setup.columns
+    sr = scanner.calculate_support_resistance(setup.copy(), historical)
+    assert sr.empty and "SRSupport" in sr.columns and "TckrSymb" in sr.columns
+
+
 def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates():
     dates = pd.bdate_range("2026-07-01", periods=60)
     close = [100 + i * 0.45 + ((i % 4) - 1.5) * 0.12 for i in range(60)]
@@ -260,6 +276,7 @@ if __name__ == "__main__":
         test_delivery_average_above_60_percent_passes,
         test_delivery_average_exactly_60_percent_rejects,
         test_delivery_below_60_rejects_and_incomplete_waits,
+        test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
         test_next_day_pipeline_only_receives_final_watch_candidates,

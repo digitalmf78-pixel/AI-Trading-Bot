@@ -1548,7 +1548,14 @@ def calculate_trend(result, historical):
             "TrendClassification": trend,
         })
 
-    trend_df = pd.DataFrame(trend_rows)
+    trend_columns = [
+        "TckrSymb", "EMA20", "EMA44", "EMA44DistancePct", "EMA44Trend",
+        "EMA44Position", "EMA44ProximityStatus", "EMA44SignalStatus",
+        "PriceChange5D", "RSI14", "ADX14", "TrendClassification",
+    ]
+    # Empty screened lists are valid (for example, when the mandatory delivery
+    # gate is WAIT_FOR_DATA). Keep the merge key even when there are zero rows.
+    trend_df = pd.DataFrame(trend_rows, columns=trend_columns)
     result = result.merge(trend_df, on="TckrSymb", how="left")
     print(f"EMA20/EMA44 indicators calculated for {len(trend_df)} screened symbols")
     print("EMA44 proximity is descriptive only; NOT_NEAR_EMA44 does not reject any candidate.")
@@ -1982,9 +1989,13 @@ def calculate_breakout_pullback(
                 current_rvol,
         })
 
-    setup_df = pd.DataFrame(
-        rows
-    )
+    setup_columns = [
+        "TckrSymb", "RecentSwingHigh", "RecentSwingLow", "High20D", "High50D",
+        "ATR14", "BreakoutStatus", "PullbackStatus", "SetupType",
+        "CorrectionFromHighPct", "SetupRVOL",
+    ]
+    # Preserve the merge key when there are no delivery-qualified candidates.
+    setup_df = pd.DataFrame(rows, columns=setup_columns)
 
     result = result.merge(
         setup_df,
@@ -2013,6 +2024,20 @@ def calculate_support_resistance(
         "\nSTEP 11: Support / "
         "Resistance Detection..."
     )
+
+    sr_columns = [
+        "PDH", "PDL", "PWH", "PWL", "SR20DHigh", "SR50DHigh",
+        "SRSwingHigh", "SRSwingLow", "SRSupport", "SRResistance", "BreakoutLevel",
+        "EntryZoneLow", "EntryZoneHigh", "SRStatus",
+    ]
+    if result is None or result.empty:
+        # No screened candidates means there is no need to index historical dates.
+        # Keep the output schema stable so downstream V8 layers can report WAIT_FOR_DATA.
+        result = result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+        for column in sr_columns:
+            if column not in result.columns:
+                result[column] = pd.Series(dtype="object")
+        return result
 
     rows = []
 
@@ -2482,9 +2507,13 @@ def calculate_support_resistance(
                 sr_status,
         })
 
-    sr_df = pd.DataFrame(
-        rows
-    )
+    sr_columns = [
+        "TckrSymb", "PDH", "PDL", "PWH", "PWL", "SR20DHigh", "SR50DHigh",
+        "SRSwingHigh", "SRSwingLow", "SRSupport", "SRResistance", "BreakoutLevel",
+        "EntryZoneLow", "EntryZoneHigh", "SRStatus",
+    ]
+    # Preserve the merge key when there are no delivery-qualified candidates.
+    sr_df = pd.DataFrame(rows, columns=sr_columns)
 
     result = result.merge(
         sr_df,
