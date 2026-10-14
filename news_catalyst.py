@@ -11,7 +11,6 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
 import re
-import time
 import xml.etree.ElementTree as ET
 
 import pandas as pd
@@ -328,79 +327,97 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
 
 
 def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str]) -> list[str]:
+    """Build a point-wise Marathi/English report for every screened candidate.
+
+    EMA44 proximity is reported but is never used to reject a shortlisted symbol.
+    """
     if result.empty:
-        return ["आजच्या अहवालात शेअर्सची यादी उपलब्ध नाही."]
+        return [
+            "NSE SWING TRADING V8.0 — EOD REPORT",
+            f"Date / तारीख: {eod_date}",
+            "आजच्या Pipeline मध्ये पुढील विश्लेषणासाठी पात्र Stock उपलब्ध नाही.",
+            "No eligible candidate reached the detailed-analysis stage.",
+            "हा निकाल EMA44 proximity मुळे नाही; आधीच्या selection gates चा परिणाम आहे.",
+        ]
+
     candidates = result.copy()
-    candidates["RVOL"] = pd.to_numeric(candidates.get("RVOL"), errors="coerce")
-    candidates = candidates.sort_values("RVOL", ascending=False).head(20)
+    if "RVOL" in candidates.columns:
+        candidates["RVOL"] = pd.to_numeric(candidates["RVOL"], errors="coerce")
+        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last").head(20)
     market_close = _eod_market_close(eod_date)
+
+    def val(row, key, digits=2, suffix=""):
+        value = pd.to_numeric(pd.Series([row.get(key)]), errors="coerce").iloc[0]
+        return f"{value:+.{digits}f}{suffix}" if pd.notna(value) and suffix == "%" else f"{value:.{digits}f}{suffix}" if pd.notna(value) else "NA / उपलब्ध नाही"
+
     lines = [
-        "एनएसई V8 — व्यवहारवाढ आणि कंपनी घडामोडी",
-        f"तारीख: {eod_date}",
-        "खालील २० शेअर्सची निवड जास्त सापेक्ष व्यवहारावरून झाली आहे.",
-        "भाव-व्यवहाराचा नमुना हा संकेत आहे; तो बातमीमुळेच घडला याची खात्री नाही.",
-        "ही माहिती अभ्यासासाठी आहे; कोणताही व्यवहार आपोआप होत नाही.",
+        "📊 NSE SWING TRADING V8.0 — EOD REPORT",
+        f"Date / तारीख: {eod_date}",
+        f"Detailed candidates / तपासलेले Stocks: {len(candidates)}",
+        "Rule: EMA20 कायम; EMA50 च्या जागी EMA44.",
+        "महत्त्वाचे: NOT_NEAR_EMA44 हा फक्त माहितीचा Status आहे; यामुळे Shortlisted Stock Reject होत नाही.",
+        "NOT_NEAR_EMA44 is informational only and does not reject a shortlisted stock.",
+        "Analysis only — no automatic order; अंतिम Status सर्व V8 gates नंतरच.",
         "",
     ]
     for number, (_, row) in enumerate(candidates.iterrows(), start=1):
-        symbol = str(row.get("TckrSymb", "")).strip()
-        try:
-            rvol = float(row.get("RVOL"))
-            rvol_text = f"{rvol:.2f} पट"
-        except (TypeError, ValueError):
-            rvol_text = "मोजता आला नाही"
-        try:
-            change = float(row.get("PriceChangePct"))
-            change_text = f"{change:+.2f}%"
-        except (TypeError, ValueError):
-            change_text = "उपलब्ध नाही"
-        matched = news[news["TckrSymb"].astype(str).str.upper() == symbol.upper()] if not news.empty else pd.DataFrame()
-        official = matched[matched["SourceType"].astype(str).str.lower().isin({"primary", "official", "exchange", "company", "regulator"})] if not matched.empty else pd.DataFrame()
+        symbol = str(row.get("TckrSymb", "UNKNOWN")).strip().upper()
+        lines.append(f"━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"{number}. 📌 {symbol}")
+        lines.append(f"1) Price / भाव: Close ₹{val(row, 'ClsPric')} | 1D Change {val(row, 'PriceChangePct', 2, '%')} | 5D Change {val(row, 'PriceChange5D', 2, '%')}")
+        lines.append(f"2) Volume: Today {val(row, 'TtlTradgVol', 0)} | 20D Avg {val(row, 'AvgVolume20D', 0)} | RVOL {val(row, 'RVOL')}x")
+
+        delivery_cols = [c for c in candidates.columns if str(c).startswith("Delivery_")]
+        delivery_cols = sorted(delivery_cols, key=lambda c: str(c).replace("Delivery_", ""), reverse=True)[:5]
+        if delivery_cols:
+            day_values = []
+            for column in delivery_cols:
+                day = str(column).replace("Delivery_", "")
+                day_value = pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
+                day_values.append(f"{day}: {day_value:.2f}%" if pd.notna(day_value) else f"{day}: NA")
+            lines.append("3) 5-Day Delivery / पाच दिवसांचा Delivery %: " + " | ".join(day_values))
+        else:
+            lines.append("3) 5-Day Delivery / पाच दिवसांचा Delivery %: Daily values unavailable / रोजचा डेटा उपलब्ध नाही")
+        avg_delivery = pd.to_numeric(pd.Series([row.get("AvgDelivery5D")]), errors="coerce").iloc[0]
+        avg_delivery_text = f"{avg_delivery:.2f}%" if pd.notna(avg_delivery) else "NA / उपलब्ध नाही"
+        lines.append(f"   Average Delivery: {avg_delivery_text} | Filter: {row.get('DeliveryFilterStatus', row.get('DeliveryStatus', 'WAIT_FOR_DATA'))}")
+
+        lines.append(f"4) EMA: EMA20 ₹{val(row, 'EMA20')} | EMA44 ₹{val(row, 'EMA44')} | Distance {val(row, 'EMA44DistancePct', 2, '%')} | EMA44 Trend {row.get('EMA44Trend', 'WAIT_FOR_DATA')}")
+        lines.append(f"   Position: {row.get('EMA44Position', 'WAIT_FOR_DATA')} | Proximity: {row.get('EMA44ProximityStatus', 'WAIT_FOR_DATA')} | EMA44 Signal: {row.get('EMA44SignalStatus', 'WAIT_FOR_DATA')}")
+        lines.append("   EMA44 note: NOT_NEAR_EMA44 = informational only; shortlisted candidate remains in analysis.")
+
+        lines.append(f"5) Technical: RSI14 {val(row, 'RSI14', 1)} | ADX14 {val(row, 'ADX14', 1)} | Trend {row.get('TrendClassification', 'WAIT_FOR_DATA')}")
+        lines.append(f"   Price/Volume: {row.get('PriceVolumeRelationship', 'WAIT_FOR_DATA')} | CLV {val(row, 'CLV')} | Breakout {row.get('BreakoutStatus', 'WAIT_FOR_DATA')} | Pullback {row.get('PullbackStatus', 'WAIT_FOR_DATA')}")
+        lines.append(f"6) Support/Resistance: Support ₹{val(row, 'SRSupport')} | Resistance ₹{val(row, 'SRResistance')} | Breakout Level ₹{val(row, 'BreakoutLevel')}")
+        lines.append(f"7) Sector/Market: Sector {row.get('Sector', 'Unknown')} | Sector status {row.get('SectorStrengthStatus', 'WAIT_FOR_DATA')} | Market regime {row.get('MarketRegime', 'WAIT_FOR_DATA')}")
+
+        matched = news[news["TckrSymb"].astype(str).str.upper() == symbol] if news is not None and not news.empty and "TckrSymb" in news.columns else pd.DataFrame()
+        official = matched[matched["SourceType"].astype(str).str.lower().isin({"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"})] if not matched.empty and "SourceType" in matched.columns else pd.DataFrame()
         secondary = matched[~matched.index.isin(official.index)] if not matched.empty else pd.DataFrame()
         chosen = official.iloc[0] if not official.empty else secondary.iloc[0] if not secondary.empty else None
-        lines.append(f"{number}. {symbol} — भावबदल {change_text}; नेहमीच्या व्यवहाराच्या तुलनेत {rvol_text}.")
-        volume_signal = str(row.get("VolumeReason", "WAIT_FOR_DATA"))
-        volume_label = {
-            "Demand-led": "खरेदीकडे झुकणारा नमुना",
-            "Supply-led": "विक्रीकडे झुकणारा नमुना",
-            "Balanced / unclear": "संतुलित किंवा अस्पष्ट नमुना",
-            "No unusual volume": "विशेष व्यवहारवाढ नाही",
-        }.get(volume_signal, "नमुना मोजता आला नाही")
-        lines.append(f"   भाव-व्यवहार संकेत: {volume_label}; हा तांत्रिक अंदाज आहे, कारणाची पुष्टी नाही.")
         if chosen is None:
-            if feed_status.get("NSE") != "available":
-                lines.append(f"   NSE घोषणांची तपासणी पूर्ण झाली नाही ({feed_status.get('NSE')}); कारण अनिश्चित.")
-            else:
-                lines.append("   मागील ५ दिवसांत जुळणारी अधिकृत घोषणा सापडली नाही; कारण पुष्टी नाही.")
+            lines.append(f"8) News/Catalyst: {row.get('NewsEvidenceStatus', 'NO_DATA')} — verified matching filing/news not available / पडताळलेली बातमी उपलब्ध नाही.")
         else:
             headline = str(chosen.get("Headline", ""))
             source_type = str(chosen.get("SourceType", "")).lower()
-            category = category_marathi(headline)
-            impact = _event_impact_marathi(headline, str(chosen.get("Impact", "neutral")))
-            if source_type in {"primary", "official", "exchange", "company", "regulator"}:
-                verification = f"{chosen.get('Source', 'एक्स्चेंज')} वरील अधिकृत नोंद"
-            else:
-                verification = f"दुय्यम बातमी ({chosen.get('Source', 'स्रोत')}); अधिकृत पुष्टी नाही"
-            lines.append(f"   जुळलेली घडामोड: {category}; {verification}.")
-            lines.append(f"   प्राथमिक अर्थ: {impact}.")
+            verification = "Official/primary source" if source_type in {"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"} else "Secondary source — official confirmation not established"
+            lines.append(f"8) News/Catalyst: {headline}")
+            lines.append(f"   Source: {chosen.get('Source', 'Unknown')} | {verification} | Impact label: {chosen.get('Impact', 'neutral')}")
             published = pd.to_datetime(chosen.get("PublishedAt", ""), errors="coerce", utc=True)
             if pd.notna(published) and published.tz_convert("Asia/Kolkata") > market_close:
-                lines.append("   ही नोंद बाजार बंद झाल्यानंतर आली; आजच्या व्यवहाराचे कारण नाही, पुढील सत्रासाठी लक्षात घ्या.")
-            lines.append(f"   मूळ दुवा: {chosen.get('URL', '')}")
-        evidence_status = str(row.get("NewsEvidenceStatus", "NO_DATA"))
-        if evidence_status == "CONFIRMED_3_PLUS_1":
-            lines.append("   पुष्टी: अधिकृत नोंद आणि तीन स्वतंत्र बातमी-स्रोत आढळले.")
-        elif evidence_status == "PRIMARY_CONFIRMED":
-            lines.append("   पुष्टी: अधिकृत नोंद मिळाली; ३+१ स्वतंत्र पुष्टी पूर्ण नाही.")
-        elif evidence_status == "UNVERIFIED":
-            lines.append("   पुष्टी: दुय्यम बातमी आहे; अधिकृत नोंद सापडलेली नाही.")
-        else:
-            lines.append("   पुष्टी: आवश्यक अधिकृत नोंद मिळालेली नाही.")
-        lines.append("")
-    lines.append("टीप: घोषणा आणि व्यवहारातील वेळ जुळली तरी तीच भावबदलाची निश्चित कारणीभूत गोष्ट असेल असे सिद्ध होत नाही.")
-    lines.append("स्रोत तपासणी — NSE घोषणा: " + ("उपलब्ध" if feed_status.get("NSE") == "available" else "अडचण") + "; इतर बातम्या: " + feed_status.get("secondary", "तपासल्या नाहीत") + ".")
-    return lines
+                lines.append("   Timing note: published after EOD close; not confirmed as the cause of today's move.")
+            lines.append(f"   Source URL: {chosen.get('URL', '')}")
 
+        lines.append(f"9) Confirmation: 3+1 {row.get('MandatoryConfirmationStatus', 'WAIT_FOR_DATA')} | Evidence categories {row.get('IndependentConfirmationCategories', 'NA')} | Primary source verified {row.get('NewsPrimarySourceVerified', 'WAIT_FOR_DATA')}")
+        lines.append(f"10) Risk/Reward: V8 Score {val(row, 'V8Score', 0)}/100 | Entry ₹{val(row, 'EntryPricePlan')} | Stop ₹{val(row, 'StopLossPlan')} | Target ₹{val(row, 'TargetPricePlan')} | R:R {val(row, 'RiskReward')} | Chase {row.get('ChaseStatus', 'WAIT_FOR_DATA')}")
+        lines.append(f"FINAL V8 STATUS: {row.get('EODWatchlistStatus', 'WAIT_FOR_DATA')} | Layer status: {row.get('EODLayerStatus', 'WAIT_FOR_DATA')}")
+        lines.append(f"Reason: {row.get('CandidateScreenReasons', row.get('EODLayerReason', 'Check detailed CSV for layer-specific reasons'))}")
+        lines.append("")
+
+    lines.append("Data rule: missing/invalid values stay NA or WAIT_FOR_DATA; no values are guessed.")
+    lines.append("Source status — NSE: " + str(feed_status.get("NSE", "not checked")) + " | Secondary news: " + str(feed_status.get("secondary", "not checked")))
+    lines.append("Disclaimer: research shortlist only, not a guaranteed signal or automatic order.")
+    return lines
 
 def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None) -> None:
     if not token or not chat_id:
@@ -417,51 +434,12 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
         current += addition
     if current:
         chunks.append(current.rstrip())
-    # Telegram is an external notification channel, not the source of truth for
-    # the scanner reports. Retry transient failures, but do not crash the EOD
-    # workflow after the CSV/report artifacts have already been written.
-    # A failed send is logged explicitly; it is never reported as delivered.
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
     for index, chunk in enumerate(chunks, start=1):
         text = f"भाग {index}/{len(chunks)}\n{chunk}" if len(chunks) > 1 else chunk
-        delivered = False
-        for attempt in range(1, 4):
-            try:
-                response = requests.post(
-                    url,
-                    data={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
-                    timeout=20,
-                )
-                print(
-                    f"Marathi Telegram digest part {index}/{len(chunks)}: "
-                    f"HTTP {response.status_code} (attempt {attempt}/3)"
-                )
-                response.raise_for_status()
-                try:
-                    payload = response.json()
-                except ValueError:
-                    payload = {}
-                if isinstance(payload, dict) and payload.get("ok") is False:
-                    raise requests.RequestException("Telegram API returned ok=false")
-                delivered = True
-                break
-            except requests.RequestException as exc:
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                # Do not retry permanent client errors; do retry rate limits,
-                # server errors and connection/time-out failures.
-                permanent_client_error = (
-                    status_code is not None and 400 <= status_code < 500 and status_code != 429
-                )
-                print(
-                    f"Marathi Telegram digest part {index}/{len(chunks)} not delivered "
-                    f"(attempt {attempt}/3; error={type(exc).__name__}; "
-                    f"HTTP={status_code if status_code is not None else 'network'})."
-                )
-                if attempt >= 3 or permanent_client_error:
-                    break
-                time.sleep(attempt)
-        if not delivered:
-            print(
-                f"WARNING: Telegram digest part {index}/{len(chunks)} FAILED after retries. "
-                "Scanner reports remain saved; notification was NOT delivered."
-            )
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+            timeout=20,
+        )
+        print(f"Marathi Telegram digest part {index}/{len(chunks)}: HTTP {response.status_code}")
+        response.raise_for_status()

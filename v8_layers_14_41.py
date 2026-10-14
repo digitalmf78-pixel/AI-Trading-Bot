@@ -407,12 +407,12 @@ def _market_regime(nifty_history: pd.DataFrame, asof) -> str:
         return "WAIT_FOR_DATA"
     close = frame["NiftyClose"]
     ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
-    ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
+    ema44 = close.ewm(span=44, adjust=False).mean().iloc[-1]
     prior_ema20 = close.ewm(span=20, adjust=False).mean().iloc[-6]
     last = close.iloc[-1]
-    if last > ema20 > ema50 and ema20 > prior_ema20:
+    if last > ema20 > ema44 and ema20 > prior_ema20:
         return "RISK_ON"
-    if last < ema20 < ema50 and ema20 < prior_ema20:
+    if last < ema20 < ema44 and ema20 < prior_ema20:
         return "RISK_OFF"
     return "MIXED"
 
@@ -421,7 +421,7 @@ def _delivery_pct(row: pd.Series) -> float:
     """Return the five-session average delivery percentage from the first-stage gate.
 
     Do not substitute a single-session delivery value here: V8 eligibility requires
-    five distinct EOD sessions and an average of at least 60 percent (exactly 60 percent passes).
+    five distinct EOD sessions and an average strictly greater than 60 percent; exactly 60 percent does not pass.
     Missing first-stage evidence remains missing and is handled as WAIT_FOR_DATA.
     """
     return _num(row.get("AvgDelivery5D"))
@@ -1001,9 +1001,9 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
         target = _num(position.get("Target"))
         pnl_pct = (price / entry - 1) * 100 if pd.notna(price) and pd.notna(entry) and entry > 0 else float("nan")
         stop_breached = pd.notna(price) and pd.notna(initial_stop) and price <= initial_stop
-        ema50 = _num(row.get("EMA50"))
+        ema44 = _num(row.get("EMA44"))
         rs = _num(row.get("RelativeStrengthNifty"))
-        thesis = "INTACT" if pd.notna(price) and pd.notna(ema50) and price >= ema50 and (pd.isna(rs) or rs > -5) else "WEAKENING" if pd.notna(price) else "WAIT_FOR_DATA"
+        thesis = "INTACT" if pd.notna(price) and pd.notna(ema44) and price >= ema44 and (pd.isna(rs) or rs > -5) else "WEAKENING" if pd.notna(price) else "WAIT_FOR_DATA"
         news_state = _news_for_symbol(news, symbol, eod_end_ist, start=position.get("EntryDate") if pd.notna(position.get("EntryDate")) else None)
         negative_news = news_state["NewsNegativePrimary"]
         rvol, clv = _num(row.get("RVOL")), _num(row.get("CLV"))

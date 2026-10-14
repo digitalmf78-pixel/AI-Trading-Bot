@@ -1423,186 +1423,136 @@ def prepare_history_by_symbol(
 
     return all_history, history_by_symbol
 
-def calculate_trend(
-    result,
-    historical
-):
+def calculate_trend(result, historical):
+    """Calculate EMA20/EMA44 and descriptive EMA44 states for screened candidates only.
 
-    print(
-        "\nSTEP 9: Calculating Trend indicators..."
-    )
-
-    print(
-        "EMA20 / EMA50 + RSI14 + ADX14 (50-session history; no EMA200)"
-    )
+    EMA44 proximity is informational: NOT_NEAR_EMA44 never rejects a candidate.
+    A breakout/breakdown requires an EOD cross plus volume confirmation.
+    """
+    print("\nSTEP 9: Calculating EMA20 / EMA44 + RSI14 + ADX14...")
+    print("Indicators run only for the current screened candidates; EMA44 proximity is not a rejection gate.")
 
     trend_rows = []
+    _, history_by_symbol = prepare_history_by_symbol(historical)
 
-    _, history_by_symbol = prepare_history_by_symbol(
-        historical
-    )
-
-    for symbol in result["TckrSymb"]:
-
+    for _, candidate in result.iterrows():
+        symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         hist = history_by_symbol.get(symbol)
-
+        missing = {
+            "TckrSymb": symbol,
+            "EMA20": float("nan"), "EMA44": float("nan"),
+            "EMA44DistancePct": float("nan"),
+            "EMA44Trend": "WAIT_FOR_DATA",
+            "EMA44Position": "WAIT_FOR_DATA",
+            "EMA44ProximityStatus": "WAIT_FOR_DATA",
+            "EMA44SignalStatus": "WAIT_FOR_DATA",
+            "PriceChange5D": float("nan"),
+            "RSI14": float("nan"), "ADX14": float("nan"),
+            "TrendClassification": "Insufficient Data",
+        }
         if hist is None or hist.empty:
-
-            trend_rows.append({
-                "TckrSymb": symbol,
-                "EMA20": float("nan"),
-                "EMA50": float("nan"),
-                "RSI14": float("nan"),
-                "ADX14": float("nan"),
-                "TrendClassification":
-                    "Insufficient Data",
-            })
-
+            trend_rows.append(missing)
             continue
 
-        hist = hist.copy()
-
-        close = pd.to_numeric(
-            hist["ClsPric"],
-            errors="coerce"
-        )
-
+        hist = hist.copy().sort_values("Date", kind="mergesort").reset_index(drop=True)
+        for column in ("ClsPric", "HghPric", "LwPric", "OpnPric", "TtlTradgVol"):
+            if column in hist.columns:
+                hist[column] = pd.to_numeric(hist[column], errors="coerce")
+        hist = hist.dropna(subset=["ClsPric"]).reset_index(drop=True)
         if len(hist) < 50:
-
-            trend_rows.append({
-                "TckrSymb": symbol,
-                "EMA20": float("nan"),
-                "EMA50": float("nan"),
-                "RSI14": float("nan"),
-                "ADX14": float("nan"),
-                "TrendClassification":
-                    "Insufficient Data",
-            })
-
+            trend_rows.append(missing)
             continue
 
-        hist["EMA20"] = close.ewm(
-            span=20,
-            adjust=False
-        ).mean()
-
-        hist["EMA50"] = close.ewm(
-            span=50,
-            adjust=False
-        ).mean()
-
-        hist["RSI14"] = calculate_rsi(
-            close,
-            14
-        )
-
-        hist["ADX14"] = calculate_adx(
-            hist,
-            14
-        )
-
+        close = hist["ClsPric"]
+        hist["EMA20"] = close.ewm(span=20, adjust=False).mean()
+        hist["EMA44"] = close.ewm(span=44, adjust=False).mean()
+        hist["RSI14"] = calculate_rsi(close, 14)
+        hist["ADX14"] = calculate_adx(hist, 14)
         last = hist.iloc[-1]
+        prior = hist.iloc[-2]
+        current_close = float(last["ClsPric"])
+        ema20 = float(last["EMA20"])
+        ema44 = float(last["EMA44"])
+        rsi = float(last["RSI14"]) if pd.notna(last["RSI14"]) else float("nan")
+        adx = float(last["ADX14"]) if pd.notna(last["ADX14"]) else float("nan")
+        distance = ((current_close - ema44) / ema44) * 100 if ema44 > 0 else float("nan")
+        proximity = "NEAR_EMA44" if pd.notna(distance) and abs(distance) <= 3.0 else "NOT_NEAR_EMA44"
+        position = "ABOVE_EMA44" if current_close > ema44 else "BELOW_EMA44" if current_close < ema44 else "AT_EMA44"
 
-        current_close = float(
-            last["ClsPric"]
-        )
-
-        ema20 = float(
-            last["EMA20"]
-        )
-
-        ema50 = float(
-            last["EMA50"]
-        )
-
-        rsi = float(
-            last["RSI14"]
-        )
-
-        adx = float(
-            last["ADX14"]
-        )
-
-        if (
-            current_close > ema20
-            and ema20 > ema50
-            and rsi >= 50
-            and adx >= 20
-        ):
-
-            trend = (
-                "Strong Bullish Trend"
-            )
-
-        elif (
-            current_close > ema20
-            and ema20 > ema50
-        ):
-
-            trend = "Bullish Trend"
-
-        elif (
-            current_close < ema20
-            and ema20 < ema50
-            and rsi < 50
-            and adx >= 20
-        ):
-
-            trend = (
-                "Strong Bearish Trend"
-            )
-
-        elif (
-            current_close < ema20
-            and ema20 < ema50
-        ):
-
-            trend = "Bearish Trend"
-
-        elif (
-            current_close > ema50
-            and ema20 > ema50
-        ):
-
-            trend = "Mixed / Improving"
-
-        elif (
-            current_close < ema50
-            and ema20 < ema50
-        ):
-
-            trend = "Mixed / Weak"
-
+        prior_ema44 = float(hist.iloc[-2]["EMA44"])
+        ema44_5_sessions_ago = float(hist.iloc[-6]["EMA44"])
+        if ema44_5_sessions_ago > 0 and ((ema44 / ema44_5_sessions_ago) - 1) * 100 > 0.10:
+            ema44_trend = "RISING"
+        elif ema44_5_sessions_ago > 0 and ((ema44 / ema44_5_sessions_ago) - 1) * 100 < -0.10:
+            ema44_trend = "FALLING"
         else:
+            ema44_trend = "FLAT"
 
+        try:
+            prior_close = float(prior["ClsPric"])
+            price_change_5d = ((current_close / float(hist.iloc[-6]["ClsPric"])) - 1) * 100
+        except (TypeError, ValueError, ZeroDivisionError):
+            prior_close, price_change_5d = float("nan"), float("nan")
+
+        rvol = pd.to_numeric(pd.Series([candidate.get("RVOL")]), errors="coerce").iloc[0]
+        avg_volume = pd.to_numeric(pd.Series([candidate.get("AvgVolume20D")]), errors="coerce").iloc[0]
+        current_volume = pd.to_numeric(pd.Series([candidate.get("TtlTradgVol")]), errors="coerce").iloc[0]
+        volume_confirmed = (pd.notna(rvol) and float(rvol) >= 1.2) or (
+            pd.notna(current_volume) and pd.notna(avg_volume) and float(avg_volume) > 0
+            and float(current_volume) >= float(avg_volume)
+        )
+        crossed_up = prior_close <= prior_ema44 and current_close > ema44
+        crossed_down = prior_close >= prior_ema44 and current_close < ema44
+        if crossed_up and volume_confirmed:
+            signal = "BULLISH_BREAKOUT"
+        elif crossed_down and volume_confirmed:
+            signal = "BEARISH_BREAKDOWN"
+        elif crossed_up:
+            signal = "BULLISH_CROSS_NO_VOLUME_CONFIRMATION"
+        elif crossed_down:
+            signal = "BEARISH_CROSS_NO_VOLUME_CONFIRMATION"
+        elif current_close > ema44:
+            signal = "ABOVE_EMA44"
+        elif current_close < ema44:
+            signal = "BELOW_EMA44"
+        else:
+            signal = "AT_EMA44"
+
+        if current_close > ema20 and ema20 > ema44 and pd.notna(rsi) and rsi >= 50 and pd.notna(adx) and adx >= 20:
+            trend = "Strong Bullish Trend"
+        elif current_close > ema20 and ema20 > ema44:
+            trend = "Bullish Trend"
+        elif current_close < ema20 and ema20 < ema44 and pd.notna(rsi) and rsi < 50 and pd.notna(adx) and adx >= 20:
+            trend = "Strong Bearish Trend"
+        elif current_close < ema20 and ema20 < ema44:
+            trend = "Bearish Trend"
+        elif current_close > ema44 and ema20 > ema44:
+            trend = "Mixed / Improving"
+        elif current_close < ema44 and ema20 < ema44:
+            trend = "Mixed / Weak"
+        else:
             trend = "Sideways / Mixed"
 
         trend_rows.append({
             "TckrSymb": symbol,
             "EMA20": ema20,
-            "EMA50": ema50,
+            "EMA44": ema44,
+            "EMA44DistancePct": distance,
+            "EMA44Trend": ema44_trend,
+            "EMA44Position": position,
+            "EMA44ProximityStatus": proximity,
+            "EMA44SignalStatus": signal,
+            "PriceChange5D": price_change_5d,
             "RSI14": rsi,
             "ADX14": adx,
             "TrendClassification": trend,
         })
 
-    trend_df = pd.DataFrame(
-        trend_rows
-    )
-
-    result = result.merge(
-        trend_df,
-        on="TckrSymb",
-        how="left"
-    )
-
-    print(
-        f"Trend indicators calculated for "
-        f"{len(trend_df)} symbols"
-    )
-
+    trend_df = pd.DataFrame(trend_rows)
+    result = result.merge(trend_df, on="TckrSymb", how="left")
+    print(f"EMA20/EMA44 indicators calculated for {len(trend_df)} screened symbols")
+    print("EMA44 proximity is descriptive only; NOT_NEAR_EMA44 does not reject any candidate.")
     return result
-
 
 # ============================================================
 # BREAKOUT / PULLBACK
@@ -1820,9 +1770,9 @@ def calculate_breakout_pullback(
             "EMA20"
         ]
 
-        ema50 = result.loc[
+        ema44 = result.loc[
             result["TckrSymb"] == symbol,
-            "EMA50"
+            "EMA44"
         ]
 
         trend_value = result.loc[
@@ -1837,10 +1787,10 @@ def calculate_breakout_pullback(
             else float("nan")
         )
 
-        ema50_value = (
-            float(ema50.iloc[0])
-            if len(ema50) > 0
-            and pd.notna(ema50.iloc[0])
+        ema44_value = (
+            float(ema44.iloc[0])
+            if len(ema44) > 0
+            and pd.notna(ema44.iloc[0])
             else float("nan")
         )
 
@@ -1869,7 +1819,7 @@ def calculate_breakout_pullback(
             ) * 100
 
         near_ema20 = False
-        near_ema50 = False
+        near_ema44 = False
 
         if pd.notna(ema20_value):
 
@@ -1882,15 +1832,15 @@ def calculate_breakout_pullback(
                 <= 0.03
             )
 
-        if pd.notna(ema50_value):
+        if pd.notna(ema44_value):
 
-            near_ema50 = (
+            near_ema44 = (
                 abs(
                     current_close
-                    - ema50_value
+                    - ema44_value
                 )
-                / ema50_value
-                <= 0.04
+                / ema44_value
+                <= 0.03
             )
 
         controlled_pullback = (
@@ -1907,7 +1857,7 @@ def calculate_breakout_pullback(
             and controlled_pullback
             and (
                 near_ema20
-                or near_ema50
+                or near_ema44
             )
             and current_rvol <= 1.5
         )
@@ -1947,7 +1897,7 @@ def calculate_breakout_pullback(
             controlled_pullback
             and (
                 near_ema20
-                or near_ema50
+                or near_ema44
             )
         ):
 
@@ -2270,7 +2220,7 @@ def calculate_support_resistance(
         )
 
         # ----------------------------------------------------
-        # EMA20 / EMA50 from existing result
+        # EMA20 / EMA44 from existing result
         # ----------------------------------------------------
 
         row_match = result[
@@ -2284,14 +2234,14 @@ def calculate_support_resistance(
                 "EMA20"
             ].iloc[0]
 
-            ema50 = row_match[
-                "EMA50"
+            ema44 = row_match[
+                "EMA44"
             ].iloc[0]
 
         else:
 
             ema20 = float("nan")
-            ema50 = float("nan")
+            ema44 = float("nan")
 
         # ----------------------------------------------------
         # SUPPORT CANDIDATES
@@ -2310,9 +2260,9 @@ def calculate_support_resistance(
                 float(ema20)
             )
 
-        if pd.notna(ema50):
+        if pd.notna(ema44):
             support_candidates.append(
-                float(ema50)
+                float(ema44)
             )
 
         support_candidates = [
@@ -2918,7 +2868,7 @@ def display_top20(result):
         print(
             f"\n{i}. "
             f"{row['TckrSymb']:<15}"
-            f" Change="
+            f" Price="
             f"{fmt(row['PriceChangePct'])}%"
             f" | RVOL="
             f"{fmt(row['RVOL'])}x"
@@ -2934,8 +2884,14 @@ def display_top20(result):
         print(
             f"   EMA20="
             f"{fmt(row['EMA20'])}"
-            f" | EMA50="
-            f"{fmt(row['EMA50'])}"
+            f" | EMA44="
+            f"{fmt(row['EMA44'])}"
+            f" | EMA44 Distance="
+            f"{fmt(row.get('EMA44DistancePct'))}%"
+            f" | EMA44 Proximity="
+            f"{row.get('EMA44ProximityStatus', 'WAIT_FOR_DATA')}"
+            f" | EMA44 Signal="
+            f"{row.get('EMA44SignalStatus', 'WAIT_FOR_DATA')}"
             f" | RSI="
             f"{fmt(row['RSI14'],1)}"
             f" | ADX="

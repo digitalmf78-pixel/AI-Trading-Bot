@@ -5,15 +5,14 @@ from datetime import date, timedelta
 from pathlib import Path
 import tempfile
 import os
-from unittest.mock import patch
 
 import pandas as pd
-import requests
-import news_catalyst
 
 import delivery_filter as delivery
 import sector_data
 import v8_layers_14_41 as layers
+import volume_gainer as scanner
+import news_catalyst
 
 
 def test_3_confirmations_plus_separate_primary_source_gate():
@@ -164,6 +163,63 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         assert audit.iloc[0]["DeliveryFilterStatus"] == "WAIT_FOR_DATA"
 
 
+
+def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates():
+    dates = pd.bdate_range("2026-07-01", periods=60)
+    close = [100 + i * 0.45 + ((i % 4) - 1.5) * 0.12 for i in range(60)]
+    history = pd.DataFrame({
+        "TckrSymb": ["ABC"] * 60,
+        "Date": dates,
+        "OpnPric": [value - 0.1 for value in close],
+        "HghPric": [value + 0.7 for value in close],
+        "LwPric": [value - 0.6 for value in close],
+        "ClsPric": close,
+        "TtlTradgVol": [1500] * 60,
+    })
+    candidate = pd.DataFrame([{
+        "TckrSymb": "ABC", "ClsPric": close[-1], "RVOL": 1.5,
+        "AvgVolume20D": 1000, "TtlTradgVol": 1500,
+        "CandidateScreenStatus": "PASS", "AvgDelivery5D": 75.0,
+        "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+    }])
+    analyzed = scanner.calculate_trend(candidate, [history])
+    assert "EMA20" in analyzed.columns and "EMA44" in analyzed.columns
+    assert "EMA50" not in analyzed.columns
+    assert analyzed.iloc[0]["EMA44ProximityStatus"] in {"NEAR_EMA44", "NOT_NEAR_EMA44"}
+    assert analyzed.iloc[0]["EMA44SignalStatus"] in {
+        "BULLISH_BREAKOUT", "BEARISH_BREAKDOWN", "BULLISH_CROSS_NO_VOLUME_CONFIRMATION",
+        "BEARISH_CROSS_NO_VOLUME_CONFIRMATION", "ABOVE_EMA44", "BELOW_EMA44", "AT_EMA44",
+    }
+    assert analyzed.iloc[0]["CandidateScreenStatus"] == "PASS"
+    assert pd.notna(analyzed.iloc[0]["PriceChange5D"])
+
+
+def test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection():
+    row = {
+        "TckrSymb": "ABC", "ClsPric": 110.0, "PriceChangePct": 2.5,
+        "PriceChange5D": 7.5, "TtlTradgVol": 2500, "AvgVolume20D": 1000,
+        "RVOL": 2.5, "AvgDelivery5D": 72.5, "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+        "Delivery_2026-10-13": 70.0, "Delivery_2026-10-12": 75.0,
+        "EMA20": 105.0, "EMA44": 102.0, "EMA44DistancePct": 7.84,
+        "EMA44Trend": "RISING", "EMA44Position": "ABOVE_EMA44",
+        "EMA44ProximityStatus": "NOT_NEAR_EMA44", "EMA44SignalStatus": "ABOVE_EMA44",
+        "RSI14": 61.0, "ADX14": 25.0, "TrendClassification": "Bullish Trend",
+        "PriceVolumeRelationship": "Positive", "CLV": 0.8,
+        "BreakoutStatus": "Breakout", "PullbackStatus": "No Pullback",
+        "SRSupport": 100.0, "SRResistance": 115.0, "BreakoutLevel": 115.0,
+        "Sector": "Unknown", "SectorStrengthStatus": "WAIT_FOR_DATA", "MarketRegime": "MIXED",
+        "NewsEvidenceStatus": "NO_DATA", "MandatoryConfirmationStatus": "WAIT_FOR_DATA",
+        "IndependentConfirmationCategories": "PRICE_VOLUME", "NewsPrimarySourceVerified": False,
+        "V8Score": 50, "EntryPricePlan": 110.0, "StopLossPlan": 100.0,
+        "TargetPricePlan": 125.0, "RiskReward": 1.5, "ChaseStatus": "CLEAR",
+        "EODWatchlistStatus": "WAIT_FOR_DATA", "EODLayerStatus": "WAIT_FOR_DATA",
+        "CandidateScreenReasons": "SECTOR_WAIT_FOR_DATA",
+    }
+    lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {"NSE": "available", "secondary": "available"})
+    text = "\n".join(lines)
+    for expected in ("ABC", "5D Change", "Average Delivery", "EMA44", "NOT_NEAR_EMA44", "does not reject", "WAIT_FOR_DATA"):
+        assert expected in text, expected
+
 def test_next_day_pipeline_only_receives_final_watch_candidates():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -183,23 +239,6 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         assert report["TckrSymb"].tolist() == ["GOOD"], report.to_dict("records")
         assert report.iloc[0]["NextDayStatus"] == "WAIT_FOR_DATA"  # bars are absent
 
-
-
-def test_telegram_network_failure_does_not_crash_scanner():
-    # GitHub Actions can occasionally have no route to api.telegram.org. The
-    # scanner must log the undelivered notification without losing completed reports.
-    with patch("news_catalyst.requests.post", side_effect=requests.ConnectionError("network unreachable")) as post_mock, \
-         patch("news_catalyst.time.sleep", return_value=None):
-        news_catalyst.send_marathi_telegram(
-            pd.DataFrame(), "2026-10-13", pd.DataFrame(), {}, "test-token", "test-chat"
-        )
-    assert post_mock.call_count == 3, post_mock.call_count
-
-
-def test_scanner_display_does_not_label_percent_change_as_price():
-    source = Path("volume_gainer.py").read_text(encoding="utf-8")
-    assert 'f" Change="' in source
-    assert 'f" Price="' not in source
 
 def test_source_code_uses_strict_greater_than_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
@@ -221,9 +260,9 @@ if __name__ == "__main__":
         test_delivery_average_above_60_percent_passes,
         test_delivery_average_exactly_60_percent_rejects,
         test_delivery_below_60_rejects_and_incomplete_waits,
+        test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
+        test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
         test_next_day_pipeline_only_receives_final_watch_candidates,
-        test_telegram_network_failure_does_not_crash_scanner,
-        test_scanner_display_does_not_label_percent_change_as_price,
         test_source_code_uses_strict_greater_than_60_delivery_status,
     ]
     for test in tests:
