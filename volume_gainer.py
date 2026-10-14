@@ -2763,7 +2763,7 @@ def select_top20_analysis_candidates(result, eod_date):
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
         # Defensive audit check: the mandatory delivery gate must already have passed.
-        if delivery != "PASS_GT_60_PERCENT":
+        if delivery != "PASS_GE_60_PERCENT":
             reasons.append("DELIVERY_AVERAGE_BELOW_60_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")

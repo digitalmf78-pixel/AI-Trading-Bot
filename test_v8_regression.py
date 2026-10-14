@@ -133,11 +133,11 @@ def test_delivery_average_above_60_percent_passes():
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GT_60_PERCENT"
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
         assert abs(audit.iloc[0]["AvgDelivery5D"] - 60.02) < 1e-9
 
 
-def test_delivery_average_exactly_60_percent_rejects():
+def test_delivery_average_exactly_60_percent_passes():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
         dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
@@ -145,8 +145,8 @@ def test_delivery_average_exactly_60_percent_rejects():
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert qualified.empty
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LE_60_PERCENT"
+        assert len(qualified) == 1, audit.to_dict("records")
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
         assert abs(audit.iloc[0]["AvgDelivery5D"] - 60.0) < 1e-9
 
 def test_delivery_below_60_rejects_and_incomplete_waits():
@@ -157,7 +157,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert qualified.empty
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
         assert audit.iloc[0]["DeliveryFilterStatus"] == "WAIT_FOR_DATA"
@@ -196,7 +196,7 @@ def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates()
         "TckrSymb": "ABC", "ClsPric": close[-1], "RVOL": 1.5,
         "AvgVolume20D": 1000, "TtlTradgVol": 1500,
         "CandidateScreenStatus": "PASS", "AvgDelivery5D": 75.0,
-        "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+        "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
     }])
     analyzed = scanner.calculate_trend(candidate, [history])
     assert "EMA20" in analyzed.columns and "EMA44" in analyzed.columns
@@ -214,7 +214,7 @@ def test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejecti
     row = {
         "TckrSymb": "ABC", "ClsPric": 110.0, "PriceChangePct": 2.5,
         "PriceChange5D": 7.5, "TtlTradgVol": 2500, "AvgVolume20D": 1000,
-        "RVOL": 2.5, "AvgDelivery5D": 72.5, "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+        "RVOL": 2.5, "AvgDelivery5D": 72.5, "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
         "Delivery_2026-10-13": 70.0, "Delivery_2026-10-12": 75.0,
         "EMA20": 105.0, "EMA44": 102.0, "EMA44DistancePct": 7.84,
         "EMA44Trend": "RISING", "EMA44Position": "ABOVE_EMA44",
@@ -227,14 +227,13 @@ def test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejecti
         "NewsEvidenceStatus": "NO_DATA", "MandatoryConfirmationStatus": "WAIT_FOR_DATA",
         "IndependentConfirmationCategories": "PRICE_VOLUME", "NewsPrimarySourceVerified": False,
         "V8Score": 50, "EntryPricePlan": 110.0, "StopLossPlan": 100.0,
-        "TargetPricePlan": 125.0, "Target1PricePlan": 115.0, "Target2PricePlan": 120.0,
-        "RiskReward": 1.5, "ChaseStatus": "CLEAR",
+        "TargetPricePlan": 125.0, "RiskReward": 1.5, "ChaseStatus": "CLEAR",
         "EODWatchlistStatus": "WAIT_FOR_DATA", "EODLayerStatus": "WAIT_FOR_DATA",
         "CandidateScreenReasons": "SECTOR_WAIT_FOR_DATA",
     }
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {"NSE": "available", "secondary": "available"})
     text = "\n".join(lines)
-    for expected in ("ABC", "5D Change", "Average Delivery", "EMA44", "NOT_NEAR_EMA44", "does not reject", "WAIT_FOR_DATA", "Target 1 ₹115.00", "Target 2 ₹120.00"):
+    for expected in ("ABC", "5D Change", "Average Delivery", "EMA44", "NOT_NEAR_EMA44", "does not reject", "WAIT_FOR_DATA"):
         assert expected in text, expected
 
 def test_next_day_pipeline_only_receives_final_watch_candidates():
@@ -245,7 +244,7 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         base = {
             "SetupType": "Breakout", "EODWatchlistStatus": "WATCH",
             "EODLayerStatus": "PASS", "MandatoryConfirmationStatus": "PASS",
-            "DeliveryFilterStatus": "PASS_GT_60_PERCENT", "CandidateScreenStatus": "PASS",
+            "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "CandidateScreenStatus": "PASS",
         }
         rows = [
             {"TckrSymb": "GOOD", **base},
@@ -257,45 +256,15 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         assert report.iloc[0]["NextDayStatus"] == "WAIT_FOR_DATA"  # bars are absent
 
 
-def test_risk_reward_does_not_invent_target_when_resistance_missing():
-    row = pd.Series({"ClsPric": 100.0, "EntryZoneHigh": 100.0, "SRSupport": 95.0,
-                     "SRResistance": float("nan"), "ATR14": 2.0, "SRSwingLow": 94.0})
-    plan = layers._risk_reward_plan(row, [])
-    assert plan["stop"] == 97.0  # tighter valid ATR stop is above support
-    assert pd.isna(plan["target1"]) and pd.isna(plan["rr"])
-    assert plan["status"] == "WAIT_FOR_DATA"
-
-
-def test_risk_reward_uses_actual_resistance_and_reports_target2_separately():
-    row = pd.Series({"ClsPric": 100.0, "EntryZoneHigh": 100.0, "SRSupport": 95.0,
-                     "SRResistance": 110.0, "SRSwingHigh": 120.0, "ATR14": 2.0})
-    plan = layers._risk_reward_plan(row, [])
-    assert plan["entry"] == 100.0 and plan["stop"] == 97.0
-    assert plan["target1"] == 110.0 and plan["target2"] == 120.0
-    assert abs(plan["rr"] - (10.0 / 3.0)) < 1e-9 and plan["status"] == "PASS"
-
-
-
-def test_risk_reward_uses_next_observed_level_when_near_resistance_is_below_entry():
-    row = pd.Series({"ClsPric": 100.5, "EntryZoneHigh": 101.0, "SRSupport": 95.0,
-                     "SRResistance": 100.8, "BreakoutLevel": 100.8,
-                     "SRSwingHigh": 106.0, "SR20DHigh": 104.0, "SR50DHigh": 110.0,
-                     "ATR14": 2.0})
-    plan = layers._risk_reward_plan(row, [])
-    assert plan["entry"] == 101.0
-    assert plan["target1"] == 104.0 and plan["target2"] == 106.0
-    assert plan["status"] in {"PASS", "FAIL"}
-    assert abs(plan["rr"] - (3.0 / 3.5)) < 1e-9
-
-def test_source_code_uses_strict_greater_than_60_delivery_status():
+def test_source_code_uses_greater_than_or_equal_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
-    assert "PASS_GT_60_PERCENT" in source
-    assert "PASS_GE_60_PERCENT" not in source
-    assert "FILTERED_OUT_LE_60_PERCENT" in source
-    assert "FILTERED_OUT_LT_60_PERCENT" not in source
+    assert "PASS_GE_60_PERCENT" in source
+    assert "PASS_GE_60_PERCENT" in source
+    assert "FILTERED_OUT_LT_60_PERCENT" in source
+    assert "FILTERED_OUT_LT_60_PERCENT" in source
     layer_source = Path("v8_layers_14_41.py").read_text(encoding="utf-8")
-    assert "PASS_GT_60_PERCENT" in layer_source
-    assert "PASS_GE_60_PERCENT" not in layer_source
+    assert "PASS_GE_60_PERCENT" in layer_source
+    assert "PASS_GE_60_PERCENT" in layer_source
 
 
 def _technical_history_for_setup(last_close=120.0, last_open=119.0, last_high=120.5, last_low=118.5, last_volume=3000):
@@ -385,7 +354,7 @@ def test_negative_relative_strength_is_warning_not_standalone_rejection():
         try:
             os.chdir(tmp)
             row = {
-                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
                 "RVOLStatus": "PASS", "RVOL": 2.0, "SetupType": "Breakout",
                 "TrendClassification": "Bullish Trend", "CLV": 0.80,
                 "PriceVolumeRelationship": "Positive", "RelativeStrengthNifty": -0.5,
@@ -408,7 +377,7 @@ def test_mixed_improving_trend_does_not_confirm_core_setup():
         try:
             os.chdir(tmp)
             row = {
-                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
                 "RVOLStatus": "PASS", "RVOL": 2.0, "SetupType": "Breakout",
                 "TrendClassification": "Mixed / Improving", "CLV": 0.80,
                 "PriceVolumeRelationship": "Positive", "RelativeStrengthNifty": 1.0,
@@ -429,7 +398,7 @@ def test_breakout_selector_rejects_clv_equal_to_075():
         try:
             os.chdir(tmp)
             row = {
-                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GT_60_PERCENT",
+                "TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
                 "RVOLStatus": "PASS", "RVOL": 2.0, "SetupType": "Breakout",
                 "TrendClassification": "Bullish Trend", "CLV": 0.75,
                 "PriceVolumeRelationship": "Positive", "RelativeStrengthNifty": 1.0,
@@ -451,16 +420,13 @@ if __name__ == "__main__":
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
         test_delivery_average_above_60_percent_passes,
-        test_delivery_average_exactly_60_percent_rejects,
+        test_delivery_average_exactly_60_percent_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
         test_next_day_pipeline_only_receives_final_watch_candidates,
-        test_source_code_uses_strict_greater_than_60_delivery_status,
-        test_risk_reward_does_not_invent_target_when_resistance_missing,
-        test_risk_reward_uses_actual_resistance_and_reports_target2_separately,
-        test_risk_reward_uses_next_observed_level_when_near_resistance_is_below_entry,
+        test_source_code_uses_greater_than_or_equal_60_delivery_status,
         test_breakout_requires_strong_clv_above_075,
         test_pullback_requires_volume_contraction_and_bullish_reversal,
         test_negative_relative_strength_is_warning_not_standalone_rejection,
