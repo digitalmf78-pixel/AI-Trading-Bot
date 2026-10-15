@@ -348,6 +348,28 @@ VERIFIED_ETF_UNDERLYING_INDEX = {
         ),
     },
 }
+# Reviewed issuer-disclosure fallback for companies that are outside tracked
+# sector-index constituents and absent from the official Nifty 500 list. This
+# is intentionally symbol-specific and source-backed; do not infer a sector
+# from a ticker or company name. Only add entries after reviewing official
+# issuer disclosures and confirming the mapped benchmark is appropriate.
+VERIFIED_ISSUER_BUSINESS_TO_TRACKED_INDEX = {
+    "AMJLAND": {
+        "sector": "Nifty Realty",
+        "index_symbol": "NIFTY REALTY",
+        "status": "OFFICIAL_ISSUER_BUSINESS_MAPPED",
+        "business_label": "Real Estate Development",
+        "source_url": "https://www.amjland.com/",
+        "reason": (
+            "Official AMJ Land Holdings company website states that its current core business "
+            "is Real Estate Development. Mapped to the tracked Nifty Realty benchmark using "
+            "issuer-disclosed primary business; this is not a claim of Nifty Realty index membership. "
+            "Official source: https://www.amjland.com/"
+        ),
+    },
+}
+
+
 VERIFIED_ETF_UNSUPPORTED = {
     "INSUREIETF": (
         "ETF_UNDERLYING_INDEX_UNSUPPORTED",
@@ -600,28 +622,43 @@ def _targeted_shortlist_mappings(
                 })
                 print(f"[SECTOR] Candidate classification {symbol}: {sector} via {industry_mapping_source}='{source_value}'")
             else:
-                sector, index_symbol = "", ""
-                status = "WAIT_FOR_DATA"
-                labels = [
-                    label for label in (
-                        f"NSE sector='{nse_sector}'" if nse_sector else "",
-                        f"NSE industry='{nse_industry}'" if nse_industry else "",
-                        f"NSE basicIndustry='{basic_industry}'" if basic_industry else "",
-                        f"Nifty 500 Industry='{industry}'" if industry else "",
-                    ) if label
-                ]
-                if labels:
-                    reason = (
-                        "Official classification found but no exact tracked benchmark mapping: "
-                        + "; ".join(labels)
-                        + "; no sector guessed"
+                issuer_review = VERIFIED_ISSUER_BUSINESS_TO_TRACKED_INDEX.get(symbol)
+                if issuer_review:
+                    sector = issuer_review["sector"]
+                    index_symbol = issuer_review["index_symbol"]
+                    status = issuer_review["status"]
+                    reason = issuer_review["reason"]
+                    mapping_rows.append({
+                        "TckrSymb": symbol, "Sector": sector,
+                        "SectorIndexSymbol": index_symbol,
+                    })
+                    print(
+                        f"[SECTOR] Candidate classification {symbol}: {sector} via "
+                        f"official issuer business='{issuer_review['business_label']}'"
                     )
                 else:
-                    reason = (
-                        "Not found in refreshed tracked-sector constituent feeds, official NSE "
-                        "quote classification, or official Nifty 500 classification; no sector guessed"
-                    )
-                print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
+                    sector, index_symbol = "", ""
+                    status = "WAIT_FOR_DATA"
+                    labels = [
+                        label for label in (
+                            f"NSE sector='{nse_sector}'" if nse_sector else "",
+                            f"NSE industry='{nse_industry}'" if nse_industry else "",
+                            f"NSE basicIndustry='{basic_industry}'" if basic_industry else "",
+                            f"Nifty 500 Industry='{industry}'" if industry else "",
+                        ) if label
+                    ]
+                    if labels:
+                        reason = (
+                            "Official classification found but no exact tracked benchmark mapping: "
+                            + "; ".join(labels)
+                            + "; no sector guessed"
+                        )
+                    else:
+                        reason = (
+                            "Not found in refreshed tracked-sector constituent feeds, official NSE "
+                            "quote classification, or official Nifty 500 classification; no sector guessed"
+                        )
+                    print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
 
         # Preserve the official NSE labels in the audit even when Nifty 500
         # Industry was the source that supplied the benchmark mapping.
