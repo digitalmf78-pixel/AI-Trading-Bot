@@ -46,16 +46,48 @@ def _norm(value: str) -> str:
 
 
 def _published(item: ET.Element) -> datetime | None:
-    raw = item.findtext("pubDate") or item.findtext("{http://purl.org/dc/elements/1.1/}date")
-    if not raw:
-        return None
-    try:
-        stamp = parsedate_to_datetime(raw)
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=timezone.utc)
-        return stamp.astimezone(timezone.utc)
-    except (TypeError, ValueError, OverflowError):
-        return None
+    """Read RSS/RDF/Atom timestamps in RFC 2822 or ISO-8601 form.
+
+    NSE feeds can contain ISO-8601 timestamps and namespace-qualified date
+    tags. An RFC-2822-only parser silently discarded those valid entries.
+    """
+    preferred = {
+        "pubdate": 0,
+        "date": 1,
+        "published": 2,
+        "updated": 3,
+        "issued": 4,
+        "created": 5,
+        "modified": 6,
+    }
+    values: list[tuple[int, str]] = []
+    for node in item.iter():
+        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+        if local_name in preferred and node.text and node.text.strip():
+            values.append((preferred[local_name], node.text.strip()))
+
+    for _, raw in sorted(values, key=lambda entry: entry[0]):
+        try:
+            stamp = parsedate_to_datetime(raw)
+            if stamp is not None:
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                return stamp.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+        try:
+            stamp = pd.Timestamp(raw)
+            if pd.isna(stamp):
+                continue
+            if stamp.tzinfo is None:
+                stamp = stamp.tz_localize("UTC")
+            else:
+                stamp = stamp.tz_convert("UTC")
+            return stamp.to_pydatetime()
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return None
 
 
 def _source_domain(url: str) -> str:
@@ -105,6 +137,47 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     if any(re.search(pattern, title) for pattern in explicit_patterns):
         return "EXPLICIT_TICKER_MATCH"
     return ""
+
+
+
+def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
+    """Apply the inclusive Delivery >= 60% gate and the required setup gate."""
+    filtered = candidates.copy()
+    if "AvgDelivery5D" in filtered.columns:
+        # Numeric evidence is the source of truth whenever it is present.
+        delivery = pd.to_numeric(filtered["AvgDelivery5D"], errors="coerce")
+        before = len(filtered)
+        filtered = filtered[delivery.ge(60.0)].copy()
+        print(
+            f"[NEWS-DIAG] Numeric delivery gate: before={before}, after={len(filtered)}, "
+            f"removed={before-len(filtered)}, rule=AvgDelivery5D>=60%"
+        )
+    elif "DeliveryFilterStatus" in filtered.columns:
+        statuses = filtered["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
+        allowed = {
+            "PASS_GE_60_PERCENT",
+            "PASS_GT_60_PERCENT",
+            "PASS_AT_OR_ABOVE_60_PERCENT",
+            "PASS",
+        }
+        before = len(filtered)
+        filtered = filtered[statuses.isin(allowed)].copy()
+        print(
+            f"[NEWS-DIAG] Delivery gate: before={before}, after={len(filtered)}, "
+            f"removed={before-len(filtered)}, rule=AvgDelivery5D>=60%"
+        )
+    else:
+        print("[NEWS-DIAG] Delivery evidence unavailable; assuming caller supplied pre-screened candidates.")
+
+    if "SetupType" in filtered.columns:
+        setup = filtered["SetupType"].astype(str).str.upper().str.strip()
+        before_setup = len(filtered)
+        filtered = filtered[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
+        print(
+            f"[NEWS-DIAG] SetupType gate: before={before_setup}, after={len(filtered)}, "
+            f"removed={before_setup-len(filtered)}"
+        )
+    return filtered
 
 
 def _impact(headline: str) -> str:
@@ -245,13 +318,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         & candidates["TckrSymb"].str.lower().ne("nan")
     ].drop_duplicates(subset=["TckrSymb"]).copy()
 
-    # Enforce explicit shortlist gates when the upstream pipeline supplies them.
-    # The caller should pass screened candidates, not the full NSE universe.
-    if "SetupType" in candidates.columns:
-        setup = candidates["SetupType"].astype(str).str.upper().str.strip()
-        before_setup_gate = len(candidates)
-        candidates = candidates[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
-        print(f"[NEWS-DIAG] SetupType gate: before={before_setup_gate}, after={len(candidates)}, removed={before_setup_gate-len(candidates)}")
+    # Enforce delivery and setup gates when upstream evidence is supplied.
+    # Delivery is inclusive: exactly 60.00% passes.
+    candidates = _filter_catalyst_candidates(candidates)
 
     if candidates.empty:
         Path("data/inputs").mkdir(parents=True, exist_ok=True)
