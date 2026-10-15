@@ -424,7 +424,17 @@ def _sector_strength(
             "SectorStrengthClassification": classification,
             "SectorStrengthStatus": status,
         })
-    return pd.DataFrame(rows)
+    # Keep the merge key and output schema even when `result` has zero rows.
+    # Without explicit columns, an empty `rows` list creates a DataFrame with
+    # no columns and the caller crashes with KeyError: 'TckrSymb'.
+    return pd.DataFrame(rows, columns=[
+        "TckrSymb",
+        "Sector",
+        "SectorReturn20D",
+        "SectorStrengthNifty",
+        "SectorStrengthClassification",
+        "SectorStrengthStatus",
+    ])
 
 
 def _market_regime(nifty_history: pd.DataFrame, asof) -> str:
