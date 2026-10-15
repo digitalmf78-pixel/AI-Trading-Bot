@@ -478,6 +478,22 @@ VERIFIED_ETF_UNSUPPORTED = {
         "assign this ETF to an arbitrary Nifty sector. Official source: "
         "https://www.hdfcfund.com/explore/mutual-funds/hdfc-bse-500-etf/regular",
     ),
+    "VALUE": (
+        "ETF_UNDERLYING_INDEX_UNSUPPORTED",
+        "Official Mirae Asset scheme documents identify VALUE as Mirae Asset Nifty 500 Value 50 ETF, "
+        "tracking the Nifty 500 Value 50 Total Return Index. This is a broad-market factor index, "
+        "not one of this module's tracked Nifty sector indices; do not assign it to a sector. "
+        "Official source: "
+        "https://nsearchives.nseindia.com/corporate/MIRAEAMC_10042026161745_HalfYearlyPortfolio.pdf",
+    ),
+    "DIVIDEND": (
+        "ETF_UNDERLYING_INDEX_UNSUPPORTED",
+        "Official Mirae Asset portfolio statement identifies DIVIDEND as Mirae Asset BSE 500 Dividend "
+        "Leaders 50 ETF, tracking the BSE 500 Dividend Leaders 50 Total Return Index. This module "
+        "stores Nifty sector index history and has no matching BSE sector benchmark history; do not "
+        "assign it to an arbitrary Nifty sector. Official source: "
+        "https://nsearchives.nseindia.com/corporate/MIRAEAMC_09042026145504_Monthlyportfolio.pdf",
+    ),
 }
 
 
@@ -731,18 +747,10 @@ def _targeted_shortlist_mappings(
             )
         # Official tracked-index membership is the strongest mapping evidence for equities.
         elif existing:
-            sector = str(existing.get("Sector", "") or "").strip()
-            index_symbol = str(existing.get("SectorIndexSymbol", "") or "").strip()
-            if existing.get("_mapping_source") == "cached_sector_map.csv":
-                status = "CACHED_EXISTING_MAPPING"
-                reason = (
-                    "Reused existing sector_map.csv mapping because the symbol was absent "
-                    "from this run's refreshed tracked-sector constituent feeds; cached mapping "
-                    "is retained as fallback and was not newly inferred"
-                )
-            else:
-                status = "INDEX_CONSTITUENT"
-                reason = "Mapped from official tracked-sector index constituent CSV refreshed in this run"
+            sector = existing.get("Sector", "")
+            index_symbol = existing.get("SectorIndexSymbol", "")
+            status = "INDEX_CONSTITUENT"
+            reason = "Mapped from official tracked-sector index constituent CSV"
         else:
             official_sector_mapping = OFFICIAL_SECTOR_TO_TRACKED_INDEX.get(nse_sector)
 
@@ -891,34 +899,6 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
     existing_mapping_by_symbol = {
         row["TckrSymb"]: row for row in mappings if row.get("TckrSymb")
     }
-
-    # Candidate audit must see the same cached mappings that the final map
-    # merge preserves below. Otherwise a symbol can remain mapped in
-    # sector_map.csv while this audit incorrectly reports WAIT_FOR_DATA.
-    # Fresh official constituent rows always take precedence over cached rows.
-    if MAP_PATH.exists():
-        try:
-            cached_map = pd.read_csv(MAP_PATH)
-            if set(MAP_COLUMNS).issubset(cached_map.columns):
-                for _, cached_row in cached_map[MAP_COLUMNS].iterrows():
-                    cached_symbol = _clean_symbol(cached_row.get("TckrSymb", ""))
-                    cached_sector = str(cached_row.get("Sector", "") or "").strip()
-                    cached_index = str(cached_row.get("SectorIndexSymbol", "") or "").strip()
-                    if (
-                        cached_symbol
-                        and cached_sector
-                        and cached_index
-                        and cached_symbol not in etf_symbols
-                        and cached_symbol not in existing_mapping_by_symbol
-                    ):
-                        existing_mapping_by_symbol[cached_symbol] = {
-                            "TckrSymb": cached_symbol,
-                            "Sector": cached_sector,
-                            "SectorIndexSymbol": cached_index,
-                            "_mapping_source": "cached_sector_map.csv",
-                        }
-        except Exception as exc:
-            print(f"[SECTOR] Existing sector map unavailable for audit fallback: {exc}")
 
     nse_classifications: dict[str, dict[str, str]] = {}
     quote_candidates = []
