@@ -49,6 +49,21 @@ class IssuerEvidenceMappingTests(unittest.TestCase):
             [],
         )
 
+    def test_value_etf_is_explicitly_unsupported_not_sector_mapped(self):
+        self.assertEqual(
+            self.map_symbols(["VALUE"], etfs=["VALUE"]),
+            [],
+        )
+
+    def test_unverified_dividend_etf_is_not_guessed(self):
+        self.assertEqual(
+            self.map_symbols(["DIVIDEND"], etfs=["DIVIDEND"]),
+            [],
+        )
+
+    def test_equities_without_exact_tracked_sector_evidence_remain_unmapped(self):
+        self.assertEqual(self.map_symbols(["BEDMUTHA", "JKIPL", "AROGRANITE"]), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
