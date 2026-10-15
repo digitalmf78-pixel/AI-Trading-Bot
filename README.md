@@ -8,8 +8,9 @@ This repository generates an end-of-day (EOD) research shortlist and optional ne
 2. Apply the five-valid-session Average Delivery filter: **average Delivery % >= 60.00% passes; below 60.00% rejects; fewer than five valid distinct sessions means `WAIT_FOR_DATA`.**
 3. Apply price/volume, trend, breakout/pullback, support/resistance, relative-strength and market-context checks.
 4. Require the 3+1 confirmation gate: at least **three independent evidence categories** plus a **separately verified primary/reliable source**. Categories may include price/volume, sector strength, accumulation/distribution and a real catalyst/news event. Multiple publishers repeating the same event remain one catalyst category.
-5. Produce an EOD `WATCH` only when all required gates, score coverage, risk/reward and chase checks pass.
-6. Run next-session opening checks only for final EOD `WATCH` candidates. Missing intraday data stays `WAIT_FOR_DATA`; no rejected or incomplete EOD candidate should enter this stage.
+5. Risk/reward uses a supplied structural resistance above planned entry. If no such target is available, `RiskRewardStatus` remains `WAIT_FOR_DATA`; a synthetic `Entry + 2R` target is never created to force a pass. A structural target below 2R is `FAIL`.
+6. Produce an EOD `WATCH` only when all required gates, score coverage, risk/reward and chase checks pass.
+7. Run next-session opening checks only for final EOD `WATCH` candidates. Missing intraday data stays `WAIT_FOR_DATA`; no rejected or incomplete EOD candidate should enter this stage.
 
 ## Primary-source handling
 

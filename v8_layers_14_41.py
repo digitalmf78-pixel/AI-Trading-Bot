@@ -99,6 +99,38 @@ def _flag(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes", "y"}
 
 
+def _calculate_structural_risk_reward(entry: float, stop: float, resistance: float) -> dict:
+    """Calculate RR only from a real supplied resistance; never synthesize a 2R target."""
+    entry = _num(entry)
+    stop = _num(stop)
+    resistance = _num(resistance)
+
+    result = {
+        "TargetPricePlan": float("nan"),
+        "RiskReward": float("nan"),
+        "RiskRewardStatus": "WAIT_FOR_DATA",
+        "TargetSource": "WAIT_FOR_DATA",
+        "RiskRewardReason": "Missing entry, valid stop, or structural resistance",
+    }
+    if pd.isna(entry) or entry <= 0 or pd.isna(stop) or stop <= 0 or stop >= entry:
+        result["RiskRewardReason"] = "Entry/stop data is missing or stop is not below entry"
+        return result
+    risk = entry - stop
+    if pd.isna(resistance) or resistance <= entry:
+        result["RiskRewardReason"] = "No verified structural resistance above planned entry; synthetic 2R target prohibited"
+        return result
+
+    rr = (resistance - entry) / risk
+    result.update({
+        "TargetPricePlan": resistance,
+        "RiskReward": rr,
+        "RiskRewardStatus": "PASS" if rr >= 2.0 else "FAIL",
+        "TargetSource": "SR_RESISTANCE",
+        "RiskRewardReason": "Structural resistance provides at least 2R" if rr >= 2.0 else "Structural resistance is below the required 2R reward",
+    })
+    return result
+
+
 def _first_number(row: pd.Series, names: list[str]) -> float:
     for name in names:
         if name in row.index:
@@ -619,7 +651,7 @@ def run_eod_layers(
     output["V8Score"] = [item[0] for item in score_coverage]
     output["V8ScoreCoveragePct"] = [item[1] for item in score_coverage]
 
-    rr_values, rr_status, rr_targets, rr_stops, chase_values = [], [], [], [], []
+    rr_values, rr_status, rr_targets, rr_stops, rr_sources, rr_reasons, chase_values = [], [], [], [], [], [], []
     hist_by_symbol = {}
     for frame in historical[-19:] + [current_dated]:
         for symbol, group in frame.groupby("TckrSymb"):
@@ -646,14 +678,15 @@ def run_eod_layers(
         entry = _num(row.get("EntryZoneHigh"))
         if pd.isna(entry) or entry <= 0:
             entry = price
-        risk = entry - stop if pd.notna(stop) else float("nan")
-        known_target = resistance if pd.notna(resistance) and resistance > entry else float("nan")
-        target = known_target if pd.notna(known_target) else entry + 2 * risk if pd.notna(risk) and risk > 0 else float("nan")
-        rr = (target - entry) / risk if pd.notna(target) and pd.notna(risk) and risk > 0 else float("nan")
-        rr_values.append(rr)
-        rr_targets.append(target)
+
+        rr_result = _calculate_structural_risk_reward(entry, stop, resistance)
+        rr_values.append(rr_result["RiskReward"])
+        rr_targets.append(rr_result["TargetPricePlan"])
         rr_stops.append(stop)
-        rr_status.append("WAIT_FOR_DATA" if pd.isna(rr) else "PASS" if rr >= 2 else "FAIL")
+        rr_status.append(rr_result["RiskRewardStatus"])
+        rr_sources.append(rr_result["TargetSource"])
+        rr_reasons.append(rr_result["RiskRewardReason"])
+
         ema20 = _num(row.get("EMA20"))
         extended = (
             (pd.notna(price) and pd.notna(entry) and price > entry * 1.03)
@@ -664,6 +697,8 @@ def run_eod_layers(
     output["EntryPricePlan"] = output["EntryZoneHigh"]
     output["StopLossPlan"] = rr_stops
     output["TargetPricePlan"] = rr_targets
+    output["TargetSource"] = rr_sources
+    output["RiskRewardReason"] = rr_reasons
     output["RiskReward"] = rr_values
     output["RiskRewardStatus"] = rr_status
     output["ChaseStatus"] = chase_values

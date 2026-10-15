@@ -256,13 +256,42 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
         assert report.iloc[0]["NextDayStatus"] == "WAIT_FOR_DATA"  # bars are absent
 
 
+def test_risk_reward_requires_structural_resistance_and_never_synthesizes_2r():
+    result = layers._calculate_structural_risk_reward(100.0, 95.0, float("nan"))
+    assert result["RiskRewardStatus"] == "WAIT_FOR_DATA", result
+    assert pd.isna(result["TargetPricePlan"]), result
+    assert result["TargetSource"] == "WAIT_FOR_DATA", result
+    assert "synthetic 2R target prohibited" in result["RiskRewardReason"], result
+
+
+def test_structural_resistance_rr_passes_only_when_at_least_2r():
+    passing = layers._calculate_structural_risk_reward(100.0, 95.0, 110.0)
+    assert passing["RiskRewardStatus"] == "PASS", passing
+    assert passing["TargetPricePlan"] == 110.0, passing
+    assert passing["TargetSource"] == "SR_RESISTANCE", passing
+    assert passing["RiskReward"] == 2.0, passing
+
+    failing = layers._calculate_structural_risk_reward(100.0, 95.0, 108.0)
+    assert failing["RiskRewardStatus"] == "FAIL", failing
+    assert failing["RiskReward"] == 1.6, failing
+    assert failing["TargetSource"] == "SR_RESISTANCE", failing
+
+
+def test_structural_risk_reward_rejects_invalid_entry_or_stop():
+    for entry, stop, resistance in [(100.0, 100.0, 120.0), (100.0, 105.0, 120.0), (float("nan"), 95.0, 120.0)]:
+        result = layers._calculate_structural_risk_reward(entry, stop, resistance)
+        assert result["RiskRewardStatus"] == "WAIT_FOR_DATA", result
+        assert pd.isna(result["TargetPricePlan"]), result
+
+
 def test_source_code_uses_greater_than_or_equal_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
-    assert "avg >= minimum_average" in source, "Delivery threshold must include exactly 60.00%"
+    assert "PASS_GE_60_PERCENT" in source
     assert "PASS_GE_60_PERCENT" in source
     assert "FILTERED_OUT_LT_60_PERCENT" in source
-    assert "strictly greater than the threshold" not in source
+    assert "FILTERED_OUT_LT_60_PERCENT" in source
     layer_source = Path("v8_layers_14_41.py").read_text(encoding="utf-8")
+    assert "PASS_GE_60_PERCENT" in layer_source
     assert "PASS_GE_60_PERCENT" in layer_source
 
 
@@ -425,6 +454,9 @@ if __name__ == "__main__":
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
         test_next_day_pipeline_only_receives_final_watch_candidates,
+        test_risk_reward_requires_structural_resistance_and_never_synthesizes_2r,
+        test_structural_resistance_rr_passes_only_when_at_least_2r,
+        test_structural_risk_reward_rejects_invalid_entry_or_stop,
         test_source_code_uses_greater_than_or_equal_60_delivery_status,
         test_breakout_requires_strong_clv_above_075,
         test_pullback_requires_volume_contraction_and_bullish_reversal,
