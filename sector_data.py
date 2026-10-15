@@ -8,7 +8,10 @@ Unavailable/invalid feeds remain absent and are never converted to PASS.
 from __future__ import annotations
 
 import json
+import re
 import time
+from html import unescape
+from html.parser import HTMLParser
 from datetime import timedelta
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -251,6 +254,80 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
     return rows, len(exact_sectors)
 
 
+def _history_from_niftyindices_api(session: requests.Session, asof: pd.Timestamp) -> tuple[list[dict[str, Any]], int]:
+    """Fallback to the official NSE Indices historical-data service.
+
+    The daily NSE all-indices CSV has occasionally returned 404 for a date that
+    has market data. This fallback requests the individual tracked indices from
+    the official Nifty Indices historical-data endpoint. It accepts only parsed
+    rows whose reported date is on/before the requested EOD date; failures stay
+    missing and never become synthetic closes.
+    """
+    endpoint = "https://www.niftyindices.com/Backpage.aspx/getHistoricaldatatabletoString"
+    start_date = (asof - pd.Timedelta(days=75)).strftime("%d %b %Y")
+    end_date = asof.strftime("%d %b %Y")
+    headers = {
+        **HEADERS,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/json; charset=utf-8",
+        "Origin": "https://www.niftyindices.com",
+        "Referer": "https://www.niftyindices.com/reports/historical-data",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    rows: list[dict[str, Any]] = []
+    exact_sectors: set[str] = set()
+    for sector, _files, official_index_name, _symbol in SECTOR_INDICES:
+        api_name = official_index_name.upper().replace("AND", "&")
+        inner = (
+            "{'name':'" + api_name + "','startDate':'" + start_date
+            + "','endDate':'" + end_date + "','indexName':'" + api_name + "'}"
+        )
+        try:
+            response = session.post(endpoint, json={"cinfo": inner}, headers=headers, timeout=20)
+            if response.status_code != 200:
+                print(f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} index={official_index_name}")
+                continue
+            payload = response.json()
+            raw = payload.get("d") if isinstance(payload, dict) else None
+            if isinstance(raw, str):
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    data = []
+            else:
+                data = raw
+            if not isinstance(data, list) or not data:
+                print(f"[SECTOR][NIFTYINDICES] NO_DATA index={official_index_name} date={asof.date()}")
+                continue
+            accepted = 0
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                raw_date = item.get("HistoricalDate") or item.get("Date") or item.get("date")
+                raw_close = item.get("CLOSE") or item.get("Close") or item.get("close")
+                parsed_date = pd.to_datetime(raw_date, errors="coerce", dayfirst=True)
+                close = pd.to_numeric(raw_close, errors="coerce")
+                if pd.isna(parsed_date) or pd.isna(close) or float(close) <= 0:
+                    continue
+                parsed_date = pd.Timestamp(parsed_date).normalize()
+                if parsed_date > asof or parsed_date < asof - pd.Timedelta(days=75):
+                    continue
+                date_text = parsed_date.strftime("%Y-%m-%d")
+                rows.append({"Date": date_text, "Sector": sector, "Close": float(close)})
+                accepted += 1
+                if parsed_date == asof:
+                    exact_sectors.add(sector)
+            print(f"[SECTOR][NIFTYINDICES] index={official_index_name} accepted_rows={accepted} exact_date={asof.date() in {pd.Timestamp(r['Date']).date() for r in rows if r['Sector'] == sector}}")
+        except Exception as exc:
+            print(f"[SECTOR][NIFTYINDICES] REQUEST_ERROR index={official_index_name}: {type(exc).__name__}: {exc}")
+        time.sleep(0.1)
+    # Deduplicate exact date/index rows returned by the official service.
+    deduped = {(r["Date"], r["Sector"]): r["Close"] for r in rows}
+    output = [{"Date": d, "Sector": sec, "Close": close} for (d, sec), close in deduped.items()]
+    print(f"[SECTOR][NIFTYINDICES] fallback rows={len(output)} exact_date_sectors={len(exact_sectors)}/{len(SECTOR_INDICES)}")
+    return output, len(exact_sectors)
+
+
 
 
 # Official NSE equity quote classification for shortlisted stocks that are not
@@ -295,6 +372,10 @@ INDUSTRY_TO_TRACKED_INDEX = {
     "TELECOMMUNICATION": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
     "TELECOMMUNICATIONS": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
     "CONSUMER SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
+    # NSE official Basic Industry labels that map directly to tracked sectors.
+    "RETAILING": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
+    "IRON & STEEL PRODUCTS": ("Nifty Metal", "NIFTY METAL"),
+    "IRON AND STEEL PRODUCTS": ("Nifty Metal", "NIFTY METAL"),
 }
 
 
@@ -348,28 +429,6 @@ VERIFIED_ETF_UNDERLYING_INDEX = {
         ),
     },
 }
-# Reviewed issuer-disclosure fallback for companies that are outside tracked
-# sector-index constituents and absent from the official Nifty 500 list. This
-# is intentionally symbol-specific and source-backed; do not infer a sector
-# from a ticker or company name. Only add entries after reviewing official
-# issuer disclosures and confirming the mapped benchmark is appropriate.
-VERIFIED_ISSUER_BUSINESS_TO_TRACKED_INDEX = {
-    "AMJLAND": {
-        "sector": "Nifty Realty",
-        "index_symbol": "NIFTY REALTY",
-        "status": "OFFICIAL_ISSUER_BUSINESS_MAPPED",
-        "business_label": "Real Estate Development",
-        "source_url": "https://www.amjland.com/",
-        "reason": (
-            "Official AMJ Land Holdings company website states that its current core business "
-            "is Real Estate Development. Mapped to the tracked Nifty Realty benchmark using "
-            "issuer-disclosed primary business; this is not a claim of Nifty Realty index membership. "
-            "Official source: https://www.amjland.com/"
-        ),
-    },
-}
-
-
 VERIFIED_ETF_UNSUPPORTED = {
     "INSUREIETF": (
         "ETF_UNDERLYING_INDEX_UNSUPPORTED",
@@ -474,36 +533,95 @@ def _warm_nse_session(session: requests.Session) -> None:
             print(f"[SECTOR] NSE session warm-up failed for {url}: {exc}")
 
 
+class _NSEVisibleTextParser(HTMLParser):
+    """Extract visible text from the official NSE quote page without extra deps."""
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        value = " ".join((data or "").split())
+        if value:
+            self.parts.append(value)
+
+
+def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> str:
+    """Fallback to the official NSE quote page when its JSON API returns 403.
+
+    The quote page exposes a "Basic Industry" label in its rendered content.
+    Only that exact official label is returned; no sector is inferred from the
+    company name or ticker. Unknown labels remain WAIT_FOR_DATA.
+    """
+    url = f"https://www.nseindia.com/get-quote/equity/{symbol}"
+    headers = {
+        **NSE_HEADERS,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.nseindia.com/market-data/live-equity-market",
+    }
+    try:
+        response = session.get(url, headers=headers, timeout=18)
+        print(f"[SECTOR] NSE quote page {symbol}: HTTP {response.status_code}")
+        response.raise_for_status()
+        parser = _NSEVisibleTextParser()
+        parser.feed(response.text or "")
+        text = unescape(" ".join(parser.parts))
+        match = re.search(r"\bBasic Industry\s+(.+?)\s+(?:Corporate Announcements|Trading Window|Annual Reports)\b", text, flags=re.I)
+        if not match:
+            print(f"[SECTOR] NSE quote page {symbol}: Basic Industry label not found")
+            return ""
+        value = " ".join(match.group(1).split()).strip(" :-")
+        if not value or value.casefold() in {"-", "na", "n/a", "undefined"}:
+            return ""
+        print(f"[SECTOR] NSE official Basic Industry {symbol}: {value}")
+        return value
+    except Exception as exc:
+        print(f"[SECTOR] NSE quote page fallback unavailable for {symbol}: {exc}")
+        return ""
+
+
 def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
-    """Fetch official NSE industryInfo for one shortlisted equity symbol."""
+    """Fetch official NSE industryInfo, falling back to NSE's rendered quote page."""
     headers = {
         **NSE_HEADERS,
         "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
     }
-    response = None
+    last_error = "no response"
     for attempt in range(1, 3):
-        response = session.get(
-            NSE_QUOTE_URL,
-            params={"symbol": symbol},
-            headers=headers,
-            timeout=18,
-        )
-        if response.status_code not in {403, 429, 500, 502, 503, 504}:
-            break
-        print(f"[SECTOR] NSE quote {symbol}: HTTP {response.status_code} (attempt {attempt}/2)")
-        time.sleep(0.8 * attempt)
-    assert response is not None
-    response.raise_for_status()
-    payload = response.json()
-    info = payload.get("industryInfo") or {}
-    if not isinstance(info, dict):
-        return {"macro": "", "sector": "", "industry": "", "basicIndustry": ""}
-    return {
-        "macro": str(info.get("macro") or "").strip(),
-        "sector": str(info.get("sector") or "").strip(),
-        "industry": str(info.get("industry") or "").strip(),
-        "basicIndustry": str(info.get("basicIndustry") or "").strip(),
-    }
+        try:
+            response = session.get(
+                NSE_QUOTE_URL,
+                params={"symbol": symbol},
+                headers=headers,
+                timeout=18,
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                info = payload.get("industryInfo") or {}
+                if isinstance(info, dict):
+                    return {
+                        "macro": str(info.get("macro") or "").strip(),
+                        "sector": str(info.get("sector") or "").strip(),
+                        "industry": str(info.get("industry") or "").strip(),
+                        "basicIndustry": str(info.get("basicIndustry") or "").strip(),
+                    }
+                last_error = "industryInfo is not an object"
+                break
+            last_error = f"HTTP {response.status_code}"
+            print(f"[SECTOR] NSE quote {symbol}: {last_error} (attempt {attempt}/2)")
+            if response.status_code not in {403, 429, 500, 502, 503, 504}:
+                break
+            time.sleep(0.8 * attempt)
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            print(f"[SECTOR] NSE quote {symbol} request failed (attempt {attempt}/2): {last_error}")
+            time.sleep(0.5 * attempt)
+
+    basic_industry = _nse_quote_page_basic_industry(session, symbol)
+    if basic_industry:
+        return {"macro": "", "sector": "", "industry": "", "basicIndustry": basic_industry}
+    raise requests.RequestException(
+        f"NSE quote API failed ({last_error}) and official quote-page fallback had no Basic Industry"
+    )
 
 
 def _targeted_shortlist_mappings(
@@ -622,43 +740,28 @@ def _targeted_shortlist_mappings(
                 })
                 print(f"[SECTOR] Candidate classification {symbol}: {sector} via {industry_mapping_source}='{source_value}'")
             else:
-                issuer_review = VERIFIED_ISSUER_BUSINESS_TO_TRACKED_INDEX.get(symbol)
-                if issuer_review:
-                    sector = issuer_review["sector"]
-                    index_symbol = issuer_review["index_symbol"]
-                    status = issuer_review["status"]
-                    reason = issuer_review["reason"]
-                    mapping_rows.append({
-                        "TckrSymb": symbol, "Sector": sector,
-                        "SectorIndexSymbol": index_symbol,
-                    })
-                    print(
-                        f"[SECTOR] Candidate classification {symbol}: {sector} via "
-                        f"official issuer business='{issuer_review['business_label']}'"
+                sector, index_symbol = "", ""
+                status = "WAIT_FOR_DATA"
+                labels = [
+                    label for label in (
+                        f"NSE sector='{nse_sector}'" if nse_sector else "",
+                        f"NSE industry='{nse_industry}'" if nse_industry else "",
+                        f"NSE basicIndustry='{basic_industry}'" if basic_industry else "",
+                        f"Nifty 500 Industry='{industry}'" if industry else "",
+                    ) if label
+                ]
+                if labels:
+                    reason = (
+                        "Official classification found but no exact tracked benchmark mapping: "
+                        + "; ".join(labels)
+                        + "; no sector guessed"
                     )
                 else:
-                    sector, index_symbol = "", ""
-                    status = "WAIT_FOR_DATA"
-                    labels = [
-                        label for label in (
-                            f"NSE sector='{nse_sector}'" if nse_sector else "",
-                            f"NSE industry='{nse_industry}'" if nse_industry else "",
-                            f"NSE basicIndustry='{basic_industry}'" if basic_industry else "",
-                            f"Nifty 500 Industry='{industry}'" if industry else "",
-                        ) if label
-                    ]
-                    if labels:
-                        reason = (
-                            "Official classification found but no exact tracked benchmark mapping: "
-                            + "; ".join(labels)
-                            + "; no sector guessed"
-                        )
-                    else:
-                        reason = (
-                            "Not found in refreshed tracked-sector constituent feeds, official NSE "
-                            "quote classification, or official Nifty 500 classification; no sector guessed"
-                        )
-                    print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
+                    reason = (
+                        "Not found in refreshed tracked-sector constituent feeds, official NSE "
+                        "quote classification, or official Nifty 500 classification; no sector guessed"
+                    )
+                print(f"[SECTOR] Candidate classification {symbol}: WAIT_FOR_DATA ({reason})")
 
         # Preserve the official NSE labels in the audit even when Nifty 500
         # Industry was the source that supplied the benchmark mapping.
@@ -792,6 +895,21 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
         print("[SECTOR] No official constituent mappings retrieved; existing map preserved if present")
 
     new_history_rows, sectors_with_asof_new = _history_from_nse_archive(session, asof)
+    # If the daily NSE all-indices archive does not provide exact-date closes,
+    # retry through the official Nifty Indices historical-data service. Merge
+    # only actual dated closes; never fill missing values synthetically.
+    if sectors_with_asof_new < len(SECTOR_INDICES):
+        fallback_rows, fallback_exact = _history_from_niftyindices_api(session, asof)
+        if fallback_rows:
+            merged = {(row["Date"], row["Sector"]): row["Close"] for row in new_history_rows}
+            for row in fallback_rows:
+                merged[(row["Date"], row["Sector"])] = row["Close"]
+            new_history_rows = [
+                {"Date": date, "Sector": sector, "Close": close}
+                for (date, sector), close in merged.items()
+            ]
+            sectors_with_asof_new = len({row["Sector"] for row in new_history_rows if row["Date"] == asof.strftime("%Y-%m-%d")})
+            print(f"[SECTOR] Official Nifty Indices fallback exact-date sectors={sectors_with_asof_new}/{len(SECTOR_INDICES)} (fallback reported {fallback_exact})")
     new_history = pd.DataFrame(new_history_rows, columns=HISTORY_COLUMNS)
     old_history = pd.DataFrame(columns=HISTORY_COLUMNS)
     if HISTORY_PATH.exists():
