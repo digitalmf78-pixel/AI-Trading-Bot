@@ -510,6 +510,35 @@ def _download_official_etf_symbols(session: requests.Session) -> set[str]:
 
 NSE_QUOTE_URL = "https://www.nseindia.com/api/quote-equity"
 
+# Narrow fallback for shortlisted issuers when NSE's API returns HTTP 403 and
+# the rendered quote page is JavaScript-only. Each entry carries its official
+# source and the exact evidence used; this is not a ticker-name inference.
+VERIFIED_ISSUER_CLASSIFICATION_FALLBACK = {
+    "SPENCERS": {
+        "sector": "Nifty Consumer Services",
+        "index_symbol": "NIFTY CONSUMER SERVICES",
+        "status": "OFFICIAL_NSE_SEGMENT_MAPPED",
+        "industry": "RETAIL",
+        "reason": (
+            "NSE corporate filing identifies RETAIL as Spencer's Retail Limited's single segment; "
+            "mapped to the tracked Nifty Consumer Services benchmark as a retail-business taxonomy "
+            "fallback. Official NSE source: "
+            "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_98383_16062025190840_iXBRL_WEB.html"
+        ),
+    },
+    "MODINATUR": {
+        "sector": "Nifty FMCG",
+        "index_symbol": "NIFTY FMCG",
+        "status": "OFFICIAL_NSE_BASIC_INDUSTRY_MAPPED",
+        "basicIndustry": "OTHER AGRICULTURAL PRODUCTS",
+        "reason": (
+            "Official NSE quote page identifies Basic Industry as Other Agricultural Products; "
+            "mapped by the exact tracked-sector taxonomy rule to Nifty FMCG. Official NSE source: "
+            "https://www.nseindia.com/get-quote/equity/MODINATUR/Modi-Naturals-Limited"
+        ),
+    },
+}
+
 # Keys are normalized NSE Indices classification "sector" labels.
 # Values are the exact Sector labels used by SECTOR_INDICES / sector_history.
 OFFICIAL_SECTOR_TO_TRACKED_INDEX = {
@@ -736,6 +765,38 @@ def _targeted_shortlist_mappings(
             status = "INDEX_CONSTITUENT"
             reason = "Mapped from official tracked-sector index constituent CSV"
         else:
+            verified_fallback = VERIFIED_ISSUER_CLASSIFICATION_FALLBACK.get(symbol)
+            if verified_fallback and not any((macro, nse_sector, nse_industry, basic_industry, industry)):
+                sector = verified_fallback["sector"]
+                index_symbol = verified_fallback["index_symbol"]
+                status = verified_fallback["status"]
+                reason = verified_fallback["reason"]
+                if verified_fallback.get("industry"):
+                    nse_industry = _normalise_name(verified_fallback["industry"])
+                if verified_fallback.get("basicIndustry"):
+                    basic_industry = _normalise_name(verified_fallback["basicIndustry"])
+                mapping_rows.append({
+                    "TckrSymb": symbol, "Sector": sector,
+                    "SectorIndexSymbol": index_symbol,
+                })
+                print(f"[SECTOR] Candidate classification {symbol}: {sector} via source-audited fallback")
+                official_sector_mapping = None
+                industry_mapping = None
+                industry_mapping_source = ""
+                # Skip generic taxonomy below because this fallback carries its own source audit.
+                audit_rows.append({
+                    "Date": asof.strftime("%Y-%m-%d"),
+                    "TckrSymb": symbol,
+                    "MappingStatus": status,
+                    "NSEMacro": macro,
+                    "NSESector": nse_sector,
+                    "NSEIndustry": nse_industry or industry,
+                    "NSEBasicIndustry": basic_industry,
+                    "MappedSector": sector,
+                    "SectorIndexSymbol": index_symbol,
+                    "Reason": reason,
+                })
+                continue
             official_sector_mapping = OFFICIAL_SECTOR_TO_TRACKED_INDEX.get(nse_sector)
 
             # Use exact official classification labels in a conservative order.
@@ -903,9 +964,29 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
                     nse_classifications[symbol] = info
                 else:
                     print(f"[SECTOR] NSE quote classification empty for {symbol}")
+                    fallback = VERIFIED_ISSUER_CLASSIFICATION_FALLBACK.get(symbol)
+                    if fallback:
+                        nse_classifications[symbol] = {
+                            "_verifiedFallback": "true",
+                            "_fallbackReason": fallback["reason"],
+                        }
+                        print(
+                            f"[SECTOR] Applying source-audited issuer fallback for {symbol}: "
+                            f"{fallback['status']}"
+                        )
             except Exception as exc:
                 # A failed quote must not break the refresh or create a guessed mapping.
                 print(f"[SECTOR] NSE quote classification unavailable for {symbol}: {exc}")
+                fallback = VERIFIED_ISSUER_CLASSIFICATION_FALLBACK.get(symbol)
+                if fallback:
+                    nse_classifications[symbol] = {
+                        "_verifiedFallback": "true",
+                        "_fallbackReason": fallback["reason"],
+                    }
+                    print(
+                        f"[SECTOR] Applying source-audited issuer fallback for {symbol}: "
+                        f"{fallback['status']}"
+                    )
             time.sleep(0.25)
 
     targeted_mappings = _targeted_shortlist_mappings(
