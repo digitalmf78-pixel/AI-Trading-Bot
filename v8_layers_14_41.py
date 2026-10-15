@@ -638,7 +638,26 @@ def run_eod_layers(
         _news_for_symbol(news, symbol, eod_end_ist, start=news_start_ist)
         for symbol in output["TckrSymb"]
     ]
-    news_frame = pd.DataFrame(news_rows, index=output.index)
+    # Preserve the news-result schema even when the technical/volume screen
+    # produces zero candidate rows. DataFrame([]) otherwise has no columns,
+    # causing KeyError: 'NewsEvidenceStatus' on the next line.
+    news_result_columns = [
+        "NewsEvidenceStatus",
+        "NewsIndependentSources",
+        "NewsPrimarySources",
+        "NewsPrimarySourceVerified",
+        "NewsNegativePrimary",
+        "NewsCatalyst",
+        "NewsCatalystSource",
+        "NewsCatalystURL",
+        "NewsCatalystPublishedAt",
+        "NewsCatalystImpact",
+    ]
+    news_frame = pd.DataFrame(
+        news_rows,
+        index=output.index,
+        columns=news_result_columns,
+    )
     output = pd.concat([output, news_frame], axis=1)
     output["NewsStatus"] = output["NewsEvidenceStatus"].map(
         lambda value: "PASS" if value in {"CONFIRMED_3_PLUS_1", "PRIMARY_CONFIRMED"} else "FAIL" if value == "NEGATIVE_PRIMARY_NEWS" else "WAIT_FOR_DATA"
