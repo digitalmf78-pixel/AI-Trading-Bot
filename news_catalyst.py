@@ -63,6 +63,50 @@ def _source_domain(url: str) -> str:
     return (match.group(1).lower().removeprefix("www.") if match else "")
 
 
+_LEGAL_SUFFIXES = {
+    "LIMITED", "LTD", "PRIVATE", "PVT", "COMPANY", "CORPORATION", "CORP",
+    "INCORPORATED", "INC", "PLC",
+}
+
+
+def _company_base(value: str) -> str:
+    """Normalize a registered issuer name without trailing legal suffixes."""
+    tokens = _norm(value).split()
+    while tokens and tokens[-1] in _LEGAL_SUFFIXES:
+        tokens.pop()
+    return " ".join(tokens)
+
+
+def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
+    """Return a match reason only when the headline identifies this issuer.
+
+    A bare ticker token is deliberately insufficient: common symbols such as
+    AKASH also occur in personal names, product names and unrelated companies.
+    """
+    symbol = str(symbol or "").strip().upper()
+    title = _norm(headline)
+    if not symbol or not title:
+        return ""
+
+    company_base = _company_base(company)
+    if len(company_base) >= 5 and len(company_base.split()) >= 2:
+        if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
+            return "COMPANY_NAME_MATCH"
+
+    # Only accept a ticker-only match when the headline presents it as a
+    # market identifier, not when it merely appears as an ordinary word.
+    escaped = re.escape(symbol)
+    explicit_patterns = (
+        rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
+        rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\s*\.NS(?![A-Z0-9])",
+        rf"\(\s*{escaped}\s*\)",
+    )
+    if any(re.search(pattern, title) for pattern in explicit_patterns):
+        return "EXPLICIT_TICKER_MATCH"
+    return ""
+
+
 def _impact(headline: str) -> str:
     text = _norm(headline)
     negative = (
@@ -207,10 +251,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                company_norm = _norm(company)
-                symbol_match = bool(re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", content))
-                company_match = len(company_norm) >= 8 and company_norm in content
-                if not (symbol_match or company_match):
+                match_reason = _issuer_match_reason(symbol, title + " " + description, company)
+                if not match_reason:
                     continue
                 rows.append({
                     "TckrSymb": symbol,
@@ -234,7 +276,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     secondary_successes = 0
     for symbol in sorted(symbols):
         try:
-            query = f'"{symbol}" NSE India stock when:10d'
+            company = names.get(symbol, "").strip()
+            # Prefer the issuer's registered name over a potentially ambiguous
+            # ticker. Keep the ticker in the query as an additional identifier.
+            query = (f'"{company}" "{symbol}" stock when:10d' if company
+                     else f'"{symbol}" NSE India stock when:10d')
             items = _rss_items(GOOGLE_RSS_URL, {
                 "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
             })
@@ -250,8 +296,10 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             stamp = _published(item)
             if stamp is None or stamp < cutoff:
                 continue
-            # Exact ticker matching reduces false matches on short company names.
-            if not re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", _norm(title)):
+            # Never assign news from a bare ticker word. Require the registered
+            # company name or an explicit market-identifier form in the headline.
+            match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
+            if not match_reason:
                 continue
             rows.append({
                 "TckrSymb": symbol,
