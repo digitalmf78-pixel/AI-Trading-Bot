@@ -254,7 +254,11 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
     return rows, len(exact_sectors)
 
 
-def _history_from_niftyindices_api(session: requests.Session, asof: pd.Timestamp) -> tuple[list[dict[str, Any]], int]:
+def _history_from_niftyindices_api(
+    session: requests.Session,
+    asof: pd.Timestamp,
+    sectors_to_fetch: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     """Fallback to the official NSE Indices historical-data service.
 
     The daily NSE all-indices CSV has occasionally returned 404 for a date that
@@ -276,7 +280,10 @@ def _history_from_niftyindices_api(session: requests.Session, asof: pd.Timestamp
     }
     rows: list[dict[str, Any]] = []
     exact_sectors: set[str] = set()
+    wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
     for sector, _files, official_index_name, _symbol in SECTOR_INDICES:
+        if sector not in wanted:
+            continue
         api_name = official_index_name.upper().replace("AND", "&")
         inner = (
             "{'name':'" + api_name + "','startDate':'" + start_date
@@ -287,7 +294,13 @@ def _history_from_niftyindices_api(session: requests.Session, asof: pd.Timestamp
             if response.status_code != 200:
                 print(f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} index={official_index_name}")
                 continue
-            payload = response.json()
+            content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
+            body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
+            try:
+                payload = response.json()
+            except Exception as exc:
+                print(f"[SECTOR][NIFTYINDICES] NON_JSON index={official_index_name} content_type={content_type!r} preview={body_preview!r} error={type(exc).__name__}")
+                continue
             raw = payload.get("d") if isinstance(payload, dict) else None
             if isinstance(raw, str):
                 try:
@@ -374,8 +387,12 @@ INDUSTRY_TO_TRACKED_INDEX = {
     "CONSUMER SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
     # NSE official Basic Industry labels that map directly to tracked sectors.
     "RETAILING": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
-    "IRON & STEEL PRODUCTS": ("Nifty Metal", "NIFTY METAL"),
-    "IRON AND STEEL PRODUCTS": ("Nifty Metal", "NIFTY METAL"),
+    # Official NSE Indices classification structure places these Basic Industries
+    # under the named sectors; use the matching tracked Nifty sector benchmark.
+    "OTHER AGRICULTURAL PRODUCTS": ("Nifty FMCG", "NIFTY FMCG"),
+    "CERAMICS": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
+    "GRANITES & MARBLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
+    "GRANITES AND MARBLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
 }
 
 
@@ -426,6 +443,16 @@ VERIFIED_ETF_UNDERLYING_INDEX = {
             "Verified DSP Nifty Bank ETF; official DSP scheme page states the underlying index is "
             "Nifty Bank Index. Official source: "
             "https://www.dspim.com/invest/mutual-fund-schemes/exchange-traded-funds/nifty-bank-etf/dsnbe-direct-growth"
+        ),
+    },
+    "PSUBANKADD": {
+        "sector": "Nifty PSU Bank",
+        "index_symbol": "NIFTY PSU BANK",
+        "status": "ETF_UNDERLYING_INDEX_VERIFIED",
+        "reason": (
+            "Verified DSP Nifty PSU Bank ETF; the official DSP scheme page states the scheme tracks "
+            "the Nifty PSU Bank Index and identifies NSE symbol PSUBANKADD. Official source: "
+            "https://www.dspim.com/invest/mutual-fund-schemes/exchange-traded-funds/nifty-psu-bank-etf/dpsub-direct-growth"
         ),
     },
 }
@@ -546,37 +573,60 @@ class _NSEVisibleTextParser(HTMLParser):
 
 
 def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> str:
-    """Fallback to the official NSE quote page when its JSON API returns 403.
+    """Fetch Basic Industry from an official NSE quote page using supported routes.
 
-    The quote page exposes a "Basic Industry" label in its rendered content.
-    Only that exact official label is returned; no sector is inferred from the
-    company name or ticker. Unknown labels remain WAIT_FOR_DATA.
+    NSE's old singular URL /get-quote/equity/SYMBOL returns 404 for symbols
+    whose canonical quote page includes a company slug. Try the current plural
+    query route first, then the canonical symbol/company route for the targeted
+    symbols. Only an explicit Basic Industry label is returned.
     """
-    url = f"https://www.nseindia.com/get-quote/equity/{symbol}"
     headers = {
         **NSE_HEADERS,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Referer": "https://www.nseindia.com/market-data/live-equity-market",
     }
-    try:
-        response = session.get(url, headers=headers, timeout=18)
-        print(f"[SECTOR] NSE quote page {symbol}: HTTP {response.status_code}")
-        response.raise_for_status()
-        parser = _NSEVisibleTextParser()
-        parser.feed(response.text or "")
-        text = unescape(" ".join(parser.parts))
-        match = re.search(r"\bBasic Industry\s+(.+?)\s+(?:Corporate Announcements|Trading Window|Annual Reports)\b", text, flags=re.I)
-        if not match:
-            print(f"[SECTOR] NSE quote page {symbol}: Basic Industry label not found")
-            return ""
-        value = " ".join(match.group(1).split()).strip(" :-")
-        if not value or value.casefold() in {"-", "na", "n/a", "undefined"}:
-            return ""
-        print(f"[SECTOR] NSE official Basic Industry {symbol}: {value}")
-        return value
-    except Exception as exc:
-        print(f"[SECTOR] NSE quote page fallback unavailable for {symbol}: {exc}")
-        return ""
+    urls: list[tuple[str, dict[str, str] | None]] = [
+        ("https://www.nseindia.com/get-quotes/equity", {"symbol": symbol}),
+    ]
+    quote_slugs = {
+        "SPENCERS": "Spencer's-Retail-Limited",
+        "BEDMUTHA": "Bedmutha-Industries-Limited",
+        "MODINATUR": "Modi-Naturals-Limited",
+        "JKIPL": "Jinkushal-Industries-Limited",
+        "AROGRANITE": "Aro-Granite-Industries-Limited",
+    }
+    slug = quote_slugs.get(_clean_symbol(symbol))
+    if slug:
+        urls.append((f"https://www.nseindia.com/get-quote/equity/{_clean_symbol(symbol)}/{slug}", None))
+
+    for url, params in urls:
+        try:
+            response = session.get(url, params=params, headers=headers, timeout=18)
+            print(f"[SECTOR] NSE quote page {symbol}: HTTP {response.status_code} route={url}")
+            if response.status_code != 200:
+                continue
+            body = response.text or ""
+            if not body:
+                continue
+            parser = _NSEVisibleTextParser()
+            parser.feed(body)
+            text = unescape(" ".join(parser.parts))
+            match = re.search(
+                r"\bBasic Industry\s+(.+?)\s+(?:Corporate Announcements|Trading Window|Annual Reports|Financial Result|Peer Comparison)\b",
+                text,
+                flags=re.I,
+            )
+            if not match:
+                print(f"[SECTOR] NSE quote page {symbol}: Basic Industry label not found on this route")
+                continue
+            value = " ".join(match.group(1).split()).strip(" :-")
+            if not value or value.casefold() in {"-", "na", "n/a", "undefined"}:
+                continue
+            print(f"[SECTOR] NSE official Basic Industry {symbol}: {value}")
+            return value
+        except Exception as exc:
+            print(f"[SECTOR] NSE quote page fallback unavailable for {symbol}: {type(exc).__name__}: {exc}")
+    return ""
 
 
 def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
@@ -899,7 +949,11 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
     # retry through the official Nifty Indices historical-data service. Merge
     # only actual dated closes; never fill missing values synthetically.
     if sectors_with_asof_new < len(SECTOR_INDICES):
-        fallback_rows, fallback_exact = _history_from_niftyindices_api(session, asof)
+        exact_date_text = asof.strftime("%Y-%m-%d")
+        archive_exact_sectors = {row["Sector"] for row in new_history_rows if row.get("Date") == exact_date_text}
+        missing_sectors = {item[0] for item in SECTOR_INDICES} - archive_exact_sectors
+        print(f"[SECTOR] Index-history fallback limited to missing exact-date sectors: {sorted(missing_sectors)}")
+        fallback_rows, fallback_exact = _history_from_niftyindices_api(session, asof, sectors_to_fetch=missing_sectors)
         if fallback_rows:
             merged = {(row["Date"], row["Sector"]): row["Close"] for row in new_history_rows}
             for row in fallback_rows:
