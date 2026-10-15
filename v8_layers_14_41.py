@@ -99,17 +99,25 @@ def _flag(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes", "y"}
 
 
-def _calculate_structural_risk_reward(entry: float, stop: float, resistance: float) -> dict:
-    """Calculate RR only from a real supplied resistance; never synthesize a 2R target."""
+def _calculate_structural_risk_reward(
+    entry: float,
+    stop: float,
+    resistance: float,
+    resistance_source: str = "SR_RESISTANCE",
+) -> dict:
+    """Calculate RR from an observed overhead price level; never synthesize a 2R target."""
     entry = _num(entry)
     stop = _num(stop)
     resistance = _num(resistance)
+    source = _text(resistance_source) or "SR_RESISTANCE"
 
     result = {
         "TargetPricePlan": float("nan"),
         "RiskReward": float("nan"),
         "RiskRewardStatus": "WAIT_FOR_DATA",
         "TargetSource": "WAIT_FOR_DATA",
+        "StructuralResistanceUsed": float("nan"),
+        "StructuralResistanceSource": "WAIT_FOR_DATA",
         "RiskRewardReason": "Missing entry, valid stop, or structural resistance",
     }
     if pd.isna(entry) or entry <= 0 or pd.isna(stop) or stop <= 0 or stop >= entry:
@@ -125,10 +133,48 @@ def _calculate_structural_risk_reward(entry: float, stop: float, resistance: flo
         "TargetPricePlan": resistance,
         "RiskReward": rr,
         "RiskRewardStatus": "PASS" if rr >= 2.0 else "FAIL",
-        "TargetSource": "SR_RESISTANCE",
+        "TargetSource": source,
+        "StructuralResistanceUsed": resistance,
+        "StructuralResistanceSource": source,
         "RiskRewardReason": "Structural resistance provides at least 2R" if rr >= 2.0 else "Structural resistance is below the required 2R reward",
     })
     return result
+
+
+def _structural_resistance_candidate(row: pd.Series, entry: float) -> tuple[float, str]:
+    """Return the nearest known historical resistance above entry, never an invented price.
+
+    Candidate levels are already computed from EOD price history by the upstream
+    technical screen. A level at/below entry cannot be a target for this plan.
+    """
+    entry = _num(entry)
+    if pd.isna(entry) or entry <= 0:
+        return float("nan"), "WAIT_FOR_DATA"
+
+    fields = [
+        ("SRResistance", "SR_RESISTANCE"),
+        ("SRSwingHigh", "SR_SWING_HIGH"),
+        ("RecentSwingHigh", "RECENT_SWING_HIGH"),
+        ("SR20DHigh", "SR_20D_HIGH"),
+        ("High20D", "HIGH_20D"),
+        ("SR50DHigh", "SR_50D_HIGH"),
+        ("High50D", "HIGH_50D"),
+    ]
+    valid = []
+    for priority, (field, source) in enumerate(fields):
+        if field not in row.index:
+            continue
+        level = _num(row.get(field))
+        if pd.notna(level) and level > entry:
+            valid.append((level, priority, source))
+
+    if not valid:
+        return float("nan"), "WAIT_FOR_DATA"
+
+    # Nearest overhead level is the conservative first target. Field order only
+    # resolves ties where several independently calculated levels share a price.
+    level, _, source = min(valid, key=lambda item: (item[0], item[1]))
+    return float(level), source
 
 
 def _first_number(row: pd.Series, names: list[str]) -> float:
@@ -681,6 +727,7 @@ def run_eod_layers(
     output["V8ScoreCoveragePct"] = [item[1] for item in score_coverage]
 
     rr_values, rr_status, rr_targets, rr_stops, rr_sources, rr_reasons, chase_values = [], [], [], [], [], [], []
+    rr_resistance_values, rr_resistance_sources = [], []
     hist_by_symbol = {}
     for frame in historical[-19:] + [current_dated]:
         for symbol, group in frame.groupby("TckrSymb"):
@@ -688,7 +735,6 @@ def run_eod_layers(
     for _, row in output.iterrows():
         price = _num(row.get("ClsPric"))
         support = _num(row.get("SRSupport"))
-        resistance = _num(row.get("SRResistance"))
         atr = _num(row.get("ATR14"))
         if pd.isna(atr) or atr <= 0:
             records = hist_by_symbol.get(str(row.get("TckrSymb")), [])
@@ -708,13 +754,21 @@ def run_eod_layers(
         if pd.isna(entry) or entry <= 0:
             entry = price
 
-        rr_result = _calculate_structural_risk_reward(entry, stop, resistance)
+        # SRResistance can be at/below the planned entry even when a verified
+        # swing/20D/50D high exists overhead. Use the nearest observed level
+        # above entry; if none exists, preserve WAIT_FOR_DATA (no synthetic 2R).
+        resistance, resistance_source = _structural_resistance_candidate(row, entry)
+        rr_result = _calculate_structural_risk_reward(
+            entry, stop, resistance, resistance_source
+        )
         rr_values.append(rr_result["RiskReward"])
         rr_targets.append(rr_result["TargetPricePlan"])
         rr_stops.append(stop)
         rr_status.append(rr_result["RiskRewardStatus"])
         rr_sources.append(rr_result["TargetSource"])
         rr_reasons.append(rr_result["RiskRewardReason"])
+        rr_resistance_values.append(rr_result["StructuralResistanceUsed"])
+        rr_resistance_sources.append(rr_result["StructuralResistanceSource"])
 
         ema20 = _num(row.get("EMA20"))
         extended = (
@@ -727,6 +781,8 @@ def run_eod_layers(
     output["StopLossPlan"] = rr_stops
     output["TargetPricePlan"] = rr_targets
     output["TargetSource"] = rr_sources
+    output["StructuralResistanceUsed"] = rr_resistance_values
+    output["StructuralResistanceSource"] = rr_resistance_sources
     output["RiskRewardReason"] = rr_reasons
     output["RiskReward"] = rr_values
     output["RiskRewardStatus"] = rr_status
