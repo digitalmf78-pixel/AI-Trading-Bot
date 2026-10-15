@@ -1,4 +1,3 @@
-```yaml
 name: News Matching Tests
 
 on:
@@ -43,4 +42,3 @@ jobs:
       - name: Run issuer-aware news matching tests
         run: |
           python -m pytest -q test_news_catalyst_matching.py
-```
