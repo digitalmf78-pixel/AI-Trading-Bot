@@ -126,7 +126,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     """Return qualifying candidates and full per-symbol audit.
 
     Qualifies only if five distinct valid reports have a valid delivery percentage
-    for the exact SYMBOL+SERIES and their arithmetic mean is strictly greater than the threshold.
+    for the exact SYMBOL+SERIES and their arithmetic mean is greater than or equal to the threshold (>= 60.00% by default).
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()

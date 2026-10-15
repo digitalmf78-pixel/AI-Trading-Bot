@@ -258,12 +258,11 @@ def test_next_day_pipeline_only_receives_final_watch_candidates():
 
 def test_source_code_uses_greater_than_or_equal_60_delivery_status():
     source = Path("delivery_filter.py").read_text(encoding="utf-8")
-    assert "PASS_GE_60_PERCENT" in source
+    assert "avg >= minimum_average" in source, "Delivery threshold must include exactly 60.00%"
     assert "PASS_GE_60_PERCENT" in source
     assert "FILTERED_OUT_LT_60_PERCENT" in source
-    assert "FILTERED_OUT_LT_60_PERCENT" in source
+    assert "strictly greater than the threshold" not in source
     layer_source = Path("v8_layers_14_41.py").read_text(encoding="utf-8")
-    assert "PASS_GE_60_PERCENT" in layer_source
     assert "PASS_GE_60_PERCENT" in layer_source
 
 
