@@ -249,7 +249,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     # The caller should pass screened candidates, not the full NSE universe.
     if "SetupType" in candidates.columns:
         setup = candidates["SetupType"].astype(str).str.upper().str.strip()
+        before_setup_gate = len(candidates)
         candidates = candidates[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
+        print(f"[NEWS-DIAG] SetupType gate: before={before_setup_gate}, after={len(candidates)}, removed={before_setup_gate-len(candidates)}")
 
     if candidates.empty:
         Path("data/inputs").mkdir(parents=True, exist_ok=True)
@@ -290,23 +292,33 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         try:
             items = _rss_items(feed_url)
         except Exception as exc:
-            print(f"{feed_name} fetch failed: {exc}")
+            print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_FAIL feed={feed_name!r} url={feed_url} error={type(exc).__name__}: {exc}")
             continue
         nse_successes += 1
-        nse_partial = nse_partial or bool(getattr(items, "partial", False))
+        partial = bool(getattr(items, "partial", False))
+        nse_partial = nse_partial or partial
+        feed_items = len(items)
+        date_valid = 0
+        date_rejected = 0
+        issuer_matches = 0
+        print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
             content = _norm(title + " " + description)
             stamp = _published(item)
             if stamp is None or stamp < cutoff:
+                date_rejected += 1
                 continue
+            date_valid += 1
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
                 match_reason = _issuer_match_reason(symbol, title + " " + description, company)
                 if not match_reason:
                     continue
+                issuer_matches += 1
+                print(f"[NEWS-DIAG] OFFICIAL_ISSUER_MATCH feed={feed_name!r} symbol={symbol} reason={match_reason} headline={title[:180]!r}")
                 rows.append({
                     "TckrSymb": symbol,
                     "PublishedAt": stamp.isoformat() if stamp else "",
@@ -318,6 +330,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                     "EventID": "",
                     "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
                 })
+        print(f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} date_valid={date_valid} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}")
 
     if nse_successes == 0:
         status["NSE"] = "unavailable"
@@ -339,10 +352,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
             })
         except Exception as exc:
-            print(f"Secondary news fetch failed for {symbol}: {exc}")
+            print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} error={type(exc).__name__}: {exc}")
             continue
         secondary_successes += 1
-        secondary_partial = secondary_partial or bool(getattr(items, "partial", False))
+        partial = bool(getattr(items, "partial", False))
+        secondary_partial = secondary_partial or partial
+        secondary_matches = 0
+        print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(items)} partial={partial}")
         for item in items:
             title = _clean(item.findtext("title", ""))
             source_node = item.find("source")
@@ -356,6 +372,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
             if not match_reason:
                 continue
+            secondary_matches += 1
+            print(f"[NEWS-DIAG] SECONDARY_ISSUER_MATCH symbol={symbol} reason={match_reason} headline={title[:180]!r}")
             rows.append({
                 "TckrSymb": symbol,
                 "PublishedAt": stamp.isoformat() if stamp else "",
@@ -367,6 +385,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 "EventID": "",
                 "SourceDomain": _source_domain(source_url),
             })
+        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(items)} issuer_matches={secondary_matches}")
 
     if secondary_successes == 0:
         status["secondary"] = "unavailable"
@@ -380,6 +399,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         )
     Path("data/inputs").mkdir(parents=True, exist_ok=True)
     frame.to_csv("data/inputs/news_evidence_auto.csv", index=False)
+    official_rows = int((frame["SourceType"].astype(str).str.lower() == "primary").sum()) if not frame.empty else 0
+    secondary_rows = int((frame["SourceType"].astype(str).str.lower() == "secondary").sum()) if not frame.empty else 0
+    print(f"[NEWS-DIAG] FINAL_SUMMARY candidates={len(symbols)} NSE_feed_status={status['NSE']} secondary_feed_status={status['secondary']} official_rows={official_rows} secondary_rows={secondary_rows} total_rows={len(frame)}")
     print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} top-volume symbols.")
     return frame, status
 
