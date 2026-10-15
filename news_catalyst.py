@@ -175,11 +175,62 @@ def _read_equity_master() -> dict[str, str]:
         return {}
 
 
+class _RSSItemList(list):
+    """List of parsed RSS items with a flag for malformed-feed recovery."""
+
+    def __init__(self, items=(), *, partial: bool = False):
+        super().__init__(items)
+        self.partial = partial
+
+
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
+    """Fetch RSS items, recovering complete <item> blocks from truncated XML.
+
+    NSE sometimes returns a large RSS payload with a malformed/truncated tail.
+    A strict whole-document parse then discards all valid entries. We first try
+    the normal XML parser; if it fails, recover only individually well-formed
+    complete item blocks. The caller is told the feed was partial, and an
+    incomplete item is never fabricated or treated as valid evidence.
+    """
     response = requests.get(url, params=params, headers=HEADERS, timeout=15)
     response.raise_for_status()
-    root = ET.fromstring(response.content)
-    return list(root.findall("./channel/item"))
+    payload = response.content
+    try:
+        root = ET.fromstring(payload)
+        return _RSSItemList(root.findall("./channel/item"), partial=False)
+    except ET.ParseError as original_error:
+        text = payload.decode(response.encoding or "utf-8", errors="replace")
+        fragments = re.findall(r"<item\b[^>]*>.*?</item\s*>", text, flags=re.IGNORECASE | re.DOTALL)
+        recovered: list[ET.Element] = []
+
+        # Item fragments can use namespace prefixes declared only on the RSS
+        # root. Copy namespace declarations into a temporary wrapper so each
+        # complete fragment can be parsed independently.
+        root_match = re.search(r"<(?:rss|rdf:RDF|feed)\b([^>]*)>", text, flags=re.IGNORECASE | re.DOTALL)
+        root_attrs = root_match.group(1) if root_match else ""
+        namespace_attrs = " ".join(re.findall(
+            r"\sxmlns(?::[A-Za-z_][\w.-]*)?\s*=\s*(?:\"[^\"]*\"|'[^']*')",
+            root_attrs,
+            flags=re.IGNORECASE,
+        ))
+        for fragment in fragments:
+            try:
+                wrapper = f"<recovery_root{namespace_attrs}>{fragment}</recovery_root>"
+                parsed = ET.fromstring(wrapper)
+                item = next((node for node in parsed if node.tag.rsplit("}", 1)[-1].lower() == "item"), None)
+                if item is not None:
+                    recovered.append(item)
+            except ET.ParseError:
+                # Skip the individual malformed item; do not invent missing data.
+                continue
+
+        if not recovered:
+            raise original_error
+        print(
+            f"WARNING: RSS feed parse error for {url}: {original_error}. "
+            f"Recovered {len(recovered)} complete item(s); feed marked partial and malformed tail skipped."
+        )
+        return _RSSItemList(recovered, partial=True)
 
 
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
@@ -232,6 +283,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     rows: list[dict[str, str]] = []
     status = {"NSE": "available", "secondary": "available"}
     nse_successes = 0
+    nse_partial = False
 
     # Read each exchange feed once, then map company names/symbols to the Top 20.
     for feed_name, feed_url in NSE_FEEDS.items():
@@ -241,6 +293,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             print(f"{feed_name} fetch failed: {exc}")
             continue
         nse_successes += 1
+        nse_partial = nse_partial or bool(getattr(items, "partial", False))
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
@@ -268,12 +321,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     if nse_successes == 0:
         status["NSE"] = "unavailable"
-    elif nse_successes < len(NSE_FEEDS):
+    elif nse_successes < len(NSE_FEEDS) or nse_partial:
         status["NSE"] = "partly available"
 
     # Free Google News RSS helps discover independent press coverage. It never
     # upgrades itself to primary evidence; the NSE file remains authoritative.
     secondary_successes = 0
+    secondary_partial = False
     for symbol in sorted(symbols):
         try:
             company = names.get(symbol, "").strip()
@@ -288,6 +342,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             print(f"Secondary news fetch failed for {symbol}: {exc}")
             continue
         secondary_successes += 1
+        secondary_partial = secondary_partial or bool(getattr(items, "partial", False))
         for item in items:
             title = _clean(item.findtext("title", ""))
             source_node = item.find("source")
@@ -315,7 +370,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     if secondary_successes == 0:
         status["secondary"] = "unavailable"
-    elif secondary_successes < len(symbols):
+    elif secondary_successes < len(symbols) or secondary_partial:
         status["secondary"] = "partly available"
 
     frame = pd.DataFrame(rows, columns=NEWS_COLUMNS)
