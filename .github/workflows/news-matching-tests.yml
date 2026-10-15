@@ -1,4 +1,4 @@
-name: News Matching Tests
+name: News Matching and Parser Tests
 
 on:
   push:
@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  news-matching-tests:
-    name: Issuer-aware News Matching
+  news-tests:
+    name: Issuer Matching and RSS Parser Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -33,12 +33,14 @@ jobs:
         run: |
           test -f news_catalyst.py
           test -f test_news_catalyst_matching.py
+          test -f test_news_catalyst_parser.py
 
       - name: Compile news module and tests
         run: |
           python -m py_compile news_catalyst.py
           python -m py_compile test_news_catalyst_matching.py
+          python -m py_compile test_news_catalyst_parser.py
 
-      - name: Run issuer-aware news matching tests
+      - name: Run issuer matching and RSS parser tests
         run: |
-          python -m pytest -q test_news_catalyst_matching.py
+          python -m pytest -q test_news_catalyst_matching.py test_news_catalyst_parser.py
