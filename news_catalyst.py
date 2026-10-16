@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
-from zoneinfo import ZoneInfo
 import re
 import xml.etree.ElementTree as ET
 
@@ -31,8 +30,6 @@ NSE_FEEDS = {
 EQUITY_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 EQUITY_MASTER_CACHE = Path("data") / "bhavcopy" / "EQUITY_L.csv"
 GOOGLE_RSS_URL = "https://news.google.com/rss/search"
-NSE_HISTORICAL_ANNOUNCEMENTS_URL = "https://www.nseindia.com/api/corporate-announcements"
-NSE_CORPORATE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; NSE-V8-Catalyst-Report/1.0)",
     "Accept": "application/rss+xml, application/xml, text/xml, */*",
@@ -48,18 +45,20 @@ def _norm(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", _clean(value).upper()).strip()
 
 
-def _published(item: ET.Element, default_timezone: str = "Asia/Kolkata") -> datetime | None:
-    """Parse RSS timestamps robustly and normalize them to UTC.
+def _published(item: ET.Element) -> datetime | None:
+    """Read RSS/RDF/Atom timestamps in RFC 2822 or ISO-8601 form.
 
-    NSE RSS dates sometimes end in the unrecognized abbreviation ``IST``.
-    Python's email parser can return those as *naive* datetimes; treating such
-    values as UTC shifts them by 5h30 and can wrongly discard valid evening news.
-    Naive exchange timestamps are interpreted as India Standard Time. Explicit
-    UTC/GMT/offset timestamps retain their stated timezone.
+    NSE feeds can contain ISO-8601 timestamps and namespace-qualified date
+    tags. An RFC-2822-only parser silently discarded those valid entries.
     """
     preferred = {
-        "pubdate": 0, "published": 1, "updated": 2, "date": 3,
-        "issued": 4, "created": 5, "modified": 6,
+        "pubdate": 0,
+        "date": 1,
+        "published": 2,
+        "updated": 3,
+        "issued": 4,
+        "created": 5,
+        "modified": 6,
     }
     values: list[tuple[int, str]] = []
     for node in item.iter():
@@ -68,54 +67,27 @@ def _published(item: ET.Element, default_timezone: str = "Asia/Kolkata") -> date
             values.append((preferred[local_name], node.text.strip()))
 
     for _, raw in sorted(values, key=lambda entry: entry[0]):
-        cleaned = raw.strip()
-        assumed_tz = default_timezone
-        if re.search(r"\sIST$", cleaned, flags=re.IGNORECASE):
-            cleaned = re.sub(r"\sIST$", "", cleaned, flags=re.IGNORECASE).strip()
-            assumed_tz = "Asia/Kolkata"
-        elif re.search(r"\s(?:UTC|GMT)$", cleaned, flags=re.IGNORECASE):
-            cleaned = re.sub(r"\s(?:UTC|GMT)$", "", cleaned, flags=re.IGNORECASE).strip()
-            assumed_tz = "UTC"
         try:
-            stamp = parsedate_to_datetime(cleaned)
+            stamp = parsedate_to_datetime(raw)
             if stamp is not None:
                 if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=ZoneInfo(assumed_tz))
+                    stamp = stamp.replace(tzinfo=timezone.utc)
                 return stamp.astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
             pass
 
         try:
-            stamp = pd.Timestamp(cleaned)
+            stamp = pd.Timestamp(raw)
             if pd.isna(stamp):
                 continue
             if stamp.tzinfo is None:
-                stamp = stamp.tz_localize(assumed_tz)
+                stamp = stamp.tz_localize("UTC")
             else:
                 stamp = stamp.tz_convert("UTC")
-            return stamp.to_pydatetime().astimezone(timezone.utc)
+            return stamp.to_pydatetime()
         except (TypeError, ValueError, OverflowError):
             continue
     return None
-
-
-def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 160) -> dict[str, str]:
-    """Return a small, bounded sample of RSS fields for troubleshooting."""
-    fields: dict[str, str] = {}
-    for node in item.iter():
-        key = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip()
-        value = _clean(node.text or "")
-        if not key or not value:
-            continue
-        out_key = key
-        suffix = 2
-        while out_key in fields:
-            out_key = f"{key}_{suffix}"
-            suffix += 1
-        fields[out_key] = value[:max_value]
-        if len(fields) >= max_fields:
-            break
-    return fields
 
 
 def _source_domain(url: str) -> str:
@@ -149,11 +121,7 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         return ""
 
     company_base = _company_base(company)
-    company_tokens = company_base.split()
-    if company_base and (
-        (len(company_base) >= 5 and len(company_tokens) >= 2)
-        or (len(company_base) >= 8 and len(company_tokens) == 1)
-    ):
+    if len(company_base) >= 5 and len(company_base.split()) >= 2:
         if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
             return "COMPANY_NAME_MATCH"
 
@@ -163,7 +131,7 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
-        rf"(?<![A-Z0-9]){escaped}\s+NS(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\s*\.NS(?![A-Z0-9])",
         rf"\(\s*{escaped}\s*\)",
     )
     if any(re.search(pattern, title) for pattern in explicit_patterns):
@@ -213,13 +181,20 @@ def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
 
 
 def _impact(headline: str) -> str:
+    """Classify catalyst impact without treating every management exit as bad news.
+
+    A bare resignation is a management-change event, not sufficient evidence of
+    negative impact by itself. Specific auditor resignation and explicit adverse
+    financial/regulatory language remain negative signals.
+    """
     text = _norm(headline)
     negative = (
         "DEFAULT", "FRAUD", "INSOLVENCY", "BANKRUPTCY", "PENALTY",
-        "FINES", "DOWNGRADE", "RESIGNS", "RESIGNATION", "ORDER CANCELLED",
-        "CONTRACT TERMINATED", "PROBE", "INVESTIGATION", "LOSSES WIDEN",
-        "PROFIT FALL", "PROFIT DECLINE", "REVENUE FALL", "REVENUE DECLINE",
-        "PLEDGE INVOCATION", "AUDITOR RESIGNS", "REGULATORY ACTION",
+        "FINES", "DOWNGRADE", "ORDER CANCELLED", "CONTRACT TERMINATED",
+        "PROBE", "INVESTIGATION", "LOSSES WIDEN", "PROFIT FALL",
+        "PROFIT DECLINE", "REVENUE FALL", "REVENUE DECLINE",
+        "PLEDGE INVOCATION", "AUDITOR RESIGNS", "AUDITOR RESIGNATION",
+        "REGULATORY ACTION",
     )
     positive = (
         "RECORD ORDER", "WINS ORDER", "SECURES ORDER", "ORDER WORTH",
@@ -338,191 +313,6 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
         return _RSSItemList(recovered, partial=True)
 
 
-def _parse_news_timestamp(value, default_timezone: str = "Asia/Kolkata") -> datetime | None:
-    """Parse a timestamp value from NSE's JSON API into UTC."""
-    if value is None or not str(value).strip():
-        return None
-    raw = str(value).strip()
-    # NSE API commonly returns strings such as 16-Oct-2026 15:48:04.
-    try:
-        stamp = pd.Timestamp(raw)
-        if pd.isna(stamp):
-            return None
-        if stamp.tzinfo is None:
-            stamp = stamp.tz_localize(default_timezone)
-        else:
-            stamp = stamp.tz_convert("UTC")
-        return stamp.to_pydatetime().astimezone(timezone.utc)
-    except (TypeError, ValueError, OverflowError):
-        try:
-            stamp = parsedate_to_datetime(raw)
-            if stamp.tzinfo is None:
-                stamp = stamp.replace(tzinfo=ZoneInfo(default_timezone))
-            return stamp.astimezone(timezone.utc)
-        except (TypeError, ValueError, OverflowError):
-            return None
-
-
-def _field_ci(record: dict, *names: str) -> str:
-    """Return the first non-empty JSON field, case-insensitively."""
-    indexed = {str(key).strip().lower(): value for key, value in record.items()}
-    for name in names:
-        value = indexed.get(name.lower())
-        if value is not None and str(value).strip() and str(value).strip().lower() not in {"nan", "none", "null"}:
-            return _clean(str(value))
-    return ""
-
-
-def _secondary_search_queries(symbol: str, company: str = "") -> list[tuple[str, str]]:
-    """Build independent company-name and ticker searches for recent coverage."""
-    queries: list[tuple[str, str]] = []
-    company_base = _company_base(company)
-    if company_base:
-        queries.append((f'"{company_base}" when:5d', "company_name"))
-    queries.append((f'"{str(symbol).strip().upper()}" NSE India stock when:5d', "ticker"))
-    # Keep deterministic order while removing duplicate query strings.
-    seen: set[str] = set()
-    return [(query, kind) for query, kind in queries if not (query in seen or seen.add(query))]
-
-
-def _fetch_historical_nse_announcements(
-    symbols: set[str],
-    names: dict[str, str],
-    news_start: datetime,
-    news_end: datetime,
-) -> tuple[list[dict[str, str]], int, int]:
-    """Fetch date-filtered official historical announcements from NSE's JSON endpoint.
-
-    RSS is a rolling latest-items feed and may contain only current-day items.
-    The date-filtered corporate-announcements API is queried per shortlisted
-    symbol so older announcements are not lost. Failures remain visible in logs.
-    Returns (rows, successful_symbol_queries, failed_symbol_queries).
-    """
-    start_local = news_start.astimezone(ZoneInfo("Asia/Kolkata"))
-    end_local = news_end.astimezone(ZoneInfo("Asia/Kolkata"))
-    params_base = {
-        "index": "equities",
-        "from_date": start_local.strftime("%d-%m-%Y"),
-        "to_date": end_local.strftime("%d-%m-%Y"),
-    }
-    session = requests.Session()
-    session.headers.update({
-        **HEADERS,
-        "Accept": "application/json, text/plain, */*",
-        "Referer": NSE_CORPORATE_FILINGS_PAGE,
-        "Origin": "https://www.nseindia.com",
-    })
-    try:
-        try:
-            warm = session.get("https://www.nseindia.com", timeout=15)
-            print(f"[NEWS-DIAG] NSE_HISTORICAL_BOOTSTRAP status={warm.status_code}")
-        except Exception as exc:
-            # Still try the API: some environments already have working cookies.
-            print(f"[NEWS-DIAG] NSE_HISTORICAL_BOOTSTRAP_FAIL error={type(exc).__name__}: {exc}")
-
-        rows: list[dict[str, str]] = []
-        succeeded = 0
-        failed = 0
-        for symbol in sorted(symbols):
-            params = {**params_base, "symbol": symbol}
-            try:
-                response = session.get(NSE_HISTORICAL_ANNOUNCEMENTS_URL, params=params, timeout=20)
-                response.raise_for_status()
-                payload = response.json()
-                if isinstance(payload, dict):
-                    records = payload.get("data", payload.get("announcements", []))
-                else:
-                    records = payload
-                if not isinstance(records, list):
-                    raise ValueError(f"unexpected JSON shape: {type(records).__name__}")
-                succeeded += 1
-                matched = 0
-                for record in records:
-                    if not isinstance(record, dict):
-                        continue
-                    row_symbol = _field_ci(record, "symbol", "ticker", "symbolName", "sm_symbol").upper()
-                    # The API query is symbol-scoped; if the payload supplies a
-                    # different symbol, do not attribute it to the requested one.
-                    if row_symbol and row_symbol != symbol:
-                        continue
-                    stamp_raw = _field_ci(
-                        record, "an_dt", "broadcastDateTime", "broadcastDate", "publishedAt",
-                        "date", "dt", "exchangeReceivedTime", "disseminationTime",
-                    )
-                    stamp = _parse_news_timestamp(stamp_raw)
-                    if not _within_news_window(stamp, news_start, news_end):
-                        continue
-                    company = _field_ci(record, "sm_name", "companyName", "company", "issuerName") or names.get(symbol, "")
-                    subject = _field_ci(record, "subject", "sm_sub", "announcementSubject", "title", "headline")
-                    description = _field_ci(record, "desc", "attchmntText", "description", "details", "announcementText")
-                    headline = " — ".join(part for part in (subject, description) if part)
-                    if not headline:
-                        headline = company or symbol
-                    link = _field_ci(record, "attchmntFile", "attachment", "attachmentUrl", "url", "link")
-                    if link and link.startswith("/"):
-                        link = "https://www.nseindia.com" + link
-                    rows.append({
-                        "TckrSymb": symbol,
-                        "PublishedAt": stamp.isoformat(),
-                        "Headline": headline[:1200],
-                        "Source": "NSE India",
-                        "SourceType": "primary",
-                        "URL": link or NSE_CORPORATE_FILINGS_PAGE,
-                        "Impact": _impact(headline),
-                        "EventID": _field_ci(record, "seq_id", "eventId", "id"),
-                        "SourceDomain": _source_domain(link) or "www.nseindia.com",
-                    })
-                    matched += 1
-                print(
-                    f"[NEWS-DIAG] NSE_HISTORICAL_SYMBOL symbol={symbol} api_records={len(records)} "
-                    f"window_matches={matched} from={params_base['from_date']} to={params_base['to_date']}"
-                )
-            except Exception as exc:
-                failed += 1
-                print(f"[NEWS-DIAG] NSE_HISTORICAL_FETCH_FAIL symbol={symbol} error={type(exc).__name__}: {exc}")
-        print(
-            f"[NEWS-DIAG] NSE_HISTORICAL_SUMMARY symbols={len(symbols)} "
-            f"successful_queries={succeeded} failed_queries={failed} rows={len(rows)}"
-        )
-        return rows, succeeded, failed
-    finally:
-        session.close()
-
-
-def _news_window(eod_date, session_dates=None) -> tuple[datetime, datetime]:
-    """Return the inclusive five-calendar-day news window in UTC.
-
-    The window covers the EOD date and the four preceding calendar dates.
-    Its upper bound is 22:00 Asia/Kolkata on the EOD date, so evening news is
-    included for next-morning review. `session_dates` is accepted for backward
-    compatibility but intentionally does not change this calendar-day window.
-    """
-    eod_day = pd.Timestamp(eod_date)
-    if eod_day.tzinfo is None:
-        eod_day = eod_day.tz_localize("Asia/Kolkata")
-    else:
-        eod_day = eod_day.tz_convert("Asia/Kolkata")
-    local_day = eod_day.normalize()
-    start_local = local_day - pd.Timedelta(days=4)
-    end_local = local_day + pd.Timedelta(hours=22)
-    start = start_local.to_pydatetime().astimezone(timezone.utc)
-    end = end_local.to_pydatetime().astimezone(timezone.utc)
-    return start, end
-
-
-def _within_news_window(stamp: datetime | None, start: datetime, end: datetime) -> bool:
-    """True only for timestamped news inside the configured inclusive window."""
-    if stamp is None:
-        return False
-    try:
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=timezone.utc)
-        stamp = stamp.astimezone(timezone.utc)
-        return start <= stamp <= end
-    except (TypeError, ValueError, OverflowError):
-        return False
-
-
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
     """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
     if result.empty or "TckrSymb" not in result.columns:
@@ -548,30 +338,32 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
     try:
-        news_start, news_end = _news_window(eod_date, session_dates)
-    except Exception as exc:
-        # Fail closed: do not silently broaden the requested five-day window.
-        print(f"[NEWS-DIAG] NEWS_WINDOW_INVALID eod_date={eod_date!r} error={type(exc).__name__}: {exc}")
-        return pd.DataFrame(columns=NEWS_COLUMNS), {"NSE": "invalid news window", "secondary": "not checked"}
-    print(
-        f"[NEWS-DIAG] NEWS_WINDOW_IST start={news_start.astimezone(ZoneInfo('Asia/Kolkata')).isoformat()} "
-        f"end={news_end.astimezone(ZoneInfo('Asia/Kolkata')).isoformat()} "
-        "rule=five_calendar_days_through_22:00_IST"
-    )
+        if session_dates:
+            # Use the oldest of the latest five actual NSE EOD sessions (current
+            # session + previous four), not a five-calendar-day approximation.
+            normalized_dates = []
+            for value in session_dates:
+                session_day = pd.Timestamp(value)
+                if session_day.tzinfo is not None:
+                    session_day = session_day.tz_convert("Asia/Kolkata").tz_localize(None)
+                normalized_dates.append(session_day.normalize())
+            first_session = min(normalized_dates).tz_localize("Asia/Kolkata")
+            cutoff = first_session.to_pydatetime().astimezone(timezone.utc)
+        else:
+            # Backwards-compatible fallback for callers that do not supply the
+            # exchange-session calendar.
+            eod_day = pd.Timestamp(eod_date)
+            eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
+            # Fallback retrieval buffer; exact session_dates take precedence.
+            cutoff = (eod_day.normalize() - pd.Timedelta(days=10)).to_pydatetime().astimezone(timezone.utc)
+    except Exception:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=10)
     rows: list[dict[str, str]] = []
     status = {"NSE": "available", "secondary": "available"}
     nse_successes = 0
     nse_partial = False
 
-    # Historical API is required because NSE RSS is a rolling feed and may not
-    # retain the previous five calendar days. Query only shortlisted symbols.
-    historical_rows, historical_successes, historical_failures = _fetch_historical_nse_announcements(
-        symbols, names, news_start, news_end
-    )
-    rows.extend(historical_rows)
-
-    # Read exchange RSS feeds too: they remain a useful fallback/near-real-time
-    # source, but they are not treated as a complete historical archive.
+    # Read each exchange feed once, then map company names/symbols to the Top 20.
     for feed_name, feed_url in NSE_FEEDS.items():
         try:
             items = _rss_items(feed_url)
@@ -583,32 +375,22 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         nse_partial = nse_partial or partial
         feed_items = len(items)
         date_valid = 0
-        date_missing = 0
-        date_outside_window = 0
+        date_rejected = 0
         issuer_matches = 0
-        sample_stamps: list[str] = []
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
-        for sample_no, sample_item in enumerate(items[:3], start=1):
-            print(f"[NEWS-DIAG] OFFICIAL_FEED_SAMPLE feed={feed_name!r} sample={sample_no} fields={_rss_debug_fields(sample_item)!r}")
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
-            item_text = " ".join(_clean(node.text or "") for node in item.iter() if node.text)
-            content = _norm(" ".join((title, description, item_text)))
-            stamp = _published(item, default_timezone="Asia/Kolkata")
-            if stamp is None:
-                date_missing += 1
-                continue
-            if not _within_news_window(stamp, news_start, news_end):
-                date_outside_window += 1
-                if len(sample_stamps) < 3:
-                    sample_stamps.append(stamp.isoformat())
+            content = _norm(title + " " + description)
+            stamp = _published(item)
+            if stamp is None or stamp < cutoff:
+                date_rejected += 1
                 continue
             date_valid += 1
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                match_reason = _issuer_match_reason(symbol, content, company)
+                match_reason = _issuer_match_reason(symbol, title + " " + description, company)
                 if not match_reason:
                     continue
                 issuer_matches += 1
@@ -624,86 +406,46 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                     "EventID": "",
                     "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
                 })
-        print(
-            f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} "
-            f"date_valid_in_window={date_valid} date_missing_or_unparseable={date_missing} "
-            f"date_outside_window={date_outside_window} issuer_matches={issuer_matches} "
-            f"outside_window_samples={sample_stamps!r}"
-        )
+        print(f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} date_valid={date_valid} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}")
 
-    if nse_successes == 0 and historical_successes == 0:
+    if nse_successes == 0:
         status["NSE"] = "unavailable"
-    elif (nse_successes < len(NSE_FEEDS) or nse_partial
-          or historical_failures > 0 or historical_successes < len(symbols)):
+    elif nse_successes < len(NSE_FEEDS) or nse_partial:
         status["NSE"] = "partly available"
-    else:
-        status["NSE"] = "available"
 
     # Free Google News RSS helps discover independent press coverage. It never
-    # upgrades itself to primary evidence; NSE filings remain authoritative.
-    # Search by registered company name AND by ticker separately: requiring both
-    # in one query was too restrictive and missed headlines that use the issuer
-    # name but omit the exchange ticker. Every returned item is still checked
-    # against the exact five-day/10 PM window and issuer matcher below.
+    # upgrades itself to primary evidence; the NSE file remains authoritative.
     secondary_successes = 0
     secondary_partial = False
     for symbol in sorted(symbols):
-        company = names.get(symbol, "").strip()
-        queries = _secondary_search_queries(symbol, company)
-
-        # Merge results from both queries before matching to avoid duplicate
-        # articles; preserve partial-source diagnostics if one query fails.
-        found_items: list[ET.Element] = []
-        seen_query_items: set[tuple[str, str]] = set()
-        successful_queries = 0
-        failed_queries = 0
-        for query, query_kind in queries:
-            try:
-                items = _rss_items(GOOGLE_RSS_URL, {
-                    "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
-                })
-                successful_queries += 1
-                partial = bool(getattr(items, "partial", False))
-                secondary_partial = secondary_partial or partial
-                print(
-                    f"[NEWS-DIAG] SECONDARY_QUERY symbol={symbol} kind={query_kind} "
-                    f"items={len(items)} partial={partial}"
-                )
-                for item in items:
-                    item_title = _clean(item.findtext("title", ""))
-                    item_link = _clean(item.findtext("link", ""))
-                    item_stamp = _published(item, default_timezone="Asia/Kolkata")
-                    key = (item_link.lower().rstrip("/"), _norm(item_title) + "|" + (item_stamp.isoformat() if item_stamp else ""))
-                    if key not in seen_query_items:
-                        seen_query_items.add(key)
-                        found_items.append(item)
-            except Exception as exc:
-                failed_queries += 1
-                print(
-                    f"[NEWS-DIAG] SECONDARY_QUERY_FAIL symbol={symbol} kind={query_kind} "
-                    f"error={type(exc).__name__}: {exc}"
-                )
-
-        if successful_queries:
-            secondary_successes += 1
-        if failed_queries:
-            secondary_partial = True
+        try:
+            company = names.get(symbol, "").strip()
+            # Prefer the issuer's registered name over a potentially ambiguous
+            # ticker. Keep the ticker in the query as an additional identifier.
+            query = (f'"{company}" "{symbol}" stock when:10d' if company
+                     else f'"{symbol}" NSE India stock when:10d')
+            items = _rss_items(GOOGLE_RSS_URL, {
+                "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
+            })
+        except Exception as exc:
+            print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} error={type(exc).__name__}: {exc}")
+            continue
+        secondary_successes += 1
+        partial = bool(getattr(items, "partial", False))
+        secondary_partial = secondary_partial or partial
         secondary_matches = 0
-        print(
-            f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(found_items)} "
-            f"queries_ok={successful_queries} queries_failed={failed_queries}"
-        )
-        for item in found_items:
+        print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(items)} partial={partial}")
+        for item in items:
             title = _clean(item.findtext("title", ""))
             source_node = item.find("source")
             source_name = _clean(source_node.text if source_node is not None else "Google News")
             source_url = source_node.get("url", "") if source_node is not None else ""
-            stamp = _published(item, default_timezone="Asia/Kolkata")
-            if not _within_news_window(stamp, news_start, news_end):
+            stamp = _published(item)
+            if stamp is None or stamp < cutoff:
                 continue
             # Never assign news from a bare ticker word. Require the registered
             # company name or an explicit market-identifier form in the headline.
-            match_reason = _issuer_match_reason(symbol, title, company)
+            match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
             if not match_reason:
                 continue
             secondary_matches += 1
@@ -719,7 +461,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 "EventID": "",
                 "SourceDomain": _source_domain(source_url),
             })
-        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(found_items)} issuer_matches={secondary_matches}")
+        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(items)} issuer_matches={secondary_matches}")
 
     if secondary_successes == 0:
         status["secondary"] = "unavailable"
@@ -728,31 +470,14 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     frame = pd.DataFrame(rows, columns=NEWS_COLUMNS)
     if not frame.empty:
-        # Prefer exact attachment/announcement URL deduplication first; the same
-        # official filing can appear in both the historical API and rolling RSS
-        # with slightly different headline formatting.
-        url_key = frame["URL"].fillna("").astype(str).str.strip().str.lower().str.rstrip("/")
-        has_url = url_key.ne("")
-        frame_with_url = frame.loc[has_url].copy()
-        frame_without_url = frame.loc[~has_url].copy()
-        if not frame_with_url.empty:
-            frame_with_url["__url_key"] = url_key.loc[has_url]
-            frame_with_url = frame_with_url.drop_duplicates(subset=["TckrSymb", "__url_key"], keep="first")
-            frame_with_url = frame_with_url.drop(columns=["__url_key"])
-        frame = pd.concat([frame_with_url, frame_without_url], ignore_index=True)
-        frame["__headline_key"] = frame["Headline"].fillna("").map(_norm)
-        frame["__published_key"] = frame["PublishedAt"].fillna("").astype(str)
-        frame = frame.drop_duplicates(
-            subset=["TckrSymb", "__headline_key", "__published_key"], keep="first"
-        )
         frame = frame.drop_duplicates(
             subset=["TckrSymb", "Headline", "SourceDomain"], keep="first"
-        ).drop(columns=["__headline_key", "__published_key"])
+        )
     Path("data/inputs").mkdir(parents=True, exist_ok=True)
     frame.to_csv("data/inputs/news_evidence_auto.csv", index=False)
     official_rows = int((frame["SourceType"].astype(str).str.lower() == "primary").sum()) if not frame.empty else 0
     secondary_rows = int((frame["SourceType"].astype(str).str.lower() == "secondary").sum()) if not frame.empty else 0
-    print(f"[NEWS-DIAG] FINAL_SUMMARY candidates={len(symbols)} NSE_status={status['NSE']} historical_api_successes={historical_successes}/{len(symbols)} historical_api_failures={historical_failures} RSS_feeds_successful={nse_successes}/{len(NSE_FEEDS)} secondary_feed_status={status['secondary']} official_rows={official_rows} secondary_rows={secondary_rows} total_rows={len(frame)}")
+    print(f"[NEWS-DIAG] FINAL_SUMMARY candidates={len(symbols)} NSE_feed_status={status['NSE']} secondary_feed_status={status['secondary']} official_rows={official_rows} secondary_rows={secondary_rows} total_rows={len(frame)}")
     print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} top-volume symbols.")
     return frame, status
 
