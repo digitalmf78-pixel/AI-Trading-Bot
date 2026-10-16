@@ -19,18 +19,19 @@ class IssuerEvidenceMappingTests(unittest.TestCase):
         os.chdir(self._old_cwd)
         self._tmp.cleanup()
 
-    def map_symbols(self, symbols, etfs=None):
+    def map_symbols(self, symbols, etfs=None, industries=None, classifications=None):
         return sector_data._targeted_shortlist_mappings(
             candidate_symbols=symbols,
             existing_mapping_by_symbol={},
-            nifty500_industries={},
+            nifty500_industries=industries or {},
             asof=sector_data.pd.Timestamp("2026-10-14"),
-            nse_classifications={},
+            nse_classifications=classifications or {},
             etf_symbols=set(etfs or []),
         )
 
     def test_amjland_maps_only_with_reviewed_issuer_evidence(self):
-        rows = self.map_symbols(["AMJLAND"])
+        # Supply reviewed official classification evidence; the ticker alone is not evidence.
+        rows = self.map_symbols(["AMJLAND"], industries={"AMJLAND": "REALTY"})
         self.assertEqual(rows, [{
             "TckrSymb": "AMJLAND",
             "Sector": "Nifty Realty",

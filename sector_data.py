@@ -356,7 +356,7 @@ def _history_from_niftyindices_api(
         try:
             response = None
             for attempt in (1, 2):
-                response = session.post(endpoint, json=payload_body, headers=headers, timeout=20)
+                response = session.post(endpoint, data=json.dumps(payload_body), headers=headers, timeout=20)
                 content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
                 body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
                 if response.status_code == 200:
