@@ -254,101 +254,6 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
     return rows, len(exact_sectors)
 
 
-def _history_from_nse_indices_api(
-    session: requests.Session,
-    asof: pd.Timestamp,
-    sectors_to_fetch: set[str] | None = None,
-) -> tuple[list[dict[str, Any]], int]:
-    """Fetch exact-date index history from NSE's official historical index API.
-
-    This is the first fallback when the daily index archive is missing a tracked
-    sector. The request uses the official NSE index-history JSON endpoint and
-    the existing requests session. Only rows with valid dates, positive closes,
-    and a recognized index name are accepted; no values are synthesized.
-    """
-    endpoint = "https://www.nseindia.com/api/historicalOR/indicesHistory"
-    bootstrap_url = "https://www.nseindia.com/report-detail/eq_security"
-    start_date = (asof - pd.Timedelta(days=75)).strftime("%d-%m-%Y")
-    end_date = asof.strftime("%d-%m-%Y")
-    headers = {
-        **HEADERS,
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.nseindia.com/reports-indices-historical-index-data",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-    wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
-    rows: list[dict[str, Any]] = []
-    exact_sectors: set[str] = set()
-
-    try:
-        warmup = session.get(bootstrap_url, headers=headers, timeout=8)
-        print(
-            f"[SECTOR][NSE-INDEX-API] SESSION_BOOTSTRAP status={getattr(warmup, 'status_code', '(missing)')} "
-            f"url={getattr(warmup, 'url', bootstrap_url)!r}"
-        )
-    except Exception as exc:
-        print(f"[SECTOR][NSE-INDEX-API] SESSION_BOOTSTRAP_FAILED error={type(exc).__name__}: {exc}")
-
-    for sector, _files, official_index_name, _symbol in SECTOR_INDICES:
-        if sector not in wanted:
-            continue
-        # The canonical NSE API name for this index is explicitly documented as
-        # "NIFTY HEALTHCARE INDEX"; the response name may omit the final word.
-        api_name = "NIFTY HEALTHCARE INDEX" if sector == "Nifty Healthcare" else official_index_name.upper()
-        params = {"indexType": api_name, "from": start_date, "to": end_date}
-        try:
-            response = session.get(endpoint, params=params, headers=headers, timeout=20)
-            content_type = getattr(response, "headers", {}).get("Content-Type", "(missing)")
-            final_url = getattr(response, "url", endpoint)
-            if getattr(response, "status_code", 0) != 200:
-                preview = str(getattr(response, "text", "") or "")[:140].replace("\r", " ").replace("\n", " ")
-                print(f"[SECTOR][NSE-INDEX-API] HTTP {response.status_code} index={api_name!r} url={final_url!r} preview={preview!r}")
-                continue
-            try:
-                payload = response.json()
-            except Exception as exc:
-                print(f"[SECTOR][NSE-INDEX-API] NON_JSON index={api_name!r} content_type={content_type!r} url={final_url!r} error={type(exc).__name__}")
-                continue
-            data = payload.get("data", []) if isinstance(payload, dict) else payload
-            if not isinstance(data, list):
-                print(f"[SECTOR][NSE-INDEX-API] INVALID_SCHEMA index={api_name!r} payload_type={type(payload).__name__}")
-                continue
-            accepted = 0
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                response_name = _normalise_name(item.get("EOD_INDEX_NAME", ""))
-                allowed_names = {_normalise_name(api_name), _normalise_name(official_index_name)}
-                if sector == "Nifty Healthcare":
-                    allowed_names.update({_normalise_name("NIFTY HEALTHCARE"), _normalise_name("NIFTY HEALTHCARE INDEX")})
-                # Fail closed if the API row does not identify the requested index.
-                if not response_name or response_name not in allowed_names:
-                    continue
-                raw_date = item.get("EOD_TIMESTAMP") or item.get("TIMESTAMP") or item.get("Date")
-                raw_close = item.get("EOD_CLOSE_INDEX_VAL") or item.get("CLOSE") or item.get("Close")
-                parsed_date = pd.to_datetime(raw_date, errors="coerce", dayfirst=True)
-                close = pd.to_numeric(raw_close, errors="coerce")
-                if pd.isna(parsed_date) or pd.isna(close) or float(close) <= 0:
-                    continue
-                parsed_date = pd.Timestamp(parsed_date).normalize()
-                if parsed_date > asof or parsed_date < asof - pd.Timedelta(days=75):
-                    continue
-                date_text = parsed_date.strftime("%Y-%m-%d")
-                rows.append({"Date": date_text, "Sector": sector, "Close": float(close)})
-                accepted += 1
-                if parsed_date == asof:
-                    exact_sectors.add(sector)
-            print(f"[SECTOR][NSE-INDEX-API] index={api_name!r} accepted_rows={accepted} exact_date={sector in exact_sectors}")
-        except Exception as exc:
-            print(f"[SECTOR][NSE-INDEX-API] REQUEST_ERROR index={api_name!r}: {type(exc).__name__}: {exc}")
-        time.sleep(0.08)
-
-    deduped = {(row["Date"], row["Sector"]): row["Close"] for row in rows}
-    output = [{"Date": date, "Sector": sector, "Close": close} for (date, sector), close in deduped.items()]
-    print(f"[SECTOR][NSE-INDEX-API] rows={len(output)} exact_date_sectors={len(exact_sectors)}/{len(wanted)}")
-    return output, len(exact_sectors)
-
-
 def _history_from_niftyindices_api(
     session: requests.Session,
     asof: pd.Timestamp,
@@ -367,15 +272,9 @@ def _history_from_niftyindices_api(
     history_page = "https://www.niftyindices.com/reports/historical-data"
     start_date = (asof - pd.Timedelta(days=75)).strftime("%d %b %Y")
     end_date = asof.strftime("%d %b %Y")
-    # Keep this API request independent of the older CSV-oriented HEADERS.
-    # The historical endpoint is an ASP.NET AJAX route and has returned the
-    # site's full HTML shell to GitHub Actions instead of JSON. Modern browser
-    # headers plus explicit JSON bytes make the request deterministic; response
-    # URL/redirect diagnostics below distinguish a route redirect from a block.
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        **HEADERS,
         "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9",
         "Content-Type": "application/json; charset=utf-8",
         "Origin": "https://www.niftyindices.com",
         "Referer": history_page,
@@ -420,20 +319,9 @@ def _history_from_niftyindices_api(
         try:
             response = None
             for attempt in (1, 2):
-                response = session.post(
-                    endpoint,
-                    data=json.dumps(payload_body, separators=(",", ":")),
-                    headers=headers,
-                    timeout=20,
-                )
+                response = session.post(endpoint, json=payload_body, headers=headers, timeout=20)
                 content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
-                body_preview = str(getattr(response, "text", "") or "")[:160].replace("\r", " ").replace("\n", " ")
-                final_url = getattr(response, "url", endpoint)
-                redirect_chain = [
-                    {"status": getattr(item, "status_code", None), "url": getattr(item, "url", None),
-                     "location": getattr(item, "headers", {}).get("Location")}
-                    for item in (getattr(response, "history", []) or [])
-                ]
+                body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
                 if response.status_code == 200:
                     try:
                         payload = response.json()
@@ -442,16 +330,13 @@ def _history_from_niftyindices_api(
                         print(
                             f"[SECTOR][NIFTYINDICES] NON_JSON index={official_index_name} "
                             f"attempt={attempt}/2 content_type={content_type!r} "
-                            f"final_url={final_url!r} redirects={redirect_chain!r} "
-                            f"server={response.headers.get('Server', '(missing)')!r} "
                             f"preview={body_preview!r} error={type(exc).__name__}"
                         )
                 else:
                     print(
                         f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} "
                         f"index={official_index_name} attempt={attempt}/2 "
-                        f"content_type={content_type!r} final_url={final_url!r} "
-                        f"redirects={redirect_chain!r} preview={body_preview!r}"
+                        f"content_type={content_type!r} preview={body_preview!r}"
                     )
                 if attempt == 1:
                     # Retry once after refreshing the official page session when
@@ -1025,6 +910,54 @@ def _targeted_shortlist_mappings(
 
 
 
+def _remove_stale_unverified_candidate_mappings(
+    old_map: pd.DataFrame,
+    audit_path: Path,
+    fresh_symbols: set[str] | None = None,
+) -> pd.DataFrame:
+    """Drop cached mappings for shortlisted symbols whose current audit is unresolved.
+
+    Cached sector rows remain useful for non-candidate symbols. But when a current
+    shortlist audit explicitly says WAIT_FOR_DATA or says an ETF benchmark is
+    unsupported/required, an older cached mapping must not silently override it.
+    Fresh official constituent/targeted mappings always take precedence.
+    """
+    if old_map.empty or not audit_path.exists():
+        return old_map
+    try:
+        audit = pd.read_csv(audit_path)
+    except Exception as exc:
+        print(f"[SECTOR] Could not read candidate mapping audit for cache reconciliation: {exc}")
+        return old_map
+    required = {"TckrSymb", "MappingStatus"}
+    if not required.issubset(audit.columns):
+        print("[SECTOR] Candidate mapping audit missing required columns; cached map left unchanged")
+        return old_map
+    unresolved_statuses = {
+        "WAIT_FOR_DATA",
+        "ETF_UNDERLYING_INDEX_UNSUPPORTED",
+        "ETF_UNDERLYING_INDEX_REQUIRED",
+    }
+    unresolved = {
+        _clean_symbol(row.TckrSymb)
+        for row in audit.itertuples(index=False)
+        if str(row.MappingStatus).strip().upper() in unresolved_statuses
+    } - {""}
+    fresh_symbols = {_clean_symbol(symbol) for symbol in (fresh_symbols or set())} - {""}
+    stale_to_drop = unresolved - fresh_symbols
+    if not stale_to_drop:
+        return old_map
+    before = len(old_map)
+    filtered = old_map[~old_map["TckrSymb"].map(_clean_symbol).isin(stale_to_drop)].copy()
+    removed = before - len(filtered)
+    if removed:
+        print(
+            "[SECTOR] Removed stale cached candidate mappings after current audit: "
+            f"symbols={sorted(stale_to_drop)}, rows_removed={removed}"
+        )
+    return filtered
+
+
 def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols: list[str] | None = None) -> dict[str, Any]:
     """Refresh sector_map.csv and sector_history.csv for a specific EOD date."""
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1117,6 +1050,15 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
                     ]
         except Exception:
             pass
+    # Reconcile current candidate audit against the persistent cache. Without this,
+    # old sector rows (e.g. a prior SPENCERS/MODINATUR mapping) can survive even
+    # when today's official audit explicitly says WAIT_FOR_DATA. Do not remove
+    # symbols supported by the current official refresh.
+    audit_path = Path("data") / "reports" / f"sector_candidate_mapping_{asof.strftime('%Y%m%d')}.csv"
+    old_map = _remove_stale_unverified_candidate_mappings(
+        old_map, audit_path, fresh_symbols=set(new_map["TckrSymb"].map(_clean_symbol))
+    )
+
     # Fresh official membership takes precedence; cached rows only fill symbols absent from refresh.
     map_frame = pd.concat([new_map, old_map], ignore_index=True).drop_duplicates(subset=["TckrSymb"], keep="first")
     if not map_frame.empty:
@@ -1134,7 +1076,7 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
         archive_exact_sectors = {row["Sector"] for row in new_history_rows if row.get("Date") == exact_date_text}
         missing_sectors = {item[0] for item in SECTOR_INDICES} - archive_exact_sectors
         print(f"[SECTOR] Index-history fallback limited to missing exact-date sectors: {sorted(missing_sectors)}")
-        fallback_rows, fallback_exact = _history_from_nse_indices_api(session, asof, sectors_to_fetch=missing_sectors)
+        fallback_rows, fallback_exact = _history_from_niftyindices_api(session, asof, sectors_to_fetch=missing_sectors)
         if fallback_rows:
             merged = {(row["Date"], row["Sector"]): row["Close"] for row in new_history_rows}
             for row in fallback_rows:
@@ -1143,22 +1085,8 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
                 {"Date": date, "Sector": sector, "Close": close}
                 for (date, sector), close in merged.items()
             ]
-        exact_date_text = asof.strftime("%Y-%m-%d")
-        recovered_sectors = {row["Sector"] for row in new_history_rows if row["Date"] == exact_date_text}
-        still_missing_sectors = {item[0] for item in SECTOR_INDICES} - recovered_sectors
-        if still_missing_sectors:
-            print(f"[SECTOR] Nifty Indices fallback limited to still-missing sectors: {sorted(still_missing_sectors)}")
-            legacy_rows, legacy_exact = _history_from_niftyindices_api(session, asof, sectors_to_fetch=still_missing_sectors)
-            if legacy_rows:
-                merged = {(row["Date"], row["Sector"]): row["Close"] for row in new_history_rows}
-                for row in legacy_rows:
-                    merged[(row["Date"], row["Sector"])] = row["Close"]
-                new_history_rows = [
-                    {"Date": date, "Sector": sector, "Close": close}
-                    for (date, sector), close in merged.items()
-                ]
-        sectors_with_asof_new = len({row["Sector"] for row in new_history_rows if row["Date"] == asof.strftime("%Y-%m-%d")})
-        print(f"[SECTOR] Official index fallback exact-date sectors={sectors_with_asof_new}/{len(SECTOR_INDICES)} (NSE API reported {fallback_exact})")
+            sectors_with_asof_new = len({row["Sector"] for row in new_history_rows if row["Date"] == asof.strftime("%Y-%m-%d")})
+            print(f"[SECTOR] Official Nifty Indices fallback exact-date sectors={sectors_with_asof_new}/{len(SECTOR_INDICES)} (fallback reported {fallback_exact})")
     new_history = pd.DataFrame(new_history_rows, columns=HISTORY_COLUMNS)
     old_history = pd.DataFrame(columns=HISTORY_COLUMNS)
     if HISTORY_PATH.exists():
