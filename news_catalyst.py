@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import re
 import xml.etree.ElementTree as ET
 
@@ -121,14 +122,7 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         return ""
 
     company_base = _company_base(company)
-    # Match the full normalized registered name (without legal suffixes).
-    # Single-token names are allowed only when sufficiently distinctive and
-    # still require a whole-token boundary; a bare ticker is never enough.
-    company_tokens = company_base.split()
-    if company_base and (
-        (len(company_base) >= 5 and len(company_tokens) >= 2)
-        or (len(company_base) >= 8 and len(company_tokens) == 1)
-    ):
+    if len(company_base) >= 5 and len(company_base.split()) >= 2:
         if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
             return "COMPANY_NAME_MATCH"
 
@@ -138,8 +132,7 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
-        # _norm turns punctuation in ".NS" into whitespace.
-        rf"(?<![A-Z0-9]){escaped}\s+NS(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\s*\.NS(?![A-Z0-9])",
         rf"\(\s*{escaped}\s*\)",
     )
     if any(re.search(pattern, title) for pattern in explicit_patterns):
@@ -236,43 +229,23 @@ def category_marathi(headline: str) -> str:
 
 
 def _read_equity_master() -> dict[str, str]:
-    """Load NSE's equity master and log enough diagnostics to audit issuer mapping."""
     try:
         EQUITY_MASTER_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        if not EQUITY_MASTER_CACHE.exists() or EQUITY_MASTER_CACHE.stat().st_size == 0:
+        if not EQUITY_MASTER_CACHE.exists():
             response = requests.get(EQUITY_MASTER_URL, headers=HEADERS, timeout=20)
             response.raise_for_status()
             EQUITY_MASTER_CACHE.write_bytes(response.content)
-
-        master = pd.read_csv(EQUITY_MASTER_CACHE, encoding="utf-8-sig")
-        # Normalize headers to tolerate BOM/whitespace variations in downloaded CSVs.
-        header_map = {str(c).replace("\\ufeff", "").strip().upper(): c for c in master.columns}
-        symbol_column = header_map.get("SYMBOL")
-        name_column = next(
-            (original for normalized, original in header_map.items()
-             if "NAME OF COMPANY" in normalized or normalized in {"COMPANY NAME", "ISSUER NAME"}),
-            None,
-        )
+        master = pd.read_csv(EQUITY_MASTER_CACHE)
+        symbol_column = next((c for c in master.columns if c.strip().upper() == "SYMBOL"), None)
+        name_column = next((c for c in master.columns if "NAME OF COMPANY" in c.strip().upper()), None)
         if not symbol_column or not name_column:
-            print(
-                "[NEWS-DIAG] EQUITY_MASTER_SCHEMA_MISMATCH "
-                f"columns={[str(c) for c in master.columns[:12]]!r}"
-            )
             return {}
-
-        selected = master[[symbol_column, name_column]].dropna()
-        mapping = {
+        return {
             str(row[symbol_column]).strip().upper(): str(row[name_column]).strip()
-            for _, row in selected.iterrows()
-            if str(row[symbol_column]).strip() and str(row[name_column]).strip()
+            for _, row in master[[symbol_column, name_column]].dropna().iterrows()
         }
-        print(
-            f"[NEWS-DIAG] EQUITY_MASTER_LOADED rows={len(master)} mapped_symbols={len(mapping)} "
-            f"cache={str(EQUITY_MASTER_CACHE)!r}"
-        )
-        return mapping
     except Exception as exc:
-        print(f"[NEWS-DIAG] EQUITY_MASTER_UNAVAILABLE error={type(exc).__name__}: {exc}")
+        print(f"NSE equity master unavailable; will match announcements by symbol: {exc}")
         return {}
 
 
@@ -282,28 +255,6 @@ class _RSSItemList(list):
     def __init__(self, items=(), *, partial: bool = False):
         super().__init__(items)
         self.partial = partial
-
-
-def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 180) -> dict[str, str]:
-    """Return bounded, namespace-safe RSS fields for diagnostics only.
-
-    This intentionally does not affect issuer matching or evidence classification.
-    """
-    fields: dict[str, str] = {}
-    for node in item.iter():
-        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip()
-        value = _clean(node.text or "")
-        if not local_name or not value:
-            continue
-        key = local_name
-        suffix = 2
-        while key in fields:
-            key = f"{local_name}_{suffix}"
-            suffix += 1
-        fields[key] = value[:max_value]
-        if len(fields) >= max_fields:
-            break
-    return fields
 
 
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
@@ -356,6 +307,40 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
         return _RSSItemList(recovered, partial=True)
 
 
+def _news_window(eod_date, session_dates=None) -> tuple[datetime, datetime]:
+    """Return the inclusive five-calendar-day news window in UTC.
+
+    The window covers the EOD date and the four preceding calendar dates.
+    Its upper bound is 22:00 Asia/Kolkata on the EOD date, so evening news is
+    included for next-morning review. `session_dates` is accepted for backward
+    compatibility but intentionally does not change this calendar-day window.
+    """
+    eod_day = pd.Timestamp(eod_date)
+    if eod_day.tzinfo is None:
+        eod_day = eod_day.tz_localize("Asia/Kolkata")
+    else:
+        eod_day = eod_day.tz_convert("Asia/Kolkata")
+    local_day = eod_day.normalize()
+    start_local = local_day - pd.Timedelta(days=4)
+    end_local = local_day + pd.Timedelta(hours=22)
+    start = start_local.to_pydatetime().astimezone(timezone.utc)
+    end = end_local.to_pydatetime().astimezone(timezone.utc)
+    return start, end
+
+
+def _within_news_window(stamp: datetime | None, start: datetime, end: datetime) -> bool:
+    """True only for timestamped news inside the configured inclusive window."""
+    if stamp is None:
+        return False
+    try:
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        stamp = stamp.astimezone(timezone.utc)
+        return start <= stamp <= end
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
     """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
     if result.empty or "TckrSymb" not in result.columns:
@@ -380,32 +365,17 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
-    for symbol in sorted(symbols):
-        print(
-            f"[NEWS-DIAG] CANDIDATE_ISSUER symbol={symbol} "
-            f"company_name={names.get(symbol, '')!r} name_available={bool(names.get(symbol, '').strip())}"
-        )
     try:
-        if session_dates:
-            # Use the oldest of the latest five actual NSE EOD sessions (current
-            # session + previous four), not a five-calendar-day approximation.
-            normalized_dates = []
-            for value in session_dates:
-                session_day = pd.Timestamp(value)
-                if session_day.tzinfo is not None:
-                    session_day = session_day.tz_convert("Asia/Kolkata").tz_localize(None)
-                normalized_dates.append(session_day.normalize())
-            first_session = min(normalized_dates).tz_localize("Asia/Kolkata")
-            cutoff = first_session.to_pydatetime().astimezone(timezone.utc)
-        else:
-            # Backwards-compatible fallback for callers that do not supply the
-            # exchange-session calendar.
-            eod_day = pd.Timestamp(eod_date)
-            eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
-            # Fallback retrieval buffer; exact session_dates take precedence.
-            cutoff = (eod_day.normalize() - pd.Timedelta(days=10)).to_pydatetime().astimezone(timezone.utc)
-    except Exception:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=10)
+        news_start, news_end = _news_window(eod_date, session_dates)
+    except Exception as exc:
+        # Fail closed: do not silently broaden the requested five-day window.
+        print(f"[NEWS-DIAG] NEWS_WINDOW_INVALID eod_date={eod_date!r} error={type(exc).__name__}: {exc}")
+        return pd.DataFrame(columns=NEWS_COLUMNS), {"NSE": "invalid news window", "secondary": "not checked"}
+    print(
+        f"[NEWS-DIAG] NEWS_WINDOW_IST start={news_start.astimezone(ZoneInfo('Asia/Kolkata')).isoformat()} "
+        f"end={news_end.astimezone(ZoneInfo('Asia/Kolkata')).isoformat()} "
+        "rule=five_calendar_days_through_22:00_IST"
+    )
     rows: list[dict[str, str]] = []
     status = {"NSE": "available", "secondary": "available"}
     nse_successes = 0
@@ -426,32 +396,19 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         date_rejected = 0
         issuer_matches = 0
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
-        # The previous logs recorded counts but not the actual XML field shape.
-        # Emit a small bounded sample so we can tell whether NSE exposes issuer
-        # names/symbols in title/description or separate fields. This is strictly
-        # diagnostic and never promotes an item to evidence by itself.
-        for sample_no, sample_item in enumerate(items[:3], start=1):
-            print(
-                f"[NEWS-DIAG] OFFICIAL_FEED_SAMPLE feed={feed_name!r} "
-                f"sample={sample_no} fields={_rss_debug_fields(sample_item)!r}"
-            )
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
-            # Some RSS variants put issuer identifiers in category/guid/content
-            # elements rather than the visible title. Inspect text fields only
-            # for issuer matching; the published headline remains unchanged.
-            item_text = " ".join(_clean(node.text or "") for node in item.iter() if node.text)
-            content = _norm(" ".join((title, description, item_text)))
+            content = _norm(title + " " + description)
             stamp = _published(item)
-            if stamp is None or stamp < cutoff:
+            if not _within_news_window(stamp, news_start, news_end):
                 date_rejected += 1
                 continue
             date_valid += 1
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                match_reason = _issuer_match_reason(symbol, content, company)
+                match_reason = _issuer_match_reason(symbol, title + " " + description, company)
                 if not match_reason:
                     continue
                 issuer_matches += 1
@@ -483,8 +440,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             company = names.get(symbol, "").strip()
             # Prefer the issuer's registered name over a potentially ambiguous
             # ticker. Keep the ticker in the query as an additional identifier.
-            query = (f'"{company}" "{symbol}" stock when:10d' if company
-                     else f'"{symbol}" NSE India stock when:10d')
+            query = (f'"{company}" "{symbol}" stock when:5d' if company
+                     else f'"{symbol}" NSE India stock when:5d')
             items = _rss_items(GOOGLE_RSS_URL, {
                 "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
             })
@@ -502,12 +459,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             source_name = _clean(source_node.text if source_node is not None else "Google News")
             source_url = source_node.get("url", "") if source_node is not None else ""
             stamp = _published(item)
-            if stamp is None or stamp < cutoff:
+            if not _within_news_window(stamp, news_start, news_end):
                 continue
             # Never assign news from a bare ticker word. Require the registered
             # company name or an explicit market-identifier form in the headline.
-            item_text = " ".join(_clean(node.text or "") for node in item.iter() if node.text)
-            match_reason = _issuer_match_reason(symbol, title + " " + item_text, names.get(symbol, ""))
+            match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
             if not match_reason:
                 continue
             secondary_matches += 1
