@@ -284,6 +284,28 @@ class _RSSItemList(list):
         self.partial = partial
 
 
+def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 180) -> dict[str, str]:
+    """Return bounded, namespace-safe RSS fields for diagnostics only.
+
+    This intentionally does not affect issuer matching or evidence classification.
+    """
+    fields: dict[str, str] = {}
+    for node in item.iter():
+        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip()
+        value = _clean(node.text or "")
+        if not local_name or not value:
+            continue
+        key = local_name
+        suffix = 2
+        while key in fields:
+            key = f"{local_name}_{suffix}"
+            suffix += 1
+        fields[key] = value[:max_value]
+        if len(fields) >= max_fields:
+            break
+    return fields
+
+
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     """Fetch RSS items, recovering complete <item> blocks from truncated XML.
 
@@ -404,6 +426,15 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         date_rejected = 0
         issuer_matches = 0
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
+        # The previous logs recorded counts but not the actual XML field shape.
+        # Emit a small bounded sample so we can tell whether NSE exposes issuer
+        # names/symbols in title/description or separate fields. This is strictly
+        # diagnostic and never promotes an item to evidence by itself.
+        for sample_no, sample_item in enumerate(items[:3], start=1):
+            print(
+                f"[NEWS-DIAG] OFFICIAL_FEED_SAMPLE feed={feed_name!r} "
+                f"sample={sample_no} fields={_rss_debug_fields(sample_item)!r}"
+            )
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
