@@ -147,10 +147,19 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
             content = response.content or b""
             content_type = response.headers.get("Content-Type", "(missing)")
             preview = content[:100].decode("utf-8", "replace").replace("\r", " ").replace("\n", " ")
+            redirect_chain = []
+            for prior in getattr(response, "history", []) or []:
+                redirect_chain.append({
+                    "status": getattr(prior, "status_code", None),
+                    "url": getattr(prior, "url", ""),
+                    "location": getattr(getattr(prior, "headers", {}), "get", lambda *_: "")("Location", ""),
+                })
+            final_url = getattr(response, "url", url)
             print(
                 f"[SECTOR][ARCHIVE] FETCH date={day.date()} host={host} "
                 f"status={response.status_code} content_type={content_type!r} "
-                f"bytes={len(content)} preview={preview!r}"
+                f"bytes={len(content)} final_url={final_url!r} "
+                f"redirects={redirect_chain!r} preview={preview!r}"
             )
             if response.status_code == 404:
                 errors.append(f"HTTP 404 from {host}")
@@ -220,6 +229,27 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
             if name_col is None or close_col is None:
                 print(f"[SECTOR] Unrecognized index CSV schema for {day.date()}: {list(frame.columns)}")
             if name_col is not None and close_col is not None:
+                # Diagnostic only: expose official Healthcare-labelled rows on the
+                # exact as-of archive date so a naming mismatch can be proven from
+                # source data. This does not map aliases or infer a close.
+                if pd.Timestamp(day).normalize() == pd.Timestamp(asof).normalize():
+                    health_rows = []
+                    for _, health_row in frame.iterrows():
+                        raw_name = str(health_row.get(name_col, "")).strip()
+                        norm_name = _normalise_name(raw_name)
+                        if "HEALTH" in norm_name:
+                            health_rows.append({
+                                "raw_name": raw_name,
+                                "normalized_name": norm_name,
+                                "date": str(health_row.get(date_col, "")) if date_col is not None else "(no date column)",
+                                "close": str(health_row.get(close_col, "")),
+                                "lookup_match": index_lookup.get(norm_name),
+                            })
+                    print(
+                        f"[SECTOR][ARCHIVE][HEALTHCARE_DIAGNOSTIC] "
+                        f"url_date={pd.Timestamp(day).date()} asof={pd.Timestamp(asof).date()} "
+                        f"rows={health_rows!r}"
+                    )
                 for _, row in frame.iterrows():
                     norm = _normalise_name(row.get(name_col, ""))
                     sector = index_lookup.get(norm)
@@ -327,9 +357,19 @@ def _history_from_niftyindices_api(
                         payload = response.json()
                         break
                     except Exception as exc:
+                        redirect_chain = [
+                            {
+                                "status": getattr(prior, "status_code", None),
+                                "url": getattr(prior, "url", ""),
+                                "location": getattr(getattr(prior, "headers", {}), "get", lambda *_: "")("Location", ""),
+                            }
+                            for prior in (getattr(response, "history", []) or [])
+                        ]
                         print(
                             f"[SECTOR][NIFTYINDICES] NON_JSON index={official_index_name} "
-                            f"attempt={attempt}/2 content_type={content_type!r} "
+                            f"attempt={attempt}/2 status={response.status_code} "
+                            f"requested_url={endpoint!r} final_url={getattr(response, 'url', endpoint)!r} "
+                            f"redirects={redirect_chain!r} content_type={content_type!r} "
                             f"preview={body_preview!r} error={type(exc).__name__}"
                         )
                 else:
