@@ -249,9 +249,24 @@ def _read_equity_master() -> dict[str, str]:
             response = requests.get(EQUITY_MASTER_URL, headers=HEADERS, timeout=20)
             response.raise_for_status()
             EQUITY_MASTER_CACHE.write_bytes(response.content)
-        master = pd.read_csv(EQUITY_MASTER_CACHE)
-        symbol_column = next((c for c in master.columns if c.strip().upper() == "SYMBOL"), None)
-        name_column = next((c for c in master.columns if "NAME OF COMPANY" in c.strip().upper()), None)
+        # NSE CSVs may be UTF-8 BOM-prefixed and headers may contain spaces.
+        # Normalize the header names explicitly so SYMBOL is not lost as \\ufeffSYMBOL.
+        master = pd.read_csv(EQUITY_MASTER_CACHE, encoding="utf-8-sig")
+        normalized_columns = {
+            str(column).replace("\\ufeff", "").strip().upper(): column
+            for column in master.columns
+        }
+        symbol_column = next(
+            (original for normalized, original in normalized_columns.items()
+             if normalized == "SYMBOL"),
+            None,
+        )
+        name_column = next(
+            (original for normalized, original in normalized_columns.items()
+             if normalized in {"NAME OF COMPANY", "COMPANY NAME", "ISSUER NAME"}
+             or "NAME OF COMPANY" in normalized),
+            None,
+        )
         if not symbol_column or not name_column:
             return {}
         return {
@@ -271,6 +286,47 @@ class _RSSItemList(list):
         self.partial = partial
 
 
+def _local_xml_name(tag: object) -> str:
+    """Return a namespace-independent, lowercase XML local name."""
+    return str(tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+
+
+def _rss_debug_fields(
+    item: ET.Element, *, max_fields: int = 12, max_value: int = 240
+) -> dict[str, str]:
+    """Return bounded, namespace-safe RSS fields for diagnostics only."""
+    fields: dict[str, str] = {}
+    for node in item.iter():
+        name = _local_xml_name(node.tag)
+        if not name or name in fields or node.text is None:
+            continue
+        value = _clean(node.text)
+        if not value:
+            continue
+        fields[name] = value[:max_value]
+        if len(fields) >= max(0, int(max_fields)):
+            break
+    return fields
+
+
+def _rss_text(item: ET.Element, field_names: tuple[str, ...]) -> str:
+    """Read the first matching direct RSS child, independent of namespaces."""
+    wanted = {name.lower() for name in field_names}
+    for child in list(item):
+        if _local_xml_name(child.tag) in wanted:
+            value = _clean("".join(child.itertext()))
+            if value:
+                return value
+    # Some Atom-style items nest content; allow a bounded recursive fallback.
+    for node in item.iter():
+        if node is item or _local_xml_name(node.tag) not in wanted:
+            continue
+        value = _clean("".join(node.itertext()))
+        if value:
+            return value
+    return ""
+
+
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     """Fetch RSS items, recovering complete <item> blocks from truncated XML.
 
@@ -285,7 +341,9 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     payload = response.content
     try:
         root = ET.fromstring(payload)
-        return _RSSItemList(root.findall("./channel/item"), partial=False)
+        # Namespace prefixes/default namespaces are common in RSS/RDF feeds.
+        items = [node for node in root.iter() if _local_xml_name(node.tag) == "item"]
+        return _RSSItemList(items, partial=False)
     except ET.ParseError as original_error:
         text = payload.decode(response.encoding or "utf-8", errors="replace")
         fragments = re.findall(r"<item\b[^>]*>.*?</item\s*>", text, flags=re.IGNORECASE | re.DOTALL)
@@ -393,8 +451,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         in_window_samples: list[str] = []
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
         for item in items:
-            title = _clean(item.findtext("title", ""))
-            description = _clean(item.findtext("description", ""))
+            rss_fields = _rss_debug_fields(item)
+            title = _rss_text(item, ("title",))
+            description = _rss_text(item, ("description", "summary", "content", "encoded"))
             content = _norm(title + " " + description)
             stamp = _published(item)
             if stamp is None or stamp < cutoff:
@@ -403,7 +462,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             date_valid += 1
             if len(in_window_samples) < 5:
                 in_window_samples.append((title or description)[:220])
-            link = _clean(item.findtext("link", ""))
+                print(
+                    f"[NEWS-DIAG] RSS_FIELDS feed={feed_name!r} "
+                    f"fields={rss_fields!r}"
+                )
+            link = _rss_text(item, ("link", "guid", "id"))
             for symbol in symbols:
                 company = names.get(symbol, "")
                 match_reason = _issuer_match_reason(symbol, title + " " + description, company)
