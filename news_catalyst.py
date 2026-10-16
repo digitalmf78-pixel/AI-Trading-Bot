@@ -122,17 +122,22 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         return ""
 
     company_base = _company_base(company)
-    if len(company_base) >= 5 and len(company_base.split()) >= 2:
+    # Match full registered names, allowing a sufficiently distinctive single-token name.
+    # A bare ticker remains insufficient, avoiding accidental matches to ordinary words.
+    company_tokens = company_base.split()
+    if company_base and (
+        (len(company_base) >= 5 and len(company_tokens) >= 2)
+        or (len(company_base) >= 8 and len(company_tokens) == 1)
+    ):
         if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
             return "COMPANY_NAME_MATCH"
 
-    # Only accept a ticker-only match when the headline presents it as a
-    # market identifier, not when it merely appears as an ordinary word.
+    # _norm converts punctuation in '.NS' to a space, so match normalized 'SYMBOL NS'.
     escaped = re.escape(symbol)
     explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
-        rf"(?<![A-Z0-9]){escaped}\s*\.NS(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\s+NS(?![A-Z0-9])",
         rf"\(\s*{escaped}\s*\)",
     )
     if any(re.search(pattern, title) for pattern in explicit_patterns):
@@ -255,6 +260,25 @@ class _RSSItemList(list):
     def __init__(self, items=(), *, partial: bool = False):
         super().__init__(items)
         self.partial = partial
+
+
+def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 180) -> dict[str, str]:
+    """Return bounded, namespace-safe RSS fields for diagnostics only."""
+    fields: dict[str, str] = {}
+    for node in item.iter():
+        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip()
+        value = _clean(node.text or "")
+        if not local_name or not value:
+            continue
+        key = local_name
+        suffix = 2
+        while key in fields:
+            key = f"{local_name}_{suffix}"
+            suffix += 1
+        fields[key] = value[:max(0, int(max_value))]
+        if len(fields) >= max(0, int(max_fields)):
+            break
+    return fields
 
 
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
