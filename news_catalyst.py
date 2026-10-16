@@ -41,6 +41,19 @@ def _clean(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _item_text(item: ET.Element, *field_names: str) -> str:
+    """Read requested RSS fields by local XML name, regardless of namespace."""
+    wanted = {name.strip().lower() for name in field_names}
+    values: list[str] = []
+    for node in item.iter():
+        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+        if local_name in wanted and node.text:
+            value = _clean(node.text)
+            if value and value not in values:
+                values.append(value)
+    return " ".join(values)
+
+
 def _norm(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", _clean(value).upper()).strip()
 
@@ -75,6 +88,14 @@ def _published(item: ET.Element) -> datetime | None:
         "issued": 4,
         "created": 5,
         "modified": 6,
+        "filingdate": 7,
+        "fileddate": 8,
+        "broadcastdatetime": 9,
+        "announcementdate": 10,
+        "submissiondate": 11,
+        "datetime": 12,
+        "timestamp": 13,
+        "dateandtime": 14,
     }
     values: list[tuple[int, str]] = []
     for node in item.iter():
@@ -128,21 +149,19 @@ def _company_base(value: str) -> str:
 def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     """Match an issuer by its registered name or an explicit market ticker.
 
-    Distinctive one-token company names are allowed, but common short names
-    are not. `_norm` removes punctuation, so `.NS` ticker identifiers are
-    matched in their normalized form (for example, ``JKIPL NS``).
+    Registered names are matched as complete normalized phrases. Ticker matching
+    is deliberately stricter than substring matching: bare common words such as
+    TECH or DIVIDEND are not accepted as issuer identifiers.
     """
     symbol = str(symbol or "").strip().upper()
-    title = _norm(headline)
+    raw_text = _clean(headline or "")
+    title = _norm(raw_text)
     if not symbol or not title:
         return ""
 
     company_base = _company_base(company)
     company_tokens = company_base.split()
     if company_base:
-        # Multi-word registered names are useful identifiers. Single-token
-        # names require a distinctive length to avoid matching common names
-        # such as AKASH in unrelated headlines.
         distinctive = len(company_base) >= 5 and (
             len(company_tokens) >= 2 or len(company_base) >= 8
         )
@@ -152,13 +171,20 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
             return "COMPANY_NAME_MATCH"
 
     escaped = re.escape(symbol)
-    explicit_patterns = (
+    # Punctuation is removed by _norm, so check explicit ticker forms in raw text.
+    raw_explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
-        rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
-        rf"(?<![A-Z0-9]){escaped}\s*NS(?![A-Z0-9])",
-        rf"\(\s*{escaped}\s*\)",
+        rf"(?<![A-Z0-9])\(\s*{escaped}\s*\)(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\.NS(?![A-Z0-9])",
     )
-    if any(re.search(pattern, title) for pattern in explicit_patterns):
+    if any(re.search(pattern, raw_text, flags=re.IGNORECASE) for pattern in raw_explicit_patterns):
+        return "EXPLICIT_TICKER_MATCH"
+
+    normalized_patterns = (
+        rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\s+NS(?![A-Z0-9])",
+    )
+    if any(re.search(pattern, title) for pattern in normalized_patterns):
         return "EXPLICIT_TICKER_MATCH"
     return ""
 
@@ -285,7 +311,7 @@ def _read_equity_master() -> dict[str, str]:
             response = requests.get(EQUITY_MASTER_URL, headers=HEADERS, timeout=20)
             response.raise_for_status()
             EQUITY_MASTER_CACHE.write_bytes(response.content)
-        master = pd.read_csv(EQUITY_MASTER_CACHE)
+        master = pd.read_csv(EQUITY_MASTER_CACHE, encoding="utf-8-sig")
         symbol_column = next((c for c in master.columns if c.strip().upper() == "SYMBOL"), None)
         name_column = next((c for c in master.columns if "NAME OF COMPANY" in c.strip().upper()), None)
         if not symbol_column or not name_column:
@@ -321,7 +347,11 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     payload = response.content
     try:
         root = ET.fromstring(payload)
-        return _RSSItemList(root.findall("./channel/item"), partial=False)
+        items = [
+            node for node in root.iter()
+            if str(node.tag).rsplit("}", 1)[-1].split(":")[-1].lower() in {"item", "entry"}
+        ]
+        return _RSSItemList(items, partial=False)
     except ET.ParseError as original_error:
         text = payload.decode(response.encoding or "utf-8", errors="replace")
         fragments = re.findall(r"<item\b[^>]*>.*?</item\s*>", text, flags=re.IGNORECASE | re.DOTALL)
@@ -435,15 +465,35 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         feed_items = len(items)
         date_valid = 0
         date_rejected = 0
+        date_missing = 0
+        before_cutoff = 0
+        after_window = 0
         issuer_matches = 0
         in_window_samples: list[str] = []
+        timestamp_samples: list[str] = []
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
         for item in items:
-            title = _clean(item.findtext("title", ""))
-            description = _clean(item.findtext("description", ""))
-            content = _norm(title + " " + description)
+            title = _item_text(item, "title")
+            description = _item_text(item, "description", "summary", "content", "abstract")
+            issuer_fields = _item_text(item, "company", "companyname", "issuer", "issuername", "symbol", "ticker")
+            match_text = " ".join(part for part in (title, description, issuer_fields) if part)
             stamp = _published(item)
-            if stamp is None or stamp < cutoff or stamp > window_end:
+            if len(timestamp_samples) < 5:
+                timestamp_samples.append(_rss_debug_fields(item, max_fields=16).get("pubdate", "") or
+                                         _rss_debug_fields(item, max_fields=16).get("date", "") or
+                                         _rss_debug_fields(item, max_fields=16).get("published", "") or
+                                         _rss_debug_fields(item, max_fields=16).get("filingdate", "") or
+                                         "NO_RECOGNIZED_DATE_FIELD")
+            if stamp is None:
+                date_missing += 1
+                date_rejected += 1
+                continue
+            if stamp < cutoff:
+                before_cutoff += 1
+                date_rejected += 1
+                continue
+            if stamp > window_end:
+                after_window += 1
                 date_rejected += 1
                 continue
             date_valid += 1
@@ -452,7 +502,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                match_reason = _issuer_match_reason(symbol, title + " " + description, company)
+                match_reason = _issuer_match_reason(symbol, match_text, company)
                 if not match_reason:
                     continue
                 issuer_matches += 1
@@ -468,7 +518,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                     "EventID": "",
                     "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
                 })
-        print(f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} date_valid={date_valid} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}")
+        print(
+            f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} "
+            f"date_valid={date_valid} date_missing={date_missing} before_cutoff={before_cutoff} "
+            f"after_window={after_window} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}"
+        )
+        if date_valid == 0:
+            print(f"[NEWS-DIAG] OFFICIAL_DATE_ZERO_SAMPLES feed={feed_name!r} samples={timestamp_samples!r}")
         if issuer_matches == 0 and in_window_samples:
             print(f"[NEWS-DIAG] OFFICIAL_ZERO_MATCH_SAMPLES feed={feed_name!r} samples={in_window_samples!r}")
 
@@ -496,7 +552,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 symbol_partial = symbol_partial or bool(getattr(fetched, "partial", False))
                 print(f"[NEWS-DIAG] SECONDARY_QUERY symbol={symbol} query={query!r} items={len(fetched)}")
                 for item in fetched:
-                    key = (_clean(item.findtext("title", "")).casefold(), _clean(item.findtext("link", "")).casefold())
+                    key = (_item_text(item, "title").casefold(), _item_text(item, "link").casefold())
                     if key not in item_keys:
                         item_keys.add(key)
                         combined_items.append(item)
@@ -510,8 +566,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         samples: list[str] = []
         print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(combined_items)} partial={symbol_partial}")
         for item in combined_items:
-            title = _clean(item.findtext("title", ""))
-            description = _clean(item.findtext("description", ""))
+            title = _item_text(item, "title")
+            description = _item_text(item, "description", "summary", "content", "abstract")
             source_node = next((node for node in item.iter() if str(node.tag).rsplit("}", 1)[-1].lower() == "source"), None)
             source_name = _clean(source_node.text if source_node is not None else "Google News")
             source_url = source_node.get("url", "") if source_node is not None else ""
@@ -533,7 +589,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 "Headline": title or description,
                 "Source": source_name or "बातमी स्रोत",
                 "SourceType": "secondary",
-                "URL": _clean(item.findtext("link", "")),
+                "URL": _item_text(item, "link"),
                 "Impact": _impact(title + " " + description),
                 "EventID": "",
                 "SourceDomain": _source_domain(source_url),
