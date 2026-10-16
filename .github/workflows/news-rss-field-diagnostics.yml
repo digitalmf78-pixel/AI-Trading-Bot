@@ -1,0 +1,27 @@
+name: NSE V8 News RSS Field Diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'news_catalyst.py'
+      - 'test_news_issuer_matching.py'
+      - 'test_news_rss_diagnostics.py'
+      - '.github/workflows/news-rss-field-diagnostics.yml'
+
+jobs:
+  news-rss-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pandas requests
+      - name: Compile news module and tests
+        run: python -m py_compile news_catalyst.py test_news_issuer_matching.py test_news_rss_diagnostics.py
+      - name: Run issuer and RSS diagnostics tests
+        run: python -m unittest -v test_news_issuer_matching.py test_news_rss_diagnostics.py
