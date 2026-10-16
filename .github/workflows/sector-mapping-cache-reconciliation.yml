@@ -1,0 +1,31 @@
+name: Sector Mapping Cache Reconciliation
+
+on:
+  push:
+    paths:
+      - 'sector_data.py'
+      - 'test_sector_mapping_cache_reconciliation.py'
+      - '.github/workflows/sector-mapping-cache-reconciliation.yml'
+  pull_request:
+    paths:
+      - 'sector_data.py'
+      - 'test_sector_mapping_cache_reconciliation.py'
+      - '.github/workflows/sector-mapping-cache-reconciliation.yml'
+  workflow_dispatch:
+
+jobs:
+  test-sector-mapping-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pandas requests
+      - name: Compile sector module
+        run: python -m py_compile sector_data.py
+      - name: Run sector mapping cache regression tests
+        run: python -m unittest test_sector_mapping_cache_reconciliation.py -v
