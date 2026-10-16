@@ -75,10 +75,13 @@ def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 2
 
 
 def _published(item: ET.Element) -> datetime | None:
-    """Read RSS/RDF/Atom timestamps in RFC 2822 or ISO-8601 form.
+    """Read RSS/RDF/Atom timestamps and normalize them to UTC.
 
-    NSE feeds can contain ISO-8601 timestamps and namespace-qualified date
-    tags. An RFC-2822-only parser silently discarded those valid entries.
+    NSE RSS items sometimes use timestamps such as ``16-Oct-2026 20:06:48``
+    without a timezone. These are exchange-local (Asia/Kolkata) timestamps,
+    not UTC. Treating them as UTC shifts them 5h30m into the future and wrongly
+    rejects valid filings at the EOD-window boundary. Explicitly zoned dates
+    retain their stated timezone.
     """
     preferred = {
         "pubdate": 0,
@@ -104,24 +107,26 @@ def _published(item: ET.Element) -> datetime | None:
             values.append((preferred[local_name], node.text.strip()))
 
     for _, raw in sorted(values, key=lambda entry: entry[0]):
+        parsed = None
         try:
-            stamp = parsedate_to_datetime(raw)
-            if stamp is not None:
-                if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=timezone.utc)
-                return stamp.astimezone(timezone.utc)
+            parsed = parsedate_to_datetime(raw)
         except (TypeError, ValueError, OverflowError):
-            pass
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                # NSE feed dates without an offset are local exchange time.
+                parsed = pd.Timestamp(parsed).tz_localize("Asia/Kolkata").to_pydatetime()
+            return parsed.astimezone(timezone.utc)
 
         try:
             stamp = pd.Timestamp(raw)
             if pd.isna(stamp):
                 continue
             if stamp.tzinfo is None:
-                stamp = stamp.tz_localize("UTC")
+                stamp = stamp.tz_localize("Asia/Kolkata")
             else:
                 stamp = stamp.tz_convert("UTC")
-            return stamp.to_pydatetime()
+            return stamp.tz_convert("UTC").to_pydatetime()
         except (TypeError, ValueError, OverflowError):
             continue
     return None

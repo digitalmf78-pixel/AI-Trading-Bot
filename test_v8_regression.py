@@ -3,6 +3,7 @@ Run: python test_v8_regression.py
 """
 from datetime import date, timedelta
 from pathlib import Path
+import xml.etree.ElementTree as ET
 import tempfile
 import os
 
@@ -68,6 +69,24 @@ def test_three_secondary_reposts_do_not_create_three_confirmations():
     })
     count, labels, status = layers._independent_confirmation_evaluation(row)
     assert count == 1 and status == "FAIL", (count, labels, status)
+
+
+
+def test_nse_naive_rss_timestamp_is_localized_to_india_time():
+    item = ET.fromstring("<item><pubDate>16-Oct-2026 20:06:48</pubDate></item>")
+    stamp = news_catalyst._published(item)
+    assert stamp is not None, "NSE local timestamp was not parsed"
+    # 20:06:48 IST must become 14:36:48 UTC, not 20:06:48 UTC.
+    assert stamp.isoformat() == "2026-10-16T14:36:48+00:00", stamp.isoformat()
+
+
+def test_nse_quote_embedded_json_basic_industry_is_read():
+    html = '<html><script id="quote-data" type="application/json">' + \
+        '{"industryInfo":{"basicIndustry":"Granites & Marbles"}}' + \
+        '</script></html>'
+    assert sector_data._extract_basic_industry(html) == "Granites & Marbles"
+    # No explicit field means no inferred classification.
+    assert sector_data._extract_basic_industry("<html><h1>AROGRANITE</h1></html>") == ""
 
 
 def test_untrusted_domain_cannot_be_primary_just_because_of_label():
@@ -446,6 +465,8 @@ if __name__ == "__main__":
         test_3_confirmations_plus_separate_primary_source_gate,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
+        test_nse_naive_rss_timestamp_is_localized_to_india_time,
+        test_nse_quote_embedded_json_basic_industry_is_read,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
         test_delivery_average_above_60_percent_passes,
         test_delivery_average_exactly_60_percent_passes,
