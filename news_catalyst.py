@@ -373,6 +373,18 @@ def _field_ci(record: dict, *names: str) -> str:
     return ""
 
 
+def _secondary_search_queries(symbol: str, company: str = "") -> list[tuple[str, str]]:
+    """Build independent company-name and ticker searches for recent coverage."""
+    queries: list[tuple[str, str]] = []
+    company_base = _company_base(company)
+    if company_base:
+        queries.append((f'"{company_base}" when:5d', "company_name"))
+    queries.append((f'"{str(symbol).strip().upper()}" NSE India stock when:5d', "ticker"))
+    # Keep deterministic order while removing duplicate query strings.
+    seen: set[str] = set()
+    return [(query, kind) for query, kind in queries if not (query in seen or seen.add(query))]
+
+
 def _fetch_historical_nse_announcements(
     symbols: set[str],
     names: dict[str, str],
@@ -628,28 +640,60 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         status["NSE"] = "available"
 
     # Free Google News RSS helps discover independent press coverage. It never
-    # upgrades itself to primary evidence; the NSE file remains authoritative.
+    # upgrades itself to primary evidence; NSE filings remain authoritative.
+    # Search by registered company name AND by ticker separately: requiring both
+    # in one query was too restrictive and missed headlines that use the issuer
+    # name but omit the exchange ticker. Every returned item is still checked
+    # against the exact five-day/10 PM window and issuer matcher below.
     secondary_successes = 0
     secondary_partial = False
     for symbol in sorted(symbols):
-        try:
-            company = names.get(symbol, "").strip()
-            # Prefer the issuer's registered name over a potentially ambiguous
-            # ticker. Keep the ticker in the query as an additional identifier.
-            query = (f'"{company}" "{symbol}" stock when:5d' if company
-                     else f'"{symbol}" NSE India stock when:5d')
-            items = _rss_items(GOOGLE_RSS_URL, {
-                "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
-            })
-        except Exception as exc:
-            print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} error={type(exc).__name__}: {exc}")
-            continue
-        secondary_successes += 1
-        partial = bool(getattr(items, "partial", False))
-        secondary_partial = secondary_partial or partial
+        company = names.get(symbol, "").strip()
+        queries = _secondary_search_queries(symbol, company)
+
+        # Merge results from both queries before matching to avoid duplicate
+        # articles; preserve partial-source diagnostics if one query fails.
+        found_items: list[ET.Element] = []
+        seen_query_items: set[tuple[str, str]] = set()
+        successful_queries = 0
+        failed_queries = 0
+        for query, query_kind in queries:
+            try:
+                items = _rss_items(GOOGLE_RSS_URL, {
+                    "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
+                })
+                successful_queries += 1
+                partial = bool(getattr(items, "partial", False))
+                secondary_partial = secondary_partial or partial
+                print(
+                    f"[NEWS-DIAG] SECONDARY_QUERY symbol={symbol} kind={query_kind} "
+                    f"items={len(items)} partial={partial}"
+                )
+                for item in items:
+                    item_title = _clean(item.findtext("title", ""))
+                    item_link = _clean(item.findtext("link", ""))
+                    item_stamp = _published(item, default_timezone="Asia/Kolkata")
+                    key = (item_link.lower().rstrip("/"), _norm(item_title) + "|" + (item_stamp.isoformat() if item_stamp else ""))
+                    if key not in seen_query_items:
+                        seen_query_items.add(key)
+                        found_items.append(item)
+            except Exception as exc:
+                failed_queries += 1
+                print(
+                    f"[NEWS-DIAG] SECONDARY_QUERY_FAIL symbol={symbol} kind={query_kind} "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+
+        if successful_queries:
+            secondary_successes += 1
+        if failed_queries:
+            secondary_partial = True
         secondary_matches = 0
-        print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(items)} partial={partial}")
-        for item in items:
+        print(
+            f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(found_items)} "
+            f"queries_ok={successful_queries} queries_failed={failed_queries}"
+        )
+        for item in found_items:
             title = _clean(item.findtext("title", ""))
             source_node = item.find("source")
             source_name = _clean(source_node.text if source_node is not None else "Google News")
@@ -659,7 +703,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 continue
             # Never assign news from a bare ticker word. Require the registered
             # company name or an explicit market-identifier form in the headline.
-            match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
+            match_reason = _issuer_match_reason(symbol, title, company)
             if not match_reason:
                 continue
             secondary_matches += 1
@@ -675,7 +719,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 "EventID": "",
                 "SourceDomain": _source_domain(source_url),
             })
-        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(items)} issuer_matches={secondary_matches}")
+        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(found_items)} issuer_matches={secondary_matches}")
 
     if secondary_successes == 0:
         status["secondary"] = "unavailable"
