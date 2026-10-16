@@ -552,6 +552,16 @@ VERIFIED_ETF_UNDERLYING_INDEX = {
             "https://www.dspim.com/invest/mutual-fund-schemes/exchange-traded-funds/nifty-psu-bank-etf/dpsub-direct-growth"
         ),
     },
+    "TECH": {
+        "sector": "Nifty IT",
+        "index_symbol": "NIFTY IT",
+        "status": "ETF_UNDERLYING_INDEX_VERIFIED",
+        "reason": (
+            "Verified Aditya Birla Sun Life Nifty IT ETF; the official AMC scheme page identifies "
+            "NSE symbol TECH and states that the scheme tracks Nifty IT TRI. Official source: "
+            "https://mutualfund.adityabirlacapital.com/empower/Passive-ETFs/Nifty-IT-ETF.html"
+        ),
+    },
 }
 VERIFIED_ETF_UNSUPPORTED = {
     "INSUREIETF": (
