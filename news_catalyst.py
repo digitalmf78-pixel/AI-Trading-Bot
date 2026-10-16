@@ -46,20 +46,18 @@ def _norm(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", _clean(value).upper()).strip()
 
 
-def _published(item: ET.Element) -> datetime | None:
-    """Read RSS/RDF/Atom timestamps in RFC 2822 or ISO-8601 form.
+def _published(item: ET.Element, default_timezone: str = "Asia/Kolkata") -> datetime | None:
+    """Parse RSS timestamps robustly and normalize them to UTC.
 
-    NSE feeds can contain ISO-8601 timestamps and namespace-qualified date
-    tags. An RFC-2822-only parser silently discarded those valid entries.
+    NSE RSS dates sometimes end in the unrecognized abbreviation ``IST``.
+    Python's email parser can return those as *naive* datetimes; treating such
+    values as UTC shifts them by 5h30 and can wrongly discard valid evening news.
+    Naive exchange timestamps are interpreted as India Standard Time. Explicit
+    UTC/GMT/offset timestamps retain their stated timezone.
     """
     preferred = {
-        "pubdate": 0,
-        "date": 1,
-        "published": 2,
-        "updated": 3,
-        "issued": 4,
-        "created": 5,
-        "modified": 6,
+        "pubdate": 0, "published": 1, "updated": 2, "date": 3,
+        "issued": 4, "created": 5, "modified": 6,
     }
     values: list[tuple[int, str]] = []
     for node in item.iter():
@@ -68,27 +66,54 @@ def _published(item: ET.Element) -> datetime | None:
             values.append((preferred[local_name], node.text.strip()))
 
     for _, raw in sorted(values, key=lambda entry: entry[0]):
+        cleaned = raw.strip()
+        assumed_tz = default_timezone
+        if re.search(r"\sIST$", cleaned, flags=re.IGNORECASE):
+            cleaned = re.sub(r"\sIST$", "", cleaned, flags=re.IGNORECASE).strip()
+            assumed_tz = "Asia/Kolkata"
+        elif re.search(r"\s(?:UTC|GMT)$", cleaned, flags=re.IGNORECASE):
+            cleaned = re.sub(r"\s(?:UTC|GMT)$", "", cleaned, flags=re.IGNORECASE).strip()
+            assumed_tz = "UTC"
         try:
-            stamp = parsedate_to_datetime(raw)
+            stamp = parsedate_to_datetime(cleaned)
             if stamp is not None:
                 if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=timezone.utc)
+                    stamp = stamp.replace(tzinfo=ZoneInfo(assumed_tz))
                 return stamp.astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
             pass
 
         try:
-            stamp = pd.Timestamp(raw)
+            stamp = pd.Timestamp(cleaned)
             if pd.isna(stamp):
                 continue
             if stamp.tzinfo is None:
-                stamp = stamp.tz_localize("UTC")
+                stamp = stamp.tz_localize(assumed_tz)
             else:
                 stamp = stamp.tz_convert("UTC")
-            return stamp.to_pydatetime()
+            return stamp.to_pydatetime().astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
             continue
     return None
+
+
+def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 160) -> dict[str, str]:
+    """Return a small, bounded sample of RSS fields for troubleshooting."""
+    fields: dict[str, str] = {}
+    for node in item.iter():
+        key = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip()
+        value = _clean(node.text or "")
+        if not key or not value:
+            continue
+        out_key = key
+        suffix = 2
+        while out_key in fields:
+            out_key = f"{key}_{suffix}"
+            suffix += 1
+        fields[out_key] = value[:max_value]
+        if len(fields) >= max_fields:
+            break
+    return fields
 
 
 def _source_domain(url: str) -> str:
@@ -122,8 +147,6 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         return ""
 
     company_base = _company_base(company)
-    # Match full registered names, allowing a sufficiently distinctive single-token name.
-    # A bare ticker remains insufficient, avoiding accidental matches to ordinary words.
     company_tokens = company_base.split()
     if company_base and (
         (len(company_base) >= 5 and len(company_tokens) >= 2)
@@ -132,7 +155,8 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
             return "COMPANY_NAME_MATCH"
 
-    # _norm converts punctuation in '.NS' to a space, so match normalized 'SYMBOL NS'.
+    # Only accept a ticker-only match when the headline presents it as a
+    # market identifier, not when it merely appears as an ordinary word.
     escaped = re.escape(symbol)
     explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
@@ -260,25 +284,6 @@ class _RSSItemList(list):
     def __init__(self, items=(), *, partial: bool = False):
         super().__init__(items)
         self.partial = partial
-
-
-def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 180) -> dict[str, str]:
-    """Return bounded, namespace-safe RSS fields for diagnostics only."""
-    fields: dict[str, str] = {}
-    for node in item.iter():
-        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip()
-        value = _clean(node.text or "")
-        if not local_name or not value:
-            continue
-        key = local_name
-        suffix = 2
-        while key in fields:
-            key = f"{local_name}_{suffix}"
-            suffix += 1
-        fields[key] = value[:max(0, int(max_value))]
-        if len(fields) >= max(0, int(max_fields)):
-            break
-    return fields
 
 
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
@@ -417,22 +422,32 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         nse_partial = nse_partial or partial
         feed_items = len(items)
         date_valid = 0
-        date_rejected = 0
+        date_missing = 0
+        date_outside_window = 0
         issuer_matches = 0
+        sample_stamps: list[str] = []
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
+        for sample_no, sample_item in enumerate(items[:3], start=1):
+            print(f"[NEWS-DIAG] OFFICIAL_FEED_SAMPLE feed={feed_name!r} sample={sample_no} fields={_rss_debug_fields(sample_item)!r}")
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
-            content = _norm(title + " " + description)
-            stamp = _published(item)
+            item_text = " ".join(_clean(node.text or "") for node in item.iter() if node.text)
+            content = _norm(" ".join((title, description, item_text)))
+            stamp = _published(item, default_timezone="Asia/Kolkata")
+            if stamp is None:
+                date_missing += 1
+                continue
             if not _within_news_window(stamp, news_start, news_end):
-                date_rejected += 1
+                date_outside_window += 1
+                if len(sample_stamps) < 3:
+                    sample_stamps.append(stamp.isoformat())
                 continue
             date_valid += 1
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                match_reason = _issuer_match_reason(symbol, title + " " + description, company)
+                match_reason = _issuer_match_reason(symbol, content, company)
                 if not match_reason:
                     continue
                 issuer_matches += 1
@@ -448,7 +463,12 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                     "EventID": "",
                     "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
                 })
-        print(f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} date_valid={date_valid} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}")
+        print(
+            f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} "
+            f"date_valid_in_window={date_valid} date_missing_or_unparseable={date_missing} "
+            f"date_outside_window={date_outside_window} issuer_matches={issuer_matches} "
+            f"outside_window_samples={sample_stamps!r}"
+        )
 
     if nse_successes == 0:
         status["NSE"] = "unavailable"
@@ -482,7 +502,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             source_node = item.find("source")
             source_name = _clean(source_node.text if source_node is not None else "Google News")
             source_url = source_node.get("url", "") if source_node is not None else ""
-            stamp = _published(item)
+            stamp = _published(item, default_timezone="Asia/Kolkata")
             if not _within_news_window(stamp, news_start, news_end):
                 continue
             # Never assign news from a bare ticker word. Require the registered
