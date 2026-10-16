@@ -1,0 +1,35 @@
+name: NSE V8 News Issuer Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "news_catalyst.py"
+      - "test_news_issuer_matching.py"
+      - ".github/workflows/news-issuer-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  news-issuer-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas
+
+      - name: Compile news module
+        run: python -m py_compile news_catalyst.py
+
+      - name: Run issuer matching regression tests
+        run: python -m unittest -v test_news_issuer_matching.py
