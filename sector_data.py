@@ -272,9 +272,15 @@ def _history_from_niftyindices_api(
     history_page = "https://www.niftyindices.com/reports/historical-data"
     start_date = (asof - pd.Timedelta(days=75)).strftime("%d %b %Y")
     end_date = asof.strftime("%d %b %Y")
+    # Keep this API request independent of the older CSV-oriented HEADERS.
+    # The historical endpoint is an ASP.NET AJAX route and has returned the
+    # site's full HTML shell to GitHub Actions instead of JSON. Modern browser
+    # headers plus explicit JSON bytes make the request deterministic; response
+    # URL/redirect diagnostics below distinguish a route redirect from a block.
     headers = {
-        **HEADERS,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
         "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9",
         "Content-Type": "application/json; charset=utf-8",
         "Origin": "https://www.niftyindices.com",
         "Referer": history_page,
@@ -319,9 +325,20 @@ def _history_from_niftyindices_api(
         try:
             response = None
             for attempt in (1, 2):
-                response = session.post(endpoint, json=payload_body, headers=headers, timeout=20)
+                response = session.post(
+                    endpoint,
+                    data=json.dumps(payload_body, separators=(",", ":")),
+                    headers=headers,
+                    timeout=20,
+                )
                 content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
-                body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
+                body_preview = str(getattr(response, "text", "") or "")[:160].replace("\r", " ").replace("\n", " ")
+                final_url = getattr(response, "url", endpoint)
+                redirect_chain = [
+                    {"status": getattr(item, "status_code", None), "url": getattr(item, "url", None),
+                     "location": getattr(item, "headers", {}).get("Location")}
+                    for item in (getattr(response, "history", []) or [])
+                ]
                 if response.status_code == 200:
                     try:
                         payload = response.json()
@@ -330,13 +347,16 @@ def _history_from_niftyindices_api(
                         print(
                             f"[SECTOR][NIFTYINDICES] NON_JSON index={official_index_name} "
                             f"attempt={attempt}/2 content_type={content_type!r} "
+                            f"final_url={final_url!r} redirects={redirect_chain!r} "
+                            f"server={response.headers.get('Server', '(missing)')!r} "
                             f"preview={body_preview!r} error={type(exc).__name__}"
                         )
                 else:
                     print(
                         f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} "
                         f"index={official_index_name} attempt={attempt}/2 "
-                        f"content_type={content_type!r} preview={body_preview!r}"
+                        f"content_type={content_type!r} final_url={final_url!r} "
+                        f"redirects={redirect_chain!r} preview={body_preview!r}"
                     )
                 if attempt == 1:
                     # Retry once after refreshing the official page session when

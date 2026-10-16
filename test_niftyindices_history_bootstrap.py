@@ -65,6 +65,13 @@ class NiftyIndicesHistoryBootstrapTests(unittest.TestCase):
 
         self.assertEqual([call[0] for call in session.calls], ["GET", "POST"])
         self.assertIn("/reports/historical-data", session.calls[0][1])
+        post_kwargs = session.calls[1][2]
+        self.assertIn("data", post_kwargs)
+        self.assertNotIn("json", post_kwargs)
+        self.assertIn("application/json", post_kwargs["headers"]["Content-Type"])
+        sent_body = json.loads(post_kwargs["data"])
+        self.assertIn("NIFTY HEALTHCARE", sent_body["cinfo"])
+        self.assertIn("startDate", sent_body["cinfo"])
         self.assertEqual(exact_count, 1)
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
