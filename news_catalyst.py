@@ -45,6 +45,22 @@ def _norm(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", _clean(value).upper()).strip()
 
 
+def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 220) -> dict[str, str]:
+    """Return bounded, namespace-safe RSS fields for diagnostics and tests."""
+    fields: dict[str, str] = {}
+    for node in item.iter():
+        key = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+        if not key or key in fields or node.text is None:
+            continue
+        value = _clean(node.text)
+        if not value:
+            continue
+        fields[key] = value[:max(1, int(max_value))]
+        if len(fields) >= max(1, int(max_fields)):
+            break
+    return fields
+
+
 def _published(item: ET.Element) -> datetime | None:
     """Read RSS/RDF/Atom timestamps in RFC 2822 or ISO-8601 form.
 
@@ -145,6 +161,26 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     if any(re.search(pattern, title) for pattern in explicit_patterns):
         return "EXPLICIT_TICKER_MATCH"
     return ""
+
+
+def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
+    """Build separate broad-enough Google News queries; strict matching happens later.
+
+    Requiring both an exact company name and ticker in one query was too restrictive:
+    many valid articles mention the registered issuer name but omit its NSE symbol.
+    The separate ticker query is only for discovery; it never bypasses issuer matching.
+    """
+    symbol = str(symbol or "").strip().upper()
+    company = str(company or "").strip()
+    queries: list[str] = []
+    if company:
+        # Preserve the registered name and legal suffix as it appears in the master.
+        queries.append(f'"{company}" when:10d')
+    if symbol:
+        queries.append(f'"{symbol}" NSE stock when:10d')
+    if not queries and symbol:
+        queries.append(f'"{symbol}" when:10d')
+    return queries
 
 
 
@@ -249,24 +285,9 @@ def _read_equity_master() -> dict[str, str]:
             response = requests.get(EQUITY_MASTER_URL, headers=HEADERS, timeout=20)
             response.raise_for_status()
             EQUITY_MASTER_CACHE.write_bytes(response.content)
-        # NSE CSVs may be UTF-8 BOM-prefixed and headers may contain spaces.
-        # Normalize the header names explicitly so SYMBOL is not lost as \\ufeffSYMBOL.
-        master = pd.read_csv(EQUITY_MASTER_CACHE, encoding="utf-8-sig")
-        normalized_columns = {
-            str(column).replace("\\ufeff", "").strip().upper(): column
-            for column in master.columns
-        }
-        symbol_column = next(
-            (original for normalized, original in normalized_columns.items()
-             if normalized == "SYMBOL"),
-            None,
-        )
-        name_column = next(
-            (original for normalized, original in normalized_columns.items()
-             if normalized in {"NAME OF COMPANY", "COMPANY NAME", "ISSUER NAME"}
-             or "NAME OF COMPANY" in normalized),
-            None,
-        )
+        master = pd.read_csv(EQUITY_MASTER_CACHE)
+        symbol_column = next((c for c in master.columns if c.strip().upper() == "SYMBOL"), None)
+        name_column = next((c for c in master.columns if "NAME OF COMPANY" in c.strip().upper()), None)
         if not symbol_column or not name_column:
             return {}
         return {
@@ -286,47 +307,6 @@ class _RSSItemList(list):
         self.partial = partial
 
 
-def _local_xml_name(tag: object) -> str:
-    """Return a namespace-independent, lowercase XML local name."""
-    return str(tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
-
-
-def _rss_debug_fields(
-    item: ET.Element, *, max_fields: int = 12, max_value: int = 240
-) -> dict[str, str]:
-    """Return bounded, namespace-safe RSS fields for diagnostics only."""
-    fields: dict[str, str] = {}
-    for node in item.iter():
-        name = _local_xml_name(node.tag)
-        if not name or name in fields or node.text is None:
-            continue
-        value = _clean(node.text)
-        if not value:
-            continue
-        fields[name] = value[:max_value]
-        if len(fields) >= max(0, int(max_fields)):
-            break
-    return fields
-
-
-def _rss_text(item: ET.Element, field_names: tuple[str, ...]) -> str:
-    """Read the first matching direct RSS child, independent of namespaces."""
-    wanted = {name.lower() for name in field_names}
-    for child in list(item):
-        if _local_xml_name(child.tag) in wanted:
-            value = _clean("".join(child.itertext()))
-            if value:
-                return value
-    # Some Atom-style items nest content; allow a bounded recursive fallback.
-    for node in item.iter():
-        if node is item or _local_xml_name(node.tag) not in wanted:
-            continue
-        value = _clean("".join(node.itertext()))
-        if value:
-            return value
-    return ""
-
-
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     """Fetch RSS items, recovering complete <item> blocks from truncated XML.
 
@@ -341,9 +321,7 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
     payload = response.content
     try:
         root = ET.fromstring(payload)
-        # Namespace prefixes/default namespaces are common in RSS/RDF feeds.
-        items = [node for node in root.iter() if _local_xml_name(node.tag) == "item"]
-        return _RSSItemList(items, partial=False)
+        return _RSSItemList(root.findall("./channel/item"), partial=False)
     except ET.ParseError as original_error:
         text = payload.decode(response.encoding or "utf-8", errors="replace")
         fragments = re.findall(r"<item\b[^>]*>.*?</item\s*>", text, flags=re.IGNORECASE | re.DOTALL)
@@ -429,6 +407,16 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             cutoff = (eod_day.normalize() - pd.Timedelta(days=10)).to_pydatetime().astimezone(timezone.utc)
     except Exception:
         cutoff = datetime.now(timezone.utc) - timedelta(days=10)
+
+    # User-approved next-morning news window ends at 22:00 IST on the EOD date.
+    # Ignore future-dated records and anything posted after this cutoff.
+    try:
+        eod_day = pd.Timestamp(eod_date)
+        eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
+        window_end = (eod_day.normalize() + pd.Timedelta(hours=22)).to_pydatetime().astimezone(timezone.utc)
+    except Exception:
+        window_end = datetime.now(timezone.utc)
+
     rows: list[dict[str, str]] = []
     status = {"NSE": "available", "secondary": "available"}
     nse_successes = 0
@@ -451,22 +439,17 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         in_window_samples: list[str] = []
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
         for item in items:
-            rss_fields = _rss_debug_fields(item)
-            title = _rss_text(item, ("title",))
-            description = _rss_text(item, ("description", "summary", "content", "encoded"))
+            title = _clean(item.findtext("title", ""))
+            description = _clean(item.findtext("description", ""))
             content = _norm(title + " " + description)
             stamp = _published(item)
-            if stamp is None or stamp < cutoff:
+            if stamp is None or stamp < cutoff or stamp > window_end:
                 date_rejected += 1
                 continue
             date_valid += 1
             if len(in_window_samples) < 5:
                 in_window_samples.append((title or description)[:220])
-                print(
-                    f"[NEWS-DIAG] RSS_FIELDS feed={feed_name!r} "
-                    f"fields={rss_fields!r}"
-                )
-            link = _rss_text(item, ("link", "guid", "id"))
+            link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
                 match_reason = _issuer_match_reason(symbol, title + " " + description, company)
@@ -499,34 +482,47 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     secondary_successes = 0
     secondary_partial = False
     for symbol in sorted(symbols):
-        try:
-            company = names.get(symbol, "").strip()
-            # Prefer the issuer's registered name over a potentially ambiguous
-            # ticker. Keep the ticker in the query as an additional identifier.
-            query = (f'"{company}" "{symbol}" stock when:10d' if company
-                     else f'"{symbol}" NSE India stock when:10d')
-            items = _rss_items(GOOGLE_RSS_URL, {
-                "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
-            })
-        except Exception as exc:
-            print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} error={type(exc).__name__}: {exc}")
+        company = names.get(symbol, "").strip()
+        combined_items: list[ET.Element] = []
+        item_keys: set[tuple[str, str]] = set()
+        query_success = False
+        symbol_partial = False
+        for query in _secondary_search_queries(symbol, company):
+            try:
+                fetched = _rss_items(GOOGLE_RSS_URL, {
+                    "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
+                })
+                query_success = True
+                symbol_partial = symbol_partial or bool(getattr(fetched, "partial", False))
+                print(f"[NEWS-DIAG] SECONDARY_QUERY symbol={symbol} query={query!r} items={len(fetched)}")
+                for item in fetched:
+                    key = (_clean(item.findtext("title", "")).casefold(), _clean(item.findtext("link", "")).casefold())
+                    if key not in item_keys:
+                        item_keys.add(key)
+                        combined_items.append(item)
+            except Exception as exc:
+                print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} query={query!r} error={type(exc).__name__}: {exc}")
+        if not query_success:
             continue
         secondary_successes += 1
-        partial = bool(getattr(items, "partial", False))
-        secondary_partial = secondary_partial or partial
+        secondary_partial = secondary_partial or symbol_partial
         secondary_matches = 0
-        print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(items)} partial={partial}")
-        for item in items:
+        samples: list[str] = []
+        print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_OK symbol={symbol} items={len(combined_items)} partial={symbol_partial}")
+        for item in combined_items:
             title = _clean(item.findtext("title", ""))
-            source_node = item.find("source")
+            description = _clean(item.findtext("description", ""))
+            source_node = next((node for node in item.iter() if str(node.tag).rsplit("}", 1)[-1].lower() == "source"), None)
             source_name = _clean(source_node.text if source_node is not None else "Google News")
             source_url = source_node.get("url", "") if source_node is not None else ""
             stamp = _published(item)
-            if stamp is None or stamp < cutoff:
+            if stamp is None or stamp < cutoff or stamp > window_end:
                 continue
-            # Never assign news from a bare ticker word. Require the registered
-            # company name or an explicit market-identifier form in the headline.
-            match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
+            if len(samples) < 5:
+                samples.append(title[:180])
+            # A separate broad query is not evidence by itself. Require the registered
+            # issuer name or an explicit NSE ticker form in the article text.
+            match_reason = _issuer_match_reason(symbol, title + " " + description, company)
             if not match_reason:
                 continue
             secondary_matches += 1
@@ -534,15 +530,17 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             rows.append({
                 "TckrSymb": symbol,
                 "PublishedAt": stamp.isoformat() if stamp else "",
-                "Headline": title,
+                "Headline": title or description,
                 "Source": source_name or "बातमी स्रोत",
                 "SourceType": "secondary",
                 "URL": _clean(item.findtext("link", "")),
-                "Impact": _impact(title),
+                "Impact": _impact(title + " " + description),
                 "EventID": "",
                 "SourceDomain": _source_domain(source_url),
             })
-        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(items)} issuer_matches={secondary_matches}")
+        if secondary_matches == 0 and samples:
+            print(f"[NEWS-DIAG] SECONDARY_ZERO_MATCH_SAMPLES symbol={symbol} samples={samples!r}")
+        print(f"[NEWS-DIAG] SECONDARY_FEED_SUMMARY symbol={symbol} items={len(combined_items)} issuer_matches={secondary_matches}")
 
     if secondary_successes == 0:
         status["secondary"] = "unavailable"

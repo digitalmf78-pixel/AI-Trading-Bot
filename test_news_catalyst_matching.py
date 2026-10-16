@@ -41,3 +41,28 @@ def test_unrelated_akash_mentions_are_rejected():
         assert news._issuer_match_reason(
             "AKASH", headline, "AKASH INFRA-PROJECTS LIMITED"
         ) == "", headline
+
+
+def test_secondary_searches_do_not_require_name_and_ticker_together():
+    queries = news._secondary_search_queries(
+        "SINGERIND", "Singer India Limited"
+    )
+    assert queries == [
+        '"Singer India Limited" when:10d',
+        '"SINGERIND" NSE stock when:10d',
+    ]
+
+
+def test_secondary_description_can_confirm_registered_issuer_name():
+    # The query is discovery only; the company name still has to match explicitly.
+    assert news._issuer_match_reason(
+        "SINGERIND",
+        "Business update | Singer India Limited announced a board meeting",
+        "Singer India Limited",
+    ) == "COMPANY_NAME_MATCH"
+
+
+def test_secondary_search_query_for_unmapped_etf_does_not_invent_company_name():
+    assert news._secondary_search_queries("TECH", "") == [
+        '"TECH" NSE stock when:10d'
+    ]
