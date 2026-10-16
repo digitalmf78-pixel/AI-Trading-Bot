@@ -121,7 +121,14 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         return ""
 
     company_base = _company_base(company)
-    if len(company_base) >= 5 and len(company_base.split()) >= 2:
+    # Match the full normalized registered name (without legal suffixes).
+    # Single-token names are allowed only when sufficiently distinctive and
+    # still require a whole-token boundary; a bare ticker is never enough.
+    company_tokens = company_base.split()
+    if company_base and (
+        (len(company_base) >= 5 and len(company_tokens) >= 2)
+        or (len(company_base) >= 8 and len(company_tokens) == 1)
+    ):
         if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
             return "COMPANY_NAME_MATCH"
 
@@ -131,7 +138,8 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
-        rf"(?<![A-Z0-9]){escaped}\s*\.NS(?![A-Z0-9])",
+        # _norm turns punctuation in ".NS" into whitespace.
+        rf"(?<![A-Z0-9]){escaped}\s+NS(?![A-Z0-9])",
         rf"\(\s*{escaped}\s*\)",
     )
     if any(re.search(pattern, title) for pattern in explicit_patterns):
@@ -228,23 +236,43 @@ def category_marathi(headline: str) -> str:
 
 
 def _read_equity_master() -> dict[str, str]:
+    """Load NSE's equity master and log enough diagnostics to audit issuer mapping."""
     try:
         EQUITY_MASTER_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        if not EQUITY_MASTER_CACHE.exists():
+        if not EQUITY_MASTER_CACHE.exists() or EQUITY_MASTER_CACHE.stat().st_size == 0:
             response = requests.get(EQUITY_MASTER_URL, headers=HEADERS, timeout=20)
             response.raise_for_status()
             EQUITY_MASTER_CACHE.write_bytes(response.content)
-        master = pd.read_csv(EQUITY_MASTER_CACHE)
-        symbol_column = next((c for c in master.columns if c.strip().upper() == "SYMBOL"), None)
-        name_column = next((c for c in master.columns if "NAME OF COMPANY" in c.strip().upper()), None)
+
+        master = pd.read_csv(EQUITY_MASTER_CACHE, encoding="utf-8-sig")
+        # Normalize headers to tolerate BOM/whitespace variations in downloaded CSVs.
+        header_map = {str(c).replace("\\ufeff", "").strip().upper(): c for c in master.columns}
+        symbol_column = header_map.get("SYMBOL")
+        name_column = next(
+            (original for normalized, original in header_map.items()
+             if "NAME OF COMPANY" in normalized or normalized in {"COMPANY NAME", "ISSUER NAME"}),
+            None,
+        )
         if not symbol_column or not name_column:
+            print(
+                "[NEWS-DIAG] EQUITY_MASTER_SCHEMA_MISMATCH "
+                f"columns={[str(c) for c in master.columns[:12]]!r}"
+            )
             return {}
-        return {
+
+        selected = master[[symbol_column, name_column]].dropna()
+        mapping = {
             str(row[symbol_column]).strip().upper(): str(row[name_column]).strip()
-            for _, row in master[[symbol_column, name_column]].dropna().iterrows()
+            for _, row in selected.iterrows()
+            if str(row[symbol_column]).strip() and str(row[name_column]).strip()
         }
+        print(
+            f"[NEWS-DIAG] EQUITY_MASTER_LOADED rows={len(master)} mapped_symbols={len(mapping)} "
+            f"cache={str(EQUITY_MASTER_CACHE)!r}"
+        )
+        return mapping
     except Exception as exc:
-        print(f"NSE equity master unavailable; will match announcements by symbol: {exc}")
+        print(f"[NEWS-DIAG] EQUITY_MASTER_UNAVAILABLE error={type(exc).__name__}: {exc}")
         return {}
 
 
@@ -330,6 +358,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
+    for symbol in sorted(symbols):
+        print(
+            f"[NEWS-DIAG] CANDIDATE_ISSUER symbol={symbol} "
+            f"company_name={names.get(symbol, '')!r} name_available={bool(names.get(symbol, '').strip())}"
+        )
     try:
         if session_dates:
             # Use the oldest of the latest five actual NSE EOD sessions (current
@@ -374,7 +407,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         for item in items:
             title = _clean(item.findtext("title", ""))
             description = _clean(item.findtext("description", ""))
-            content = _norm(title + " " + description)
+            # Some RSS variants put issuer identifiers in category/guid/content
+            # elements rather than the visible title. Inspect text fields only
+            # for issuer matching; the published headline remains unchanged.
+            item_text = " ".join(_clean(node.text or "") for node in item.iter() if node.text)
+            content = _norm(" ".join((title, description, item_text)))
             stamp = _published(item)
             if stamp is None or stamp < cutoff:
                 date_rejected += 1
@@ -383,7 +420,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                match_reason = _issuer_match_reason(symbol, title + " " + description, company)
+                match_reason = _issuer_match_reason(symbol, content, company)
                 if not match_reason:
                     continue
                 issuer_matches += 1
@@ -438,7 +475,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 continue
             # Never assign news from a bare ticker word. Require the registered
             # company name or an explicit market-identifier form in the headline.
-            match_reason = _issuer_match_reason(symbol, title, names.get(symbol, ""))
+            item_text = " ".join(_clean(node.text or "") for node in item.iter() if node.text)
+            match_reason = _issuer_match_reason(symbol, title + " " + item_text, names.get(symbol, ""))
             if not match_reason:
                 continue
             secondary_matches += 1
