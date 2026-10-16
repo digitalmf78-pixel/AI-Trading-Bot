@@ -208,6 +208,13 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
         _normalise_name(index_name): sector
         for sector, _files, index_name, _symbol in SECTOR_INDICES
     }
+    # NSE's official daily all-indices archive uses "Nifty Healthcare Index",
+    # while the configured sector label is "Nifty Healthcare". Treat this as
+    # an explicit official-name alias; do not infer or synthesize any values.
+    archive_index_aliases = {
+        "NIFTY HEALTHCARE INDEX": "Nifty Healthcare",
+    }
+    index_lookup.update(archive_index_aliases)
     collected: dict[tuple[str, str], float] = {}
     exact_sectors: set[str] = set()
     # 45 weekdays gives a buffer for holidays and should exceed the required 21 closes.
