@@ -259,15 +259,17 @@ def _history_from_niftyindices_api(
     asof: pd.Timestamp,
     sectors_to_fetch: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Fallback to the official NSE Indices historical-data service.
+    """Fetch official Nifty Indices historical closes for missing sector indices.
 
-    The daily NSE all-indices CSV has occasionally returned 404 for a date that
-    has market data. This fallback requests the individual tracked indices from
-    the official Nifty Indices historical-data endpoint. It accepts only parsed
-    rows whose reported date is on/before the requested EOD date; failures stay
-    missing and never become synthetic closes.
+    The public historical-data page is requested first to establish a normal
+    session/cookie jar before calling its ASP.NET data endpoint. Some requests
+    otherwise return an HTML page instead of the expected JSON payload. The
+    bootstrap is best-effort: if it fails, the data request is still attempted.
+    Only valid, dated closes returned by the official service are accepted;
+    missing/invalid responses remain missing and are never synthesized.
     """
     endpoint = "https://www.niftyindices.com/Backpage.aspx/getHistoricaldatatabletoString"
+    history_page = "https://www.niftyindices.com/reports/historical-data"
     start_date = (asof - pd.Timedelta(days=75)).strftime("%d %b %Y")
     end_date = asof.strftime("%d %b %Y")
     headers = {
@@ -275,9 +277,33 @@ def _history_from_niftyindices_api(
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Content-Type": "application/json; charset=utf-8",
         "Origin": "https://www.niftyindices.com",
-        "Referer": "https://www.niftyindices.com/reports/historical-data",
+        "Referer": history_page,
         "X-Requested-With": "XMLHttpRequest",
     }
+
+    def bootstrap_session(reason: str) -> None:
+        try:
+            page_response = session.get(
+                history_page,
+                headers={**HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+                timeout=5,
+            )
+            content_type = page_response.headers.get("Content-Type", "(missing)") if hasattr(page_response, "headers") else "(missing)"
+            body_size = len(getattr(page_response, "content", b"") or b"")
+            print(
+                f"[SECTOR][NIFTYINDICES] SESSION_BOOTSTRAP reason={reason} "
+                f"status={getattr(page_response, 'status_code', '(missing)')} "
+                f"content_type={content_type!r} bytes={body_size}"
+            )
+        except Exception as exc:
+            print(
+                f"[SECTOR][NIFTYINDICES] SESSION_BOOTSTRAP_FAILED reason={reason} "
+                f"error={type(exc).__name__}: {exc}; continuing with data request"
+            )
+
+    # Bootstrap once for this fallback call. Failure is diagnostic, not fatal.
+    bootstrap_session("initial")
+
     rows: list[dict[str, Any]] = []
     exact_sectors: set[str] = set()
     wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
@@ -289,23 +315,42 @@ def _history_from_niftyindices_api(
             "{'name':'" + api_name + "','startDate':'" + start_date
             + "','endDate':'" + end_date + "','indexName':'" + api_name + "'}"
         )
+        payload_body = {"cinfo": inner}
         try:
-            response = session.post(endpoint, json={"cinfo": inner}, headers=headers, timeout=20)
-            if response.status_code != 200:
-                print(f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} index={official_index_name}")
+            response = None
+            for attempt in (1, 2):
+                response = session.post(endpoint, json=payload_body, headers=headers, timeout=20)
+                content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
+                body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
+                if response.status_code == 200:
+                    try:
+                        payload = response.json()
+                        break
+                    except Exception as exc:
+                        print(
+                            f"[SECTOR][NIFTYINDICES] NON_JSON index={official_index_name} "
+                            f"attempt={attempt}/2 content_type={content_type!r} "
+                            f"preview={body_preview!r} error={type(exc).__name__}"
+                        )
+                else:
+                    print(
+                        f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} "
+                        f"index={official_index_name} attempt={attempt}/2 "
+                        f"content_type={content_type!r} preview={body_preview!r}"
+                    )
+                if attempt == 1:
+                    # Retry once after refreshing the official page session when
+                    # the endpoint returned an HTTP error or non-JSON HTML.
+                    bootstrap_session("retry-" + official_index_name)
+            else:
                 continue
-            content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
-            body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
-            try:
-                payload = response.json()
-            except Exception as exc:
-                print(f"[SECTOR][NIFTYINDICES] NON_JSON index={official_index_name} content_type={content_type!r} preview={body_preview!r} error={type(exc).__name__}")
-                continue
+
             raw = payload.get("d") if isinstance(payload, dict) else None
             if isinstance(raw, str):
                 try:
                     data = json.loads(raw)
-                except Exception:
+                except Exception as exc:
+                    print(f"[SECTOR][NIFTYINDICES] INVALID_JSON_PAYLOAD index={official_index_name}: {type(exc).__name__}")
                     data = []
             else:
                 data = raw
@@ -330,10 +375,15 @@ def _history_from_niftyindices_api(
                 accepted += 1
                 if parsed_date == asof:
                     exact_sectors.add(sector)
-            print(f"[SECTOR][NIFTYINDICES] index={official_index_name} accepted_rows={accepted} exact_date={asof.date() in {pd.Timestamp(r['Date']).date() for r in rows if r['Sector'] == sector}}")
+            sector_dates = {pd.Timestamp(r["Date"]).date() for r in rows if r["Sector"] == sector}
+            print(
+                f"[SECTOR][NIFTYINDICES] index={official_index_name} "
+                f"accepted_rows={accepted} exact_date={asof.date() in sector_dates}"
+            )
         except Exception as exc:
             print(f"[SECTOR][NIFTYINDICES] REQUEST_ERROR index={official_index_name}: {type(exc).__name__}: {exc}")
         time.sleep(0.1)
+
     # Deduplicate exact date/index rows returned by the official service.
     deduped = {(r["Date"], r["Sector"]): r["Close"] for r in rows}
     output = [{"Date": d, "Sector": sec, "Close": close} for (d, sec), close in deduped.items()]
