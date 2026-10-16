@@ -110,10 +110,11 @@ def _company_base(value: str) -> str:
 
 
 def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
-    """Return a match reason only when the headline identifies this issuer.
+    """Match an issuer by its registered name or an explicit market ticker.
 
-    A bare ticker token is deliberately insufficient: common symbols such as
-    AKASH also occur in personal names, product names and unrelated companies.
+    Distinctive one-token company names are allowed, but common short names
+    are not. `_norm` removes punctuation, so `.NS` ticker identifiers are
+    matched in their normalized form (for example, ``JKIPL NS``).
     """
     symbol = str(symbol or "").strip().upper()
     title = _norm(headline)
@@ -121,17 +122,24 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
         return ""
 
     company_base = _company_base(company)
-    if len(company_base) >= 5 and len(company_base.split()) >= 2:
-        if re.search(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title):
+    company_tokens = company_base.split()
+    if company_base:
+        # Multi-word registered names are useful identifiers. Single-token
+        # names require a distinctive length to avoid matching common names
+        # such as AKASH in unrelated headlines.
+        distinctive = len(company_base) >= 5 and (
+            len(company_tokens) >= 2 or len(company_base) >= 8
+        )
+        if distinctive and re.search(
+            rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title
+        ):
             return "COMPANY_NAME_MATCH"
 
-    # Only accept a ticker-only match when the headline presents it as a
-    # market identifier, not when it merely appears as an ordinary word.
     escaped = re.escape(symbol)
     explicit_patterns = (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
-        rf"(?<![A-Z0-9]){escaped}\s*\.NS(?![A-Z0-9])",
+        rf"(?<![A-Z0-9]){escaped}\s*NS(?![A-Z0-9])",
         rf"\(\s*{escaped}\s*\)",
     )
     if any(re.search(pattern, title) for pattern in explicit_patterns):
@@ -337,6 +345,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
+    print(
+        "[NEWS-DIAG] ISSUER_MASTER "
+        f"candidate_count={len(symbols)} mapped_company_names={sum(bool(str(names.get(sym, '')).strip()) for sym in symbols)} "
+        f"candidates={[(sym, names.get(sym, '')) for sym in sorted(symbols)]!r}"
+    )
     try:
         if session_dates:
             # Use the oldest of the latest five actual NSE EOD sessions (current
@@ -377,6 +390,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         date_valid = 0
         date_rejected = 0
         issuer_matches = 0
+        in_window_samples: list[str] = []
         print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
         for item in items:
             title = _clean(item.findtext("title", ""))
@@ -387,6 +401,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                 date_rejected += 1
                 continue
             date_valid += 1
+            if len(in_window_samples) < 5:
+                in_window_samples.append((title or description)[:220])
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
@@ -407,6 +423,8 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
                     "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
                 })
         print(f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} date_valid={date_valid} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}")
+        if issuer_matches == 0 and in_window_samples:
+            print(f"[NEWS-DIAG] OFFICIAL_ZERO_MATCH_SAMPLES feed={feed_name!r} samples={in_window_samples!r}")
 
     if nse_successes == 0:
         status["NSE"] = "unavailable"
