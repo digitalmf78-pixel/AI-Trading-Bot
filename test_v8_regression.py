@@ -475,6 +475,7 @@ def test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter(
     assert news_catalyst._item_text(items[0], "eventid") == "123"
     stamp = news_catalyst._published(items[0])
     assert stamp.isoformat() == "2026-10-16T09:30:00+00:00", stamp
+    assert fake.calls[1][0] == "https://www.nseindia.com/api/corporates-announcements", fake.calls[1][0]
     assert fake.calls[1][1]["params"]["from_date"] == "10-10-2026"
     assert fake.calls[1][1]["params"]["to_date"] == "16-10-2026"
 
