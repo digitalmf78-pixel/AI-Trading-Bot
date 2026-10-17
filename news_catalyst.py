@@ -75,13 +75,10 @@ def _rss_debug_fields(item: ET.Element, max_fields: int = 12, max_value: int = 2
 
 
 def _published(item: ET.Element) -> datetime | None:
-    """Read RSS/RDF/Atom timestamps and normalize them to UTC.
+    """Read RSS/RDF/Atom timestamps in RFC 2822 or ISO-8601 form.
 
-    NSE RSS items sometimes use timestamps such as ``16-Oct-2026 20:06:48``
-    without a timezone. These are exchange-local (Asia/Kolkata) timestamps,
-    not UTC. Treating them as UTC shifts them 5h30m into the future and wrongly
-    rejects valid filings at the EOD-window boundary. Explicitly zoned dates
-    retain their stated timezone.
+    NSE feeds can contain ISO-8601 timestamps and namespace-qualified date
+    tags. An RFC-2822-only parser silently discarded those valid entries.
     """
     preferred = {
         "pubdate": 0,
@@ -107,26 +104,24 @@ def _published(item: ET.Element) -> datetime | None:
             values.append((preferred[local_name], node.text.strip()))
 
     for _, raw in sorted(values, key=lambda entry: entry[0]):
-        parsed = None
         try:
-            parsed = parsedate_to_datetime(raw)
+            stamp = parsedate_to_datetime(raw)
+            if stamp is not None:
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                return stamp.astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
-            parsed = None
-        if parsed is not None:
-            if parsed.tzinfo is None:
-                # NSE feed dates without an offset are local exchange time.
-                parsed = pd.Timestamp(parsed).tz_localize("Asia/Kolkata").to_pydatetime()
-            return parsed.astimezone(timezone.utc)
+            pass
 
         try:
             stamp = pd.Timestamp(raw)
             if pd.isna(stamp):
                 continue
             if stamp.tzinfo is None:
-                stamp = stamp.tz_localize("Asia/Kolkata")
+                stamp = stamp.tz_localize("UTC")
             else:
                 stamp = stamp.tz_convert("UTC")
-            return stamp.tz_convert("UTC").to_pydatetime()
+            return stamp.to_pydatetime()
         except (TypeError, ValueError, OverflowError):
             continue
     return None
@@ -392,6 +387,71 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
         return _RSSItemList(recovered, partial=True)
 
 
+def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Element]:
+    """Fetch issuer/date-filtered announcements from NSE's official JSON endpoint.
+
+    This is a fallback for the global RSS feed, which often contains only the
+    latest announcements (and therefore can be entirely after a historical EOD
+    cutoff). It uses a normal landing-page request to establish a session; it
+    does not bypass access controls. If NSE blocks the request, callers retain
+    WAIT_FOR_DATA rather than treating secondary coverage as primary evidence.
+    """
+    start = pd.Timestamp(from_date).strftime("%d-%m-%Y")
+    end = pd.Timestamp(to_date).strftime("%d-%m-%Y")
+    session = requests.Session()
+    session.headers.update({**HEADERS, "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-announcements"})
+    try:
+        landing = session.get("https://www.nseindia.com/companies-listing/corporate-filings-announcements", timeout=15)
+        landing.raise_for_status()
+        response = session.get(
+            "https://www.nseindia.com/api/corporate-announcements",
+            params={"index": "equities", "symbol": str(symbol).upper(), "from_date": start, "to_date": end},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, list):
+            print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_BAD_PAYLOAD symbol={symbol} type={type(payload).__name__}")
+            return []
+        items: list[ET.Element] = []
+        for record in payload:
+            if not isinstance(record, dict):
+                continue
+            record_symbol = str(record.get("symbol", "")).strip().upper()
+            # The endpoint is symbol-filtered, but verify every returned row.
+            if record_symbol and record_symbol != str(symbol).upper():
+                continue
+            item = ET.Element("item")
+            raw_stamp = record.get("an_dt") or record.get("sort_date") or record.get("dt") or ""
+            try:
+                parsed_stamp = pd.Timestamp(raw_stamp)
+                if not pd.isna(parsed_stamp):
+                    # NSE API timestamps are India-local when no offset is present.
+                    if parsed_stamp.tzinfo is None:
+                        parsed_stamp = parsed_stamp.tz_localize("Asia/Kolkata")
+                    raw_stamp = parsed_stamp.isoformat()
+            except (TypeError, ValueError, OverflowError):
+                pass
+            fields = {
+                "title": record.get("desc") or record.get("subject") or "",
+                "description": record.get("attchmntText") or record.get("desc") or "",
+                "pubDate": raw_stamp,
+                "link": record.get("attchmntFile") or "",
+                "company": record.get("sm_name") or "",
+                "symbol": record_symbol,
+                "eventid": record.get("seq_id") or "",
+            }
+            for key, value in fields.items():
+                node = ET.SubElement(item, key)
+                node.text = str(value or "")
+            items.append(item)
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_OK symbol={symbol} items={len(items)} range={start}:{end}")
+        return items
+    except Exception as exc:
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_FAIL symbol={symbol} range={start}:{end} error={type(exc).__name__}: {exc}")
+        return []
+
+
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
     """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
     if result.empty or "TckrSymb" not in result.columns:
@@ -532,6 +592,40 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             print(f"[NEWS-DIAG] OFFICIAL_DATE_ZERO_SAMPLES feed={feed_name!r} samples={timestamp_samples!r}")
         if issuer_matches == 0 and in_window_samples:
             print(f"[NEWS-DIAG] OFFICIAL_ZERO_MATCH_SAMPLES feed={feed_name!r} samples={in_window_samples!r}")
+
+    # The public RSS feeds are global and can contain only post-EOD items.
+    # If a candidate has no official match from RSS, query NSE's issuer/date-
+    # filtered official announcements endpoint for the same permitted window.
+    try:
+        cutoff_ist_date = pd.Timestamp(cutoff).tz_convert("Asia/Kolkata").date()
+        eod_ist_date = pd.Timestamp(eod_date)
+        eod_ist_date = eod_ist_date.tz_localize("Asia/Kolkata") if eod_ist_date.tzinfo is None else eod_ist_date.tz_convert("Asia/Kolkata")
+        eod_ist_date = eod_ist_date.date()
+    except Exception:
+        cutoff_ist_date = pd.Timestamp(eod_date).date() - pd.Timedelta(days=10)
+        eod_ist_date = pd.Timestamp(eod_date).date()
+    primary_symbols_found = {str(row.get("TckrSymb", "")).upper() for row in rows if str(row.get("SourceType", "")).lower() == "primary"}
+    for symbol in sorted(symbols - primary_symbols_found):
+        api_items = _nse_announcement_api_items(symbol, cutoff_ist_date, eod_ist_date)
+        api_matches = 0
+        for item in api_items:
+            title = _item_text(item, "title")
+            description = _item_text(item, "description")
+            issuer_fields = _item_text(item, "company", "symbol")
+            if _issuer_match_reason(symbol, " ".join((title, description, issuer_fields)), names.get(symbol, "")) == "":
+                continue
+            stamp = _published(item)
+            if stamp is None or stamp < cutoff or stamp > window_end:
+                continue
+            api_matches += 1
+            rows.append({
+                "TckrSymb": symbol, "PublishedAt": stamp.isoformat(),
+                "Headline": title or description, "Source": "NSE India",
+                "SourceType": "primary", "URL": _item_text(item, "link") or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+                "Impact": _impact(title + " " + description), "EventID": _item_text(item, "eventid"),
+                "SourceDomain": "nseindia.com",
+            })
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_SUMMARY symbol={symbol} matched={api_matches}")
 
     if nse_successes == 0:
         status["NSE"] = "unavailable"

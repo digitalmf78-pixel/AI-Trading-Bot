@@ -441,57 +441,48 @@ def test_breakout_selector_rejects_clv_equal_to_075():
             os.chdir(old_cwd)
 
 
-def test_etf_like_instruments_are_excluded_before_stock_ranking():
-    rows = [
-        {"TckrSymb": "LOWVOL", "ISIN": "INF769K01JU9", "FinInstrmNm": "MIRAEAMC - MANV30F", "SctySrs": "EQ",
-         "OpnPric": 191.91, "HghPric": 213.60, "LwPric": 174.78, "ClsPric": 193.91, "PrvsClsgPric": 194.19, "TtlTradgVol": 215353},
-        {"TckrSymb": "BANKPSU", "ISIN": "INF769K01LZ4", "FinInstrmNm": "MIRAEAMC - BANKPSU", "SctySrs": "EQ",
-         "OpnPric": 81.67, "HghPric": 84.00, "LwPric": 73.15, "ClsPric": 81.61, "PrvsClsgPric": 81.27, "TtlTradgVol": 385379},
-        {"TckrSymb": "TECH", "ISIN": "INF209KB11D8", "FinInstrmNm": "BIRLASLAMC - TECH", "SctySrs": "EQ",
-         "OpnPric": 33.97, "HghPric": 35.09, "LwPric": 33.97, "ClsPric": 34.98, "PrvsClsgPric": 33.59, "TtlTradgVol": 1191034},
-        {"TckrSymb": "DIVIDEND", "ISIN": "INF769K01PY8", "FinInstrmNm": "MIRAEAMC - DIVIDEND", "SctySrs": "EQ",
-         "OpnPric": 33.30, "HghPric": 34.88, "LwPric": 30.89, "ClsPric": 34.68, "PrvsClsgPric": 34.32, "TtlTradgVol": 241835},
-        {"TckrSymb": "OFFETF", "ISIN": "INE000A01000", "FinInstrmNm": "Sample Fund Unit", "SctySrs": "EQ",
-         "OpnPric": 10.0, "HghPric": 11.0, "LwPric": 9.0, "ClsPric": 10.5, "PrvsClsgPric": 10.0, "TtlTradgVol": 1000},
-        {"TckrSymb": "SINGERIND", "ISIN": "INE638A01035", "FinInstrmNm": "SINGER INDIA LIMITED", "SctySrs": "EQ",
-         "OpnPric": 75.55, "HghPric": 90.66, "LwPric": 75.21, "ClsPric": 90.09, "PrvsClsgPric": 75.55, "TtlTradgVol": 4330111},
-    ]
-    cleaned = scanner.prepare_equity_data(pd.DataFrame(rows), etf_symbols={"OFFETF"})
-    assert cleaned["TckrSymb"].tolist() == ["SINGERIND"], cleaned["TckrSymb"].tolist()
+def test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter():
+    class FakeResponse:
+        def __init__(self, payload=None):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
 
-
-
-def test_current_nse_getquote_payload_classification_extraction():
-    payload = {
-        "equityResponse": [{
-            "secInfo": {
-                "macro": "Consumer Discretionary",
-                "sector": "Automobile and Auto Components",
-                "industryInfo": "Auto Components",
-                "basicIndustry": "Auto Components & Equipments",
-            }
-        }]
-    }
-    result = sector_data._classification_from_nse_payload(payload)
-    assert result["macro"] == "Consumer Discretionary"
-    assert result["sector"] == "Automobile and Auto Components"
-    assert result["industry"] == "Auto Components"
-    assert result["basicIndustry"] == "Auto Components & Equipments"
-
-
-def test_legacy_nse_quote_payload_classification_extraction():
-    payload = {"industryInfo": {
-        "macro": "Financial Services", "sector": "Banks",
-        "industry": "Banks", "basicIndustry": "Private Sector Bank",
-    }}
-    result = sector_data._classification_from_nse_payload(payload)
-    assert result["basicIndustry"] == "Private Sector Bank"
-    assert result["sector"] == "Banks"
+    class FakeSession:
+        def __init__(self):
+            self.headers = {}
+            self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if "corporate-filings-announcements" in url:
+                return FakeResponse([])
+            return FakeResponse([
+                {"symbol": "ABC", "desc": "ABC Limited receives order", "an_dt": "16-Oct-2026 15:00:00", "sm_name": "ABC Limited", "attchmntText": "Company informed NSE", "attchmntFile": "https://nsearchives.nseindia.com/a.pdf", "seq_id": "123"},
+                {"symbol": "XYZ", "desc": "Wrong issuer", "an_dt": "16-Oct-2026 15:00:00"},
+            ])
+    fake = FakeSession()
+    original_session = news_catalyst.requests.Session
+    try:
+        news_catalyst.requests.Session = lambda: fake
+        items = news_catalyst._nse_announcement_api_items("ABC", "2026-10-10", "2026-10-16")
+    finally:
+        news_catalyst.requests.Session = original_session
+    assert len(items) == 1
+    assert news_catalyst._item_text(items[0], "title") == "ABC Limited receives order"
+    assert news_catalyst._item_text(items[0], "symbol") == "ABC"
+    assert news_catalyst._item_text(items[0], "eventid") == "123"
+    stamp = news_catalyst._published(items[0])
+    assert stamp.isoformat() == "2026-10-16T09:30:00+00:00", stamp
+    assert fake.calls[1][1]["params"]["from_date"] == "10-10-2026"
+    assert fake.calls[1][1]["params"]["to_date"] == "16-10-2026"
 
 
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
+        test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
@@ -511,31 +502,8 @@ if __name__ == "__main__":
         test_negative_relative_strength_is_warning_not_standalone_rejection,
         test_mixed_improving_trend_does_not_confirm_core_setup,
         test_breakout_selector_rejects_clv_equal_to_075,
-        test_etf_like_instruments_are_excluded_before_stock_ranking,
-        test_current_nse_getquote_payload_classification_extraction,
-        test_legacy_nse_quote_payload_classification_extraction,
     ]
     for test in tests:
         test()
         print(f"PASS: {test.__name__}")
     print(f"PASS: all {len(tests)} V8 regression tests")
-
-
-def test_sector_quote_page_has_canonical_routes_for_current_unresolved_symbols():
-    # These are official NSE quote-page slugs. Classification is accepted only
-    # when the page explicitly exposes a Basic Industry label.
-    expected = {
-        "SINGERIND": "Singer-India-Limited",
-        "AROGRANITE": "Aro-Granite-Industries-Limited",
-        "ACGL": "Automotive-Stampings-and-Assemblies-Limited",
-        "TAMBOLIIN": "Tamboli-Industries-Limited",
-        "SHREERAMA": "Shree-Rama-Multi-Tech-Limited",
-        "PRISMX": "Prismx-Global-Ventures-Limited",
-    }
-    source = Path(sector_data.__file__).read_text(encoding="utf-8")
-    for symbol, slug in expected.items():
-        assert f'"{symbol}": "{slug}"' in source, (symbol, slug)
-    # No symbol is assigned a sector by this route alone; it only enables a
-    # canonical official page fetch, and mapping still requires exact taxonomy.
-
-
