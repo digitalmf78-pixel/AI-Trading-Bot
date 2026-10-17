@@ -356,7 +356,7 @@ def _history_from_niftyindices_api(
         try:
             response = None
             for attempt in (1, 2):
-                response = session.post(endpoint, data=json.dumps(payload_body), headers=headers, timeout=20)
+                response = session.post(endpoint, json=payload_body, headers=headers, timeout=20)
                 content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
                 body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
                 if response.status_code == 200:
@@ -552,16 +552,6 @@ VERIFIED_ETF_UNDERLYING_INDEX = {
             "https://www.dspim.com/invest/mutual-fund-schemes/exchange-traded-funds/nifty-psu-bank-etf/dpsub-direct-growth"
         ),
     },
-    "TECH": {
-        "sector": "Nifty IT",
-        "index_symbol": "NIFTY IT",
-        "status": "ETF_UNDERLYING_INDEX_VERIFIED",
-        "reason": (
-            "Verified Aditya Birla Sun Life Nifty IT ETF; the official AMC scheme page identifies "
-            "NSE symbol TECH and states that the scheme tracks Nifty IT TRI. Official source: "
-            "https://mutualfund.adityabirlacapital.com/empower/Passive-ETFs/Nifty-IT-ETF.html"
-        ),
-    },
 }
 VERIFIED_ETF_UNSUPPORTED = {
     "INSUREIETF": (
@@ -695,43 +685,6 @@ class _NSEVisibleTextParser(HTMLParser):
             self.parts.append(value)
 
 
-def _extract_basic_industry(body: str) -> str:
-    """Extract an explicit Basic Industry label from NSE quote HTML or embedded JSON.
-
-    Some quote routes render the classification into visible text; others may
-    carry the same field inside a JSON script payload. Return only a value tied
-    to an explicit Basic Industry/basicIndustry key—never infer a sector from
-    the symbol or a generic page title.
-    """
-    decoded = unescape(body or "")
-    parser = _NSEVisibleTextParser()
-    try:
-        parser.feed(decoded)
-        visible_text = " ".join(parser.parts)
-        match = re.search(
-            r"\bBasic Industry\s+(.+?)\s+(?:Corporate Announcements|Trading Window|Annual Reports|Financial Result|Peer Comparison)\b",
-            visible_text,
-            flags=re.I,
-        )
-        if match:
-            value = " ".join(match.group(1).split()).strip(" :-")
-            if value and value.casefold() not in {"-", "na", "n/a", "undefined"}:
-                return value
-    except Exception:
-        pass
-
-    # JSON string values are parsed rather than returned with escape sequences.
-    for match in re.finditer(r"(?i)[\"']basicIndustry[\"']\s*:\s*(\"(?:\\.|[^\"\\])*\")", decoded):
-        try:
-            value = json.loads(match.group(1))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        value = " ".join(str(value or "").split()).strip(" :-")
-        if value and value.casefold() not in {"-", "na", "n/a", "undefined", "null"}:
-            return value
-    return ""
-
-
 def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> str:
     """Fetch Basic Industry from an official NSE quote page using supported routes.
 
@@ -754,6 +707,11 @@ def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> st
         "MODINATUR": "Modi-Naturals-Limited",
         "JKIPL": "Jinkushal-Industries-Limited",
         "AROGRANITE": "Aro-Granite-Industries-Limited",
+        "SINGERIND": "Singer-India-Limited",
+        "ACGL": "Automotive-Stampings-and-Assemblies-Limited",
+        "TAMBOLIIN": "Tamboli-Industries-Limited",
+        "SHREERAMA": "Shree-Rama-Multi-Tech-Limited",
+        "PRISMX": "Prismx-Global-Ventures-Limited",
     }
     slug = quote_slugs.get(_clean_symbol(symbol))
     if slug:
@@ -768,9 +726,19 @@ def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> st
             body = response.text or ""
             if not body:
                 continue
-            value = _extract_basic_industry(body)
-            if not value:
-                print(f"[SECTOR] NSE quote page {symbol}: explicit Basic Industry field not found on this route")
+            parser = _NSEVisibleTextParser()
+            parser.feed(body)
+            text = unescape(" ".join(parser.parts))
+            match = re.search(
+                r"\bBasic Industry\s+(.+?)\s+(?:Corporate Announcements|Trading Window|Annual Reports|Financial Result|Peer Comparison)\b",
+                text,
+                flags=re.I,
+            )
+            if not match:
+                print(f"[SECTOR] NSE quote page {symbol}: Basic Industry label not found on this route")
+                continue
+            value = " ".join(match.group(1).split()).strip(" :-")
+            if not value or value.casefold() in {"-", "na", "n/a", "undefined"}:
                 continue
             print(f"[SECTOR] NSE official Basic Industry {symbol}: {value}")
             return value

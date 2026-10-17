@@ -488,3 +488,21 @@ if __name__ == "__main__":
         test()
         print(f"PASS: {test.__name__}")
     print(f"PASS: all {len(tests)} V8 regression tests")
+
+
+def test_sector_quote_page_has_canonical_routes_for_current_unresolved_symbols():
+    # These are official NSE quote-page slugs. Classification is accepted only
+    # when the page explicitly exposes a Basic Industry label.
+    expected = {
+        "SINGERIND": "Singer-India-Limited",
+        "AROGRANITE": "Aro-Granite-Industries-Limited",
+        "ACGL": "Automotive-Stampings-and-Assemblies-Limited",
+        "TAMBOLIIN": "Tamboli-Industries-Limited",
+        "SHREERAMA": "Shree-Rama-Multi-Tech-Limited",
+        "PRISMX": "Prismx-Global-Ventures-Limited",
+    }
+    source = Path(sector_data.__file__).read_text(encoding="utf-8")
+    for symbol, slug in expected.items():
+        assert f'"{symbol}": "{slug}"' in source, (symbol, slug)
+    # No symbol is assigned a sector by this route alone; it only enables a
+    # canonical official page fetch, and mapping still requires exact taxonomy.
