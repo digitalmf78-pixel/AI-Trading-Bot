@@ -1,6 +1,7 @@
-name: Independent 5-Day Delivery 60% + Relative Valuation Watchlist
+name: 5-Day Delivery 60% + Relative Valuation Watchlist (Reuse V8 Cache)
 
-# Standalone workflow. It does not import, edit, or run the NSE V8.0 project.
+# Separate workflow, reusing the existing NSE V8 delivery cache/module.
+# Does not edit or run the main V8 scanner.
 on:
   workflow_dispatch:
   schedule:
@@ -15,6 +16,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Checkout existing repository modules and cache
+        uses: actions/checkout@v5
+
+      - name: Restore existing NSE delivery cache
+        uses: actions/cache@v5
+        with:
+          path: data/cache/delivery/
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-delivery-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -32,23 +44,19 @@ jobs:
           import re
           import statistics
           import time
-          from datetime import date, datetime, timedelta, timezone
+          from datetime import timedelta, datetime
           from pathlib import Path
+          from zoneinfo import ZoneInfo
 
           import pandas as pd
           import requests
           from bs4 import BeautifulSoup
+          from delivery_filter import get_delivery_sessions
 
           OUTPUT = Path("delivery_60_valuation_watchlist.csv")
           MIN_DELIVERY = 60.0
           REQUIRED_SESSIONS = 5
-          MAX_LOOKBACK_DAYS = 35
-          BHAVCOPY_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv"
-          NSE_HEADERS = {
-              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-              "Accept": "text/csv,text/plain,*/*",
-              "Referer": "https://www.nseindia.com/",
-          }
+          MAX_ASOF_LOOKBACK_DAYS = 10
           SCREENER_HEADERS = {
               "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
               "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -58,38 +66,6 @@ jobs:
               df = df.copy()
               df.columns = [str(c).strip().upper().replace(" ", "_") for c in df.columns]
               return df
-
-          def download_session(http, day):
-              token = day.strftime("%d%m%Y")
-              url = BHAVCOPY_URL.format(date=token)
-              try:
-                  response = http.get(url, timeout=25)
-                  if response.status_code != 200:
-                      print(f"[BHAVCOPY] {day}: HTTP {response.status_code}; skip")
-                      return None
-                  if not response.content or response.content.lstrip().lower().startswith((b"<html", b"<!doctype")):
-                      print(f"[BHAVCOPY] {day}: empty/HTML response; skip")
-                      return None
-                  frame = normalise_columns(pd.read_csv(io.BytesIO(response.content)))
-                  required = {"SYMBOL", "SERIES", "DELIV_PER"}
-                  if frame.empty or not required.issubset(frame.columns):
-                      print(f"[BHAVCOPY] {day}: required columns/data missing; skip")
-                      return None
-                  frame["SYMBOL"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
-                  frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
-                  frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
-                  frame = frame[(frame["SYMBOL"] != "") & frame["DELIV_PER"].notna()]
-                  # Only regular listed equity series; ETFs/funds are removed below where identifiable.
-                  frame = frame[frame["SERIES"] == "EQ"].copy()
-                  if frame.empty:
-                      print(f"[BHAVCOPY] {day}: no EQ rows; skip")
-                      return None
-                  frame["REPORT_DATE"] = day.isoformat()
-                  print(f"[BHAVCOPY] accepted {day}: {len(frame)} EQ rows")
-                  return frame
-              except Exception as exc:
-                  print(f"[BHAVCOPY] {day}: {type(exc).__name__}: {exc}; skip")
-                  return None
 
           def is_fund_or_etf(row):
               symbol = str(row.get("SYMBOL", "")).upper().strip()
@@ -178,24 +154,32 @@ jobs:
               pd.DataFrame(columns=["SYMBOL", "VALUATION"]).to_csv(OUTPUT, index=False)
               print(f"[RESULT] {status}; output is an empty SYMBOL,VALUATION CSV")
 
-          asof = datetime.now(timezone.utc).date()
-          nse = requests.Session()
-          nse.headers.update(NSE_HEADERS)
-          sessions = []
-          for offset in range(MAX_LOOKBACK_DAYS + 1):
-              day = asof - timedelta(days=offset)
-              if day.weekday() >= 5:
+          # Reuse the project's delivery_filter.py and data/cache/delivery/.
+          # Do not create a second Bhavcopy downloader or a second cache.
+          today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+          sessions = None
+          asof = today_ist
+          last_error = None
+          for offset in range(MAX_ASOF_LOOKBACK_DAYS + 1):
+              candidate_date = today_ist - timedelta(days=offset)
+              if candidate_date.weekday() >= 5:
                   continue
-              frame = download_session(nse, day)
-              if frame is None:
-                  continue
-              sessions.append((day, frame))
-              if len(sessions) == REQUIRED_SESSIONS:
+              try:
+                  sessions = get_delivery_sessions(candidate_date, required_sessions=REQUIRED_SESSIONS)
+                  asof = candidate_date
                   break
+              except RuntimeError as exc:
+                  last_error = exc
+                  print(f"[DELIVERY] No complete five-session window ending {candidate_date}: {exc}")
 
-          if len(sessions) < REQUIRED_SESSIONS:
-              write_empty(f"WAIT_FOR_DATA: only {len(sessions)}/{REQUIRED_SESSIONS} valid distinct sessions found")
+          if not sessions or len(sessions) < REQUIRED_SESSIONS:
+              write_empty(f"WAIT_FOR_DATA: existing project delivery cache/source did not provide five valid sessions; last_error={last_error}")
               raise SystemExit(0)
+
+          # Existing delivery_filter returns validated reports from its existing cache/download path.
+          sessions = [(day, frame.copy()) for day, frame in sessions]
+          for day, frame in sessions:
+              print(f"[BHAVCOPY-REUSE] {day}: reused delivery_filter.py report, {len(frame)} rows")
 
           sessions.sort(key=lambda item: item[0])
           print("[SESSIONS] oldest-to-newest: " + ", ".join(day.isoformat() for day, _ in sessions))
@@ -205,6 +189,16 @@ jobs:
           per_day = []
           for day, frame in sessions:
               frame = frame.copy()
+              frame.columns = [str(c).strip().upper().replace(" ", "_") for c in frame.columns]
+              required = {"SYMBOL", "SERIES", "DELIV_PER"}
+              if not required.issubset(frame.columns):
+                  print(f"[DELIVERY] {day}: required fields missing in existing cache; fail closed")
+                  write_empty("WAIT_FOR_DATA: existing delivery report missing required fields")
+                  raise SystemExit(0)
+              frame["SYMBOL"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
+              frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
+              frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
+              frame = frame[(frame["SERIES"] == "EQ") & frame["DELIV_PER"].between(0, 100)]
               if "SECURITY" not in frame.columns:
                   frame["SECURITY"] = ""
               frame = frame[~frame.apply(is_fund_or_etf, axis=1)]
