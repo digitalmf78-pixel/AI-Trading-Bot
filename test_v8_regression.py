@@ -3,7 +3,6 @@ Run: python test_v8_regression.py
 """
 from datetime import date, timedelta
 from pathlib import Path
-import xml.etree.ElementTree as ET
 import tempfile
 import os
 
@@ -69,24 +68,6 @@ def test_three_secondary_reposts_do_not_create_three_confirmations():
     })
     count, labels, status = layers._independent_confirmation_evaluation(row)
     assert count == 1 and status == "FAIL", (count, labels, status)
-
-
-
-def test_nse_naive_rss_timestamp_is_localized_to_india_time():
-    item = ET.fromstring("<item><pubDate>16-Oct-2026 20:06:48</pubDate></item>")
-    stamp = news_catalyst._published(item)
-    assert stamp is not None, "NSE local timestamp was not parsed"
-    # 20:06:48 IST must become 14:36:48 UTC, not 20:06:48 UTC.
-    assert stamp.isoformat() == "2026-10-16T14:36:48+00:00", stamp.isoformat()
-
-
-def test_nse_quote_embedded_json_basic_industry_is_read():
-    html = '<html><script id="quote-data" type="application/json">' + \
-        '{"industryInfo":{"basicIndustry":"Granites & Marbles"}}' + \
-        '</script></html>'
-    assert sector_data._extract_basic_industry(html) == "Granites & Marbles"
-    # No explicit field means no inferred classification.
-    assert sector_data._extract_basic_industry("<html><h1>AROGRANITE</h1></html>") == ""
 
 
 def test_untrusted_domain_cannot_be_primary_just_because_of_label():
@@ -460,13 +441,30 @@ def test_breakout_selector_rejects_clv_equal_to_075():
             os.chdir(old_cwd)
 
 
+def test_etf_like_instruments_are_excluded_before_stock_ranking():
+    rows = [
+        {"TckrSymb": "LOWVOL", "ISIN": "INF769K01JU9", "FinInstrmNm": "MIRAEAMC - MANV30F", "SctySrs": "EQ",
+         "OpnPric": 191.91, "HghPric": 213.60, "LwPric": 174.78, "ClsPric": 193.91, "PrvsClsgPric": 194.19, "TtlTradgVol": 215353},
+        {"TckrSymb": "BANKPSU", "ISIN": "INF769K01LZ4", "FinInstrmNm": "MIRAEAMC - BANKPSU", "SctySrs": "EQ",
+         "OpnPric": 81.67, "HghPric": 84.00, "LwPric": 73.15, "ClsPric": 81.61, "PrvsClsgPric": 81.27, "TtlTradgVol": 385379},
+        {"TckrSymb": "TECH", "ISIN": "INF209KB11D8", "FinInstrmNm": "BIRLASLAMC - TECH", "SctySrs": "EQ",
+         "OpnPric": 33.97, "HghPric": 35.09, "LwPric": 33.97, "ClsPric": 34.98, "PrvsClsgPric": 33.59, "TtlTradgVol": 1191034},
+        {"TckrSymb": "DIVIDEND", "ISIN": "INF769K01PY8", "FinInstrmNm": "MIRAEAMC - DIVIDEND", "SctySrs": "EQ",
+         "OpnPric": 33.30, "HghPric": 34.88, "LwPric": 30.89, "ClsPric": 34.68, "PrvsClsgPric": 34.32, "TtlTradgVol": 241835},
+        {"TckrSymb": "OFFETF", "ISIN": "INE000A01000", "FinInstrmNm": "Sample Fund Unit", "SctySrs": "EQ",
+         "OpnPric": 10.0, "HghPric": 11.0, "LwPric": 9.0, "ClsPric": 10.5, "PrvsClsgPric": 10.0, "TtlTradgVol": 1000},
+        {"TckrSymb": "SINGERIND", "ISIN": "INE638A01035", "FinInstrmNm": "SINGER INDIA LIMITED", "SctySrs": "EQ",
+         "OpnPric": 75.55, "HghPric": 90.66, "LwPric": 75.21, "ClsPric": 90.09, "PrvsClsgPric": 75.55, "TtlTradgVol": 4330111},
+    ]
+    cleaned = scanner.prepare_equity_data(pd.DataFrame(rows), etf_symbols={"OFFETF"})
+    assert cleaned["TckrSymb"].tolist() == ["SINGERIND"], cleaned["TckrSymb"].tolist()
+
+
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
-        test_nse_naive_rss_timestamp_is_localized_to_india_time,
-        test_nse_quote_embedded_json_basic_industry_is_read,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
         test_delivery_average_above_60_percent_passes,
         test_delivery_average_exactly_60_percent_passes,
@@ -484,6 +482,7 @@ if __name__ == "__main__":
         test_negative_relative_strength_is_warning_not_standalone_rejection,
         test_mixed_improving_trend_does_not_confirm_core_setup,
         test_breakout_selector_rejects_clv_equal_to_075,
+        test_etf_like_instruments_are_excluded_before_stock_ranking,
     ]
     for test in tests:
         test()

@@ -11,6 +11,7 @@ from v8_layers_14_41 import (
     validate_next_day,
     write_layer_status_summary,
 )
+import sector_data
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
     collect_catalyst_news,
@@ -48,6 +49,28 @@ HEADERS = {
 
 session = requests.Session()
 session.headers.update(HEADERS)
+
+# Official NSE ETF symbols are refreshed at runtime. If NSE's ETF list is
+# unavailable, the scanner still excludes mutual-fund-unit ISINs (INF...) and
+# AMC scheme rows from the CM bhavcopy so ETF units cannot enter stock ranking.
+OFFICIAL_ETF_SYMBOLS: set[str] = set()
+
+
+def refresh_official_etf_symbols() -> set[str]:
+    """Load NSE's official ETF symbol list; safe fallback is handled locally."""
+    global OFFICIAL_ETF_SYMBOLS
+    try:
+        symbols = sector_data._download_official_etf_symbols(session)
+        OFFICIAL_ETF_SYMBOLS = {
+            str(symbol).strip().upper()
+            for symbol in (symbols or set())
+            if str(symbol).strip()
+        }
+        print(f"[UNIVERSE] Official NSE ETF exclusion list: {len(OFFICIAL_ETF_SYMBOLS)} symbols")
+    except Exception as exc:
+        OFFICIAL_ETF_SYMBOLS = set()
+        print(f"[UNIVERSE] Official ETF list unavailable; using ISIN/name fallback: {exc}")
+    return OFFICIAL_ETF_SYMBOLS
 
 
 # ============================================================
@@ -218,7 +241,7 @@ def download_bhavcopy(date_obj):
 # CLEAN EQUITY DATA
 # ============================================================
 
-def prepare_equity_data(df):
+def prepare_equity_data(df, etf_symbols=None):
 
     required = [
         "TckrSymb",
@@ -278,6 +301,36 @@ def prepare_equity_data(df):
         print(
             f"[UNIVERSE] Listed-equity series filter: {len(data)}/{before_series_filter} rows retained."
         )
+
+    # CM bhavcopy can mark ETF units as STK/EQ. Exclude them before ranking:
+    # (1) official NSE ETF symbols, (2) Indian mutual-fund ISIN prefix INF,
+    # and (3) AMC scheme names such as "MIRAEAMC - BANKPSU". The latter two
+    # are conservative fallbacks if NSE's ETF CSV returns HTTP 403.
+    official_etfs = OFFICIAL_ETF_SYMBOLS if etf_symbols is None else {
+        str(symbol).strip().upper() for symbol in (etf_symbols or set())
+    }
+    symbol_text = data["TckrSymb"].astype(str).str.strip().str.upper()
+    etf_mask = symbol_text.isin(official_etfs)
+
+    if "ISIN" in data.columns:
+        isin_text = data["ISIN"].fillna("").astype(str).str.strip().str.upper()
+        etf_mask = etf_mask | isin_text.str.startswith("INF")
+
+    if "FinInstrmNm" in data.columns:
+        instrument_name = data["FinInstrmNm"].fillna("").astype(str)
+        etf_mask = etf_mask | instrument_name.str.contains(
+            r"\bAMC\s*-\s*", case=False, regex=True, na=False
+        )
+
+    excluded_etfs = sorted(set(symbol_text[etf_mask].tolist()))
+    if excluded_etfs:
+        data = data.loc[~etf_mask].copy()
+        print(
+            f"[UNIVERSE] Excluded {len(excluded_etfs)} ETF/mutual-fund symbols "
+            f"before stock ranking: {excluded_etfs}"
+        )
+    else:
+        print("[UNIVERSE] No ETF-like instruments found by official list/ISIN/name checks.")
 
     data = data.drop_duplicates(
         subset=["TckrSymb"],
@@ -3202,6 +3255,9 @@ def main():
     print(
         "\nPython script started successfully."
     )
+
+    # Exclude ETF units consistently from current EOD and historical volume data.
+    refresh_official_etf_symbols()
 
     # --------------------------------------------------------
     # STEP 1
