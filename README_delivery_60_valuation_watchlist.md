@@ -1,26 +1,37 @@
-# Independent 5-Day Delivery + Relative Valuation Watchlist
+# Delivery 60% + Relative Valuation Watchlist — corrected workflow
 
-## Scope
-- Add this file as a **new workflow only** at `.github/workflows/delivery_60_valuation_watchlist.yml`.
-- It does not edit, import, or run the existing NSE Swing Trading V8.0 code/modules.
-- It downloads NSE `sec_bhavdata_full` reports and selects stocks only when the daily `DELIV_PER` is **>= 60.00% on each of the five latest distinct valid trading-session reports**.
-- If fewer than five valid sessions are available, it emits an empty CSV and reports `WAIT_FOR_DATA` in the Actions log.
-- It outputs only `SYMBOL` and `VALUATION` in `delivery_60_valuation_watchlist.csv` and uploads it as a GitHub Actions artifact.
+## What the latest Actions log showed
 
-## Valuation meaning / limitation
-- Valuation uses a simple **relative P/E vs the median positive peer P/E** from the public Screener.in company page.
-- Current P/E <= 80% of peer median: `RELATIVELY_UNDERVALUED`.
-- Current P/E > 80% and <= 120% of peer median: `FAIRLY_VALUED`.
-- Current P/E > 120% of peer median: `RELATIVELY_OVERVALUED`.
-- If the current P/E or at least three positive peer P/E observations cannot be retrieved, the output is `DATA_INSUFFICIENT`; the workflow does not guess.
-- This is a relative valuation indicator, not a guaranteed intrinsic-value estimate. It does not use technical indicators, news, sectors, or trading-entry signals.
+- The main NSE cache **was restored successfully** from `nse-bhavcopy-Linux-main-39009733627`.
+- The diagnostic step found 54 files matching `data/bhavcopy/bhavcopy_YYYYMMDD.csv`, spanning 2026-07-31 to 2026-10-16, and 8 cached delivery reports. This run therefore does **not** prove that 220 trading-day Bhavcopy history is present in this cache.
+- The workflow reused five existing delivery reports (2026-10-12 through 2026-10-16) and found 388 symbols with delivery >=60% on every one of those five sessions.
+- Screener valuation calls failed with `Network is unreachable`; the script nevertheless attempted 388 per-symbol requests and took around 11 minutes 50 seconds overall.
+- The separate valuation cache was empty at the beginning of this run.
 
-## Add it safely
-1. Open `digitalmf78-pixel/AI-Trading-Bot` on GitHub.
-2. Open `.github/workflows` and choose **Add file → Create new file**.
-3. Name the new file `delivery_60_valuation_watchlist.yml`.
-4. Paste the complete YAML file and commit it. Do not replace any existing file.
-5. Open **Actions → Independent 5-Day Delivery 60% + Relative Valuation Watchlist → Run workflow** to test it.
-6. Download the artifact named `delivery-60-valuation-watchlist-<run id>` and check `delivery_60_valuation_watchlist.csv`.
+## Changes in this version
 
-The workflow uses public NSE/Screener pages; availability, blocking, or missing data can cause `DATA_INSUFFICIENT`/`WAIT_FOR_DATA`. Local syntax checks are not proof that a live GitHub Actions run will succeed.
+1. Adds one short Screener connectivity preflight. If the runner cannot reach Screener, it skips hundreds of doomed requests and marks valuation as `DATA_INSUFFICIENT`; it does not guess cheap/expensive labels.
+2. Network/HTTP failures are not cached, so a temporary outage cannot be stored as a 36-hour valuation result.
+3. Legacy valuation-cache entries without `cacheable: true` are ignored and replaced, preventing previous outage results from being treated as real valuation data.
+4. Reuses the existing `delivery_filter.py` and main NSE cache paths. It does not edit or run the main V8 scanner.
+
+## Install
+
+Use this YAML as the complete replacement for the **separate** workflow file:
+`.github/workflows/delivery_60_valuation_watchlist.yml`
+
+Do not replace or edit any other workflow or Python file.
+
+## Output
+
+Artifact CSV: `delivery_60_valuation_watchlist.csv`
+
+Columns: `SYMBOL`, `VALUATION`
+
+Possible valuation labels:
+- `RELATIVELY_UNDERVALUED`
+- `FAIRLY_VALUED`
+- `RELATIVELY_OVERVALUED`
+- `DATA_INSUFFICIENT`
+
+The valuation labels are only relative P/E-vs-peer comparisons when the source page provides sufficient data. This is not a complete intrinsic-value estimate. A `DATA_INSUFFICIENT` value means no reliable label was available.
