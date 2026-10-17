@@ -441,6 +441,18 @@ def test_breakout_selector_rejects_clv_equal_to_075():
             os.chdir(old_cwd)
 
 
+
+def test_nse_naive_rss_timestamp_is_interpreted_as_ist_for_eod_window():
+    item = news_catalyst.ET.fromstring(
+        "<item><pubDate>16-Oct-2026 21:49:19</pubDate>"
+        "<title>Official filing timestamp</title></item>"
+    )
+    stamp = news_catalyst._published(item)
+    assert stamp is not None
+    assert stamp.isoformat() == "2026-10-16T16:19:19+00:00", stamp
+    # The approved next-morning window ends at 22:00 IST (16:30 UTC) on EOD day.
+    assert stamp <= pd.Timestamp("2026-10-16T22:00:00+05:30").tz_convert("UTC").to_pydatetime()
+
 def test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter():
     class FakeResponse:
         def __init__(self, payload=None):
@@ -484,6 +496,7 @@ if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
         test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
+        test_nse_naive_rss_timestamp_is_interpreted_as_ist_for_eod_window,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,

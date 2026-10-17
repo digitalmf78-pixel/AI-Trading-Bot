@@ -108,7 +108,10 @@ def _published(item: ET.Element) -> datetime | None:
             stamp = parsedate_to_datetime(raw)
             if stamp is not None:
                 if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=timezone.utc)
+                    # NSE RSS date strings may be RFC-like but omit a timezone.
+                    # Interpret timezone-naive exchange timestamps as India local time,
+                    # otherwise an evening IST filing can be shifted past the EOD window.
+                    stamp = pd.Timestamp(stamp).tz_localize("Asia/Kolkata").to_pydatetime()
                 return stamp.astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
             pass
@@ -118,9 +121,10 @@ def _published(item: ET.Element) -> datetime | None:
             if pd.isna(stamp):
                 continue
             if stamp.tzinfo is None:
-                stamp = stamp.tz_localize("UTC")
-            else:
-                stamp = stamp.tz_convert("UTC")
+                # NSE's "16-Oct-2026 21:49:19" style dates have no explicit zone
+                # but are India-local exchange timestamps.
+                stamp = stamp.tz_localize("Asia/Kolkata")
+            stamp = stamp.tz_convert("UTC")
             return stamp.to_pydatetime()
         except (TypeError, ValueError, OverflowError):
             continue
