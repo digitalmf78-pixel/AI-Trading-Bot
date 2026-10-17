@@ -3,9 +3,20 @@ name: NSE Data Test
 
 on:
   workflow_dispatch:
+    inputs:
+      scan_mode:
+        description: "EOD scan or next-session premarket news refresh"
+        required: true
+        type: choice
+        default: EOD
+        options:
+          - EOD
+          - PREMARKET
   schedule:
-    # 16:40 UTC = 22:10 IST, Monday through Friday (after NSE EOD data is usually available).
+    # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
+    # 03:35 UTC = 09:05 IST: refresh news before the next market session.
+    - cron: "35 3 * * 1-5"
 
 permissions:
   contents: read
@@ -66,6 +77,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: "true"
+          NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '35 3 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
           set -e
 
@@ -82,7 +94,7 @@ jobs:
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
 
-          echo "===== STARTING NSE SCANNER ====="
+          echo "===== NEWS SCAN MODE: ${NEWS_SCAN_MODE} ====="
           python -u ./volume_gainer.py
           echo "===== NSE SCANNER FINISHED ====="
 
