@@ -1,0 +1,258 @@
+name: Independent 5-Day Delivery 60% + Relative Valuation Watchlist
+
+# Standalone workflow. It does not import, edit, or run the NSE V8.0 project.
+on:
+  workflow_dispatch:
+  schedule:
+    # 17:30 UTC = 23:00 IST, Monday-Friday, after the NSE cash-market session.
+    - cron: "30 17 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  build-watchlist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip requests pandas beautifulsoup4 lxml
+
+      - name: Build five-session delivery and relative valuation report
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python - <<'PY'
+          import io
+          import re
+          import statistics
+          import time
+          from datetime import date, datetime, timedelta, timezone
+          from pathlib import Path
+
+          import pandas as pd
+          import requests
+          from bs4 import BeautifulSoup
+
+          OUTPUT = Path("delivery_60_valuation_watchlist.csv")
+          MIN_DELIVERY = 60.0
+          REQUIRED_SESSIONS = 5
+          MAX_LOOKBACK_DAYS = 35
+          BHAVCOPY_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv"
+          NSE_HEADERS = {
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+              "Accept": "text/csv,text/plain,*/*",
+              "Referer": "https://www.nseindia.com/",
+          }
+          SCREENER_HEADERS = {
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          }
+
+          def normalise_columns(df):
+              df = df.copy()
+              df.columns = [str(c).strip().upper().replace(" ", "_") for c in df.columns]
+              return df
+
+          def download_session(http, day):
+              token = day.strftime("%d%m%Y")
+              url = BHAVCOPY_URL.format(date=token)
+              try:
+                  response = http.get(url, timeout=25)
+                  if response.status_code != 200:
+                      print(f"[BHAVCOPY] {day}: HTTP {response.status_code}; skip")
+                      return None
+                  if not response.content or response.content.lstrip().lower().startswith((b"<html", b"<!doctype")):
+                      print(f"[BHAVCOPY] {day}: empty/HTML response; skip")
+                      return None
+                  frame = normalise_columns(pd.read_csv(io.BytesIO(response.content)))
+                  required = {"SYMBOL", "SERIES", "DELIV_PER"}
+                  if frame.empty or not required.issubset(frame.columns):
+                      print(f"[BHAVCOPY] {day}: required columns/data missing; skip")
+                      return None
+                  frame["SYMBOL"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
+                  frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
+                  frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
+                  frame = frame[(frame["SYMBOL"] != "") & frame["DELIV_PER"].notna()]
+                  # Only regular listed equity series; ETFs/funds are removed below where identifiable.
+                  frame = frame[frame["SERIES"] == "EQ"].copy()
+                  if frame.empty:
+                      print(f"[BHAVCOPY] {day}: no EQ rows; skip")
+                      return None
+                  frame["REPORT_DATE"] = day.isoformat()
+                  print(f"[BHAVCOPY] accepted {day}: {len(frame)} EQ rows")
+                  return frame
+              except Exception as exc:
+                  print(f"[BHAVCOPY] {day}: {type(exc).__name__}: {exc}; skip")
+                  return None
+
+          def is_fund_or_etf(row):
+              symbol = str(row.get("SYMBOL", "")).upper().strip()
+              security = str(row.get("SECURITY", "")).upper().strip()
+              if any(term in security for term in (" ETF", "EXCHANGE TRADED FUND", "MUTUAL FUND")):
+                  return True
+              # Common NSE ETF/fund naming patterns, not price/technical filters.
+              if symbol.endswith(("BEES", "IETF", "ETF", "LIQUIDCASE", "LIQUIDETF")):
+                  return True
+              if symbol in {"GOLDETF", "SILVERETF", "GOLDIETF", "SILVERIETF"}:
+                  return True
+              return False
+
+          def parse_number(value):
+              if value is None:
+                  return None
+              text = str(value).strip().replace(",", "").replace("%", "")
+              if text in {"", "-", "—", "NA", "N/A", "nan", "None"}:
+                  return None
+              match = re.search(r"-?\d+(?:\.\d+)?", text)
+              if not match:
+                  return None
+              try:
+                  number = float(match.group(0))
+                  return number if number > 0 else None
+              except ValueError:
+                  return None
+
+          def relative_valuation(symbol, http):
+              """Compare positive current P/E with median positive peer P/E from Screener.in.
+
+              <=80% of peer median => RELATIVELY_UNDERVALUED; 80%-120% => FAIRLY_VALUED;
+              >120% => RELATIVELY_OVERVALUED. Missing/negative P/E or peers => DATA_INSUFFICIENT.
+              This is a relative P/E label, not an intrinsic-value guarantee.
+              """
+              url = f"https://www.screener.in/company/{symbol}/"
+              try:
+                  response = http.get(url, timeout=20)
+                  if response.status_code != 200 or len(response.text) < 1000:
+                      print(f"[VALUATION] {symbol}: Screener unavailable (HTTP {response.status_code})")
+                      return "DATA_INSUFFICIENT"
+                  soup = BeautifulSoup(response.text, "lxml")
+                  text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+                  # Read the company's current Stock P/E from the overview text.
+                  own_match = re.search(r"Stock\s+P\s*/\s*E\s+([\d,]+(?:\.\d+)?)", text, flags=re.I)
+                  own_pe = parse_number(own_match.group(1)) if own_match else None
+                  if own_pe is None:
+                      print(f"[VALUATION] {symbol}: current positive P/E unavailable")
+                      return "DATA_INSUFFICIENT"
+
+                  peer_pes = []
+                  try:
+                      tables = pd.read_html(io.StringIO(response.text))
+                  except Exception:
+                      tables = []
+                  for table in tables:
+                      table.columns = [re.sub(r"\s+", " ", str(c)).strip().upper() for c in table.columns]
+                      pe_col = next((c for c in table.columns if "STOCK P/E" in c or c == "P/E" or c.endswith(" P/E")), None)
+                      if pe_col is None or len(table) < 3:
+                          continue
+                      for value in table[pe_col].tolist():
+                          pe = parse_number(value)
+                          if pe is not None:
+                              peer_pes.append(pe)
+                  # Do not classify against a single observation; require at least three positive P/E values.
+                  if len(peer_pes) < 3:
+                      print(f"[VALUATION] {symbol}: insufficient peer P/E observations ({len(peer_pes)})")
+                      return "DATA_INSUFFICIENT"
+                  peer_median = statistics.median(peer_pes)
+                  if peer_median <= 0:
+                      return "DATA_INSUFFICIENT"
+                  ratio = own_pe / peer_median
+                  if ratio <= 0.80:
+                      result = "RELATIVELY_UNDERVALUED"
+                  elif ratio <= 1.20:
+                      result = "FAIRLY_VALUED"
+                  else:
+                      result = "RELATIVELY_OVERVALUED"
+                  print(f"[VALUATION] {symbol}: own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f} => {result}")
+                  return result
+              except Exception as exc:
+                  print(f"[VALUATION] {symbol}: {type(exc).__name__}: {exc}")
+                  return "DATA_INSUFFICIENT"
+
+          def write_empty(status):
+              pd.DataFrame(columns=["SYMBOL", "VALUATION"]).to_csv(OUTPUT, index=False)
+              print(f"[RESULT] {status}; output is an empty SYMBOL,VALUATION CSV")
+
+          asof = datetime.now(timezone.utc).date()
+          nse = requests.Session()
+          nse.headers.update(NSE_HEADERS)
+          sessions = []
+          for offset in range(MAX_LOOKBACK_DAYS + 1):
+              day = asof - timedelta(days=offset)
+              if day.weekday() >= 5:
+                  continue
+              frame = download_session(nse, day)
+              if frame is None:
+                  continue
+              sessions.append((day, frame))
+              if len(sessions) == REQUIRED_SESSIONS:
+                  break
+
+          if len(sessions) < REQUIRED_SESSIONS:
+              write_empty(f"WAIT_FOR_DATA: only {len(sessions)}/{REQUIRED_SESSIONS} valid distinct sessions found")
+              raise SystemExit(0)
+
+          sessions.sort(key=lambda item: item[0])
+          print("[SESSIONS] oldest-to-newest: " + ", ".join(day.isoformat() for day, _ in sessions))
+
+          # Build a strict intersection: a symbol must have one unambiguous EQ delivery value
+          # on every one of the five accepted dates, and every value must be >=60.00%.
+          per_day = []
+          for day, frame in sessions:
+              frame = frame.copy()
+              if "SECURITY" not in frame.columns:
+                  frame["SECURITY"] = ""
+              frame = frame[~frame.apply(is_fund_or_etf, axis=1)]
+              counts = frame.groupby("SYMBOL").size()
+              ambiguous = set(counts[counts != 1].index)
+              if ambiguous:
+                  frame = frame[~frame["SYMBOL"].isin(ambiguous)]
+                  print(f"[DELIVERY] {day}: excluded {len(ambiguous)} duplicate/ambiguous symbols")
+              day_values = frame.set_index("SYMBOL")["DELIV_PER"].to_dict()
+              per_day.append(day_values)
+
+          common_symbols = set(per_day[0])
+          for day_values in per_day[1:]:
+              common_symbols.intersection_update(day_values)
+          qualifying = sorted(
+              symbol for symbol in common_symbols
+              if all(day_values[symbol] >= MIN_DELIVERY for day_values in per_day)
+          )
+          print(f"[DELIVERY] qualifying stocks with all five sessions >= {MIN_DELIVERY:.2f}%: {len(qualifying)}")
+
+          if not qualifying:
+              write_empty("NO_STOCKS_MET_ALL_FIVE_DAYS")
+              raise SystemExit(0)
+
+          screener = requests.Session()
+          screener.headers.update(SCREENER_HEADERS)
+          rows = []
+          for index, symbol in enumerate(qualifying, start=1):
+              valuation = relative_valuation(symbol, screener)
+              rows.append({"SYMBOL": symbol, "VALUATION": valuation})
+              # Avoid hammering the public valuation site.
+              if index < len(qualifying):
+                  time.sleep(0.7)
+
+          result = pd.DataFrame(rows, columns=["SYMBOL", "VALUATION"])
+          result.to_csv(OUTPUT, index=False)
+          print("\n===== FINAL OUTPUT: qualifying stock names and relative valuation only =====")
+          if result.empty:
+              print("No qualifying stocks.")
+          else:
+              print(result.to_string(index=False))
+          print(f"[DONE] wrote {OUTPUT} with {len(result)} rows")
+          PY
+
+      - name: Upload result CSV
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: delivery-60-valuation-watchlist-${{ github.run_id }}
+          path: delivery_60_valuation_watchlist.csv
+          if-no-files-found: warn
