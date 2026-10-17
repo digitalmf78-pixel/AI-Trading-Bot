@@ -22,7 +22,9 @@ jobs:
       - name: Restore existing NSE delivery cache
         uses: actions/cache@v5
         with:
-          path: data/cache/delivery/
+          path: |
+            data/cache/delivery/
+            data/cache/valuation/
           key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-delivery-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
@@ -41,9 +43,11 @@ jobs:
         run: |
           python - <<'PY'
           import io
+          import json
           import re
           import statistics
           import time
+          from concurrent.futures import ThreadPoolExecutor, as_completed
           from datetime import timedelta, datetime
           from pathlib import Path
           from zoneinfo import ZoneInfo
@@ -54,6 +58,9 @@ jobs:
           from delivery_filter import get_delivery_sessions
 
           OUTPUT = Path("delivery_60_valuation_watchlist.csv")
+          VALUATION_CACHE = Path("data/cache/valuation/screener_relative_valuation.json")
+          VALUATION_CACHE_TTL_SECONDS = 36 * 60 * 60
+          VALUATION_WORKERS = 6
           MIN_DELIVERY = 60.0
           REQUIRED_SESSIONS = 5
           MAX_ASOF_LOOKBACK_DAYS = 10
@@ -94,61 +101,82 @@ jobs:
               except ValueError:
                   return None
 
-          def relative_valuation(symbol, http):
-              """Compare positive current P/E with median positive peer P/E from Screener.in.
+          def load_valuation_cache():
+              try:
+                  data = json.loads(VALUATION_CACHE.read_text(encoding="utf-8"))
+                  return data if isinstance(data, dict) else {}
+              except (OSError, json.JSONDecodeError):
+                  return {}
 
-              <=80% of peer median => RELATIVELY_UNDERVALUED; 80%-120% => FAIRLY_VALUED;
-              >120% => RELATIVELY_OVERVALUED. Missing/negative P/E or peers => DATA_INSUFFICIENT.
-              This is a relative P/E label, not an intrinsic-value guarantee.
+          valuation_cache = load_valuation_cache()
+
+          def save_valuation_cache():
+              VALUATION_CACHE.parent.mkdir(parents=True, exist_ok=True)
+              temporary = VALUATION_CACHE.with_suffix(".tmp")
+              temporary.write_text(json.dumps(valuation_cache, sort_keys=True), encoding="utf-8")
+              temporary.replace(VALUATION_CACHE)
+
+          def relative_valuation(symbol):
+              """Compare current positive P/E with a peer median when the page exposes one.
+
+              Cache results for 36 hours and use a small bounded worker pool to avoid
+              spending 7+ minutes doing 388 serial requests. If peer data is absent,
+              keep DATA_INSUFFICIENT rather than guessing a cheap/expensive label.
               """
+              now = time.time()
+              cached = valuation_cache.get(symbol)
+              if isinstance(cached, dict) and now - float(cached.get("timestamp", 0)) < VALUATION_CACHE_TTL_SECONDS:
+                  return cached.get("valuation", "DATA_INSUFFICIENT"), "CACHE"
+
               url = f"https://www.screener.in/company/{symbol}/"
               try:
-                  response = http.get(url, timeout=20)
+                  with requests.Session() as http:
+                      http.headers.update(SCREENER_HEADERS)
+                      response = http.get(url, timeout=15)
                   if response.status_code != 200 or len(response.text) < 1000:
-                      print(f"[VALUATION] {symbol}: Screener unavailable (HTTP {response.status_code})")
-                      return "DATA_INSUFFICIENT"
-                  soup = BeautifulSoup(response.text, "lxml")
-                  text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
-                  # Read the company's current Stock P/E from the overview text.
-                  own_match = re.search(r"Stock\s+P\s*/\s*E\s+([\d,]+(?:\.\d+)?)", text, flags=re.I)
-                  own_pe = parse_number(own_match.group(1)) if own_match else None
-                  if own_pe is None:
-                      print(f"[VALUATION] {symbol}: current positive P/E unavailable")
-                      return "DATA_INSUFFICIENT"
-
-                  peer_pes = []
-                  try:
-                      tables = pd.read_html(io.StringIO(response.text))
-                  except Exception:
-                      tables = []
-                  for table in tables:
-                      table.columns = [re.sub(r"\s+", " ", str(c)).strip().upper() for c in table.columns]
-                      pe_col = next((c for c in table.columns if "STOCK P/E" in c or c == "P/E" or c.endswith(" P/E")), None)
-                      if pe_col is None or len(table) < 3:
-                          continue
-                      for value in table[pe_col].tolist():
-                          pe = parse_number(value)
-                          if pe is not None:
-                              peer_pes.append(pe)
-                  # Do not classify against a single observation; require at least three positive P/E values.
-                  if len(peer_pes) < 3:
-                      print(f"[VALUATION] {symbol}: insufficient peer P/E observations ({len(peer_pes)})")
-                      return "DATA_INSUFFICIENT"
-                  peer_median = statistics.median(peer_pes)
-                  if peer_median <= 0:
-                      return "DATA_INSUFFICIENT"
-                  ratio = own_pe / peer_median
-                  if ratio <= 0.80:
-                      result = "RELATIVELY_UNDERVALUED"
-                  elif ratio <= 1.20:
-                      result = "FAIRLY_VALUED"
+                      result = "DATA_INSUFFICIENT"
+                      reason = f"Screener unavailable (HTTP {response.status_code})"
                   else:
-                      result = "RELATIVELY_OVERVALUED"
-                  print(f"[VALUATION] {symbol}: own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f} => {result}")
-                  return result
+                      soup = BeautifulSoup(response.text, "lxml")
+                      page_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+                      own_match = re.search(r"Stock\s+P\s*/\s*E\s+([\d,]+(?:\.\d+)?)", page_text, flags=re.I)
+                      own_pe = parse_number(own_match.group(1)) if own_match else None
+                      if own_pe is None:
+                          result, reason = "DATA_INSUFFICIENT", "current positive P/E unavailable"
+                      else:
+                          peer_pes = []
+                          try:
+                              tables = pd.read_html(io.StringIO(response.text))
+                          except Exception:
+                              tables = []
+                          for table in tables:
+                              table.columns = [re.sub(r"\s+", " ", str(c)).strip().upper() for c in table.columns]
+                              pe_col = next((c for c in table.columns if "STOCK P/E" in c or c == "P/E" or c.endswith(" P/E")), None)
+                              if pe_col is None or len(table) < 3:
+                                  continue
+                              for value in table[pe_col].tolist():
+                                  pe = parse_number(value)
+                                  if pe is not None:
+                                      peer_pes.append(pe)
+                          if len(peer_pes) < 3:
+                              result, reason = "DATA_INSUFFICIENT", f"insufficient peer P/E observations ({len(peer_pes)})"
+                          else:
+                              peer_median = statistics.median(peer_pes)
+                              ratio = own_pe / peer_median if peer_median > 0 else None
+                              if ratio is None:
+                                  result, reason = "DATA_INSUFFICIENT", "peer median invalid"
+                              elif ratio <= 0.80:
+                                  result, reason = "RELATIVELY_UNDERVALUED", f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
+                              elif ratio <= 1.20:
+                                  result, reason = "FAIRLY_VALUED", f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
+                              else:
+                                  result, reason = "RELATIVELY_OVERVALUED", f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
               except Exception as exc:
-                  print(f"[VALUATION] {symbol}: {type(exc).__name__}: {exc}")
-                  return "DATA_INSUFFICIENT"
+                  result, reason = "DATA_INSUFFICIENT", f"{type(exc).__name__}: {exc}"
+
+              valuation_cache[symbol] = {"valuation": result, "timestamp": now}
+              print(f"[VALUATION] {symbol}: {reason} => {result}")
+              return result, "FETCH"
 
           def write_empty(status):
               pd.DataFrame(columns=["SYMBOL", "VALUATION"]).to_csv(OUTPUT, index=False)
@@ -223,17 +251,25 @@ jobs:
               write_empty("NO_STOCKS_MET_ALL_FIVE_DAYS")
               raise SystemExit(0)
 
-          screener = requests.Session()
-          screener.headers.update(SCREENER_HEADERS)
-          rows = []
-          for index, symbol in enumerate(qualifying, start=1):
-              valuation = relative_valuation(symbol, screener)
-              rows.append({"SYMBOL": symbol, "VALUATION": valuation})
-              # Avoid hammering the public valuation site.
-              if index < len(qualifying):
-                  time.sleep(0.7)
+          rows_by_symbol = {}
+          cache_hits = 0
+          fetches = 0
+          with ThreadPoolExecutor(max_workers=VALUATION_WORKERS) as pool:
+              future_map = {pool.submit(relative_valuation, symbol): symbol for symbol in qualifying}
+              for future in as_completed(future_map):
+                  symbol = future_map[future]
+                  try:
+                      valuation, source = future.result()
+                  except Exception as exc:
+                      valuation, source = "DATA_INSUFFICIENT", "ERROR"
+                      print(f"[VALUATION] {symbol}: worker error {type(exc).__name__}: {exc}")
+                  rows_by_symbol[symbol] = {"SYMBOL": symbol, "VALUATION": valuation}
+                  cache_hits += source == "CACHE"
+                  fetches += source == "FETCH"
+          save_valuation_cache()
+          print(f"[VALUATION-SUMMARY] cache_hits={cache_hits}; fetched={fetches}; workers={VALUATION_WORKERS}")
 
-          result = pd.DataFrame(rows, columns=["SYMBOL", "VALUATION"])
+          result = pd.DataFrame([rows_by_symbol[s] for s in qualifying], columns=["SYMBOL", "VALUATION"])
           result.to_csv(OUTPUT, index=False)
           print("\n===== FINAL OUTPUT: qualifying stock names and relative valuation only =====")
           if result.empty:
