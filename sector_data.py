@@ -747,48 +747,99 @@ def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> st
     return ""
 
 
+NSE_NEXT_QUOTE_URL = "https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi"
+
+
+def _classification_from_nse_payload(payload: dict[str, Any]) -> dict[str, str]:
+    """Normalize classification fields from current or legacy NSE quote JSON."""
+    info = payload.get("industryInfo")
+    if isinstance(info, dict):
+        return {
+            "macro": str(info.get("macro") or "").strip(),
+            "sector": str(info.get("sector") or "").strip(),
+            "industry": str(info.get("industry") or "").strip(),
+            "basicIndustry": str(info.get("basicIndustry") or "").strip(),
+        }
+
+    # Current NSE quote backend reshapes company data under equityResponse[0].secInfo.
+    rows = payload.get("equityResponse")
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        info = rows[0].get("secInfo") or {}
+        if isinstance(info, dict):
+            return {
+                "macro": str(info.get("macro") or "").strip(),
+                "sector": str(info.get("sector") or "").strip(),
+                "industry": str(info.get("industryInfo") or info.get("industry") or "").strip(),
+                "basicIndustry": str(info.get("basicIndustry") or "").strip(),
+            }
+    return {"macro": "", "sector": "", "industry": "", "basicIndustry": ""}
+
+
 def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
-    """Fetch official NSE industryInfo, falling back to NSE's rendered quote page."""
-    headers = {
+    """Fetch classification from the current NSE quote backend, then legacy API/page.
+
+    The legacy /api/quote-equity endpoint has been returning HTTP 403. Current
+    NSE quote clients use GetQuoteApi?functionName=getSymbolData and read the
+    company classification from equityResponse[0].secInfo. Only explicit NSE
+    classification values are returned; unknowns remain unavailable.
+    """
+    symbol = _clean_symbol(symbol)
+    current_url = NSE_NEXT_QUOTE_URL
+    current_headers = {
         **NSE_HEADERS,
+        "Accept": "application/json, text/plain, */*",
         "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
     }
+    current_params = {
+        "functionName": "getSymbolData",
+        "marketType": "N",
+        "series": "EQ",
+        "symbol": symbol,
+    }
     last_error = "no response"
+
+    # Warm the same NSE session before the current quote endpoint; do not rely
+    # on the legacy endpoint's response shape.
+    _warm_nse_session(session)
     for attempt in range(1, 3):
         try:
-            response = session.get(
-                NSE_QUOTE_URL,
-                params={"symbol": symbol},
-                headers=headers,
-                timeout=18,
-            )
+            response = session.get(current_url, params=current_params, headers=current_headers, timeout=20)
             if response.status_code == 200:
                 payload = response.json()
-                info = payload.get("industryInfo") or {}
-                if isinstance(info, dict):
-                    return {
-                        "macro": str(info.get("macro") or "").strip(),
-                        "sector": str(info.get("sector") or "").strip(),
-                        "industry": str(info.get("industry") or "").strip(),
-                        "basicIndustry": str(info.get("basicIndustry") or "").strip(),
-                    }
-                last_error = "industryInfo is not an object"
-                break
-            last_error = f"HTTP {response.status_code}"
-            print(f"[SECTOR] NSE quote {symbol}: {last_error} (attempt {attempt}/2)")
+                result = _classification_from_nse_payload(payload if isinstance(payload, dict) else {})
+                if any(result.values()):
+                    print(f"[SECTOR] NSE current quote classification {symbol}: sector='{result['sector']}', basicIndustry='{result['basicIndustry']}'")
+                    return result
+                last_error = "current GetQuoteApi response had no secInfo classification fields"
+            else:
+                last_error = f"current GetQuoteApi HTTP {response.status_code}"
+            print(f"[SECTOR] NSE current quote {symbol}: {last_error} (attempt {attempt}/2)")
             if response.status_code not in {403, 429, 500, 502, 503, 504}:
                 break
             time.sleep(0.8 * attempt)
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
-            print(f"[SECTOR] NSE quote {symbol} request failed (attempt {attempt}/2): {last_error}")
+            print(f"[SECTOR] NSE current quote {symbol} request failed (attempt {attempt}/2): {last_error}")
             time.sleep(0.5 * attempt)
+
+    # Retain legacy route as a fallback for deployments where it still works.
+    headers = {**NSE_HEADERS, "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}"}
+    try:
+        response = session.get(NSE_QUOTE_URL, params={"symbol": symbol}, headers=headers, timeout=18)
+        if response.status_code == 200:
+            result = _classification_from_nse_payload(response.json())
+            if any(result.values()):
+                return result
+        else:
+            print(f"[SECTOR] NSE legacy quote {symbol}: HTTP {response.status_code}")
+    except Exception as exc:
+        print(f"[SECTOR] NSE legacy quote {symbol} failed: {type(exc).__name__}: {exc}")
 
     basic_industry = _nse_quote_page_basic_industry(session, symbol)
     if basic_industry:
         return {"macro": "", "sector": "", "industry": "", "basicIndustry": basic_industry}
     raise requests.RequestException(
-        f"NSE quote API failed ({last_error}) and official quote-page fallback had no Basic Industry"
+        f"NSE current quote, legacy quote, and quote-page extraction unavailable for {symbol}; last error: {last_error}"
     )
 
 

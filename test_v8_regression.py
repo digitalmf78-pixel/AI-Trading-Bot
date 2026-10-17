@@ -460,6 +460,35 @@ def test_etf_like_instruments_are_excluded_before_stock_ranking():
     assert cleaned["TckrSymb"].tolist() == ["SINGERIND"], cleaned["TckrSymb"].tolist()
 
 
+
+def test_current_nse_getquote_payload_classification_extraction():
+    payload = {
+        "equityResponse": [{
+            "secInfo": {
+                "macro": "Consumer Discretionary",
+                "sector": "Automobile and Auto Components",
+                "industryInfo": "Auto Components",
+                "basicIndustry": "Auto Components & Equipments",
+            }
+        }]
+    }
+    result = sector_data._classification_from_nse_payload(payload)
+    assert result["macro"] == "Consumer Discretionary"
+    assert result["sector"] == "Automobile and Auto Components"
+    assert result["industry"] == "Auto Components"
+    assert result["basicIndustry"] == "Auto Components & Equipments"
+
+
+def test_legacy_nse_quote_payload_classification_extraction():
+    payload = {"industryInfo": {
+        "macro": "Financial Services", "sector": "Banks",
+        "industry": "Banks", "basicIndustry": "Private Sector Bank",
+    }}
+    result = sector_data._classification_from_nse_payload(payload)
+    assert result["basicIndustry"] == "Private Sector Bank"
+    assert result["sector"] == "Banks"
+
+
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
@@ -483,6 +512,8 @@ if __name__ == "__main__":
         test_mixed_improving_trend_does_not_confirm_core_setup,
         test_breakout_selector_rejects_clv_equal_to_075,
         test_etf_like_instruments_are_excluded_before_stock_ranking,
+        test_current_nse_getquote_payload_classification_extraction,
+        test_legacy_nse_quote_payload_classification_extraction,
     ]
     for test in tests:
         test()
@@ -506,3 +537,5 @@ def test_sector_quote_page_has_canonical_routes_for_current_unresolved_symbols()
         assert f'"{symbol}": "{slug}"' in source, (symbol, slug)
     # No symbol is assigned a sector by this route alone; it only enables a
     # canonical official page fetch, and mapping still requires exact taxonomy.
+
+
