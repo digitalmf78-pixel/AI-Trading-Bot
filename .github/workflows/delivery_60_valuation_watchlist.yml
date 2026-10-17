@@ -19,15 +19,59 @@ jobs:
       - name: Checkout existing repository modules and cache
         uses: actions/checkout@v5
 
-      - name: Restore existing NSE delivery cache
+      # IMPORTANT: The first cache step intentionally uses the exact same path list,
+      # key prefix, and restore prefix as .github/workflows/nse-test-scheduled.yml.
+      # GitHub cache version depends on the path list; omitting data/bhavcopy or the
+      # sector paths prevents restoration of the main workflow's existing cache.
+      - name: Restore existing NSE V8 data cache (same paths as main workflow)
         uses: actions/cache@v5
         with:
           path: |
+            data/bhavcopy/
             data/cache/delivery/
-            data/cache/valuation/
-          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-delivery-${{ github.run_id }}
+            data/cache/sector_index_daily/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+
+      # Keep valuation cache separate so it does not change the cache version
+      # needed to restore the main V8 cache above.
+      - name: Restore separate valuation result cache
+        uses: actions/cache@v5
+        with:
+          path: data/cache/valuation/
+          key: delivery-60-valuation-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            delivery-60-valuation-${{ runner.os }}-${{ github.ref_name }}-
+
+      - name: Diagnose restored cache before processing
+        shell: bash
+        run: |
+          echo "===== EXISTING NSE CACHE FILE COUNTS ====="
+          for dir in data/bhavcopy data/cache/delivery data/cache/sector_index_daily data/cache/valuation; do
+            if [ -d "$dir" ]; then
+              printf '%s: ' "$dir"
+              find "$dir" -maxdepth 1 -type f | wc -l
+            else
+              echo "$dir: 0 (directory absent)"
+            fi
+          done
+          echo "===== HISTORICAL BHAVCOPY DATE SPAN ====="
+          python - <<'PYDATES'
+          from pathlib import Path
+          import re
+          files = sorted(Path("data/bhavcopy").glob("bhavcopy_????????.csv"))
+          dates = [m.group(1) for p in files if (m := re.fullmatch(r"bhavcopy_(\d{8})\.csv", p.name))]
+          print(f"historical_bhavcopy_files={len(dates)}")
+          if dates:
+              print(f"oldest={min(dates)} newest={max(dates)}")
+          delivery_files = sorted(Path("data/cache/delivery").glob("sec_bhavdata_full_*.csv"))
+          print(f"delivery_report_files={len(delivery_files)}")
+          if delivery_files:
+              print("delivery_report_names=" + ", ".join(p.name for p in delivery_files[-8:]))
+          PYDATES
 
       - name: Set up Python
         uses: actions/setup-python@v6
