@@ -404,7 +404,7 @@ def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Elem
         landing = session.get("https://www.nseindia.com/companies-listing/corporate-filings-announcements", timeout=15)
         landing.raise_for_status()
         response = session.get(
-            "https://www.nseindia.com/api/corporates-announcements",
+            "https://www.nseindia.com/api/corporate-announcements",
             params={"index": "equities", "symbol": str(symbol).upper(), "from_date": start, "to_date": end},
             timeout=20,
         )
