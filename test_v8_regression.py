@@ -492,10 +492,81 @@ def test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter(
     assert fake.calls[1][1]["params"]["to_date"] == "16-10-2026"
 
 
+def test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts():
+    from contextlib import redirect_stdout
+    from io import StringIO
+    class FakeResponse:
+        def __init__(self, payload=None, content=b"{}", status_code=200, headers=None):
+            self.payload = payload
+            self.content = content
+            self.status_code = status_code
+            self.headers = headers or {"Content-Type": "application/json"}
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def __init__(self):
+            self.headers = {}
+            self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if "corporate-filings-announcements" in url:
+                return FakeResponse([], content=b"<html>landing</html>", headers={"Content-Type": "text/html"})
+            return FakeResponse([
+                {"symbol": "ABC", "desc": "ABC receives an order", "an_dt": "16-Oct-2026 15:00:00", "seq_id": "123"},
+                {"symbol": "XYZ", "desc": "Different issuer", "an_dt": "16-Oct-2026 15:01:00", "seq_id": "124"},
+            ], content=b'json-response-body', headers={"Content-Type": "application/json; charset=utf-8"})
+
+    fake = FakeSession()
+    original_session = news_catalyst.requests.Session
+    captured = StringIO()
+    try:
+        news_catalyst.requests.Session = lambda: fake
+        with redirect_stdout(captured):
+            items = news_catalyst._nse_announcement_api_items("ABC", "2026-10-10", "2026-10-16")
+    finally:
+        news_catalyst.requests.Session = original_session
+    output = captured.getvalue()
+    assert len(items) == 1
+    assert "NSE_API_LANDING symbol=ABC status=200 content_type='text/html'" in output, output
+    assert "NSE_API_RAW_RESPONSE symbol=ABC status=200 content_type='application/json; charset=utf-8'" in output, output
+    assert "payload_type=list raw_records=2 dict_records=2" in output, output
+    assert "field_names=['an_dt', 'desc', 'seq_id', 'symbol']" in output, output
+    assert "normalized_items=1 symbol_mismatch=1" in output, output
+
+
+def test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff():
+    start_utc, end_utc, start_ist, end_ist, mode = news_catalyst._news_window_bounds(
+        "2026-10-16", scan_mode="EOD", now="2026-10-16T22:10:00+05:30"
+    )
+    assert mode == "EOD"
+    assert start_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-12 00:00:00 IST", start_ist
+    assert end_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-16 22:00:00 IST", end_ist
+    assert (end_ist.normalize() - start_ist.normalize()).days == 4
+    assert start_utc < end_utc
+
+
+def test_news_window_premarket_covers_five_calendar_days_including_weekend_to_0915():
+    start_utc, end_utc, start_ist, end_ist, mode = news_catalyst._news_window_bounds(
+        "2026-10-16", scan_mode="PREMARKET", now="2026-10-19T09:05:00+05:30"
+    )
+    assert mode == "PREMARKET"
+    assert start_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-15 00:00:00 IST", start_ist
+    assert end_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-19 09:15:00 IST", end_ist
+    assert start_utc < end_utc
+    assert start_ist.date() <= pd.Timestamp("2026-10-17").date()  # weekend included
+    assert end_ist.hour == 9 and end_ist.minute == 15
+
+
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
         test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
+        test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts,
+        test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff,
+        test_news_window_premarket_covers_five_calendar_days_including_weekend_to_0915,
         test_nse_naive_rss_timestamp_is_interpreted_as_ist_for_eod_window,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,

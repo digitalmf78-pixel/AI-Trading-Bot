@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -392,41 +393,86 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
 
 
 def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Element]:
-    """Fetch issuer/date-filtered announcements from NSE's official JSON endpoint.
+    """Fetch NSE announcements and log bounded raw-response diagnostics.
 
-    This is a fallback for the global RSS feed, which often contains only the
-    latest announcements (and therefore can be entirely after a historical EOD
-    cutoff). It uses a normal landing-page request to establish a session; it
-    does not bypass access controls. If NSE blocks the request, callers retain
-    WAIT_FOR_DATA rather than treating secondary coverage as primary evidence.
+    Diagnostics report status, content type, byte count, payload type/count,
+    field names and a few non-sensitive record summaries. The function does
+    not weaken date cutoffs, infer missing announcements, or bypass access
+    controls. An empty response remains empty evidence.
     """
     start = pd.Timestamp(from_date).strftime("%d-%m-%Y")
     end = pd.Timestamp(to_date).strftime("%d-%m-%Y")
+    requested_symbol = str(symbol).strip().upper()
     session = requests.Session()
     session.headers.update({**HEADERS, "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-announcements"})
     try:
-        landing = session.get("https://www.nseindia.com/companies-listing/corporate-filings-announcements", timeout=15)
+        landing_url = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+        landing = session.get(landing_url, timeout=15)
         landing.raise_for_status()
-        response = session.get(
-            "https://www.nseindia.com/api/corporate-announcements",
-            params={"index": "equities", "symbol": str(symbol).upper(), "from_date": start, "to_date": end},
-            timeout=20,
+        landing_headers = getattr(landing, "headers", {}) or {}
+        landing_content = getattr(landing, "content", b"") or b""
+        print(
+            f"[NEWS-DIAG] NSE_API_LANDING symbol={requested_symbol} "
+            f"status={getattr(landing, 'status_code', 'unknown')} "
+            f"content_type={landing_headers.get('Content-Type', 'unknown')!r} "
+            f"bytes={len(landing_content)}"
         )
+
+        api_url = "https://www.nseindia.com/api/corporate-announcements"
+        params = {"index": "equities", "symbol": requested_symbol, "from_date": start, "to_date": end}
+        response = session.get(api_url, params=params, timeout=20)
         response.raise_for_status()
+        response_headers = getattr(response, "headers", {}) or {}
+        raw_content = getattr(response, "content", b"") or b""
+        print(
+            f"[NEWS-DIAG] NSE_API_RAW_RESPONSE symbol={requested_symbol} "
+            f"status={getattr(response, 'status_code', 'unknown')} "
+            f"content_type={response_headers.get('Content-Type', 'unknown')!r} "
+            f"bytes={len(raw_content)} range={start}:{end} params={params!r}"
+        )
+
         payload = response.json()
-        if not isinstance(payload, list):
-            print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_BAD_PAYLOAD symbol={symbol} type={type(payload).__name__}")
+        if isinstance(payload, list):
+            raw_count = len(payload)
+            dict_records = [record for record in payload if isinstance(record, dict)]
+            field_names = sorted({str(key) for record in dict_records for key in record.keys()})
+            print(
+                f"[NEWS-DIAG] NSE_API_PAYLOAD symbol={requested_symbol} "
+                f"payload_type=list raw_records={raw_count} dict_records={len(dict_records)} "
+                f"field_names={field_names!r}"
+            )
+            samples = []
+            for record in dict_records[:3]:
+                samples.append({
+                    "symbol": str(record.get("symbol", ""))[:30],
+                    "date": str(record.get("an_dt") or record.get("sort_date") or record.get("dt") or "")[:50],
+                    "subject": str(record.get("desc") or record.get("subject") or "")[:120],
+                    "seq_id": str(record.get("seq_id") or "")[:40],
+                })
+            print(f"[NEWS-DIAG] NSE_API_SAMPLE_RECORDS symbol={requested_symbol} samples={samples!r}")
+        else:
+            print(
+                f"[NEWS-DIAG] NSE_API_PAYLOAD symbol={requested_symbol} "
+                f"payload_type={type(payload).__name__} raw_records=NA "
+                f"field_names=NA"
+            )
             return []
+
         items: list[ET.Element] = []
-        for record in payload:
-            if not isinstance(record, dict):
-                continue
+        symbol_mismatch = 0
+        records_without_symbol = 0
+        records_without_date = 0
+        for record in dict_records:
             record_symbol = str(record.get("symbol", "")).strip().upper()
             # The endpoint is symbol-filtered, but verify every returned row.
-            if record_symbol and record_symbol != str(symbol).upper():
+            if record_symbol and record_symbol != requested_symbol:
+                symbol_mismatch += 1
                 continue
-            item = ET.Element("item")
+            if not record_symbol:
+                records_without_symbol += 1
             raw_stamp = record.get("an_dt") or record.get("sort_date") or record.get("dt") or ""
+            if not raw_stamp:
+                records_without_date += 1
             try:
                 parsed_stamp = pd.Timestamp(raw_stamp)
                 if not pd.isna(parsed_stamp):
@@ -445,15 +491,63 @@ def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Elem
                 "symbol": record_symbol,
                 "eventid": record.get("seq_id") or "",
             }
+            item = ET.Element("item")
             for key, value in fields.items():
                 node = ET.SubElement(item, key)
                 node.text = str(value or "")
             items.append(item)
-        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_OK symbol={symbol} items={len(items)} range={start}:{end}")
+        print(
+            f"[NEWS-DIAG] NSE_API_NORMALIZE_SUMMARY symbol={requested_symbol} "
+            f"raw_records={len(payload)} dict_records={len(dict_records)} "
+            f"normalized_items={len(items)} symbol_mismatch={symbol_mismatch} "
+            f"records_without_symbol={records_without_symbol} records_without_date={records_without_date}"
+        )
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_OK symbol={requested_symbol} items={len(items)} range={start}:{end}")
         return items
     except Exception as exc:
-        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_FAIL symbol={symbol} range={start}:{end} error={type(exc).__name__}: {exc}")
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_FAIL symbol={requested_symbol} range={start}:{end} error={type(exc).__name__}: {exc}")
         return []
+
+
+def _news_window_bounds(eod_date, scan_mode=None, now=None):
+    """Return the news scan window as UTC bounds plus its IST display bounds.
+
+    EOD mode: five calendar dates inclusive, from 00:00 IST on EOD date - 4
+    days through 22:00 IST on the EOD date.
+
+    PREMARKET mode: five calendar dates inclusive relative to the next entry
+    session's local scan date, through 09:15 IST on that date. This captures
+    overnight/weekend announcements without changing the technical EOD date.
+    """
+    mode = str(scan_mode or os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
+    if mode not in {"EOD", "PREMARKET"}:
+        print(f"[NEWS-DIAG] UNKNOWN_SCAN_MODE requested={mode!r}; falling back to EOD")
+        mode = "EOD"
+
+    if now is None:
+        now_ist = pd.Timestamp.now(tz="Asia/Kolkata")
+    else:
+        now_ist = pd.Timestamp(now)
+        now_ist = now_ist.tz_localize("Asia/Kolkata") if now_ist.tzinfo is None else now_ist.tz_convert("Asia/Kolkata")
+
+    if mode == "PREMARKET":
+        end_day = now_ist.normalize()
+        start_ist = end_day - pd.Timedelta(days=4)
+        end_ist = end_day + pd.Timedelta(hours=9, minutes=15)
+    else:
+        eod_day = pd.Timestamp(eod_date)
+        eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
+        end_day = eod_day.normalize()
+        start_ist = end_day - pd.Timedelta(days=4)
+        end_ist = end_day + pd.Timedelta(hours=22)
+
+    return (
+        start_ist.tz_convert("UTC").to_pydatetime(),
+        end_ist.tz_convert("UTC").to_pydatetime(),
+        start_ist,
+        end_ist,
+        mode,
+    )
 
 
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
@@ -485,41 +579,22 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         f"candidate_count={len(symbols)} mapped_company_names={sum(bool(str(names.get(sym, '')).strip()) for sym in symbols)} "
         f"candidates={[(sym, names.get(sym, '')) for sym in sorted(symbols)]!r}"
     )
-    try:
-        if session_dates:
-            # Use the oldest of the latest five actual NSE EOD sessions (current
-            # session + previous four), not a five-calendar-day approximation.
-            normalized_dates = []
-            for value in session_dates:
-                session_day = pd.Timestamp(value)
-                if session_day.tzinfo is not None:
-                    session_day = session_day.tz_convert("Asia/Kolkata").tz_localize(None)
-                normalized_dates.append(session_day.normalize())
-            first_session = min(normalized_dates).tz_localize("Asia/Kolkata")
-            cutoff = first_session.to_pydatetime().astimezone(timezone.utc)
-        else:
-            # Backwards-compatible fallback for callers that do not supply the
-            # exchange-session calendar.
-            eod_day = pd.Timestamp(eod_date)
-            eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
-            # Fallback retrieval buffer; exact session_dates take precedence.
-            cutoff = (eod_day.normalize() - pd.Timedelta(days=10)).to_pydatetime().astimezone(timezone.utc)
-    except Exception:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=10)
-
-    # User-approved next-morning news window ends at 22:00 IST on the EOD date.
-    # Ignore future-dated records and anything posted after this cutoff.
-    try:
-        eod_day = pd.Timestamp(eod_date)
-        eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
-        window_end = (eod_day.normalize() + pd.Timedelta(hours=22)).to_pydatetime().astimezone(timezone.utc)
-    except Exception:
-        window_end = datetime.now(timezone.utc)
+    cutoff, window_end, window_start_ist, window_end_ist, scan_mode = _news_window_bounds(eod_date)
+    cutoff_ist_date = window_start_ist.date()
+    window_end_ist_date = window_end_ist.date()
+    print(
+        f"[NEWS-DIAG] NEWS_WINDOW mode={scan_mode} "
+        f"start_ist={window_start_ist.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+        f"end_ist={window_end_ist.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+        f"eod_date={pd.Timestamp(eod_date).date()} "
+        f"calendar_days=5"
+    )
 
     rows: list[dict[str, str]] = []
     status = {"NSE": "available", "secondary": "available"}
     nse_successes = 0
     nse_partial = False
+    official_window_records = 0
 
     # Read each exchange feed once, then map company names/symbols to the Top 20.
     for feed_name, feed_url in NSE_FEEDS.items():
@@ -592,6 +667,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             f"date_valid={date_valid} date_missing={date_missing} before_cutoff={before_cutoff} "
             f"after_window={after_window} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}"
         )
+        official_window_records += date_valid
         if date_valid == 0:
             print(f"[NEWS-DIAG] OFFICIAL_DATE_ZERO_SAMPLES feed={feed_name!r} samples={timestamp_samples!r}")
         if issuer_matches == 0 and in_window_samples:
@@ -600,17 +676,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     # The public RSS feeds are global and can contain only post-EOD items.
     # If a candidate has no official match from RSS, query NSE's issuer/date-
     # filtered official announcements endpoint for the same permitted window.
-    try:
-        cutoff_ist_date = pd.Timestamp(cutoff).tz_convert("Asia/Kolkata").date()
-        eod_ist_date = pd.Timestamp(eod_date)
-        eod_ist_date = eod_ist_date.tz_localize("Asia/Kolkata") if eod_ist_date.tzinfo is None else eod_ist_date.tz_convert("Asia/Kolkata")
-        eod_ist_date = eod_ist_date.date()
-    except Exception:
-        cutoff_ist_date = pd.Timestamp(eod_date).date() - pd.Timedelta(days=10)
-        eod_ist_date = pd.Timestamp(eod_date).date()
+    # The official API date parameters must match the same exact IST window used
+    # by RSS/secondary filtering (including Monday morning after a weekend).
+    api_start_date = cutoff_ist_date
+    api_end_date = window_end_ist_date
     primary_symbols_found = {str(row.get("TckrSymb", "")).upper() for row in rows if str(row.get("SourceType", "")).lower() == "primary"}
     for symbol in sorted(symbols - primary_symbols_found):
-        api_items = _nse_announcement_api_items(symbol, cutoff_ist_date, eod_ist_date)
+        api_items = _nse_announcement_api_items(symbol, api_start_date, api_end_date)
         api_matches = 0
         for item in api_items:
             title = _item_text(item, "title")
@@ -717,6 +789,48 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     secondary_rows = int((frame["SourceType"].astype(str).str.lower() == "secondary").sum()) if not frame.empty else 0
     print(f"[NEWS-DIAG] FINAL_SUMMARY candidates={len(symbols)} NSE_feed_status={status['NSE']} secondary_feed_status={status['secondary']} official_rows={official_rows} secondary_rows={secondary_rows} total_rows={len(frame)}")
     print(f"Catalyst scan: {len(frame)} matched filing/news rows across {len(symbols)} top-volume symbols.")
+
+    if scan_mode == "PREMARKET":
+        report_rows = []
+        for symbol in sorted(symbols):
+            matched = frame[frame["TckrSymb"].astype(str).str.upper() == symbol] if not frame.empty else pd.DataFrame(columns=NEWS_COLUMNS)
+            official = matched[matched["SourceType"].astype(str).str.lower().isin({"primary", "official", "exchange", "company", "regulator"})] if not matched.empty else pd.DataFrame(columns=NEWS_COLUMNS)
+            secondary = matched[~matched.index.isin(official.index)] if not matched.empty else pd.DataFrame(columns=NEWS_COLUMNS)
+            if not official.empty:
+                news_status = "OFFICIAL_NEWS_FOUND"
+                chosen = official.iloc[0]
+            elif status.get("NSE") != "available" or official_window_records == 0:
+                # Do not claim NO_NEWS_FOUND when the official feeds returned no
+                # records in the requested window; coverage cannot be established.
+                news_status = "WAIT_FOR_DATA"
+                chosen = secondary.iloc[0] if not secondary.empty else None
+            elif not secondary.empty:
+                news_status = "SECONDARY_ONLY_UNVERIFIED"
+                chosen = secondary.iloc[0]
+            else:
+                news_status = "NO_NEWS_FOUND"
+                chosen = None
+            report_rows.append({
+                "TckrSymb": symbol,
+                "EODDate": str(eod_date),
+                "ScanMode": scan_mode,
+                "WindowStartIST": window_start_ist.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "WindowEndIST": window_end_ist.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "NSEFeedStatus": status.get("NSE", "WAIT_FOR_DATA"),
+                "OfficialWindowRecords": official_window_records,
+                "NewsStatus": news_status,
+                "OfficialRows": len(official),
+                "SecondaryRows": len(secondary),
+                "Headline": str(chosen.get("Headline", "")) if chosen is not None else "",
+                "SourceType": str(chosen.get("SourceType", "")) if chosen is not None else "",
+                "PublishedAt": str(chosen.get("PublishedAt", "")) if chosen is not None else "",
+                "Source": str(chosen.get("Source", "")) if chosen is not None else "",
+                "URL": str(chosen.get("URL", "")) if chosen is not None else "",
+            })
+        Path("outputs").mkdir(parents=True, exist_ok=True)
+        premarket_path = Path("outputs") / "v8_premarket_news_check.csv"
+        pd.DataFrame(report_rows).to_csv(premarket_path, index=False)
+        print(f"[NEWS-DIAG] PREMARKET_REPORT path={premarket_path} candidates={len(report_rows)} official_window_records={official_window_records} statuses={pd.DataFrame(report_rows)['NewsStatus'].value_counts().to_dict() if report_rows else {}}")
     return frame, status
 
 
@@ -770,10 +884,13 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
 
     EMA44 proximity is reported but is never used to reject a shortlisted symbol.
     """
+    scan_mode = str(os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
     if result.empty:
+        heading = "🌅 NSE SWING TRADING V8.0 — PRE-MARKET NEWS CHECK" if scan_mode == "PREMARKET" else "NSE SWING TRADING V8.0 — EOD REPORT"
         return [
-            "NSE SWING TRADING V8.0 — EOD REPORT",
-            f"Date / तारीख: {eod_date}",
+            heading,
+            f"Latest EOD data date / शेवटचा EOD डेटा: {eod_date}",
+            "Premarket mode checks the previous five calendar days through 09:15 IST; this is a news refresh, not an automatic order." if scan_mode == "PREMARKET" else "",
             "आजच्या Pipeline मध्ये पुढील विश्लेषणासाठी पात्र Stock उपलब्ध नाही.",
             "No eligible candidate reached the detailed-analysis stage.",
             "हा निकाल EMA44 proximity मुळे नाही; आधीच्या selection gates चा परिणाम आहे.",
@@ -789,14 +906,25 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
         value = pd.to_numeric(pd.Series([row.get(key)]), errors="coerce").iloc[0]
         return f"{value:+.{digits}f}{suffix}" if pd.notna(value) and suffix == "%" else f"{value:.{digits}f}{suffix}" if pd.notna(value) else "NA / उपलब्ध नाही"
 
+    if scan_mode == "PREMARKET":
+        _, _, window_start_ist, window_end_ist, _ = _news_window_bounds(eod_date, scan_mode=scan_mode)
+        heading = "🌅 NSE SWING TRADING V8.0 — PRE-MARKET NEWS CHECK"
+        window_note = f"News window / बातम्यांचा कालावधी: {window_start_ist.strftime('%d-%b %H:%M')} to {window_end_ist.strftime('%d-%b %H:%M')} IST (5 calendar days; ends 09:15 IST)."
+        safety_note = "PRE-MARKET NEWS REVIEW ONLY — latest technical data is prior EOD; no automatic order or guaranteed entry."
+    else:
+        heading = "📊 NSE SWING TRADING V8.0 — EOD REPORT"
+        window_note = "News window: previous 5 calendar dates through 22:00 IST on the EOD date."
+        safety_note = "Analysis only — no automatic order; अंतिम Status सर्व V8 gates नंतरच."
+
     lines = [
-        "📊 NSE SWING TRADING V8.0 — EOD REPORT",
-        f"Date / तारीख: {eod_date}",
+        heading,
+        f"Latest EOD data date / शेवटचा EOD डेटा: {eod_date}",
+        window_note,
         f"Detailed candidates / तपासलेले Stocks: {len(candidates)}",
         "Rule: EMA20 कायम; EMA50 च्या जागी EMA44.",
         "महत्त्वाचे: NOT_NEAR_EMA44 हा फक्त माहितीचा Status आहे; यामुळे Shortlisted Stock Reject होत नाही.",
         "NOT_NEAR_EMA44 is informational only and does not reject a shortlisted stock.",
-        "Analysis only — no automatic order; अंतिम Status सर्व V8 gates नंतरच.",
+        safety_note,
         "",
     ]
     for number, (_, row) in enumerate(candidates.iterrows(), start=1):
