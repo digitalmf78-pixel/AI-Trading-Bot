@@ -93,6 +93,8 @@ jobs:
 
           echo "===== PYTEST PARSER TESTS ====="
           python -m pytest -q test_news_catalyst_parser.py
+          echo "===== UPCOMING CORPORATE EVENTS TESTS ====="
+          python -m pytest -q test_upcoming_corporate_events.py
 
       - name: Run NSE Volume Gainer
         env:
