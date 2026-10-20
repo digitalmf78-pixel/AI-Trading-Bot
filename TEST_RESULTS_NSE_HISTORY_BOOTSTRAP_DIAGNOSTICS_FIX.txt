@@ -1,0 +1,17 @@
+NSE V8.0 — Local Test Results
+Date: 20-Oct-2026
+
+PASS: Python compilation of sector_data.py and test_nse_official_index_api.py
+PASS: 38 unittest cases across:
+  - official NSE Historical Index API parsing and response diagnostics
+  - NiftyIndices fallback
+  - sector mapping cache reconciliation
+  - Sector/News regression tests
+  - official News feed diagnostics
+  - News Catalyst matching
+  - issuer matching
+PASS: 27 V8 regression tests
+PASS: 4 News parser pytest tests
+
+Important limitation:
+These tests use mocked HTTP responses. They do not prove that GitHub Actions can obtain live NSE historical records. The next workflow run must confirm whether the report-page bootstrap avoids the observed 403 and whether the API returns records for the six missing indices.

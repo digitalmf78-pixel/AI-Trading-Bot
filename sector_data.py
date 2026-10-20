@@ -354,19 +354,49 @@ def _history_from_nse_indices_api(
         "X-Requested-With": "XMLHttpRequest",
     }
 
-    try:
-        boot = session.get(
-            "https://www.nseindia.com/",
-            headers={**NSE_HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
-            timeout=12,
-        )
+    # The NSE home page returned HTTP 403 in the real GitHub Actions log.
+    # Bootstrap against the report page used by NSE's own historical-data
+    # workflow, then fall back to the historical page itself. Do not assume
+    # that a 200 HTML response means the session was successfully established.
+    bootstrap_urls = (
+        "https://www.nseindia.com/report-detail/eq_security",
+        history_page,
+        "https://www.nseindia.com/",
+    )
+    bootstrap_ok = False
+    for bootstrap_url in bootstrap_urls:
+        try:
+            boot = session.get(
+                bootstrap_url,
+                headers={
+                    **NSE_HEADERS,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Referer": history_page,
+                },
+                timeout=12,
+            )
+            boot_status = getattr(boot, "status_code", None)
+            boot_type = getattr(boot, "headers", {}).get("Content-Type", "(missing)")
+            print(
+                f"[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP "
+                f"url={bootstrap_url!r} status={boot_status!r} "
+                f"content_type={boot_type!r} "
+                f"cookies={len(getattr(session, 'cookies', {}) or {})}"
+            )
+            if boot_status == 200 and "text/html" in str(boot_type).lower():
+                bootstrap_ok = True
+                break
+        except Exception as exc:
+            print(
+                f"[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP_FAILED "
+                f"url={bootstrap_url!r} error={type(exc).__name__}: {exc}"
+            )
+    if not bootstrap_ok:
         print(
-            f"[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP status={getattr(boot, 'status_code', 'unknown')} "
-            f"content_type={getattr(boot, 'headers', {}).get('Content-Type', '(missing)')!r} "
-            f"cookies={len(getattr(session, 'cookies', {}) or {})}"
+            "[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP_UNCONFIRMED "
+            "all candidate pages failed or returned non-HTML/blocked responses; "
+            "API requests will be diagnostic only"
         )
-    except Exception as exc:
-        print(f"[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP_FAILED error={type(exc).__name__}: {exc}")
 
     wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
     rows: list[dict[str, Any]] = []
@@ -384,11 +414,12 @@ def _history_from_nse_indices_api(
             content_type = getattr(response, "headers", {}).get("Content-Type", "(missing)")
             response_url = getattr(response, "url", endpoint)
             body = getattr(response, "text", "") or ""
-            if getattr(response, "status_code", None) != 200:
+            response_status = getattr(response, "status_code", None)
+            if response_status != 200:
                 print(
                     f"[SECTOR][NSE_HISTORY_API] HTTP_ERROR sector={sector} indexType={index_type!r} "
-                    f"status={getattr(response, 'status_code', 'unknown')} url={response_url!r} "
-                    f"content_type={content_type!r} preview={body[:100]!r}"
+                    f"status={response_status!r} url={response_url!r} "
+                    f"content_type={content_type!r} preview={body[:160]!r}"
                 )
                 continue
             try:
@@ -414,12 +445,22 @@ def _history_from_nse_indices_api(
                 keys = sorted(payload.keys()) if isinstance(payload, dict) else []
                 nested = sorted(data_container.keys()) if isinstance(data_container, dict) else []
                 print(
-                    f"[SECTOR][NSE_HISTORY_API] INVALID_SCHEMA sector={sector} top_keys={keys!r} "
-                    f"data_type={type(data_container).__name__} nested_keys={nested!r}"
+                    f"[SECTOR][NSE_HISTORY_API] INVALID_SCHEMA sector={sector} "
+                    f"status={response_status!r} url={response_url!r} content_type={content_type!r} "
+                    f"top_keys={keys!r} data_type={type(data_container).__name__} nested_keys={nested!r} "
+                    f"preview={body[:160]!r}"
                 )
                 continue
             if not records:
-                print(f"[SECTOR][NSE_HISTORY_API] EMPTY_RECORDS sector={sector} indexType={index_type!r} date={asof.date()}")
+                keys = sorted(payload.keys()) if isinstance(payload, dict) else []
+                nested = sorted(data_container.keys()) if isinstance(data_container, dict) else []
+                print(
+                    f"[SECTOR][NSE_HISTORY_API] EMPTY_RECORDS sector={sector} "
+                    f"indexType={index_type!r} date={asof.date()} status={response_status!r} "
+                    f"url={response_url!r} content_type={content_type!r} "
+                    f"top_keys={keys!r} data_type={type(data_container).__name__} nested_keys={nested!r} "
+                    f"cookies={len(getattr(session, 'cookies', {}) or {})}"
+                )
                 continue
 
             accepted = 0

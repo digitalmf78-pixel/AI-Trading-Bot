@@ -110,8 +110,16 @@ class NSEHistorySession:
 
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        if url == "https://www.nseindia.com/":
-            return NSEHistoryResponse(text="<html>home</html>", content_type="text/html", url=url)
+        if url in {
+            "https://www.nseindia.com/report-detail/eq_security",
+            "https://www.nseindia.com/reports-indices-historical-index-data",
+            "https://www.nseindia.com/",
+        }:
+            return NSEHistoryResponse(
+                text="<html>official NSE report page</html>",
+                content_type="text/html; charset=utf-8",
+                url=url,
+            )
         return NSEHistoryResponse(payload=self.payload, url=url)
 
 
@@ -136,6 +144,14 @@ class NSEOfficialHistoryEndpointTests(unittest.TestCase):
         self.assertEqual(api_call[1]["params"]["indexType"], "NIFTY POWER")
         self.assertEqual(api_call[1]["params"]["from"], "05-08-2026")
         self.assertEqual(api_call[1]["params"]["to"], "19-10-2026")
+
+    def test_uses_report_detail_bootstrap_before_root_fallback(self):
+        session = NSEHistorySession({"data": {"indexCloseOnlineRecords": []}})
+        with patch.object(sector_data.time, "sleep", return_value=None):
+            sector_data._history_from_nse_indices_api(session, self.asof, {"Nifty Power"})
+        bootstrap_urls = [url for url, _kwargs in session.calls if "historicalOR/indicesHistory" not in url]
+        self.assertGreaterEqual(len(bootstrap_urls), 1)
+        self.assertEqual(bootstrap_urls[0], "https://www.nseindia.com/report-detail/eq_security")
 
     def test_empty_or_invalid_payload_stays_missing(self):
         session = NSEHistorySession({"data": {"indexCloseOnlineRecords": []}})
