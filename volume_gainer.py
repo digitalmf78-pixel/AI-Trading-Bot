@@ -13,6 +13,7 @@ from v8_layers_14_41 import (
     write_layer_status_summary,
 )
 import sector_data
+from main_board_filter import apply_official_main_board_filter
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
     collect_catalyst_news,
@@ -3282,12 +3283,31 @@ def main():
     )
 
     print(
-        f"Current valid symbols: "
+        f"Current valid symbols before Main Board classification: "
         f"{len(current)}"
     )
 
     # --------------------------------------------------------
-    # STEP 2A: MANDATORY DELIVERY-FIRST GATE (BEFORE VOLUME/RVOL/TOP 20)
+    # STEP 1B: OFFICIAL MAIN BOARD ONLY (SME EXCLUDED)
+    # --------------------------------------------------------
+    # Classification comes from NSE's official Equity-segment and SME CSVs.
+    # Unknown symbols are excluded; no name/price/series heuristic is used.
+    try:
+        current, board_audit = apply_official_main_board_filter(current, session=session)
+        os.makedirs("outputs", exist_ok=True)
+        board_audit.to_csv("outputs/v8_main_board_universe_audit.csv", index=False)
+    except Exception as exc:
+        print(f"[MAIN_BOARD] WAIT_FOR_DATA: official board classification could not be verified: {exc}")
+        current = current.iloc[0:0].copy()
+        os.makedirs("outputs", exist_ok=True)
+        pd.DataFrame(columns=["TckrSymb", "BoardClassification", "MainBoardStatus", "ClassificationSource"]).to_csv(
+            "outputs/v8_main_board_universe_audit.csv", index=False
+        )
+
+    print(f"Current verified Main Board symbols: {len(current)}")
+
+    # --------------------------------------------------------
+    # STEP 2A: MANDATORY DELIVERY-FIRST GATE (AFTER MAIN BOARD, BEFORE VOLUME/RVOL/TOP 20)
     # --------------------------------------------------------
     # Only stocks with Delivery >=60.00% on EACH of the latest five distinct
     # valid sessions proceed. Average Delivery is descriptive, not a gate.

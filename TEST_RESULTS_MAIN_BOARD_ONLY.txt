@@ -1,0 +1,5 @@
+NSE V8 Main Board-only patch validation
+python -m py_compile volume_gainer.py main_board_filter.py: PASS
+python -m pytest -q test_*.py: 103 passed
+Note: Full pytest discovery (`python -m pytest -q`) is not valid in this repository because the existing `delivery_60_valuation_watchlist_inline_test.py` executes and raises SystemExit during collection. This separate Delivery Watchlist file was not changed.
+Note: Local runtime NSE network fetch was unavailable in the sandbox; live GitHub Actions verification is still required after applying the patch.
