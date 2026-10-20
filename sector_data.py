@@ -329,151 +329,118 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
     return rows, len(exact_sectors)
 
 
-def _history_from_nse_official_api(
+def _history_from_nse_indices_api(
     session: requests.Session,
     asof: pd.Timestamp,
     sectors_to_fetch: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Fetch exact-dated sector-index closes from NSE's official historical API.
+    """Fetch missing index closes from NSE's official indicesHistory endpoint.
 
-    This is the first fallback when the official daily all-indices CSV omits a
-    tracked index. Only an explicit response index name and valid EOD timestamp /
-    close are accepted. HTML, empty payloads, wrong index identities and invalid
-    rows remain missing; no close is inferred from another index.
+    The previous fallback called niftyindices.com's Backpage endpoint. GitHub
+    Actions logs showed that endpoint redirects to Sitefinity/Login and returns
+    HTML, so it cannot be relied on from the workflow. This fallback uses NSE's
+    public historicalOR/indicesHistory endpoint, bootstraps an NSE session, and
+    parses data.indexCloseOnlineRecords. Only exact official index-name matches
+    and valid dated positive closes are accepted; nothing is synthesized.
     """
     endpoint = "https://www.nseindia.com/api/historicalOR/indicesHistory"
-    bootstrap_url = "https://www.nseindia.com/reports-indices-historical-index-data"
-    start_date = (asof - pd.Timedelta(days=75)).strftime("%d-%m-%Y")
-    end_date = asof.strftime("%d-%m-%Y")
-    wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
-
-    # Explicit aliases observed in official NSE response fields. These are not
-    # fuzzy matches; all other names are rejected.
-    response_aliases = {
-        "Nifty Financial Services": {"NIFTY FINANCIAL SERVICES", "NIFTY FIN SERVICE"},
-        "Nifty Healthcare": {"NIFTY HEALTHCARE", "NIFTY HEALTHCARE INDEX"},
-        "Nifty Oil and Gas": {"NIFTY OIL & GAS", "NIFTY OIL AND GAS"},
-        "Nifty Transportation and Logistics": {
-            "NIFTY TRANSPORTATION AND LOGISTICS",
-            "NIFTY TRANSPORTATION & LOGISTICS",
-        },
-        "Nifty Non-Cyclical Consumer": {
-            "NIFTY NON-CYCLICAL CONSUMER",
-            "NIFTY NON CYCLICAL CONSUMER",
-            "NIFTY NON-CYCLICAL CONSUMER INDEX",
-        },
-    }
-    request_names = {
-        "Nifty Healthcare": "NIFTY HEALTHCARE INDEX",
+    history_page = "https://www.nseindia.com/reports-indices-historical-index-data"
+    start = (asof - pd.Timedelta(days=75)).strftime("%d-%m-%Y")
+    end = asof.strftime("%d-%m-%Y")
+    headers = {
+        **NSE_HEADERS,
+        "Accept": "application/json, text/plain, */*",
+        "Referer": history_page,
+        "X-Requested-With": "XMLHttpRequest",
     }
 
     try:
-        bootstrap = session.get(
-            bootstrap_url,
-            headers={
-                **NSE_HEADERS,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            timeout=15,
+        boot = session.get(
+            "https://www.nseindia.com/",
+            headers={**NSE_HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+            timeout=12,
         )
         print(
-            f"[SECTOR][NSE_HISTORY] SESSION_BOOTSTRAP status={getattr(bootstrap, 'status_code', '(missing)')} "
-            f"url={bootstrap_url}"
+            f"[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP status={getattr(boot, 'status_code', 'unknown')} "
+            f"content_type={getattr(boot, 'headers', {}).get('Content-Type', '(missing)')!r} "
+            f"cookies={len(getattr(session, 'cookies', {}) or {})}"
         )
     except Exception as exc:
-        print(
-            f"[SECTOR][NSE_HISTORY] SESSION_BOOTSTRAP_FAILED "
-            f"error={type(exc).__name__}: {exc}; continuing with API request"
-        )
+        print(f"[SECTOR][NSE_HISTORY_API] SESSION_BOOTSTRAP_FAILED error={type(exc).__name__}: {exc}")
 
+    wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
     rows: list[dict[str, Any]] = []
     exact_sectors: set[str] = set()
-    for sector, _files, _index_name, index_symbol in SECTOR_INDICES:
+    for sector, _files, official_index_name, index_symbol in SECTOR_INDICES:
         if sector not in wanted:
             continue
-        query_index = request_names.get(sector, index_symbol)
-        params = {
-            "indexType": query_index,
-            "from": start_date,
-            "to": end_date,
-        }
+        # NSE's endpoint accepts the official indexType display label. Prefer
+        # the configured NSE index symbol; also retain the human label for exact
+        # matching against response rows.
+        index_type = index_symbol.strip().upper()
+        params = {"indexType": index_type, "from": start, "to": end}
         try:
-            response = session.get(
-                endpoint,
-                params=params,
-                headers={
-                    **NSE_HEADERS,
-                    "Accept": "application/json, text/plain, */*",
-                    "Origin": "https://www.nseindia.com",
-                    "Referer": bootstrap_url,
-                },
-                timeout=20,
-            )
-            content_type = response.headers.get("Content-Type", "(missing)")
-            if response.status_code != 200:
+            response = session.get(endpoint, params=params, headers=headers, timeout=20)
+            content_type = getattr(response, "headers", {}).get("Content-Type", "(missing)")
+            response_url = getattr(response, "url", endpoint)
+            body = getattr(response, "text", "") or ""
+            if getattr(response, "status_code", None) != 200:
                 print(
-                    f"[SECTOR][NSE_HISTORY] HTTP_FAIL sector={sector} "
-                    f"status={response.status_code} content_type={content_type!r}"
+                    f"[SECTOR][NSE_HISTORY_API] HTTP_ERROR sector={sector} indexType={index_type!r} "
+                    f"status={getattr(response, 'status_code', 'unknown')} url={response_url!r} "
+                    f"content_type={content_type!r} preview={body[:100]!r}"
                 )
                 continue
             try:
                 payload = response.json()
-            except Exception:
-                preview = (getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
+            except Exception as exc:
                 print(
-                    f"[SECTOR][NSE_HISTORY] NON_JSON sector={sector} "
-                    f"content_type={content_type!r} preview={preview!r}"
+                    f"[SECTOR][NSE_HISTORY_API] NON_JSON sector={sector} status=200 "
+                    f"url={response_url!r} content_type={content_type!r} preview={body[:100]!r} "
+                    f"error={type(exc).__name__}"
                 )
                 continue
 
-            # NSE's documented response commonly nests the rows at
-            # payload["data"]["indexCloseOnlineRecords"]. Some deployments/tests
-            # expose a direct list at payload["data"], so support both schemas.
-            data_block = payload.get("data") if isinstance(payload, dict) else None
-            if isinstance(data_block, dict):
-                data = data_block.get("indexCloseOnlineRecords")
-                if data is None:
-                    data = data_block.get("data")
-                if data is None:
-                    # Keep diagnostics useful if NSE changes its response schema.
-                    data = data_block.get("records")
-            elif isinstance(data_block, list):
-                data = data_block
+            data_container = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(data_container, dict):
+                records = data_container.get("indexCloseOnlineRecords")
+                if records is None:
+                    records = data_container.get("data") or data_container.get("records")
+            elif isinstance(data_container, list):
+                records = data_container
             else:
-                data = None
-
-            if not isinstance(data, list) or not data:
-                payload_keys = list(payload.keys()) if isinstance(payload, dict) else []
-                data_keys = list(data_block.keys()) if isinstance(data_block, dict) else []
+                records = None
+            if not isinstance(records, list):
+                keys = sorted(payload.keys()) if isinstance(payload, dict) else []
+                nested = sorted(data_container.keys()) if isinstance(data_container, dict) else []
                 print(
-                    f"[SECTOR][NSE_HISTORY] EMPTY_OR_INVALID_DATA sector={sector} "
-                    f"payload_keys={payload_keys!r} data_type={type(data_block).__name__} "
-                    f"data_keys={data_keys!r}"
+                    f"[SECTOR][NSE_HISTORY_API] INVALID_SCHEMA sector={sector} top_keys={keys!r} "
+                    f"data_type={type(data_container).__name__} nested_keys={nested!r}"
                 )
+                continue
+            if not records:
+                print(f"[SECTOR][NSE_HISTORY_API] EMPTY_RECORDS sector={sector} indexType={index_type!r} date={asof.date()}")
                 continue
 
             accepted = 0
             allowed_names = {
-                _normalise_name(name).replace("&", "AND")
-                for name in response_aliases.get(
-                    sector,
-                    {query_index, index_symbol, _index_name},
-                )
+                _normalise_index_name(official_index_name),
+                _normalise_index_name(index_symbol),
             }
-            # Also permit only the configured canonical names for non-aliased indices.
-            allowed_names.update(
-                _normalise_name(name).replace("&", "AND")
-                for name in (query_index, index_symbol, _index_name)
-            )
-            for item in data:
+            for item in records:
                 if not isinstance(item, dict):
                     continue
-                raw_name = str(item.get("EOD_INDEX_NAME") or "").strip()
-                normalized_name = _normalise_name(raw_name).replace("&", "AND")
-                if normalized_name not in allowed_names:
+                raw_name = item.get("EOD_INDEX_NAME") or item.get("indexName") or item.get("INDEX_NAME") or item.get("index")
+                if raw_name and _normalise_index_name(raw_name) not in allowed_names:
                     continue
-                raw_date = item.get("EOD_TIMESTAMP")
-                raw_close = item.get("EOD_CLOSE_INDEX_VAL")
+                raw_date = item.get("EOD_TIMESTAMP") or item.get("HistoricalDate") or item.get("Date") or item.get("date")
+                raw_close = (
+                    item.get("EOD_CLOSE_INDEX_VAL")
+                    or item.get("CLOSE_INDEX_VAL")
+                    or item.get("CLOSE")
+                    or item.get("Close")
+                    or item.get("close")
+                )
                 parsed_date = pd.to_datetime(raw_date, errors="coerce", dayfirst=True)
                 close = pd.to_numeric(raw_close, errors="coerce")
                 if pd.isna(parsed_date) or pd.isna(close) or float(close) <= 0:
@@ -481,32 +448,21 @@ def _history_from_nse_official_api(
                 parsed_date = pd.Timestamp(parsed_date).normalize()
                 if parsed_date > asof or parsed_date < asof - pd.Timedelta(days=75):
                     continue
-                date_text = parsed_date.strftime("%Y-%m-%d")
-                rows.append({"Date": date_text, "Sector": sector, "Close": float(close)})
+                rows.append({"Date": parsed_date.strftime("%Y-%m-%d"), "Sector": sector, "Close": float(close)})
                 accepted += 1
                 if parsed_date == asof:
                     exact_sectors.add(sector)
-
             print(
-                f"[SECTOR][NSE_HISTORY] sector={sector} requested={query_index!r} "
-                f"accepted_rows={accepted} exact_date={sector in exact_sectors}"
+                f"[SECTOR][NSE_HISTORY_API] sector={sector} indexType={index_type!r} "
+                f"raw_records={len(records)} accepted_rows={accepted} exact_date={sector in exact_sectors}"
             )
         except Exception as exc:
-            print(
-                f"[SECTOR][NSE_HISTORY] REQUEST_ERROR sector={sector} "
-                f"error={type(exc).__name__}: {exc}"
-            )
+            print(f"[SECTOR][NSE_HISTORY_API] REQUEST_ERROR sector={sector} error={type(exc).__name__}: {exc}")
         time.sleep(0.08)
 
-    deduped = {(row["Date"], row["Sector"]): row["Close"] for row in rows}
-    output = [
-        {"Date": date, "Sector": sector, "Close": close}
-        for (date, sector), close in deduped.items()
-    ]
-    print(
-        f"[SECTOR][NSE_HISTORY] fallback rows={len(output)} "
-        f"exact_date_sectors={len(exact_sectors)}/{len(wanted)}"
-    )
+    deduped = {(r["Date"], r["Sector"]): r["Close"] for r in rows}
+    output = [{"Date": date, "Sector": sector, "Close": close} for (date, sector), close in deduped.items()]
+    print(f"[SECTOR][NSE_HISTORY_API] fallback rows={len(output)} exact_date_sectors={len(exact_sectors)}/{len(wanted)}")
     return output, len(exact_sectors)
 
 
@@ -1415,61 +1371,28 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
         print("[SECTOR] No official constituent mappings retrieved; existing map preserved if present")
 
     new_history_rows, sectors_with_asof_new = _history_from_nse_archive(session, asof)
-    # Prefer the current official NSE historical-index JSON API for indices
-    # omitted by the daily all-indices archive. Use the legacy Nifty Indices
-    # service only for sectors still missing after that attempt. Every source
-    # must return a valid dated close for the same index; never synthesize data.
+    # If the daily NSE all-indices archive does not provide exact-date closes,
+    # retry through the official Nifty Indices historical-data service. Merge
+    # only actual dated closes; never fill missing values synthetically.
     if sectors_with_asof_new < len(SECTOR_INDICES):
         exact_date_text = asof.strftime("%Y-%m-%d")
-        archive_exact_sectors = {
-            row["Sector"] for row in new_history_rows
-            if row.get("Date") == exact_date_text
-        }
+        archive_exact_sectors = {row["Sector"] for row in new_history_rows if row.get("Date") == exact_date_text}
         missing_sectors = {item[0] for item in SECTOR_INDICES} - archive_exact_sectors
-        print(f"[SECTOR] Official NSE API fallback limited to missing exact-date sectors: {sorted(missing_sectors)}")
-        nse_rows, nse_exact = _history_from_nse_official_api(
-            session, asof, sectors_to_fetch=missing_sectors
-        )
-        if nse_rows:
+        print(f"[SECTOR] Index-history fallback limited to missing exact-date sectors: {sorted(missing_sectors)}")
+        # Use NSE's public historicalOR/indicesHistory endpoint first. The
+        # previous Nifty Indices Backpage endpoint is login-gated in Actions
+        # (302 to Sitefinity/Login), so repeating it does not repair coverage.
+        fallback_rows, fallback_exact = _history_from_nse_indices_api(session, asof, sectors_to_fetch=missing_sectors)
+        if fallback_rows:
             merged = {(row["Date"], row["Sector"]): row["Close"] for row in new_history_rows}
-            for row in nse_rows:
+            for row in fallback_rows:
                 merged[(row["Date"], row["Sector"])] = row["Close"]
             new_history_rows = [
                 {"Date": date, "Sector": sector, "Close": close}
                 for (date, sector), close in merged.items()
             ]
-
-        exact_after_nse = {
-            row["Sector"] for row in new_history_rows
-            if row.get("Date") == exact_date_text
-        }
-        remaining_missing = {item[0] for item in SECTOR_INDICES} - exact_after_nse
-        if remaining_missing:
-            print(f"[SECTOR] Legacy Nifty Indices fallback limited to remaining sectors: {sorted(remaining_missing)}")
-            fallback_rows, fallback_exact = _history_from_niftyindices_api(
-                session, asof, sectors_to_fetch=remaining_missing
-            )
-            if fallback_rows:
-                merged = {(row["Date"], row["Sector"]): row["Close"] for row in new_history_rows}
-                for row in fallback_rows:
-                    merged[(row["Date"], row["Sector"])] = row["Close"]
-                new_history_rows = [
-                    {"Date": date, "Sector": sector, "Close": close}
-                    for (date, sector), close in merged.items()
-                ]
-                print(
-                    f"[SECTOR] Legacy Nifty Indices fallback exact-date sectors="
-                    f"{len({row['Sector'] for row in new_history_rows if row['Date'] == exact_date_text})}/"
-                    f"{len(SECTOR_INDICES)} (fallback reported {fallback_exact})"
-                )
-        sectors_with_asof_new = len({
-            row["Sector"] for row in new_history_rows
-            if row["Date"] == exact_date_text
-        })
-        print(
-            f"[SECTOR] Combined official index sources exact-date sectors="
-            f"{sectors_with_asof_new}/{len(SECTOR_INDICES)} (NSE API reported {nse_exact})"
-        )
+            sectors_with_asof_new = len({row["Sector"] for row in new_history_rows if row["Date"] == asof.strftime("%Y-%m-%d")})
+            print(f"[SECTOR] Official NSE historical API exact-date sectors={sectors_with_asof_new}/{len(SECTOR_INDICES)} (fallback reported {fallback_exact})")
     new_history = pd.DataFrame(new_history_rows, columns=HISTORY_COLUMNS)
     old_history = pd.DataFrame(columns=HISTORY_COLUMNS)
     if HISTORY_PATH.exists():

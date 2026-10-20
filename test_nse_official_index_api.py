@@ -87,146 +87,71 @@ class OfficialIndexHistoryTests(unittest.TestCase):
         self.assertEqual(exact, 0)
 
 
-class OfficialNSEHistoryTests(unittest.TestCase):
+class NSEHistoryResponse:
+    def __init__(self, status_code=200, payload=None, text="", content_type="application/json; charset=utf-8", url=""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+        self.content = text.encode("utf-8")
+        self.headers = {"Content-Type": content_type}
+        self.url = url
+
+    def json(self):
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
+
+
+class NSEHistorySession:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+        self.cookies = {"session": "test"}
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        if url == "https://www.nseindia.com/":
+            return NSEHistoryResponse(text="<html>home</html>", content_type="text/html", url=url)
+        return NSEHistoryResponse(payload=self.payload, url=url)
+
+
+class NSEOfficialHistoryEndpointTests(unittest.TestCase):
     def setUp(self):
-        self.asof = pd.Timestamp("2026-10-15")
+        self.asof = pd.Timestamp("2026-10-19")
 
-    def test_current_nse_endpoint_parses_exact_healthcare_closes(self):
-        class Response:
-            status_code = 200
-            headers = {"Content-Type": "application/json; charset=utf-8"}
-            text = ""
-            def __init__(self, payload=None):
-                self.payload = payload or {}
-            def json(self):
-                return self.payload
-
-        class Session:
-            def __init__(self):
-                self.calls = []
-            def get(self, url, **kwargs):
-                self.calls.append((url, kwargs))
-                if url.endswith("/reports-indices-historical-index-data"):
-                    return Response({})
-                return Response({"data": [
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "15-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15721.45",
-                    },
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "14-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15663.00",
-                    },
-                ]})
-
-        session = Session()
+    def test_reads_nested_index_close_online_records_and_uses_nse_endpoint(self):
+        session = NSEHistorySession({"data": {"indexCloseOnlineRecords": [
+            {"EOD_INDEX_NAME": "NIFTY POWER", "EOD_TIMESTAMP": "19-Oct-2026", "EOD_CLOSE_INDEX_VAL": "8123.45"},
+            {"EOD_INDEX_NAME": "NIFTY POWER", "EOD_TIMESTAMP": "16-Oct-2026", "EOD_CLOSE_INDEX_VAL": "8099.10"},
+            {"EOD_INDEX_NAME": "NIFTY INSURANCE", "EOD_TIMESTAMP": "19-Oct-2026", "EOD_CLOSE_INDEX_VAL": "123.0"},
+        ]}})
         with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                session, self.asof, {"Nifty Healthcare"}
-            )
+            rows, exact = sector_data._history_from_nse_indices_api(session, self.asof, {"Nifty Power"})
         self.assertEqual(exact, 1)
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
-        self.assertEqual(rows[0]["Date"], "2026-10-15")
-        self.assertAlmostEqual(rows[0]["Close"], 15721.45)
-        bootstrap_call = next(call for call in session.calls if call[0].endswith("/reports-indices-historical-index-data"))
-        self.assertEqual(bootstrap_call[1]["headers"]["Accept"].startswith("text/html"), True)
-        api_call = next(call for call in session.calls if "/api/historicalOR/indicesHistory" in call[0])
-        self.assertEqual(api_call[1]["headers"]["Referer"], "https://www.nseindia.com/reports-indices-historical-index-data")
-        self.assertEqual(api_call[1]["headers"]["Origin"], "https://www.nseindia.com")
-        self.assertEqual(api_call[1]["params"]["indexType"], "NIFTY HEALTHCARE INDEX")
-        self.assertEqual(api_call[1]["params"]["from"], "01-08-2026")
-        self.assertEqual(api_call[1]["params"]["to"], "15-10-2026")
+        self.assertTrue(all(row["Sector"] == "Nifty Power" for row in rows))
+        self.assertEqual(rows[0]["Date"], "2026-10-19")
+        self.assertAlmostEqual(rows[0]["Close"], 8123.45)
+        api_call = next((url, kw) for url, kw in session.calls if "historicalOR/indicesHistory" in url)
+        self.assertEqual(api_call[1]["params"]["indexType"], "NIFTY POWER")
+        self.assertEqual(api_call[1]["params"]["from"], "05-08-2026")
+        self.assertEqual(api_call[1]["params"]["to"], "19-10-2026")
 
-    def test_current_nse_endpoint_parses_documented_nested_records_schema(self):
-        class Response:
-            status_code = 200
-            headers = {"Content-Type": "application/json; charset=utf-8"}
-            text = ""
-            def __init__(self, payload=None):
-                self.payload = payload or {}
-            def json(self):
-                return self.payload
-
-        class Session:
-            def __init__(self):
-                self.calls = []
-            def get(self, url, **kwargs):
-                self.calls.append((url, kwargs))
-                if url.endswith("/reports-indices-historical-index-data"):
-                    return Response({})
-                return Response({"data": {"indexCloseOnlineRecords": [
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "15-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15721.45",
-                    },
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "14-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15663.00",
-                    },
-                ]}})
-
-        session = Session()
+    def test_empty_or_invalid_payload_stays_missing(self):
+        session = NSEHistorySession({"data": {"indexCloseOnlineRecords": []}})
         with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                session, self.asof, {"Nifty Healthcare"}
-            )
-        self.assertEqual(exact, 1)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
-        self.assertEqual(rows[0]["Date"], "2026-10-15")
-        self.assertAlmostEqual(rows[0]["Close"], 15721.45)
-
-    def test_current_nse_endpoint_rejects_wrong_index_identity(self):
-        class Response:
-            status_code = 200
-            headers = {"Content-Type": "application/json"}
-            text = ""
-            def __init__(self, payload=None):
-                self.payload = payload or {}
-            def json(self):
-                return self.payload
-
-        class Session:
-            def get(self, url, **kwargs):
-                if url.endswith("/reports-indices-historical-index-data"):
-                    return Response({})
-                return Response({"data": [{
-                    "EOD_INDEX_NAME": "NIFTY IT",
-                    "EOD_TIMESTAMP": "15-OCT-2026",
-                    "EOD_CLOSE_INDEX_VAL": "15721.45",
-                }]})
-
-        with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                Session(), self.asof, {"Nifty Healthcare"}
-            )
+            rows, exact = sector_data._history_from_nse_indices_api(session, self.asof, {"Nifty Power"})
         self.assertEqual(rows, [])
         self.assertEqual(exact, 0)
 
-    def test_current_nse_endpoint_rejects_html_and_http_errors(self):
-        class Response:
-            headers = {"Content-Type": "text/html"}
-            text = "<html>login</html>"
-            def __init__(self, status_code):
-                self.status_code = status_code
-            def json(self):
-                raise ValueError("not json")
-
-        class Session:
-            def get(self, url, **kwargs):
-                if url.endswith("/reports-indices-historical-index-data"):
-                    return Response(200)
-                return Response(403)
-
+    def test_rejects_wrong_index_name_bad_close_and_future_date(self):
+        session = NSEHistorySession({"data": {"indexCloseOnlineRecords": [
+            {"EOD_INDEX_NAME": "NIFTY INSURANCE", "EOD_TIMESTAMP": "19-Oct-2026", "EOD_CLOSE_INDEX_VAL": "123"},
+            {"EOD_INDEX_NAME": "NIFTY POWER", "EOD_TIMESTAMP": "19-Oct-2026", "EOD_CLOSE_INDEX_VAL": "-"},
+            {"EOD_INDEX_NAME": "NIFTY POWER", "EOD_TIMESTAMP": "20-Oct-2026", "EOD_CLOSE_INDEX_VAL": "999"},
+        ]}})
         with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                Session(), self.asof, {"Nifty Healthcare"}
-            )
+            rows, exact = sector_data._history_from_nse_indices_api(session, self.asof, {"Nifty Power"})
         self.assertEqual(rows, [])
         self.assertEqual(exact, 0)
 

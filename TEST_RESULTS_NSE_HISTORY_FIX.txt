@@ -1,0 +1,13 @@
+NSE V8 OFFICIAL HISTORY FALLBACK FIX — LOCAL TEST RESULTS
+Date: 2026-10-20
+
+python -m py_compile sector_data.py test_nse_official_index_api.py
+PASS
+
+python -m unittest -v test_nse_official_index_api test_sector_news_final_fix test_sector_mapping_cache_reconciliation test_niftyindices_history_bootstrap test_news_official_feed_diagnostics test_news_catalyst_matching test_news_issuer_matching test_delivery_rule test_liquidity_filter test_etf_underlying_mapping test_v8_structural_resistance_selection
+39 tests PASS
+
+python -m pytest -q test_news_catalyst_parser.py test_v8_regression.py
+31 passed
+
+These are local deterministic tests. Live NSE API access is not asserted by this file.
