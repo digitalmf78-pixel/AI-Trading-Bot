@@ -342,7 +342,7 @@ def _history_from_nse_official_api(
     rows remain missing; no close is inferred from another index.
     """
     endpoint = "https://www.nseindia.com/api/historicalOR/indicesHistory"
-    bootstrap_url = "https://www.nseindia.com/report-detail/eq_security"
+    bootstrap_url = "https://www.nseindia.com/reports-indices-historical-index-data"
     start_date = (asof - pd.Timedelta(days=75)).strftime("%d-%m-%Y")
     end_date = asof.strftime("%d-%m-%Y")
     wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
@@ -404,6 +404,7 @@ def _history_from_nse_official_api(
                 headers={
                     **NSE_HEADERS,
                     "Accept": "application/json, text/plain, */*",
+                    "Origin": "https://www.nseindia.com",
                     "Referer": bootstrap_url,
                 },
                 timeout=20,

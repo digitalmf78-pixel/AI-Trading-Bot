@@ -106,7 +106,7 @@ class OfficialNSEHistoryTests(unittest.TestCase):
                 self.calls = []
             def get(self, url, **kwargs):
                 self.calls.append((url, kwargs))
-                if url.endswith("/report-detail/eq_security"):
+                if url.endswith("/reports-indices-historical-index-data"):
                     return Response({})
                 return Response({"data": [
                     {
@@ -131,7 +131,11 @@ class OfficialNSEHistoryTests(unittest.TestCase):
         self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
         self.assertEqual(rows[0]["Date"], "2026-10-15")
         self.assertAlmostEqual(rows[0]["Close"], 15721.45)
+        bootstrap_call = next(call for call in session.calls if call[0].endswith("/reports-indices-historical-index-data"))
+        self.assertEqual(bootstrap_call[1]["headers"]["Accept"].startswith("text/html"), True)
         api_call = next(call for call in session.calls if "/api/historicalOR/indicesHistory" in call[0])
+        self.assertEqual(api_call[1]["headers"]["Referer"], "https://www.nseindia.com/reports-indices-historical-index-data")
+        self.assertEqual(api_call[1]["headers"]["Origin"], "https://www.nseindia.com")
         self.assertEqual(api_call[1]["params"]["indexType"], "NIFTY HEALTHCARE INDEX")
         self.assertEqual(api_call[1]["params"]["from"], "01-08-2026")
         self.assertEqual(api_call[1]["params"]["to"], "15-10-2026")
@@ -151,7 +155,7 @@ class OfficialNSEHistoryTests(unittest.TestCase):
                 self.calls = []
             def get(self, url, **kwargs):
                 self.calls.append((url, kwargs))
-                if url.endswith("/report-detail/eq_security"):
+                if url.endswith("/reports-indices-historical-index-data"):
                     return Response({})
                 return Response({"data": {"indexCloseOnlineRecords": [
                     {
@@ -189,7 +193,7 @@ class OfficialNSEHistoryTests(unittest.TestCase):
 
         class Session:
             def get(self, url, **kwargs):
-                if url.endswith("/report-detail/eq_security"):
+                if url.endswith("/reports-indices-historical-index-data"):
                     return Response({})
                 return Response({"data": [{
                     "EOD_INDEX_NAME": "NIFTY IT",
@@ -215,7 +219,7 @@ class OfficialNSEHistoryTests(unittest.TestCase):
 
         class Session:
             def get(self, url, **kwargs):
-                if url.endswith("/report-detail/eq_security"):
+                if url.endswith("/reports-indices-historical-index-data"):
                     return Response(200)
                 return Response(403)
 
