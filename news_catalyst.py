@@ -615,6 +615,162 @@ def _premarket_news_status(official_count: int, secondary_count: int, api_covere
     return "NO_NEWS_FOUND"
 
 
+
+
+UPCOMING_EVENT_COLUMNS = [
+    "EODDate", "TckrSymb", "EventType", "EventDate", "AnnouncementDate",
+    "Headline", "Source", "SourceType", "URL", "Status", "LookbackDays",
+]
+
+_EVENT_KEYWORDS = re.compile(
+    r"\b(result|results|financial results|quarterly results|board meeting|"
+    r"dividend|bonus|stock split|split|buyback|buy-back|record date|"
+    r"rights issue|agm|egm|annual general meeting|extraordinary general meeting|"
+    r"fund raising|fundraising|preferential issue|qip|merger|acquisition|"
+    r"scheme of arrangement|demerger|corporate action)\b",
+    re.IGNORECASE,
+)
+
+def _event_type_from_text(text: str) -> str:
+    value = _clean(text).lower()
+    if re.search(r"\b(quarterly|financial|annual|half[- ]yearly|audited|unaudited)\b.{0,60}\b(results?|earnings?)\b|\b(results?|earnings?)\b.{0,60}\b(quarterly|financial|annual|half[- ]yearly|audited|unaudited)\b", value):
+        return "RESULTS"
+    if re.search(r"\bboard meeting\b", value):
+        return "BOARD_MEETING"
+    if re.search(r"\bdividend\b", value):
+        return "DIVIDEND"
+    if re.search(r"\bbonus\b", value):
+        return "BONUS"
+    if re.search(r"\b(stock )?split\b", value):
+        return "STOCK_SPLIT"
+    if re.search(r"\bbuy[- ]?back\b", value):
+        return "BUYBACK"
+    if re.search(r"\brecord date\b", value):
+        return "RECORD_DATE"
+    if re.search(r"\b(rights issue|preferential issue|qip|fund ?rais(ing|e))\b", value):
+        return "FUNDRAISING_OR_ISSUE"
+    if re.search(r"\b(agm|annual general meeting|egm|extraordinary general meeting)\b", value):
+        return "SHAREHOLDER_MEETING"
+    if re.search(r"\b(merger|acquisition|demerger|scheme of arrangement)\b", value):
+        return "M_AND_A"
+    if re.search(r"\bcorporate action\b", value):
+        return "CORPORATE_ACTION"
+    return "OTHER_OFFICIAL_EVENT"
+
+
+def _explicit_dates_in_text(text: str) -> list:
+    """Parse only explicit date-shaped strings; never infer a date from context."""
+    patterns = [
+        r"\b\d{4}-\d{1,2}-\d{1,2}\b",
+        r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",
+        r"\b\d{1,2}[- ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[- ,]+\d{2,4}\b",
+        r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[ ,]+\d{1,2}(?:st|nd|rd|th)?[,]?[ ]+\d{4}\b",
+        r"\b\d{1,2}(?:st|nd|rd|th)?[ ]+(?:of[ ]+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)[ ,]+\d{4}\b",
+    ]
+    found = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", re.IGNORECASE):
+            raw = match.group(0).strip()
+            try:
+                stamp = pd.to_datetime(raw, errors="raise", dayfirst=True)
+                if not pd.isna(stamp):
+                    day = stamp.date()
+                    if day not in found:
+                        found.append(day)
+            except (TypeError, ValueError, OverflowError):
+                continue
+    return sorted(found)
+
+
+def _upcoming_event_rows_for_item(
+    symbol: str, item: ET.Element, eod_date, scan_mode: str, lookback_days: int = 90
+) -> list[dict[str, str]]:
+    """Build official upcoming-event records from issuer-filtered NSE filings.
+
+    Only explicit dates in the filing text are accepted. Publication dates are
+    never substituted for event dates, and past dates are not labelled upcoming.
+    """
+    title = _item_text(item, "title")
+    description = _item_text(item, "description", "summary", "attchmntText")
+    text = " ".join(part for part in (title, description) if part).strip()
+    if not text or not _EVENT_KEYWORDS.search(text):
+        return []
+    published = _published(item)
+    announcement_date = ""
+    if published is not None:
+        announcement_date = published.astimezone(
+            pd.Timestamp.now(tz="UTC").tzinfo
+        ).isoformat()
+        # Display announcement dates in exchange-local time.
+        announcement_date = pd.Timestamp(published).tz_convert("Asia/Kolkata").strftime("%Y-%m-%d")
+    mode = str(scan_mode or "EOD").upper()
+    ref = pd.Timestamp.now(tz="Asia/Kolkata").date() if mode == "PREMARKET" else pd.Timestamp(eod_date).date()
+    event_type = _event_type_from_text(text)
+    future_dates = [d for d in _explicit_dates_in_text(text) if d > ref]
+    source_url = _item_text(item, "link") or "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+    base = {
+        "EODDate": str(pd.Timestamp(eod_date).date()),
+        "TckrSymb": symbol,
+        "EventType": event_type,
+        "AnnouncementDate": announcement_date,
+        "Headline": title or text,
+        "Source": "NSE India",
+        "SourceType": "PRIMARY_OFFICIAL",
+        "URL": source_url,
+        "LookbackDays": str(int(lookback_days)),
+    }
+    if future_dates:
+        return [{**base, "EventDate": d.isoformat(), "Status": "OFFICIAL_DATE_CONFIRMED"} for d in future_dates]
+    # Keep an explicit diagnostic row, but do not claim the event is upcoming.
+    return [{**base, "EventDate": "", "Status": "DATE_NOT_FOUND_OR_NO_FUTURE_DATE"}]
+
+
+def _write_upcoming_events_report(
+    symbols: set[str], event_rows: list[dict[str, str]], api_coverage: dict[str, bool], eod_date
+) -> None:
+    """Write one or more event/evidence status rows for every shortlist symbol."""
+    Path("outputs").mkdir(parents=True, exist_ok=True)
+    by_symbol: dict[str, list[dict[str, str]]] = {s: [] for s in sorted(symbols)}
+    for row in event_rows:
+        symbol = str(row.get("TckrSymb", "")).upper()
+        if symbol in by_symbol:
+            by_symbol[symbol].append(row)
+    final_rows = []
+    for symbol in sorted(symbols):
+        rows = by_symbol.get(symbol, [])
+        if rows:
+            # De-duplicate identical event date/type/headline records.
+            seen = set()
+            for row in rows:
+                key = (row.get("EventType"), row.get("EventDate"), row.get("Headline"))
+                if key not in seen:
+                    seen.add(key)
+                    final_rows.append(row)
+        elif api_coverage.get(symbol, False):
+            final_rows.append({
+                "EODDate": str(pd.Timestamp(eod_date).date()), "TckrSymb": symbol,
+                "EventType": "", "EventDate": "", "AnnouncementDate": "",
+                "Headline": "", "Source": "NSE India", "SourceType": "PRIMARY_OFFICIAL",
+                "URL": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+                "Status": "NO_MATCHING_UPCOMING_EVENT_FOUND", "LookbackDays": "90",
+            })
+        else:
+            final_rows.append({
+                "EODDate": str(pd.Timestamp(eod_date).date()), "TckrSymb": symbol,
+                "EventType": "", "EventDate": "", "AnnouncementDate": "",
+                "Headline": "", "Source": "", "SourceType": "",
+                "URL": "", "Status": "WAIT_FOR_DATA", "LookbackDays": "90",
+            })
+    out = pd.DataFrame(final_rows, columns=UPCOMING_EVENT_COLUMNS)
+    out.to_csv("outputs/v8_upcoming_corporate_events.csv", index=False)
+    print(
+        f"[NEWS-DIAG] UPCOMING_EVENTS_REPORT path=outputs/v8_upcoming_corporate_events.csv "
+        f"shortlist_symbols={len(symbols)} rows={len(out)} "
+        f"confirmed={int((out['Status'] == 'OFFICIAL_DATE_CONFIRMED').sum()) if not out.empty else 0} "
+        f"wait_for_data={int((out['Status'] == 'WAIT_FOR_DATA').sum()) if not out.empty else 0}"
+    )
+
+
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
     """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
     if result.empty or "TckrSymb" not in result.columns:
@@ -635,6 +791,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         Path("data/inputs").mkdir(parents=True, exist_ok=True)
         empty = pd.DataFrame(columns=NEWS_COLUMNS)
         empty.to_csv("data/inputs/news_evidence_auto.csv", index=False)
+        Path("outputs").mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=UPCOMING_EVENT_COLUMNS).to_csv("outputs/v8_upcoming_corporate_events.csv", index=False)
+        print("[NEWS-DIAG] UPCOMING_EVENTS_REPORT no shortlisted candidates; wrote empty report")
         return empty, {"NSE": "no shortlisted candidates", "secondary": "not checked"}
 
     symbols = set(candidates["TckrSymb"].tolist())
@@ -744,10 +903,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     # The public RSS feeds are global and can omit issuer-specific filings.
     # Query NSE's issuer/date-filtered official announcements endpoint for every
-    # candidate, using the same exact IST window as RSS/secondary filtering.
-    api_start_date = cutoff_ist_date
+    # candidate. The normal News/Catalyst rows are still restricted to the exact
+    # five-calendar-day window; a separate 90-day official announcement lookback
+    # is used only to discover explicitly dated future corporate events.
+    api_start_date = (pd.Timestamp(window_end_ist_date) - pd.Timedelta(days=90)).date()
     api_end_date = window_end_ist_date
     api_coverage: dict[str, bool] = {}
+    upcoming_event_rows: list[dict[str, str]] = []
     api_session = requests.Session()
     for api_index, symbol in enumerate(sorted(symbols)):
         # Query every candidate even when RSS found one filing: RSS is global and
@@ -765,6 +927,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             exact_api_symbol = _item_text(item, "symbol").strip().upper() == symbol
             if not exact_api_symbol and _issuer_match_reason(symbol, " ".join((title, description, issuer_fields)), names.get(symbol, "")) == "":
                 continue
+            # Corporate-event scan uses the broader official announcement lookback,
+            # but records only explicit future dates and never changes News window rules.
+            upcoming_event_rows.extend(
+                _upcoming_event_rows_for_item(symbol, item, eod_date, scan_mode, lookback_days=90)
+            )
             stamp = _published(item)
             if stamp is None or stamp < cutoff or stamp > window_end:
                 continue
@@ -778,6 +945,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             })
         print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_SUMMARY symbol={symbol} matched={api_matches}")
 
+    _write_upcoming_events_report(symbols, upcoming_event_rows, api_coverage, eod_date)
     api_successes = sum(api_coverage.values())
     if nse_successes == 0:
         status["NSE"] = "available via issuer API" if api_successes else "unavailable"
