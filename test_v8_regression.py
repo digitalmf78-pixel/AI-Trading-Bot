@@ -122,57 +122,66 @@ def test_sector_mapping_uses_exact_official_nse_industry_fallbacks():
         finally:
             os.chdir(old_cwd)
 
-def test_delivery_each_of_five_daily_values_at_least_60_passes():
+def test_delivery_requires_each_of_five_sessions_at_least_60_percent():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
         dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
-        values = [60.0, 60.1, 65.0, 70.0, 80.0]
-        sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
-        candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
-        qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 1, audit.to_dict("records")
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-        assert audit.iloc[0]["MinDelivery5D"] == 60.0
-        assert audit.iloc[0]["DeliveryDailyPassCount"] == 5
-
-
-def test_delivery_average_high_but_one_day_below_60_rejects():
-    with tempfile.TemporaryDirectory() as tmp:
-        delivery.AUDIT_DIR = Path(tmp)
-        dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
-        values = [50.0, 75.0, 80.0, 85.0, 90.0]
+        # Mean is above 60, but one session is below 60: must reject.
+        values = [50.0, 75.0, 65.0, 70.0, 80.0]
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert qualified.empty
         assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
-        assert audit.iloc[0]["AvgDelivery5D"] > 60.0
-        assert audit.iloc[0]["MinDelivery5D"] == 50.0
-        assert audit.iloc[0]["DeliveryDailyPassCount"] == 4
+        assert audit.iloc[0]["AvgDelivery5D"] >= 60.0
+        assert audit.iloc[0]["DeliveryMin5D"] == 50.0
 
 
-def test_delivery_exactly_60_each_day_passes_and_incomplete_waits():
+def test_delivery_exactly_60_each_day_passes():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
         dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
-        sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": 60.0}])) for day in dates]
+        values = [60.0, 60.0, 60.0, 60.0, 60.0]
+        sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
         assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryDailyPassCount"] == 5
+
+
+def test_delivery_below_60_rejects_and_incomplete_waits():
+    with tempfile.TemporaryDirectory() as tmp:
+        delivery.AUDIT_DIR = Path(tmp)
+        dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
+        sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}]))
+                    for day, value in zip(dates, [60.0, 60.0, 59.99, 80.0, 90.0])]
+        candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
+        qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
+        assert qualified.empty
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
         assert audit.iloc[0]["DeliveryFilterStatus"] == "WAIT_FOR_DATA"
 
 
-def test_pipeline_applies_delivery_filter_before_other_screens_and_top20():
+def test_news_gate_does_not_use_average_delivery_as_a_gate():
+    candidates = pd.DataFrame([{
+        "TckrSymb": "ABC", "AvgDelivery5D": 80.0,
+        "DeliveryFilterStatus": "FILTERED_OUT_LT_60_PERCENT",
+        **{f"Delivery_2026-10-{day:02d}": value for day, value in zip([19, 16, 15, 14, 13], [70, 80, 75, 59.9, 90])},
+        "SetupType": "Breakout",
+    }])
+    assert news_catalyst._filter_catalyst_candidates(candidates).empty
+
+
+def test_delivery_gate_runs_before_rvol_top20_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
-    delivery_step = source.index("STEP 2A: DELIVERY-FIRST STOCK SELECTION — BEFORE OTHER SCREENS")
-    history_step = source.index("STEP 3", delivery_step)
-    rvol_step = source.index("STEP 6: CURRENT RVOL — only after delivery-first + volume-history gates")
-    top20_step = source.index("STEP 7: TOP 20 — selected after daily Delivery and existing history checks")
-    assert delivery_step < history_step < rvol_step < top20_step
-    assert "minimum_daily=60.0" in source
+    delivery_step = source.index("STEP 2A: MANDATORY DELIVERY-FIRST GATE")
+    rvol_step = source.index("STEP 6: CURRENT RVOL")
+    top20_step = source.index("result = select_top20_by_rvol(result, eod_date)")
+    assert delivery_step < rvol_step < top20_step
+    assert "STEP 6A: MANDATORY FIVE-SESSION DELIVERY GATE — RVOL TOP 20 ONLY" not in source
 
 
 def test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps():
@@ -582,10 +591,11 @@ if __name__ == "__main__":
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
-        test_delivery_each_of_five_daily_values_at_least_60_passes,
-        test_delivery_average_high_but_one_day_below_60_rejects,
-        test_delivery_exactly_60_each_day_passes_and_incomplete_waits,
-        test_pipeline_applies_delivery_filter_before_other_screens_and_top20,
+        test_delivery_requires_each_of_five_sessions_at_least_60_percent,
+        test_delivery_exactly_60_each_day_passes,
+        test_delivery_below_60_rejects_and_incomplete_waits,
+        test_news_gate_does_not_use_average_delivery_as_a_gate,
+        test_delivery_gate_runs_before_rvol_top20_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,

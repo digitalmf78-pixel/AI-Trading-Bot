@@ -506,12 +506,12 @@ def _market_regime(nifty_history: pd.DataFrame, asof) -> str:
 
 
 def _delivery_pct(row: pd.Series) -> float:
-    """Return the five-session average for scoring/reporting only.
+    """Return the five-session average Delivery % as a descriptive metric only.
 
-    Hard eligibility is decided earlier by delivery_filter.py: each of the five
-    distinct valid EOD sessions must independently have Delivery % >=60.00%.
-    Exactly 60.00% on a day passes. Missing first-stage evidence remains missing
-    and is handled as WAIT_FOR_DATA. This helper's numeric score input is unchanged.
+    Eligibility is decided upstream by requiring each of the five distinct daily
+    Delivery % values to be >=60.00%. This average is used only for display/scoring
+    context, never as a substitute for the per-session gate. Missing evidence remains
+    missing and is handled as WAIT_FOR_DATA.
     """
     return _num(row.get("AvgDelivery5D"))
 

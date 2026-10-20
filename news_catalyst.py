@@ -216,33 +216,34 @@ def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
 
 
 def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
-    """Apply the inclusive Delivery >= 60% gate and the required setup gate."""
+    """Keep only candidates that passed the five-daily-session Delivery gate.
+
+    AvgDelivery5D is display-only and must never qualify a candidate. Prefer
+    checking the five daily evidence columns when present; otherwise trust the
+    explicit status produced by delivery_filter.py. Missing evidence fails closed.
+    """
     filtered = candidates.copy()
-    if "AvgDelivery5D" in filtered.columns:
-        # Numeric evidence is the source of truth whenever it is present.
-        delivery = pd.to_numeric(filtered["AvgDelivery5D"], errors="coerce")
-        before = len(filtered)
-        filtered = filtered[delivery.ge(60.0)].copy()
+    daily_cols = [c for c in filtered.columns if str(c).startswith("Delivery_")]
+    before = len(filtered)
+    if len(daily_cols) >= 5:
+        daily = filtered[daily_cols].apply(pd.to_numeric, errors="coerce")
+        daily_pass = daily.notna().sum(axis=1).eq(5) & daily.ge(60.0).all(axis=1)
+        filtered = filtered[daily_pass].copy()
         print(
-            f"[NEWS-DIAG] Numeric delivery gate: before={before}, after={len(filtered)}, "
-            f"removed={before-len(filtered)}, rule=AvgDelivery5D>=60%"
+            f"[NEWS-DIAG] Daily Delivery gate: before={before}, after={len(filtered)}, "
+            f"removed={before-len(filtered)}, rule=each_of_5_sessions>=60%"
         )
     elif "DeliveryFilterStatus" in filtered.columns:
         statuses = filtered["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
-        allowed = {
-            "PASS_GE_60_PERCENT",
-            "PASS_GT_60_PERCENT",
-            "PASS_AT_OR_ABOVE_60_PERCENT",
-            "PASS",
-        }
-        before = len(filtered)
+        allowed = {"PASS_GE_60_PERCENT", "PASS_GT_60_PERCENT", "PASS_AT_OR_ABOVE_60_PERCENT", "PASS"}
         filtered = filtered[statuses.isin(allowed)].copy()
         print(
-            f"[NEWS-DIAG] Delivery gate: before={before}, after={len(filtered)}, "
-            f"removed={before-len(filtered)}, rule=AvgDelivery5D>=60%"
+            f"[NEWS-DIAG] Delivery status gate: before={before}, after={len(filtered)}, "
+            f"removed={before-len(filtered)}, rule=delivery-first status (each of 5 sessions >=60%)"
         )
     else:
-        print("[NEWS-DIAG] Delivery evidence unavailable; assuming caller supplied pre-screened candidates.")
+        filtered = filtered.iloc[0:0].copy()
+        print("[NEWS-DIAG] Delivery evidence/status missing; fail-closed with zero candidates.")
 
     if "SetupType" in filtered.columns:
         setup = filtered["SetupType"].astype(str).str.upper().str.strip()
