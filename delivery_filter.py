@@ -1,8 +1,9 @@
 """NSE EOD five-session delivery-first shortlist filter.
 
-Rule: average Delivery % across the latest EOD session plus the previous four
-available NSE trading-session reports must be greater than or equal to 60% to qualify.
-Missing/invalid reports or fewer than five distinct sessions never PASS.
+Rule: each of the latest five distinct valid EOD trading sessions must have
+Delivery % >= 60.00% for a symbol to qualify. The five-session average is
+reported for audit only; it does not decide eligibility. Missing/invalid data
+or fewer than five distinct sessions never PASS.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import requests
 BASE_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv"
 CACHE_DIR = Path("data/cache/delivery")
 AUDIT_DIR = Path("data/reports")
-MINIMUM_AVERAGE = 60.0
+MINIMUM_DAILY_DELIVERY = 60.0
 REQUIRED_COLUMNS = {"SYMBOL", "SERIES", "DELIV_PER"}
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
@@ -120,13 +121,14 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
 
 
 def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str = "TckrSymb",
-                          series_col: str = "SctySrs", minimum_average: float = MINIMUM_AVERAGE,
+                          series_col: str = "SctySrs", minimum_daily: float = MINIMUM_DAILY_DELIVERY,
                           sessions: list[tuple[date, pd.DataFrame]] | None = None,
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return qualifying candidates and full per-symbol audit.
 
-    Qualifies only if five distinct valid reports have a valid delivery percentage
-    for the exact SYMBOL+SERIES and their arithmetic mean is greater than or equal to the threshold (>= 60.00% by default).
+    A symbol qualifies only when all five distinct valid reports contain a valid
+    Delivery % for the exact SYMBOL+SERIES and every daily value is >= 60.00%
+    by default. AvgDelivery5D is retained as descriptive audit data only.
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()
@@ -185,13 +187,20 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         count = int(distinct["REPORT_DATE"].nunique())
         avg = float(distinct["DELIV_PER"].mean()) if count == 5 else float("nan")
         by_date = {r["REPORT_DATE"]: float(r["DELIV_PER"]) for _, r in distinct.iterrows()}
+        daily_values = list(by_date.values())
+        min_daily = min(daily_values) if count == 5 else float("nan")
+        daily_pass_count = sum(value >= minimum_daily for value in daily_values) if count == 5 else 0
+        passes = count == 5 and daily_pass_count == 5
+        status = "WAIT_FOR_DATA" if count != 5 else ("PASS_GE_60_PERCENT" if passes else "FILTERED_OUT_LT_60_PERCENT")
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
             "DeliverySessions": count,
-            "AvgDelivery5D": avg,
+            "AvgDelivery5D": avg,  # Descriptive only; never used for the pass/fail decision.
+            "MinDelivery5D": min_daily,
+            "DeliveryDailyPassCount": daily_pass_count,
             "LatestDeliveryPct": by_date.get(_parse_date(asof_date).isoformat(), float("nan")),
-            "DeliveryStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GE_60_PERCENT" if avg >= minimum_average else "FILTERED_OUT_LT_60_PERCENT"),
-            "DeliveryFilterStatus": "WAIT_FOR_DATA" if count != 5 else ("PASS_GE_60_PERCENT" if avg >= minimum_average else "FILTERED_OUT_LT_60_PERCENT"),
+            "DeliveryStatus": status,
+            "DeliveryFilterStatus": status,
         })
         for i, (report_date, _) in enumerate(reports, start=1):
             record[f"Delivery_{report_date.isoformat()}"] = by_date.get(report_date.isoformat(), float("nan"))
@@ -203,9 +212,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     audit.to_csv(audit_path, index=False)
     qualified = audit[audit["DeliveryStatus"] == "PASS_GE_60_PERCENT"].copy()
     print(f"[DELIVERY] Candidates checked: {len(audit)}")
-    print(f"[DELIVERY] Qualified (>={minimum_average:.1f}%): {len(qualified)}")
+    print(f"[DELIVERY] Qualified: all five daily values >={minimum_daily:.2f}%: {len(qualified)}")
     print(f"[DELIVERY] WAIT_FOR_DATA: {(audit['DeliveryStatus'] == 'WAIT_FOR_DATA').sum()}")
-    print(f"[DELIVERY] Filtered out (< {minimum_average:.1f}%): {(audit['DeliveryStatus'] == 'FILTERED_OUT_LT_60_PERCENT').sum()}")
+    print(f"[DELIVERY] Rejected: at least one daily value <{minimum_daily:.2f}%: {(audit['DeliveryStatus'] == 'FILTERED_OUT_LT_60_PERCENT').sum()}")
     print(f"[DELIVERY] Audit saved: {audit_path}")
 
     # Restore original candidate columns plus audit metrics.

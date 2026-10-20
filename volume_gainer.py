@@ -1036,7 +1036,7 @@ def prepare_primary_shortlist(result, eod_date):
         "PASS" if is_complete else "WAIT_FOR_DATA" for is_complete in complete
     ]
     frame["PrimaryShortlistReason"] = [
-        "PASS_COMPLETE_5D_AND_PRIOR_20D_HISTORY_DELIVERY_GATE_APPLIED_AFTER_RVOL_TOP20"
+        "PASS_COMPLETE_5D_AND_PRIOR_20D_VOLUME_HISTORY_DELIVERY_GATE_FOLLOWS_BEFORE_TOP20"
         if is_complete else "WAIT_INSUFFICIENT_5D_OR_PRIOR_20D_VOLUME_HISTORY"
         for is_complete in complete
     ]
@@ -1061,7 +1061,7 @@ def prepare_primary_shortlist(result, eod_date):
     print(
         f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. "
-        "Low-volume 3/5 rule is NOT USED. AvgDelivery5D > 60% gate runs after RVOL Top 20. "
+        "Low-volume 3/5 rule is NOT USED. Daily Delivery >=60% gate runs before RVOL Top 20. "
         f"Audit: {audit_path}"
     )
     return primary
@@ -2772,8 +2772,8 @@ def calculate_relative_strength_nifty(
 def select_top20_analysis_candidates(result, eod_date):
     """Select up to 20 technical candidates after core EOD screens.
 
-    Delivery has already been applied as a mandatory pre-analysis gate: only candidates
-    with five valid sessions and AvgDelivery5D > 60.00% reach this screen. A candidate
+    Delivery has already been applied before RVOL Top 20: only candidates with five
+    valid sessions and each daily Delivery % >=60.00% reach this screen. A candidate
     must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
     trend/candle and setup-specific volume rules. Negative relative strength is
     retained as a scoring/ranking warning, not a standalone hard rejection.
@@ -2817,7 +2817,7 @@ def select_top20_analysis_candidates(result, eod_date):
 
         # Defensive audit check: the mandatory delivery gate must already have passed.
         if delivery != "PASS_GE_60_PERCENT":
-            reasons.append("DELIVERY_AVERAGE_BELOW_60_OR_DATA_MISSING")
+            reasons.append("ONE_OR_MORE_DAILY_DELIVERY_VALUES_BELOW_60_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
@@ -3286,12 +3286,58 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 2A: DELIVERY SCREEN DEFERRED UNTIL AFTER RVOL TOP 20
+    # STEP 2A: DELIVERY-FIRST STOCK SELECTION — BEFORE OTHER SCREENS
     # --------------------------------------------------------
-    # Do not add placeholder delivery columns here: apply_delivery_filter uses
-    # existing candidate columns as-is, so pre-created placeholders could mask
-    # the verified audit values. Delivery data is fetched only for RVOL Top 20.
-    print("[DELIVERY] Full-universe scan skipped; delivery gate runs after RVOL Top 20.")
+    # The first stock-selection gate is daily Delivery: each of the five latest
+    # distinct valid sessions must be >=60.00%. Only those survivors proceed to
+    # existing history, RVOL Top 20, technical, sector, news and final conditions.
+    print("\nSTEP 2A: Applying daily Delivery >=60% filter before other stock-selection conditions...")
+    if current.empty:
+        current["DeliverySessions"] = pd.Series(dtype="Int64")
+        current["AvgDelivery5D"] = pd.Series(dtype="float64")
+        current["MinDelivery5D"] = pd.Series(dtype="float64")
+        current["DeliveryDailyPassCount"] = pd.Series(dtype="Int64")
+        current["LatestDeliveryPct"] = pd.Series(dtype="float64")
+        current["DeliveryStatus"] = pd.Series(dtype="object")
+        current["DeliveryFilterStatus"] = pd.Series(dtype="object")
+        print("[DELIVERY] No current EOD symbols available.")
+    else:
+        try:
+            stale_delivery_cols = [
+                col for col in current.columns
+                if col in {"DeliverySessions", "AvgDelivery5D", "MinDelivery5D", "DeliveryDailyPassCount", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus"}
+                or str(col).startswith("Delivery_")
+            ]
+            delivery_input = current.drop(columns=stale_delivery_cols, errors="ignore").copy()
+            delivery_qualified, delivery_audit = apply_delivery_filter(
+                delivery_input,
+                eod_date,
+                symbol_col="TckrSymb",
+                series_col="SctySrs",
+                minimum_daily=60.0,
+            )
+            if delivery_audit is not None and not delivery_audit.empty:
+                delivery_audit_path = os.path.join("outputs", "v8_delivery_first_audit.csv")
+                os.makedirs("outputs", exist_ok=True)
+                delivery_audit.to_csv(delivery_audit_path, index=False)
+                print(f"[DELIVERY] Full-current-universe audit saved: {delivery_audit_path}")
+            current = delivery_qualified.copy()
+            if not current.empty:
+                current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
+            else:
+                print("[DELIVERY] No stock passed all five daily Delivery >=60.00% checks.")
+            print(f"[DELIVERY] Stocks passing all five days: {len(current)}")
+        except Exception as exc:
+            # Fail closed: missing official delivery evidence cannot pass the gate.
+            print(f"[DELIVERY] WAIT_FOR_DATA: daily delivery gate could not be verified: {exc}")
+            current = current.iloc[0:0].copy()
+            current["DeliverySessions"] = pd.Series(dtype="Int64")
+            current["AvgDelivery5D"] = pd.Series(dtype="float64")
+            current["MinDelivery5D"] = pd.Series(dtype="float64")
+            current["DeliveryDailyPassCount"] = pd.Series(dtype="Int64")
+            current["LatestDeliveryPct"] = pd.Series(dtype="float64")
+            current["DeliveryStatus"] = pd.Series(dtype="object")
+            current["DeliveryFilterStatus"] = pd.Series(dtype="object")
 
     # --------------------------------------------------------
     # STEP 3
@@ -3323,72 +3369,21 @@ def main():
     # --------------------------------------------------------
     # STEP 5: PRIMARY SHORTLIST — complete history only
     # --------------------------------------------------------
-    # The user's required selection gate is AvgDelivery5D > 60%, applied
-    # after RVOL Top 20. Do not use a 3/5 low-volume rule as a filter or setup gate.
+    # Validate history only here. Daily Delivery >=60% on all five sessions is
+    # applied next, before RVOL ranking / Top 20. Do not use a 3/5 low-volume rule.
     result = current.merge(avg_volume, on="TckrSymb", how="left")
     result = calculate_5d_volume(result, historical)
     result = prepare_primary_shortlist(result, eod_date)
 
     # --------------------------------------------------------
-    # STEP 6: CURRENT RVOL — only for primary-shortlisted symbols
+    # STEP 6: CURRENT RVOL — only after delivery-first + volume-history gates
     # --------------------------------------------------------
     result = calculate_rvol(result, avg_volume)
-    result = select_top20_by_rvol(result, eod_date)
 
     # --------------------------------------------------------
-    # STEP 6A: MANDATORY FIVE-SESSION DELIVERY GATE — RVOL TOP 20 ONLY
+    # STEP 7: TOP 20 — selected after daily Delivery and existing history checks
     # --------------------------------------------------------
-    # Strict rule: arithmetic average Delivery % across the latest five distinct
-    # valid NSE sessions must be strictly > 60.00. Values at or below 60.00 are rejected.
-    # Missing/invalid per-symbol history is WAIT_FOR_DATA and does not pass.
-    print("\nSTEP 6A: Applying five-session delivery gate to RVOL Top 20...")
-    if result.empty:
-        result["DeliverySessions"] = pd.Series(dtype="Int64")
-        result["AvgDelivery5D"] = pd.Series(dtype="float64")
-        result["LatestDeliveryPct"] = pd.Series(dtype="float64")
-        result["DeliveryStatus"] = pd.Series(dtype="object")
-        result["DeliveryFilterStatus"] = pd.Series(dtype="object")
-        print("[DELIVERY] RVOL Top 20 is empty; delivery gate has no candidates to evaluate.")
-    else:
-        try:
-            # Drop any legacy/stale delivery fields before filtering so the
-            # verified five-session audit values cannot be masked by old columns.
-            stale_delivery_cols = [
-                col for col in result.columns
-                if col in {"DeliverySessions", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus"}
-                or str(col).startswith("Delivery_")
-            ]
-            delivery_input = result.drop(columns=stale_delivery_cols, errors="ignore").copy()
-            delivery_qualified, delivery_audit = apply_delivery_filter(
-                delivery_input,
-                eod_date,
-                symbol_col="TckrSymb",
-                series_col="SctySrs",
-                minimum_average=60.0,
-            )
-            if delivery_audit is not None and not delivery_audit.empty:
-                delivery_audit_path = os.path.join(
-                    "outputs", "v8_rvol_top20_delivery_audit.csv"
-                )
-                os.makedirs("outputs", exist_ok=True)
-                delivery_audit.to_csv(delivery_audit_path, index=False)
-                print(f"[DELIVERY] RVOL Top 20 audit saved: {delivery_audit_path}")
-            result = delivery_qualified.copy()
-            if not result.empty:
-                result["DeliveryFilterStatus"] = result["DeliveryStatus"].astype(str)
-            else:
-                print("[DELIVERY] No RVOL Top 20 stock passed AvgDelivery5D > 60.00%; no candidate will proceed.")
-            print(f"[DELIVERY] Qualified candidates passed to price/volume analysis: {len(result)}")
-        except Exception as exc:
-            # Fail closed: unavailable official delivery history must never be
-            # interpreted as a pass or allow unverified candidates to proceed.
-            print(f"[DELIVERY] WAIT_FOR_DATA: delivery gate could not be verified: {exc}")
-            result = result.iloc[0:0].copy()
-            result["DeliverySessions"] = pd.Series(dtype="Int64")
-            result["AvgDelivery5D"] = pd.Series(dtype="float64")
-            result["LatestDeliveryPct"] = pd.Series(dtype="float64")
-            result["DeliveryStatus"] = pd.Series(dtype="object")
-            result["DeliveryFilterStatus"] = pd.Series(dtype="object")
+    result = select_top20_by_rvol(result, eod_date)
 
     # --------------------------------------------------------
     # STEP 7: PRICE + VOLUME — only delivery-qualified Top 20
@@ -3423,8 +3418,8 @@ def main():
         )
     )
     # LowVolumeDays5D may remain as descriptive data only. It is not a selection
-    # condition; the mandatory five-session AvgDelivery5D > 60% gate is the user's
-    # requested volume-related eligibility rule.
+    # condition; each of the five daily Delivery values >=60% is the mandatory
+    # volume-related eligibility rule. AvgDelivery5D is descriptive only.
     if "LowVolumeDays5D" in result.columns:
         result["LowVolumeRuleStatus"] = "NOT_USED_DELIVERY_PERCENTAGE_IS_THE_REQUIRED_VOLUME_SELECTION_GATE"
 
