@@ -92,6 +92,23 @@ def _normalise_index_name(value: Any) -> str:
     return re.sub(r"\s+INDEX$", "", name).strip()
 
 
+def _archive_sector_coverage(frame: pd.DataFrame) -> set[str]:
+    """Return the configured tracked sectors present in an official archive CSV.
+
+    Coverage is based only on normalized official Index Name values. Unknown
+    names and malformed frames do not count toward completeness.
+    """
+    if frame is None or frame.empty or "Index Name" not in frame.columns:
+        return set()
+    expected = {_normalise_index_name(item[2]): item[0] for item in SECTOR_INDICES}
+    found: set[str] = set()
+    for raw_name in frame["Index Name"].dropna().tolist():
+        normalized = _normalise_index_name(raw_name)
+        if normalized in expected:
+            found.add(expected[normalized])
+    return found
+
+
 def _download_constituents(session: requests.Session, sector: str, filenames: list[str], index_symbol: str) -> list[dict[str, str]]:
     """Try official filename variants; reject HTML/error pages and malformed CSVs."""
     last_error = "no candidate filenames"
@@ -134,16 +151,26 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     date_key = day.strftime("%d%m%Y")
     cache_path = CACHE_DIR / f"ind_close_all_{date_key}.csv"
+    cached: pd.DataFrame | None = None
     if cache_path.exists():
         try:
-            cached = pd.read_csv(cache_path)
-            if not cached.empty:
+            candidate = pd.read_csv(cache_path)
+            if not candidate.empty:
+                cached = candidate
+                coverage = _archive_sector_coverage(candidate)
+                expected_count = len(SECTOR_INDICES)
+                if len(coverage) >= expected_count:
+                    print(
+                        f"[SECTOR][ARCHIVE] CACHE_HIT date={day.date()} "
+                        f"rows={len(candidate)} sector_coverage={len(coverage)}/{expected_count}"
+                    )
+                    return candidate
                 print(
-                    f"[SECTOR][ARCHIVE] CACHE_HIT date={day.date()} "
-                    f"rows={len(cached)} columns={list(cached.columns)}"
+                    f"[SECTOR][ARCHIVE] CACHE_INCOMPLETE date={day.date()} "
+                    f"rows={len(candidate)} sector_coverage={len(coverage)}/{expected_count}; revalidating"
                 )
-                return cached
-            print(f"[SECTOR][ARCHIVE] CACHE_EMPTY date={day.date()} path={cache_path}")
+            else:
+                print(f"[SECTOR][ARCHIVE] CACHE_EMPTY date={day.date()} path={cache_path}")
         except Exception as exc:
             print(f"[SECTOR][ARCHIVE] CACHE_READ_ERROR date={day.date()} error={exc}")
 
@@ -194,15 +221,33 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
             if frame.empty:
                 errors.append(f"empty CSV from {host}")
                 continue
+            coverage = _archive_sector_coverage(frame)
+            expected_count = len(SECTOR_INDICES)
+            if len(coverage) < expected_count:
+                errors.append(f"incomplete sector coverage {len(coverage)}/{expected_count} from {host}")
+                print(
+                    f"[SECTOR][ARCHIVE] CSV_INCOMPLETE date={day.date()} host={host} "
+                    f"rows={len(frame)} sector_coverage={len(coverage)}/{expected_count}"
+                )
+                continue
             print(
                 f"[SECTOR][ARCHIVE] CSV_OK date={day.date()} host={host} "
-                f"rows={len(frame)} columns={list(frame.columns)}"
+                f"rows={len(frame)} sector_coverage={len(coverage)}/{expected_count}"
             )
             frame.to_csv(cache_path, index=False)
+            print(f"[SECTOR][ARCHIVE] CACHE_REFRESHED date={day.date()} sector_coverage={len(coverage)}/{expected_count}")
             return frame
         except Exception as exc:
             errors.append(f"{host}: {type(exc).__name__}: {exc}")
             print(f"[SECTOR][ARCHIVE] REQUEST_ERROR date={day.date()} host={host} error={type(exc).__name__}: {exc}")
+
+    if cached is not None:
+        print(
+            f"[SECTOR][ARCHIVE] CACHE_FALLBACK date={day.date()} "
+            f"sector_coverage={len(_archive_sector_coverage(cached))}/{len(SECTOR_INDICES)} "
+            "reason=official_revalidation_unavailable"
+        )
+        return cached
 
     if errors and all("HTTP 404" in item for item in errors):
         print(

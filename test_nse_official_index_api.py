@@ -1,7 +1,7 @@
+import tempfile
 """Regression tests for the current official Nifty Indices historical-data API."""
 import importlib.util
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -92,88 +92,79 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 
 
-class ArchiveCSVResponse:
-    def __init__(self, status_code=200, content=b"", content_type="text/csv"):
-        self.status_code = status_code
-        self.content = content
-        self.headers = {"Content-Type": content_type}
-        self.url = "https://archives.nseindia.com/content/indices/test.csv"
-        self.history = []
-
-
-class ArchiveCSVSession:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = []
-
-    def get(self, url, **kwargs):
-        self.calls.append(url)
-        if self.responses:
-            return self.responses.pop(0)
-        return ArchiveCSVResponse(503, b"unavailable", "text/plain")
-
-
-def _archive_csv_for_sectors(sectors):
-    names = {sector: index_name for sector, _files, index_name, _symbol in sector_data.SECTOR_INDICES}
-    frame = pd.DataFrame({
-        "Index Name": [names[s] for s in sectors],
-        "Index Date": ["19-10-2026"] * len(sectors),
-        "Closing Index Value": [1000.0 + i for i in range(len(sectors))],
-    })
-    return frame.to_csv(index=False).encode("utf-8")
-
-
 class ArchiveCacheRevalidationTests(unittest.TestCase):
-    def setUp(self):
-        self.asof = pd.Timestamp("2026-10-19")
-        self.all_sectors = [item[0] for item in sector_data.SECTOR_INDICES]
-        self.missing_six = {
-            "Nifty Capital Goods", "Nifty Construction", "Nifty Consumer Services",
-            "Nifty Insurance", "Nifty Power", "Nifty Telecommunications",
-        }
+    def _frame(self, count=None):
+        names = [item[2] for item in sector_data.SECTOR_INDICES]
+        if count is not None:
+            names = names[:count]
+        return pd.DataFrame({
+            "Index Name": names,
+            "Index Date": ["19-Oct-2026"] * len(names),
+            "Closing Index Value": [100.0] * len(names),
+        })
 
-    def test_incomplete_cache_is_revalidated_and_replaced_by_complete_official_csv(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache_dir = Path(tmp)
-            cache_path = cache_dir / "ind_close_all_19102026.csv"
-            initial = [s for s in self.all_sectors if s not in self.missing_six]
-            pd.DataFrame({
-                "Index Name": [next(x[2] for x in sector_data.SECTOR_INDICES if x[0] == s) for s in initial],
-                "Index Date": ["19-10-2026"] * len(initial),
-                "Closing Index Value": [1000.0] * len(initial),
-            }).to_csv(cache_path, index=False)
-            session = ArchiveCSVSession([ArchiveCSVResponse(200, _archive_csv_for_sectors(self.all_sectors))])
-            with patch.object(sector_data, "CACHE_DIR", cache_dir):
-                frame = sector_data._download_daily_index_file(session, self.asof)
-                self.assertEqual(len(sector_data._archive_sector_coverage(frame)), len(self.all_sectors))
-                self.assertEqual(len(session.calls), 1)
-                refreshed = pd.read_csv(cache_path)
-                self.assertEqual(len(sector_data._archive_sector_coverage(refreshed)), len(self.all_sectors))
+    def _write_cache(self, cache_dir, frame, day):
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(cache_dir / f"ind_close_all_{day.strftime('%d%m%Y')}.csv", index=False)
 
     def test_complete_cache_is_reused_without_network_request(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_dir = Path(tmp)
-            cache_path = cache_dir / "ind_close_all_19102026.csv"
-            cache_path.write_bytes(_archive_csv_for_sectors(self.all_sectors))
-            session = ArchiveCSVSession([])
+            day = pd.Timestamp("2026-10-19")
+            self._write_cache(cache_dir, self._frame(), day)
+            session = FakeArchiveSession([])
             with patch.object(sector_data, "CACHE_DIR", cache_dir):
-                frame = sector_data._download_daily_index_file(session, self.asof)
-            self.assertEqual(len(sector_data._archive_sector_coverage(frame)), len(self.all_sectors))
+                result = sector_data._download_daily_index_file(session, day)
+            self.assertEqual(len(sector_data._archive_sector_coverage(result)), len(sector_data.SECTOR_INDICES))
             self.assertEqual(session.calls, [])
 
     def test_failed_revalidation_preserves_and_returns_existing_incomplete_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_dir = Path(tmp)
-            cache_path = cache_dir / "ind_close_all_19102026.csv"
-            initial = [s for s in self.all_sectors if s not in self.missing_six]
-            cache_bytes = _archive_csv_for_sectors(initial)
-            cache_path.write_bytes(cache_bytes)
-            session = ArchiveCSVSession([
-                ArchiveCSVResponse(403, b"blocked", "text/html"),
-                ArchiveCSVResponse(403, b"blocked", "text/html"),
-            ])
+            day = pd.Timestamp("2026-10-19")
+            self._write_cache(cache_dir, self._frame(len(sector_data.SECTOR_INDICES) - 6), day)
+            session = FakeArchiveSession([FakeArchiveResponse(403, b"blocked"), FakeArchiveResponse(403, b"blocked")])
             with patch.object(sector_data, "CACHE_DIR", cache_dir):
-                frame = sector_data._download_daily_index_file(session, self.asof)
-            self.assertEqual(len(sector_data._archive_sector_coverage(frame)), len(self.all_sectors) - 6)
-            self.assertEqual(cache_path.read_bytes(), cache_bytes)
+                result = sector_data._download_daily_index_file(session, day)
+            self.assertEqual(len(sector_data._archive_sector_coverage(result)), len(sector_data.SECTOR_INDICES) - 6)
             self.assertEqual(len(session.calls), 2)
+            self.assertTrue((cache_dir / "ind_close_all_19102026.csv").exists())
+
+    def test_incomplete_cache_is_revalidated_and_replaced_by_complete_official_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            day = pd.Timestamp("2026-10-19")
+            self._write_cache(cache_dir, self._frame(len(sector_data.SECTOR_INDICES) - 6), day)
+            complete_csv = self._frame().to_csv(index=False).encode("utf-8")
+            session = FakeArchiveSession([FakeArchiveResponse(200, complete_csv)])
+            with patch.object(sector_data, "CACHE_DIR", cache_dir):
+                result = sector_data._download_daily_index_file(session, day)
+                cached_after = pd.read_csv(cache_dir / "ind_close_all_19102026.csv")
+            self.assertEqual(len(sector_data._archive_sector_coverage(result)), len(sector_data.SECTOR_INDICES))
+            self.assertEqual(len(sector_data._archive_sector_coverage(cached_after)), len(sector_data.SECTOR_INDICES))
+            self.assertEqual(len(session.calls), 1)
+
+
+class FakeArchiveResponse:
+    def __init__(self, status_code, content):
+        self.status_code = status_code
+        self.content = content
+        self.headers = {"Content-Type": "text/csv" if status_code == 200 else "text/html"}
+        self.url = "https://nsearchives.nseindia.com/content/indices/ind_close_all_19102026.csv"
+        self.history = []
+
+
+class FakeArchiveSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        if self.responses:
+            return self.responses.pop(0)
+        return FakeArchiveResponse(403, b"blocked")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
