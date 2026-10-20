@@ -141,6 +141,17 @@ _LEGAL_SUFFIXES = {
     "LIMITED", "LTD", "PRIVATE", "PVT", "COMPANY", "CORPORATION", "CORP",
     "INCORPORATED", "INC", "PLC",
 }
+# Single-token registered issuer names can be distinctive (e.g. MARICO), but
+# generic words must never become issuer evidence by themselves.
+_GENERIC_SINGLE_WORD_ISSUER_NAMES = {
+    "TECH", "TECHNOLOGY", "TECHNOLOGIES", "INDIA", "INDIAN", "BANK",
+    "POWER", "GOLD", "SILVER", "FINANCE", "FINANCIAL", "CAPITAL",
+    "INFRA", "INFRASTRUCTURE", "INDUSTRIES", "INDUSTRIAL", "SERVICES",
+    "SERVICE", "GLOBAL", "ENTERPRISES", "ENTERPRISE", "TRADING",
+    "CHEMICALS", "PHARMA", "HEALTHCARE", "HOSPITALS", "HOSPITAL",
+    "REALTY", "TEXTILES", "AGRO", "MOTORS", "MOTOR", "MEDIA",
+    "CONSUMER", "CONSTRUCTION", "LOGISTICS", "TRANSPORT", "HOLDINGS",
+}
 
 
 def _company_base(value: str) -> str:
@@ -167,8 +178,12 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     company_base = _company_base(company)
     company_tokens = company_base.split()
     if company_base:
-        distinctive = len(company_base) >= 5 and (
-            len(company_tokens) >= 2 or len(company_base) >= 8
+        distinctive = (
+            len(company_tokens) >= 2 and len(company_base) >= 5
+        ) or (
+            len(company_tokens) == 1
+            and len(company_base) >= 6
+            and company_base not in _GENERIC_SINGLE_WORD_ISSUER_NAMES
         )
         if distinctive and re.search(
             rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title
@@ -192,6 +207,33 @@ def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
     if any(re.search(pattern, title) for pattern in normalized_patterns):
         return "EXPLICIT_TICKER_MATCH"
     return ""
+
+
+def _item_has_exact_symbol(item: ET.Element, symbol: str) -> bool:
+    """Return true only when an official RSS/API symbol field equals the ticker."""
+    wanted = str(symbol or "").strip().upper()
+    if not wanted:
+        return False
+    for node in item.iter():
+        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+        if local_name in {"symbol", "ticker", "securitysymbol", "scripsymbol"}:
+            value = str(node.text or "").strip().upper()
+            if value == wanted:
+                return True
+    return False
+
+
+def _is_market_quote_headline(headline: str) -> bool:
+    """Reject quote/profile pages masquerading as dated secondary news."""
+    title = _norm(headline)
+    patterns = (
+        r"\bSHARE PRICE\b.*\b(LIVE NSE|LIVE CHART|STOCK PRICE|PRICE TODAY|CHART)\b",
+        r"\bSTOCK PRICE\b.*\b(LIVE NSE|LIVE CHART|TODAY|CHART|QUOTE)\b",
+        r"\bLIVE NSE\b.*\b(SHARE PRICE|STOCK PRICE)\b",
+        r"\bSTOCK QUOTE\b",
+        r"\bPRICE CHART\b.*\bLIVE\b",
+    )
+    return any(re.search(pattern, title) for pattern in patterns)
 
 
 def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
@@ -332,11 +374,12 @@ def _read_equity_master() -> dict[str, str]:
 
 
 class _RSSItemList(list):
-    """List of parsed RSS items with a flag for malformed-feed recovery."""
+    """List of parsed feed items with explicit completeness/availability flags."""
 
-    def __init__(self, items=(), *, partial: bool = False):
+    def __init__(self, items=(), *, partial: bool = False, available: bool = True):
         super().__init__(items)
         self.partial = partial
+        self.available = available
 
 
 def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
@@ -393,7 +436,11 @@ def _rss_items(url: str, params: dict | None = None) -> list[ET.Element]:
         return _RSSItemList(recovered, partial=True)
 
 
-def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Element]:
+def _nse_announcement_api_items(
+    symbol: str, from_date, to_date,
+    session: requests.Session | None = None,
+    warm_session: bool = True,
+) -> list[ET.Element]:
     """Fetch NSE announcements and log bounded raw-response diagnostics.
 
     Diagnostics report status, content type, byte count, payload type/count,
@@ -404,20 +451,21 @@ def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Elem
     start = pd.Timestamp(from_date).strftime("%d-%m-%Y")
     end = pd.Timestamp(to_date).strftime("%d-%m-%Y")
     requested_symbol = str(symbol).strip().upper()
-    session = requests.Session()
+    session = session or requests.Session()
     session.headers.update({**HEADERS, "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-announcements"})
     try:
-        landing_url = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
-        landing = session.get(landing_url, timeout=15)
-        landing.raise_for_status()
-        landing_headers = getattr(landing, "headers", {}) or {}
-        landing_content = getattr(landing, "content", b"") or b""
-        print(
-            f"[NEWS-DIAG] NSE_API_LANDING symbol={requested_symbol} "
-            f"status={getattr(landing, 'status_code', 'unknown')} "
-            f"content_type={landing_headers.get('Content-Type', 'unknown')!r} "
-            f"bytes={len(landing_content)}"
-        )
+        if warm_session:
+            landing_url = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+            landing = session.get(landing_url, timeout=15)
+            landing.raise_for_status()
+            landing_headers = getattr(landing, "headers", {}) or {}
+            landing_content = getattr(landing, "content", b"") or b""
+            print(
+                f"[NEWS-DIAG] NSE_API_LANDING symbol={requested_symbol} "
+                f"status={getattr(landing, 'status_code', 'unknown')} "
+                f"content_type={landing_headers.get('Content-Type', 'unknown')!r} "
+                f"bytes={len(landing_content)}"
+            )
 
         api_url = "https://www.nseindia.com/api/corporate-announcements"
         params = {"index": "equities", "symbol": requested_symbol, "from_date": start, "to_date": end}
@@ -457,7 +505,7 @@ def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Elem
                 f"payload_type={type(payload).__name__} raw_records=NA "
                 f"field_names=NA"
             )
-            return []
+            return _RSSItemList([], available=False)
 
         items: list[ET.Element] = []
         symbol_mismatch = 0
@@ -504,10 +552,10 @@ def _nse_announcement_api_items(symbol: str, from_date, to_date) -> list[ET.Elem
             f"records_without_symbol={records_without_symbol} records_without_date={records_without_date}"
         )
         print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_OK symbol={requested_symbol} items={len(items)} range={start}:{end}")
-        return items
+        return _RSSItemList(items, partial=False, available=True)
     except Exception as exc:
         print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_FAIL symbol={requested_symbol} range={start}:{end} error={type(exc).__name__}: {exc}")
-        return []
+        return _RSSItemList([], available=False)
 
 
 def _news_window_bounds(eod_date, scan_mode=None, now=None):
@@ -647,7 +695,11 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             link = _clean(item.findtext("link", ""))
             for symbol in symbols:
                 company = names.get(symbol, "")
-                match_reason = _issuer_match_reason(symbol, match_text, company)
+                match_reason = (
+                    "EXACT_OFFICIAL_SYMBOL_FIELD"
+                    if _item_has_exact_symbol(item, symbol)
+                    else _issuer_match_reason(symbol, match_text, company)
+                )
                 if not match_reason:
                     continue
                 issuer_matches += 1
@@ -674,22 +726,28 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         if issuer_matches == 0 and in_window_samples:
             print(f"[NEWS-DIAG] OFFICIAL_ZERO_MATCH_SAMPLES feed={feed_name!r} samples={in_window_samples!r}")
 
-    # The public RSS feeds are global and can contain only post-EOD items.
-    # If a candidate has no official match from RSS, query NSE's issuer/date-
-    # filtered official announcements endpoint for the same permitted window.
-    # The official API date parameters must match the same exact IST window used
-    # by RSS/secondary filtering (including Monday morning after a weekend).
+    # The public RSS feeds are global and can omit issuer-specific filings.
+    # Query NSE's issuer/date-filtered official announcements endpoint for every
+    # candidate, using the same exact IST window as RSS/secondary filtering.
     api_start_date = cutoff_ist_date
     api_end_date = window_end_ist_date
-    primary_symbols_found = {str(row.get("TckrSymb", "")).upper() for row in rows if str(row.get("SourceType", "")).lower() == "primary"}
-    for symbol in sorted(symbols - primary_symbols_found):
-        api_items = _nse_announcement_api_items(symbol, api_start_date, api_end_date)
+    api_coverage: dict[str, bool] = {}
+    api_session = requests.Session()
+    for api_index, symbol in enumerate(sorted(symbols)):
+        # Query every candidate even when RSS found one filing: RSS is global and
+        # can omit additional issuer-specific filings. Reuse one warmed session.
+        api_items = _nse_announcement_api_items(
+            symbol, api_start_date, api_end_date,
+            session=api_session, warm_session=(api_index == 0),
+        )
+        api_coverage[symbol] = bool(getattr(api_items, "available", True))
         api_matches = 0
         for item in api_items:
             title = _item_text(item, "title")
             description = _item_text(item, "description")
             issuer_fields = _item_text(item, "company", "symbol")
-            if _issuer_match_reason(symbol, " ".join((title, description, issuer_fields)), names.get(symbol, "")) == "":
+            exact_api_symbol = _item_text(item, "symbol").strip().upper() == symbol
+            if not exact_api_symbol and _issuer_match_reason(symbol, " ".join((title, description, issuer_fields)), names.get(symbol, "")) == "":
                 continue
             stamp = _published(item)
             if stamp is None or stamp < cutoff or stamp > window_end:
@@ -704,8 +762,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             })
         print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_SUMMARY symbol={symbol} matched={api_matches}")
 
+    api_successes = sum(api_coverage.values())
     if nse_successes == 0:
-        status["NSE"] = "unavailable"
+        status["NSE"] = "available via issuer API" if api_successes else "unavailable"
     elif nse_successes < len(NSE_FEEDS) or nse_partial:
         status["NSE"] = "partly available"
 
@@ -744,6 +803,9 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         for item in combined_items:
             title = _item_text(item, "title")
             description = _item_text(item, "description", "summary", "content", "abstract")
+            if _is_market_quote_headline(title):
+                print(f"[NEWS-DIAG] SECONDARY_QUOTE_PAGE_IGNORED symbol={symbol} headline={title[:160]!r}")
+                continue
             source_node = next((node for node in item.iter() if str(node.tag).rsplit("}", 1)[-1].lower() == "source"), None)
             source_name = _clean(source_node.text if source_node is not None else "Google News")
             source_url = source_node.get("url", "") if source_node is not None else ""
@@ -782,7 +844,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     frame = pd.DataFrame(rows, columns=NEWS_COLUMNS)
     if not frame.empty:
         frame = frame.drop_duplicates(
-            subset=["TckrSymb", "Headline", "SourceDomain"], keep="first"
+            subset=["TckrSymb", "PublishedAt", "Headline"], keep="first"
         )
     Path("data/inputs").mkdir(parents=True, exist_ok=True)
     frame.to_csv("data/inputs/news_evidence_auto.csv", index=False)
@@ -800,9 +862,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             if not official.empty:
                 news_status = "OFFICIAL_NEWS_FOUND"
                 chosen = official.iloc[0]
-            elif status.get("NSE") != "available" or official_window_records == 0:
-                # Do not claim NO_NEWS_FOUND when the official feeds returned no
-                # records in the requested window; coverage cannot be established.
+            elif not (
+                (status.get("NSE") == "available" and official_window_records > 0)
+                or api_coverage.get(symbol, False)
+            ):
+                # NO_NEWS_FOUND is allowed only when an official source actually
+                # covered this issuer/window; successful empty API responses count
+                # as coverage, while blocked/failed requests remain WAIT_FOR_DATA.
                 news_status = "WAIT_FOR_DATA"
                 chosen = secondary.iloc[0] if not secondary.empty else None
             elif not secondary.empty:

@@ -1,4 +1,4 @@
-"""Refresh NSE V8 sector membership and historical index closes.
+"""Refresh NSE V8 sector/thematic index membership and historical closes.
 
 Sector membership is fetched from official NSE Indices constituent CSVs using
 known filename variants. Sector index closes are read from NSE's official daily
@@ -50,6 +50,12 @@ SECTOR_INDICES = [
     ("Nifty Insurance", ["ind_niftyinsurancelist.csv", "ind_niftyinsurance_list.csv"], "Nifty Insurance", "NIFTY INSURANCE"),
     ("Nifty Consumer Services", ["ind_niftyconsumerserviceslist.csv", "ind_niftyconsumerservices_list.csv"], "Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
     ("Nifty Telecommunications", ["ind_niftyTelecommunications_list.csv", "ind_niftytelecommunications_list.csv", "ind_niftytelecommunicationslist.csv", "ind_niftytelecomlist.csv", "ind_niftytelecom_list.csv"], "Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    # Official thematic/sectoral benchmarks needed for precise classification of
+    # construction, transport/logistics and textile issuers that do not belong
+    # to the original 20 tracked indices.
+    ("Nifty Construction", ["ind_niftyconstructionlist.csv", "ind_niftyconstruction_list.csv"], "Nifty Construction", "NIFTY CONSTRUCTION"),
+    ("Nifty Transportation and Logistics", ["ind_niftytransportationlogisticslist.csv", "ind_niftytransportation_logistics_list.csv", "ind_niftytransportationlogistics_list.csv", "ind_niftytransportationandlogistics_list.csv", "ind_niftytransportation_logisticslist.csv"], "Nifty Transportation & Logistics", "NIFTY TRANSPORTATION AND LOGISTICS"),
+    ("Nifty Non-Cyclical Consumer", ["ind_niftynoncyclicalconsumerlist.csv", "ind_nifty_non_cyclical_consumer_list.csv", "ind_niftynoncyclicalconsumer_list.csv", "ind_nifty_noncyclicalconsumer_list.csv", "ind_nifty_non_cyclical_consumerlist.csv"], "Nifty Non-Cyclical Consumer Index", "NIFTY NON-CYCLICAL CONSUMER"),
 ]
 
 HEADERS = {
@@ -78,6 +84,12 @@ def _clean_symbol(value: Any) -> str:
 
 def _normalise_name(value: Any) -> str:
     return " ".join(str(value or "").strip().upper().replace("&", "AND").split())
+
+
+def _normalise_index_name(value: Any) -> str:
+    """Normalize official index names despite the archive's optional INDEX suffix."""
+    name = _normalise_name(value)
+    return re.sub(r"\s+INDEX$", "", name).strip()
 
 
 def _download_constituents(session: requests.Session, sector: str, filenames: list[str], index_symbol: str) -> list[dict[str, str]]:
@@ -205,16 +217,16 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
 def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> tuple[list[dict[str, Any]], int]:
     """Fetch 45 prior weekdays of official NSE index closes; retain exact-date rows only."""
     index_lookup = {
-        _normalise_name(index_name): sector
+        _normalise_index_name(index_name): sector
         for sector, _files, index_name, _symbol in SECTOR_INDICES
     }
-    # NSE's official daily all-indices archive uses "Nifty Healthcare Index",
-    # while the configured sector label is "Nifty Healthcare". Treat this as
-    # an explicit official-name alias; do not infer or synthesize any values.
-    archive_index_aliases = {
-        "NIFTY HEALTHCARE INDEX": "Nifty Healthcare",
-    }
-    index_lookup.update(archive_index_aliases)
+    # The official daily archive inconsistently includes a trailing "Index"
+    # suffix (for example, "Nifty Healthcare Index" and "Nifty Power Index").
+    # Strip only that exact terminal suffix; never use fuzzy/substring matching.
+    index_lookup.update({
+        _normalise_index_name(index_name + " Index"): sector
+        for sector, _files, index_name, _symbol in SECTOR_INDICES
+    })
     collected: dict[tuple[str, str], float] = {}
     exact_sectors: set[str] = set()
     # 45 weekdays gives a buffer for holidays and should exceed the required 21 closes.
@@ -243,7 +255,7 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
                     health_rows = []
                     for _, health_row in frame.iterrows():
                         raw_name = str(health_row.get(name_col, "")).strip()
-                        norm_name = _normalise_name(raw_name)
+                        norm_name = _normalise_index_name(raw_name)
                         if "HEALTH" in norm_name:
                             health_rows.append({
                                 "raw_name": raw_name,
@@ -258,7 +270,7 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
                         f"rows={health_rows!r}"
                     )
                 for _, row in frame.iterrows():
-                    norm = _normalise_name(row.get(name_col, ""))
+                    norm = _normalise_index_name(row.get(name_col, ""))
                     sector = index_lookup.get(norm)
                     if not sector:
                         continue
@@ -356,7 +368,7 @@ def _history_from_niftyindices_api(
         try:
             response = None
             for attempt in (1, 2):
-                response = session.post(endpoint, json=payload_body, headers=headers, timeout=20)
+                response = session.post(endpoint, data=json.dumps(payload_body), headers=headers, timeout=20)
                 content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
                 body_preview = str(getattr(response, "text", "") or "")[:120].replace("\r", " ").replace("\n", " ")
                 if response.status_code == 200:
@@ -487,6 +499,14 @@ INDUSTRY_TO_TRACKED_INDEX = {
     # Official NSE Indices classification structure places these Basic Industries
     # under the named sectors; use the matching tracked Nifty sector benchmark.
     "OTHER AGRICULTURAL PRODUCTS": ("Nifty FMCG", "NIFTY FMCG"),
+    # These exact NSE Basic Industry/Industry labels map to official Nifty
+    # benchmarks whose methodologies explicitly cover the relevant activity.
+    "TEXTILES AND APPARELS": ("Nifty Non-Cyclical Consumer", "NIFTY NON-CYCLICAL CONSUMER"),
+    "OTHER TEXTILE PRODUCTS": ("Nifty Non-Cyclical Consumer", "NIFTY NON-CYCLICAL CONSUMER"),
+    "TRANSPORT SERVICES": ("Nifty Transportation and Logistics", "NIFTY TRANSPORTATION AND LOGISTICS"),
+    "LOGISTICS SOLUTION PROVIDER": ("Nifty Transportation and Logistics", "NIFTY TRANSPORTATION AND LOGISTICS"),
+    "CIVIL CONSTRUCTION": ("Nifty Construction", "NIFTY CONSTRUCTION"),
+    "CONSTRUCTION AND ENGINEERING": ("Nifty Construction", "NIFTY CONSTRUCTION"),
     "CERAMICS": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
     "GRANITES & MARBLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
     "GRANITES AND MARBLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
@@ -647,6 +667,8 @@ OFFICIAL_SECTOR_TO_TRACKED_INDEX = {
     "CONSUMER SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
     "TELECOMMUNICATION": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
     "TELECOMMUNICATIONS": ("Nifty Telecommunications", "NIFTY TELECOMMUNICATIONS"),
+    "TEXTILES": ("Nifty Non-Cyclical Consumer", "NIFTY NON-CYCLICAL CONSUMER"),
+    "CONSTRUCTION": ("Nifty Construction", "NIFTY CONSTRUCTION"),
     "CAPITAL GOODS": ("Nifty Capital Goods", "NIFTY CAPITAL GOODS"),
     "CHEMICALS": ("Nifty Chemicals", "NIFTY CHEMICALS"),
     "POWER": ("Nifty Power", "NIFTY POWER"),
@@ -925,7 +947,10 @@ def _targeted_shortlist_mappings(
                     industry_mapping_source = source_name
                     break
 
-            if official_sector_mapping:
+            # A specific industry/basic-industry classification is more precise
+            # than the broad NSE sector label (e.g. SERVICES -> logistics).
+            prefer_industry = bool(industry_mapping) and nse_sector in {"", "SERVICES"}
+            if official_sector_mapping and not prefer_industry:
                 sector, index_symbol = official_sector_mapping
                 status = "OFFICIAL_NSE_SECTOR_MAPPED"
                 reason = (
@@ -958,6 +983,18 @@ def _targeted_shortlist_mappings(
                     "SectorIndexSymbol": index_symbol,
                 })
                 print(f"[SECTOR] Candidate classification {symbol}: {sector} via {industry_mapping_source}='{source_value}'")
+            elif official_sector_mapping:
+                sector, index_symbol = official_sector_mapping
+                status = "OFFICIAL_NSE_SECTOR_MAPPED"
+                reason = (
+                    f"Official NSE sector='{nse_sector}' mapped to tracked benchmark; "
+                    f"macro='{macro}', industry='{nse_industry}', basicIndustry='{basic_industry}'"
+                )
+                mapping_rows.append({
+                    "TckrSymb": symbol, "Sector": sector,
+                    "SectorIndexSymbol": index_symbol,
+                })
+                print(f"[SECTOR] Candidate classification {symbol}: {sector} via official NSE sector='{nse_sector}'")
             else:
                 sector, index_symbol = "", ""
                 status = "WAIT_FOR_DATA"
