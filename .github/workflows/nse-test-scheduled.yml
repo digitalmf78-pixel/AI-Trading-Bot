@@ -1,4 +1,3 @@
-
 name: NSE Data Test
 
 on:
@@ -15,7 +14,7 @@ on:
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
-    # 02:30 UTC = 08:00 IST: refresh news before the next market session.
+    # 02:30 UTC = 08:00 IST: premarket refresh.
     - cron: "30 2 * * 1-5"
 
 permissions:
@@ -50,27 +49,46 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas
+          pip install requests pandas pytest
 
       - name: Check repository files
         run: |
-          echo "===== CURRENT DIRECTORY ====="
-          pwd
-
-          echo "===== REPOSITORY FILES ====="
-          ls -lah
-
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py v8_layers_14_41.py news_catalyst.py; do
+          for f in volume_gainer.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
               echo "MISSING: $f"
+              exit 1
             fi
           done
-
-          echo "===== PYTHON VERSION ====="
           python --version
+
+      - name: Run NSE V8 compile and regression tests
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_TELEGRAM: "false"
+        run: |
+          set -e
+          echo "===== PYTHON COMPILE CHECK ====="
+          python -m py_compile volume_gainer.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_bhavcopy_test.py nifty500_api_test.py
+
+          echo "===== V8 REGRESSION TESTS ====="
+          python -u test_v8_regression.py
+
+          echo "===== SECTOR / NEWS / CACHE UNIT TESTS ====="
+          python -u -m unittest -v \
+            test_sector_news_final_fix \
+            test_sector_mapping_cache_reconciliation \
+            test_niftyindices_history_bootstrap \
+            test_news_official_feed_diagnostics \
+            test_news_catalyst_matching \
+            test_news_issuer_matching \
+            test_nse_official_index_api
+
+          echo "===== PYTEST PARSER TESTS ====="
+          python -m pytest -q test_news_catalyst_parser.py
 
       - name: Run NSE Volume Gainer
         env:
@@ -80,31 +98,6 @@ jobs:
           NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
           set -e
-
-          echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py
-          python -m py_compile v8_layers_14_41.py
-          python -m py_compile news_catalyst.py
-          python -m py_compile sector_data.py
-          python -m py_compile delivery_filter.py
-          python -m py_compile nse_bhavcopy_test.py
-          python -m py_compile nifty500_api_test.py
-          echo "Compile check PASSED"
-
-          echo "===== V8 REGRESSION TESTS ====="
-          python -u test_v8_regression.py
-
-          echo "===== SECTOR / NEWS / CACHE REGRESSION TESTS ====="
-          python -u -m unittest -v \
-            test_sector_news_final_fix \
-            test_sector_mapping_cache_reconciliation \
-            test_niftyindices_history_bootstrap \
-            test_news_official_feed_diagnostics \
-            test_news_catalyst_matching \
-            test_news_catalyst_parser \
-            test_news_issuer_matching \
-            test_nse_official_index_api
-
           echo "===== NEWS SCAN MODE: ${NEWS_SCAN_MODE} ====="
           python -u ./volume_gainer.py
           echo "===== NSE SCANNER FINISHED ====="
@@ -112,94 +105,19 @@ jobs:
       - name: Diagnose NSE V8 data files
         if: always()
         run: |
-          echo "===== INPUT CSV FILES ====="
-
-          if [ -d data/inputs ]; then
-            for f in data/inputs/*.csv; do
-              if [ -f "$f" ]; then
-                echo ""
-                echo "===== FILE: $f ====="
-                echo "Line count:"
-                wc -l "$f"
-                echo "First 3 lines:"
-                head -3 "$f"
-              fi
-            done
-          else
-            echo "data/inputs directory does not exist"
-          fi
-
-          echo ""
           echo "===== LAYER STATUS SUMMARY PREVIEW ====="
-          if [ -f outputs/v8_layer_status_summary.csv ]; then
-            head -12 outputs/v8_layer_status_summary.csv
-          else
-            echo "Layer status summary not found"
-          fi
-
-          echo ""
+          if [ -f outputs/v8_layer_status_summary.csv ]; then head -12 outputs/v8_layer_status_summary.csv; else echo "Layer status summary not found"; fi
           echo "===== EOD WATCHLIST PREVIEW ====="
-          if [ -f outputs/v8_eod_watchlist.csv ]; then
-            head -6 outputs/v8_eod_watchlist.csv
-          else
-            echo "EOD watchlist not found"
-          fi
-
-          echo ""
-          echo "===== NEXT DAY ENTRY PREVIEW ====="
-          if [ -f outputs/v8_next_day_entry.csv ]; then
-            head -6 outputs/v8_next_day_entry.csv
-          else
-            echo "Next day entry report not found"
-          fi
-
-          echo ""
-          echo "===== CATALYST TOP 20 PREVIEW ====="
-          if [ -f outputs/v8_catalyst_top20.csv ]; then
-            head -6 outputs/v8_catalyst_top20.csv
-          else
-            echo "Catalyst report not found"
-          fi
-
-          echo ""
-          echo "===== POSITION MONITOR PREVIEW ====="
-          if [ -f outputs/v8_position_monitor.csv ]; then
-            head -6 outputs/v8_position_monitor.csv
-          else
-            echo "Position monitor report not found"
-          fi
-
-          echo ""
-          echo ""
+          if [ -f outputs/v8_eod_watchlist.csv ]; then head -6 outputs/v8_eod_watchlist.csv; else echo "EOD watchlist not found"; fi
           echo "===== SECTOR / DATA REPORTS ====="
           if [ -d data/reports ]; then
             find data/reports -maxdepth 2 -type f -print
             for f in data/reports/sector_candidate_mapping_*.csv data/reports/delivery_first_audit_*.csv; do
-              if [ -f "$f" ]; then
-                echo ""
-                echo "===== FILE: $f ====="
-                head -12 "$f"
-              fi
+              if [ -f "$f" ]; then echo "===== $f ====="; head -12 "$f"; fi
             done
-          else
-            echo "data/reports directory does not exist"
           fi
-
-          echo ""
-          echo "===== OUTPUT FILE LIST ====="
-          if [ -d outputs ]; then
-            find outputs -maxdepth 3 -type f -print
-          else
-            echo "outputs directory does not exist"
-          fi
-
-          echo ""
           echo "===== BHAVCOPY CACHE SAMPLE ====="
-          if [ -d data/bhavcopy ]; then
-            find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print | head -20
-          else
-            echo "Bhavcopy cache directory does not exist"
-          fi
+          if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print | head -20; else echo "Bhavcopy cache directory does not exist"; fi
 
       - name: Upload NSE V8 reports and input templates
         if: always()
