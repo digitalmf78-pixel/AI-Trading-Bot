@@ -21,7 +21,7 @@ class FakeResponse:
         self.text = text
         self.content = text.encode("utf-8")
         self.headers = {"Content-Type": content_type}
-        self.url = "https://www.niftyindices.com/BackPage/getHistoricaldatatabletoString"
+        self.url = "https://www.niftyindices.com/Backpage.aspx/getHistoricaldatatabletoString"
 
     def json(self):
         if isinstance(self._payload, Exception):
@@ -63,14 +63,14 @@ class OfficialIndexHistoryTests(unittest.TestCase):
         post_call = next(call for call in session.calls if call[0] == "POST")
         self.assertEqual(
             post_call[1],
-            "https://www.niftyindices.com/BackPage/getHistoricaldatatabletoString",
+            "https://www.niftyindices.com/Backpage.aspx/getHistoricaldatatabletoString",
         )
         self.assertIn("data", post_call[2])
         self.assertNotIn("json", post_call[2])
         body = json.loads(post_call[2]["data"])
         self.assertIn("NIFTY HEALTHCARE", body["cinfo"])
-        self.assertIn("startDate':'08/01/2026", body["cinfo"])
-        self.assertIn("endDate':'10/15/2026", body["cinfo"])
+        self.assertIn("startDate':'01 Aug 2026", body["cinfo"])
+        self.assertIn("endDate':'15 Oct 2026", body["cinfo"])
 
     def test_rejects_invalid_dates_and_closes(self):
         response = FakeResponse(payload={"d": json.dumps([

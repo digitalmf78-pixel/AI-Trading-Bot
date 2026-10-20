@@ -518,16 +518,15 @@ def _history_from_niftyindices_api(
 
     The public historical-data page is requested first to establish a normal
     session/cookie jar before calling the current BackPage historical endpoint.
-    The older /Backpage.aspx route was redirecting to Sitefinity/Login in the
-    GitHub Actions log. The current endpoint uses the documented MM/DD/YYYY
-    date form. Bootstrap is best-effort; responses are still validated strictly.
+    Use the documented ASP.NET Backpage.aspx endpoint and the historical-data
+    API date format (DD Mon YYYY). The response must still be validated strictly. Bootstrap is best-effort; responses are still validated strictly.
     Only valid, dated closes returned by the official service are accepted;
     missing/invalid responses remain missing and are never synthesized.
     """
-    endpoint = "https://www.niftyindices.com/BackPage/getHistoricaldatatabletoString"
+    endpoint = "https://www.niftyindices.com/Backpage.aspx/getHistoricaldatatabletoString"
     history_page = "https://www.niftyindices.com/reports/historical-data"
-    start_date = (asof - pd.Timedelta(days=75)).strftime("%m/%d/%Y")
-    end_date = asof.strftime("%m/%d/%Y")
+    start_date = (asof - pd.Timedelta(days=75)).strftime("%d %b %Y")
+    end_date = asof.strftime("%d %b %Y")
     headers = {
         **HEADERS,
         "Accept": "application/json, text/javascript, */*; q=0.01",
