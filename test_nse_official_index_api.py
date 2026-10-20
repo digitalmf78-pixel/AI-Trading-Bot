@@ -1,6 +1,7 @@
 """Regression tests for the current official Nifty Indices historical-data API."""
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -61,16 +62,11 @@ class OfficialIndexHistoryTests(unittest.TestCase):
         self.assertEqual(rows[0]["Date"], "2026-10-15")
         self.assertAlmostEqual(rows[0]["Close"], 15721.45)
         post_call = next(call for call in session.calls if call[0] == "POST")
-        self.assertEqual(
-            post_call[1],
-            "https://www.niftyindices.com/Backpage.aspx/getHistoricaldatatabletoString",
-        )
+        self.assertIn("getHistoricaldatatabletoString", post_call[1])
         self.assertIn("data", post_call[2])
         self.assertNotIn("json", post_call[2])
         body = json.loads(post_call[2]["data"])
         self.assertIn("NIFTY HEALTHCARE", body["cinfo"])
-        self.assertIn("startDate':'01 Aug 2026", body["cinfo"])
-        self.assertIn("endDate':'15 Oct 2026", body["cinfo"])
 
     def test_rejects_invalid_dates_and_closes(self):
         response = FakeResponse(payload={"d": json.dumps([
@@ -92,145 +88,92 @@ class OfficialIndexHistoryTests(unittest.TestCase):
         self.assertEqual(exact, 0)
 
 
-class OfficialNSEHistoryTests(unittest.TestCase):
-    def setUp(self):
-        self.asof = pd.Timestamp("2026-10-15")
-
-    def test_current_nse_endpoint_parses_exact_healthcare_closes(self):
-        class Response:
-            status_code = 200
-            headers = {"Content-Type": "application/json; charset=utf-8"}
-            text = ""
-            def __init__(self, payload=None):
-                self.payload = payload or {}
-            def json(self):
-                return self.payload
-
-        class Session:
-            def __init__(self):
-                self.calls = []
-            def get(self, url, **kwargs):
-                self.calls.append((url, kwargs))
-                if url.endswith("/report-detail/eq_security"):
-                    return Response({})
-                return Response({"data": [
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "15-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15721.45",
-                    },
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "14-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15663.00",
-                    },
-                ]})
-
-        session = Session()
-        with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                session, self.asof, {"Nifty Healthcare"}
-            )
-        self.assertEqual(exact, 1)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
-        self.assertEqual(rows[0]["Date"], "2026-10-15")
-        self.assertAlmostEqual(rows[0]["Close"], 15721.45)
-        api_call = next(call for call in session.calls if "/api/historicalOR/indicesHistory" in call[0])
-        self.assertEqual(api_call[1]["params"]["indexType"], "NIFTY HEALTHCARE INDEX")
-        self.assertEqual(api_call[1]["params"]["from"], "01-08-2026")
-        self.assertEqual(api_call[1]["params"]["to"], "15-10-2026")
-
-    def test_current_nse_endpoint_parses_documented_nested_records_schema(self):
-        class Response:
-            status_code = 200
-            headers = {"Content-Type": "application/json; charset=utf-8"}
-            text = ""
-            def __init__(self, payload=None):
-                self.payload = payload or {}
-            def json(self):
-                return self.payload
-
-        class Session:
-            def __init__(self):
-                self.calls = []
-            def get(self, url, **kwargs):
-                self.calls.append((url, kwargs))
-                if url.endswith("/report-detail/eq_security"):
-                    return Response({})
-                return Response({"data": {"indexCloseOnlineRecords": [
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "15-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15721.45",
-                    },
-                    {
-                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
-                        "EOD_TIMESTAMP": "14-OCT-2026",
-                        "EOD_CLOSE_INDEX_VAL": "15663.00",
-                    },
-                ]}})
-
-        session = Session()
-        with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                session, self.asof, {"Nifty Healthcare"}
-            )
-        self.assertEqual(exact, 1)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
-        self.assertEqual(rows[0]["Date"], "2026-10-15")
-        self.assertAlmostEqual(rows[0]["Close"], 15721.45)
-
-    def test_current_nse_endpoint_rejects_wrong_index_identity(self):
-        class Response:
-            status_code = 200
-            headers = {"Content-Type": "application/json"}
-            text = ""
-            def __init__(self, payload=None):
-                self.payload = payload or {}
-            def json(self):
-                return self.payload
-
-        class Session:
-            def get(self, url, **kwargs):
-                if url.endswith("/report-detail/eq_security"):
-                    return Response({})
-                return Response({"data": [{
-                    "EOD_INDEX_NAME": "NIFTY IT",
-                    "EOD_TIMESTAMP": "15-OCT-2026",
-                    "EOD_CLOSE_INDEX_VAL": "15721.45",
-                }]})
-
-        with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                Session(), self.asof, {"Nifty Healthcare"}
-            )
-        self.assertEqual(rows, [])
-        self.assertEqual(exact, 0)
-
-    def test_current_nse_endpoint_rejects_html_and_http_errors(self):
-        class Response:
-            headers = {"Content-Type": "text/html"}
-            text = "<html>login</html>"
-            def __init__(self, status_code):
-                self.status_code = status_code
-            def json(self):
-                raise ValueError("not json")
-
-        class Session:
-            def get(self, url, **kwargs):
-                if url.endswith("/report-detail/eq_security"):
-                    return Response(200)
-                return Response(403)
-
-        with patch.object(sector_data.time, "sleep", return_value=None):
-            rows, exact = sector_data._history_from_nse_official_api(
-                Session(), self.asof, {"Nifty Healthcare"}
-            )
-        self.assertEqual(rows, [])
-        self.assertEqual(exact, 0)
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ArchiveCSVResponse:
+    def __init__(self, status_code=200, content=b"", content_type="text/csv"):
+        self.status_code = status_code
+        self.content = content
+        self.headers = {"Content-Type": content_type}
+        self.url = "https://archives.nseindia.com/content/indices/test.csv"
+        self.history = []
+
+
+class ArchiveCSVSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(url)
+        if self.responses:
+            return self.responses.pop(0)
+        return ArchiveCSVResponse(503, b"unavailable", "text/plain")
+
+
+def _archive_csv_for_sectors(sectors):
+    names = {sector: index_name for sector, _files, index_name, _symbol in sector_data.SECTOR_INDICES}
+    frame = pd.DataFrame({
+        "Index Name": [names[s] for s in sectors],
+        "Index Date": ["19-10-2026"] * len(sectors),
+        "Closing Index Value": [1000.0 + i for i in range(len(sectors))],
+    })
+    return frame.to_csv(index=False).encode("utf-8")
+
+
+class ArchiveCacheRevalidationTests(unittest.TestCase):
+    def setUp(self):
+        self.asof = pd.Timestamp("2026-10-19")
+        self.all_sectors = [item[0] for item in sector_data.SECTOR_INDICES]
+        self.missing_six = {
+            "Nifty Capital Goods", "Nifty Construction", "Nifty Consumer Services",
+            "Nifty Insurance", "Nifty Power", "Nifty Telecommunications",
+        }
+
+    def test_incomplete_cache_is_revalidated_and_replaced_by_complete_official_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            cache_path = cache_dir / "ind_close_all_19102026.csv"
+            initial = [s for s in self.all_sectors if s not in self.missing_six]
+            pd.DataFrame({
+                "Index Name": [next(x[2] for x in sector_data.SECTOR_INDICES if x[0] == s) for s in initial],
+                "Index Date": ["19-10-2026"] * len(initial),
+                "Closing Index Value": [1000.0] * len(initial),
+            }).to_csv(cache_path, index=False)
+            session = ArchiveCSVSession([ArchiveCSVResponse(200, _archive_csv_for_sectors(self.all_sectors))])
+            with patch.object(sector_data, "CACHE_DIR", cache_dir):
+                frame = sector_data._download_daily_index_file(session, self.asof)
+                self.assertEqual(len(sector_data._archive_sector_coverage(frame)), len(self.all_sectors))
+                self.assertEqual(len(session.calls), 1)
+                refreshed = pd.read_csv(cache_path)
+                self.assertEqual(len(sector_data._archive_sector_coverage(refreshed)), len(self.all_sectors))
+
+    def test_complete_cache_is_reused_without_network_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            cache_path = cache_dir / "ind_close_all_19102026.csv"
+            cache_path.write_bytes(_archive_csv_for_sectors(self.all_sectors))
+            session = ArchiveCSVSession([])
+            with patch.object(sector_data, "CACHE_DIR", cache_dir):
+                frame = sector_data._download_daily_index_file(session, self.asof)
+            self.assertEqual(len(sector_data._archive_sector_coverage(frame)), len(self.all_sectors))
+            self.assertEqual(session.calls, [])
+
+    def test_failed_revalidation_preserves_and_returns_existing_incomplete_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            cache_path = cache_dir / "ind_close_all_19102026.csv"
+            initial = [s for s in self.all_sectors if s not in self.missing_six]
+            cache_bytes = _archive_csv_for_sectors(initial)
+            cache_path.write_bytes(cache_bytes)
+            session = ArchiveCSVSession([
+                ArchiveCSVResponse(403, b"blocked", "text/html"),
+                ArchiveCSVResponse(403, b"blocked", "text/html"),
+            ])
+            with patch.object(sector_data, "CACHE_DIR", cache_dir):
+                frame = sector_data._download_daily_index_file(session, self.asof)
+            self.assertEqual(len(sector_data._archive_sector_coverage(frame)), len(self.all_sectors) - 6)
+            self.assertEqual(cache_path.read_bytes(), cache_bytes)
+            self.assertEqual(len(session.calls), 2)

@@ -1,61 +1,25 @@
-$ /opt/pyvenv/bin/python -m py_compile /mnt/data/NSE_V8_HISTORY_ENDPOINT_CORRECTED_FIX_2026-10-20/sector_data.py /mnt/data/NSE_V8_HISTORY_ENDPOINT_CORRECTED_FIX_2026-10-20/test_nse_official_index_api.py
-EXIT=0
-Spreadsheet runtime warmup failed during python startup
-Traceback (most recent call last):
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/patches/warm_spreadsheet_runtime_on_startup.py", line 26, in warm_spreadsheet_runtime_on_startup
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/spreadsheet_warmup.py", line 785, in warm_spreadsheet_runtime
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/spreadsheet_warmup.py", line 718, in _warm_feature_flows
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/spreadsheet_warmup.py", line 509, in _warm_drawing_and_image_flows
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/generated/interface/models.py", line 32861, in bring_to_front
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/rpc/remote.py", line 764, in __call__
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/rpc/client.py", line 175, in call
-artifact_tool.rpc.client.RemoteError: Element ordering requires an owning element collection.
+NSE V8 ROOT-CAUSE CACHE REVALIDATION PATCH — TEST RESULTS
+Date: 2026-10-20
 
+Source evidence:
+- Latest log logs_106817728483.zip shows cached 2026-10-19 all-indices CSV has 146 rows.
+- Exact configured sector-name coverage was 17/23; six configured sectors were missing.
+- The old _download_daily_index_file() returned any non-empty cached CSV immediately, so it never refreshed the incomplete cache.
+- Report data/inputs/sector_history.csv has 17 rows for 2026-10-19, while those six sectors last had rows on 2026-10-16.
 
-$ /opt/pyvenv/bin/python -m unittest -v test_nse_official_index_api
-EXIT=0
-[SECTOR][NIFTYINDICES] SESSION_BOOTSTRAP reason=initial status=200 content_type='text/html; charset=utf-8' bytes=42
-[SECTOR][NIFTYINDICES] HTTP 403 index=Nifty Healthcare attempt=1/2 content_type='text/html' preview='blocked'
-[SECTOR][NIFTYINDICES] SESSION_BOOTSTRAP reason=retry-Nifty Healthcare status=200 content_type='text/html; charset=utf-8' bytes=42
-[SECTOR][NIFTYINDICES] HTTP 403 index=Nifty Healthcare attempt=2/2 content_type='text/html' preview='blocked'
-[SECTOR][NIFTYINDICES] fallback rows=0 exact_date_sectors=0/23
-[SECTOR][NIFTYINDICES] SESSION_BOOTSTRAP reason=initial status=200 content_type='text/html; charset=utf-8' bytes=42
-[SECTOR][NIFTYINDICES] index=Nifty Healthcare accepted_rows=2 exact_date=True
-[SECTOR][NIFTYINDICES] fallback rows=2 exact_date_sectors=1/23
-[SECTOR][NIFTYINDICES] SESSION_BOOTSTRAP reason=initial status=200 content_type='text/html; charset=utf-8' bytes=42
-[SECTOR][NIFTYINDICES] index=Nifty Healthcare accepted_rows=0 exact_date=False
-[SECTOR][NIFTYINDICES] fallback rows=0 exact_date_sectors=0/23
-[SECTOR][NSE_HISTORY] SESSION_BOOTSTRAP status=200 url=https://www.nseindia.com/report-detail/eq_security
-[SECTOR][NSE_HISTORY] sector=Nifty Healthcare requested='NIFTY HEALTHCARE INDEX' accepted_rows=2 exact_date=True
-[SECTOR][NSE_HISTORY] fallback rows=2 exact_date_sectors=1/1
-[SECTOR][NSE_HISTORY] SESSION_BOOTSTRAP status=200 url=https://www.nseindia.com/report-detail/eq_security
-[SECTOR][NSE_HISTORY] sector=Nifty Healthcare requested='NIFTY HEALTHCARE INDEX' accepted_rows=2 exact_date=True
-[SECTOR][NSE_HISTORY] fallback rows=2 exact_date_sectors=1/1
-[SECTOR][NSE_HISTORY] SESSION_BOOTSTRAP status=200 url=https://www.nseindia.com/report-detail/eq_security
-[SECTOR][NSE_HISTORY] HTTP_FAIL sector=Nifty Healthcare status=403 content_type='text/html'
-[SECTOR][NSE_HISTORY] fallback rows=0 exact_date_sectors=0/1
-[SECTOR][NSE_HISTORY] SESSION_BOOTSTRAP status=200 url=https://www.nseindia.com/report-detail/eq_security
-[SECTOR][NSE_HISTORY] sector=Nifty Healthcare requested='NIFTY HEALTHCARE INDEX' accepted_rows=0 exact_date=False
-[SECTOR][NSE_HISTORY] fallback rows=0 exact_date_sectors=0/1
-Spreadsheet runtime warmup failed during python startup
-Traceback (most recent call last):
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/patches/warm_spreadsheet_runtime_on_startup.py", line 26, in warm_spreadsheet_runtime_on_startup
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/spreadsheet_warmup.py", line 785, in warm_spreadsheet_runtime
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/spreadsheet_warmup.py", line 718, in _warm_feature_flows
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/spreadsheet_warmup.py", line 509, in _warm_drawing_and_image_flows
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/generated/interface/models.py", line 32861, in bring_to_front
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/rpc/remote.py", line 764, in __call__
-  File "/tmp/tmp.QlpUkOUI9D/artifact_tool_v2-2.8.66/artifact_tool/rpc/client.py", line 175, in call
-artifact_tool.rpc.client.RemoteError: Element ordering requires an owning element collection.
-test_non_200_stays_missing (test_nse_official_index_api.OfficialIndexHistoryTests.test_non_200_stays_missing) ... ok
-test_reads_official_healthcare_closes_and_posts_expected_query (test_nse_official_index_api.OfficialIndexHistoryTests.test_reads_official_healthcare_closes_and_posts_expected_query) ... ok
-test_rejects_invalid_dates_and_closes (test_nse_official_index_api.OfficialIndexHistoryTests.test_rejects_invalid_dates_and_closes) ... ok
-test_current_nse_endpoint_parses_documented_nested_records_schema (test_nse_official_index_api.OfficialNSEHistoryTests.test_current_nse_endpoint_parses_documented_nested_records_schema) ... ok
-test_current_nse_endpoint_parses_exact_healthcare_closes (test_nse_official_index_api.OfficialNSEHistoryTests.test_current_nse_endpoint_parses_exact_healthcare_closes) ... ok
-test_current_nse_endpoint_rejects_html_and_http_errors (test_nse_official_index_api.OfficialNSEHistoryTests.test_current_nse_endpoint_rejects_html_and_http_errors) ... ok
-test_current_nse_endpoint_rejects_wrong_index_identity (test_nse_official_index_api.OfficialNSEHistoryTests.test_current_nse_endpoint_rejects_wrong_index_identity) ... ok
+Patch changes:
+- Revalidates cached official archive CSV when exact configured sector coverage is incomplete.
+- Tries both official NSE archive hosts.
+- Replaces the cache when the fetched official CSV is at least as complete as the cached copy.
+- Preserves and returns existing cache if both refresh attempts fail.
+- Never synthesizes closes or substitutes a different index.
 
-----------------------------------------------------------------------
-Ran 7 tests in 0.007s
+Validation:
+- Python compile check for workflow's core files: PASS
+- unittest discover: 49 tests PASS
+- test_v8_regression.py: 27/27 PASS
+- pytest test_news_catalyst_parser.py: 4/4 PASS
+- test_nse_official_index_api.py includes 3 new cache revalidation tests.
 
-OK
+Important limitation:
+These are local/mock tests. They prove the incomplete-cache refresh behavior, not that GitHub Actions will receive a complete live CSV. After applying, run NSE Data Test and check for CACHE_INCOMPLETE followed by CACHE_REFRESHED and exact_date_sectors=23/23. If the live official archive is still incomplete or blocked, do not claim the issue is solved; WAIT_FOR_DATA must remain.
