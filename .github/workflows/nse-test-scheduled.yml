@@ -15,8 +15,8 @@ on:
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
-    # 03:35 UTC = 09:05 IST: refresh news before the next market session.
-    - cron: "35 3 * * 1-5"
+    # 02:30 UTC = 08:00 IST: refresh news before the next market session.
+    - cron: "30 2 * * 1-5"
 
 permissions:
   contents: read
@@ -77,7 +77,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: "true"
-          NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '35 3 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
+          NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
           set -e
 
@@ -93,6 +93,17 @@ jobs:
 
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
+
+          echo "===== SECTOR / NEWS / CACHE REGRESSION TESTS ====="
+          python -u -m unittest -v \
+            test_sector_news_final_fix \
+            test_sector_mapping_cache_reconciliation \
+            test_niftyindices_history_bootstrap \
+            test_news_official_feed_diagnostics \
+            test_news_catalyst_matching \
+            test_news_catalyst_parser \
+            test_news_issuer_matching \
+            test_nse_official_index_api
 
           echo "===== NEWS SCAN MODE: ${NEWS_SCAN_MODE} ====="
           python -u ./volume_gainer.py
