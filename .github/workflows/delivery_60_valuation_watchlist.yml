@@ -193,8 +193,8 @@ jobs:
                       # are absent; connection/HTTP failures are not.
                       cacheable = True
                       soup = BeautifulSoup(response.text, "lxml")
-                      page_text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
-                      own_match = re.search(r"Stock\\s+P\\s*/\\s*E\\s+([\\d,]+(?:\\.\\d+)?)", page_text, flags=re.I)
+                      page_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+                      own_match = re.search(r"Stock\s+P\s*/\s*E\s+([\d,]+(?:\.\d+)?)", page_text, flags=re.I)
                       own_pe = parse_number(own_match.group(1)) if own_match else None
                       if own_pe is None:
                           result, reason = "DATA_INSUFFICIENT", "current positive P/E unavailable"
@@ -205,7 +205,7 @@ jobs:
                           except Exception:
                               tables = []
                           for table in tables:
-                              table.columns = [re.sub(r"\\s+", " ", str(c)).strip().upper() for c in table.columns]
+                              table.columns = [re.sub(r"\s+", " ", str(c)).strip().upper() for c in table.columns]
                               pe_col = next((c for c in table.columns if "STOCK P/E" in c or c == "P/E" or c.endswith(" P/E")), None)
                               if pe_col is None or len(table) < 3:
                                   continue
