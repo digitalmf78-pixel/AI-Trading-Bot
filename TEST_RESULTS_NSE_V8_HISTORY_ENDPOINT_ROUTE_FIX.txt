@@ -1,0 +1,8 @@
+LOCAL TEST RESULTS — 20-Oct-2026
+- py_compile: PASS
+- test_v8_regression.py: 27/27 PASS
+- unittest suite (Sector/News/Cache/Official API): 38 tests PASS
+- pytest test_news_catalyst_parser.py: 4/4 PASS
+- focused test_nse_official_index_api.py: 7/7 PASS
+
+Live API access is NOT validated by local mocked tests.
