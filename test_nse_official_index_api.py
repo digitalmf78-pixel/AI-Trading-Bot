@@ -87,5 +87,104 @@ class OfficialIndexHistoryTests(unittest.TestCase):
         self.assertEqual(exact, 0)
 
 
+class OfficialNSEHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.asof = pd.Timestamp("2026-10-15")
+
+    def test_current_nse_endpoint_parses_exact_healthcare_closes(self):
+        class Response:
+            status_code = 200
+            headers = {"Content-Type": "application/json; charset=utf-8"}
+            text = ""
+            def __init__(self, payload=None):
+                self.payload = payload or {}
+            def json(self):
+                return self.payload
+
+        class Session:
+            def __init__(self):
+                self.calls = []
+            def get(self, url, **kwargs):
+                self.calls.append((url, kwargs))
+                if url.endswith("/report-detail/eq_security"):
+                    return Response({})
+                return Response({"data": [
+                    {
+                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
+                        "EOD_TIMESTAMP": "15-OCT-2026",
+                        "EOD_CLOSE_INDEX_VAL": "15721.45",
+                    },
+                    {
+                        "EOD_INDEX_NAME": "NIFTY HEALTHCARE",
+                        "EOD_TIMESTAMP": "14-OCT-2026",
+                        "EOD_CLOSE_INDEX_VAL": "15663.00",
+                    },
+                ]})
+
+        session = Session()
+        with patch.object(sector_data.time, "sleep", return_value=None):
+            rows, exact = sector_data._history_from_nse_official_api(
+                session, self.asof, {"Nifty Healthcare"}
+            )
+        self.assertEqual(exact, 1)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["Sector"], "Nifty Healthcare")
+        self.assertEqual(rows[0]["Date"], "2026-10-15")
+        self.assertAlmostEqual(rows[0]["Close"], 15721.45)
+        api_call = next(call for call in session.calls if "/api/historicalOR/indicesHistory" in call[0])
+        self.assertEqual(api_call[1]["params"]["indexType"], "NIFTY HEALTHCARE INDEX")
+        self.assertEqual(api_call[1]["params"]["from"], "01-08-2026")
+        self.assertEqual(api_call[1]["params"]["to"], "15-10-2026")
+
+    def test_current_nse_endpoint_rejects_wrong_index_identity(self):
+        class Response:
+            status_code = 200
+            headers = {"Content-Type": "application/json"}
+            text = ""
+            def __init__(self, payload=None):
+                self.payload = payload or {}
+            def json(self):
+                return self.payload
+
+        class Session:
+            def get(self, url, **kwargs):
+                if url.endswith("/report-detail/eq_security"):
+                    return Response({})
+                return Response({"data": [{
+                    "EOD_INDEX_NAME": "NIFTY IT",
+                    "EOD_TIMESTAMP": "15-OCT-2026",
+                    "EOD_CLOSE_INDEX_VAL": "15721.45",
+                }]})
+
+        with patch.object(sector_data.time, "sleep", return_value=None):
+            rows, exact = sector_data._history_from_nse_official_api(
+                Session(), self.asof, {"Nifty Healthcare"}
+            )
+        self.assertEqual(rows, [])
+        self.assertEqual(exact, 0)
+
+    def test_current_nse_endpoint_rejects_html_and_http_errors(self):
+        class Response:
+            headers = {"Content-Type": "text/html"}
+            text = "<html>login</html>"
+            def __init__(self, status_code):
+                self.status_code = status_code
+            def json(self):
+                raise ValueError("not json")
+
+        class Session:
+            def get(self, url, **kwargs):
+                if url.endswith("/report-detail/eq_security"):
+                    return Response(200)
+                return Response(403)
+
+        with patch.object(sector_data.time, "sleep", return_value=None):
+            rows, exact = sector_data._history_from_nse_official_api(
+                Session(), self.asof, {"Nifty Healthcare"}
+            )
+        self.assertEqual(rows, [])
+        self.assertEqual(exact, 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
