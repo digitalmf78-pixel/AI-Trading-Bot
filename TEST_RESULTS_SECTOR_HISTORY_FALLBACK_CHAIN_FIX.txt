@@ -1,0 +1,9 @@
+LOCAL TEST RESULTS — 20-Oct-2026
+Patch: NSE V8 Sector History Fallback Chain Fix
+
+1. Python compile check: PASS
+2. V8 regression tests: PASS (27/27)
+3. Sector/News/Cache/API unittest group: PASS (41/41)
+4. News parser pytest: PASS (4/4)
+
+Live NSE/NiftyIndices requests were not executed from the local test environment. GitHub Actions must confirm whether the missing six index closes are served by the official history APIs or by the same-day post-close NSE snapshot. No missing historical values are fabricated.

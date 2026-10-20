@@ -174,3 +174,75 @@ class NSEOfficialHistoryEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SameDaySnapshotResponse:
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload)
+        self.content = self.text.encode("utf-8")
+        self.headers = {"Content-Type": "application/json; charset=utf-8"}
+        self.url = "https://www.nseindia.com/api/allIndices"
+
+    def json(self):
+        return self._payload
+
+
+class SameDaySnapshotSession:
+    def __init__(self, payload):
+        self.response = SameDaySnapshotResponse(payload)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.response
+
+
+class NSEAllIndicesSnapshotTests(unittest.TestCase):
+    def test_accepts_only_same_day_post_close_snapshot_for_missing_sectors(self):
+        from datetime import datetime
+        payload = {"data": [
+            {"index": "NIFTY CAPITAL GOODS", "last": "16200.41"},
+            {"index": "NIFTY CONSTRUCTION", "last": "1001.25"},
+            {"index": "NIFTY CONSUMER SERVICES", "last": "900.15"},
+            {"index": "NIFTY INSURANCE", "last": "820.10"},
+            {"index": "NIFTY POWER", "last": "7500.55"},
+            {"index": "NIFTY TELECOMMUNICATIONS", "last": "2100.35"},
+        ]}
+        session = SameDaySnapshotSession(payload)
+        now = datetime.fromisoformat("2026-10-20T16:00:00+05:30")
+        rows, exact = sector_data._history_from_nse_all_indices_snapshot(
+            session, pd.Timestamp("2026-10-20"),
+            {"Nifty Capital Goods", "Nifty Construction", "Nifty Consumer Services",
+             "Nifty Insurance", "Nifty Power", "Nifty Telecommunications"},
+            now=now,
+        )
+        self.assertEqual(exact, 6)
+        self.assertEqual(len(rows), 6)
+        self.assertTrue(all(row["Date"] == "2026-10-20" for row in rows))
+        self.assertEqual({row["Sector"] for row in rows}, {
+            "Nifty Capital Goods", "Nifty Construction", "Nifty Consumer Services",
+            "Nifty Insurance", "Nifty Power", "Nifty Telecommunications",
+        })
+
+    def test_never_stamps_today_snapshot_on_prior_eod_date(self):
+        from datetime import datetime
+        session = SameDaySnapshotSession({"data": [{"index": "NIFTY POWER", "last": "7500.55"}]})
+        now = datetime.fromisoformat("2026-10-20T22:10:00+05:30")
+        rows, exact = sector_data._history_from_nse_all_indices_snapshot(
+            session, pd.Timestamp("2026-10-19"), {"Nifty Power"}, now=now
+        )
+        self.assertEqual(rows, [])
+        self.assertEqual(exact, 0)
+
+    def test_skips_snapshot_before_market_close(self):
+        from datetime import datetime
+        session = SameDaySnapshotSession({"data": [{"index": "NIFTY POWER", "last": "7500.55"}]})
+        now = datetime.fromisoformat("2026-10-20T15:30:00+05:30")
+        rows, exact = sector_data._history_from_nse_all_indices_snapshot(
+            session, pd.Timestamp("2026-10-20"), {"Nifty Power"}, now=now
+        )
+        self.assertEqual(rows, [])
+        self.assertEqual(exact, 0)
+        self.assertEqual(session.calls, [])
