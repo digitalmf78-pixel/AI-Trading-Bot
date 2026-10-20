@@ -52,5 +52,24 @@ class SectorMappingCacheReconciliationTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["TckrSymb"], "ABC")
 
 
+    def test_persistent_mapping_rows_are_scoped_to_current_candidates(self):
+        rows = [
+            {"TckrSymb": "ABC", "Sector": "Nifty IT", "SectorIndexSymbol": "NIFTY IT"},
+            {"TckrSymb": "XYZ", "Sector": "Nifty Bank", "SectorIndexSymbol": "NIFTY BANK"},
+            {"TckrSymb": "QWE", "Sector": "Nifty Auto", "SectorIndexSymbol": "NIFTY AUTO"},
+        ]
+        result = sector_data._scope_mapping_rows_to_candidates(rows, ["xyz", "ABC"])
+        self.assertEqual(set(result["TckrSymb"]), {"ABC", "XYZ"})
+        self.assertNotIn("QWE", set(result["TckrSymb"]))
+
+    def test_empty_candidate_list_persists_no_company_mappings(self):
+        rows = [
+            {"TckrSymb": "ABC", "Sector": "Nifty IT", "SectorIndexSymbol": "NIFTY IT"},
+        ]
+        result = sector_data._scope_mapping_rows_to_candidates(rows, [])
+        self.assertTrue(result.empty)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -123,62 +123,27 @@ def _download_constituents(session: requests.Session, sector: str, filenames: li
     return []
 
 
-def _archive_sector_coverage(frame: pd.DataFrame) -> set[str]:
-    """Return configured sector names represented by exact official archive index names."""
-    if frame is None or frame.empty:
-        return set()
-    cols = {str(c).strip().casefold(): c for c in frame.columns}
-    name_col = next((cols[k] for k in ("index name", "index_name", "index") if k in cols), None)
-    if name_col is None:
-        return set()
-    lookup: dict[str, str] = {}
-    for sector, _files, index_name, _symbol in SECTOR_INDICES:
-        lookup[_normalise_index_name(index_name)] = sector
-        lookup[_normalise_index_name(index_name + " Index")] = sector
-    covered = set()
-    for raw_name in frame[name_col].dropna().astype(str):
-        sector = lookup.get(_normalise_index_name(raw_name))
-        if sector:
-            covered.add(sector)
-    return covered
-
-
 def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> pd.DataFrame:
-    """Load one official NSE all-indices EOD CSV and revalidate incomplete cache entries.
+    """Load one official NSE all-indices EOD CSV, with explicit archive diagnostics.
 
-    Earlier runs accepted any non-empty cached CSV. That let a partial 146-row
-    archive remain a permanent CACHE_HIT even when it contained only 17/23
-    configured sector indices. Cached files are now checked against exact
-    configured index names; incomplete entries trigger a fresh request to both
-    official archive hosts. A better fresh file replaces the cache. If refresh
-    fails, the old cache is preserved and returned for safe downstream fallback.
+    A 404 can mean a holiday or an unpublished report, so both official archive
+    hosts are tried. Every outcome is logged to distinguish 404s from access,
+    server, HTML/challenge, and CSV-schema problems. Existing cache files are
+    preserved and are never deleted by this diagnostic change.
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     date_key = day.strftime("%d%m%Y")
     cache_path = CACHE_DIR / f"ind_close_all_{date_key}.csv"
-    cached: pd.DataFrame | None = None
-    cached_coverage: set[str] = set()
     if cache_path.exists():
         try:
-            candidate = pd.read_csv(cache_path)
-            if not candidate.empty:
-                cached = candidate
-                cached_coverage = _archive_sector_coverage(candidate)
-                expected = len(SECTOR_INDICES)
-                missing = sorted({item[0] for item in SECTOR_INDICES} - cached_coverage)
-                if len(cached_coverage) >= expected:
-                    print(
-                        f"[SECTOR][ARCHIVE] CACHE_HIT date={day.date()} rows={len(candidate)} "
-                        f"sector_coverage={len(cached_coverage)}/{expected} columns={list(candidate.columns)}"
-                    )
-                    return candidate
+            cached = pd.read_csv(cache_path)
+            if not cached.empty:
                 print(
-                    f"[SECTOR][ARCHIVE] CACHE_INCOMPLETE date={day.date()} rows={len(candidate)} "
-                    f"sector_coverage={len(cached_coverage)}/{expected} missing_sectors={missing!r}; "
-                    "revalidating_official_archives=True"
+                    f"[SECTOR][ARCHIVE] CACHE_HIT date={day.date()} "
+                    f"rows={len(cached)} columns={list(cached.columns)}"
                 )
-            else:
-                print(f"[SECTOR][ARCHIVE] CACHE_EMPTY date={day.date()} path={cache_path}")
+                return cached
+            print(f"[SECTOR][ARCHIVE] CACHE_EMPTY date={day.date()} path={cache_path}")
         except Exception as exc:
             print(f"[SECTOR][ARCHIVE] CACHE_READ_ERROR date={day.date()} error={exc}")
 
@@ -187,8 +152,6 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
         f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{date_key}.csv",
     ]
     errors: list[str] = []
-    best_fresh: pd.DataFrame | None = None
-    best_fresh_coverage: set[str] = set()
     for url in urls:
         host = url.split('/')[2]
         try:
@@ -231,31 +194,12 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
             if frame.empty:
                 errors.append(f"empty CSV from {host}")
                 continue
-            fresh_coverage = _archive_sector_coverage(frame)
             print(
-                f"[SECTOR][ARCHIVE] CSV_OK date={day.date()} host={host} rows={len(frame)} "
-                f"sector_coverage={len(fresh_coverage)}/{len(SECTOR_INDICES)} columns={list(frame.columns)}"
+                f"[SECTOR][ARCHIVE] CSV_OK date={day.date()} host={host} "
+                f"rows={len(frame)} columns={list(frame.columns)}"
             )
-            if len(fresh_coverage) > len(best_fresh_coverage):
-                best_fresh, best_fresh_coverage = frame, fresh_coverage
-            # A refreshed CSV that is at least as complete as the cache is the
-            # best available official response for this date. Persist it and use it.
-            if cached is None or len(fresh_coverage) >= len(cached_coverage):
-                frame.to_csv(cache_path, index=False)
-                if len(fresh_coverage) < len(SECTOR_INDICES):
-                    missing = sorted({item[0] for item in SECTOR_INDICES} - fresh_coverage)
-                    print(
-                        f"[SECTOR][ARCHIVE] REFRESHED_BUT_INCOMPLETE date={day.date()} "
-                        f"sector_coverage={len(fresh_coverage)}/{len(SECTOR_INDICES)} missing_sectors={missing!r}"
-                    )
-                else:
-                    print(f"[SECTOR][ARCHIVE] CACHE_REFRESHED date={day.date()} sector_coverage={len(fresh_coverage)}/{len(SECTOR_INDICES)}")
-                return frame
-            print(
-                f"[SECTOR][ARCHIVE] FRESH_RESPONSE_NOT_BETTER date={day.date()} "
-                f"fresh_coverage={len(fresh_coverage)}/{len(SECTOR_INDICES)} "
-                f"cached_coverage={len(cached_coverage)}/{len(SECTOR_INDICES)}; preserving_cached_file=True"
-            )
+            frame.to_csv(cache_path, index=False)
+            return frame
         except Exception as exc:
             errors.append(f"{host}: {type(exc).__name__}: {exc}")
             print(f"[SECTOR][ARCHIVE] REQUEST_ERROR date={day.date()} host={host} error={type(exc).__name__}: {exc}")
@@ -267,13 +211,6 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
         )
     elif errors:
         print(f"[SECTOR][ARCHIVE] FETCH_FAILED date={day.date()} details={' ; '.join(errors)}")
-    if best_fresh is not None and len(best_fresh_coverage) > len(cached_coverage):
-        best_fresh.to_csv(cache_path, index=False)
-        print(f"[SECTOR][ARCHIVE] CACHE_REFRESHED_WITH_BEST_AVAILABLE date={day.date()} sector_coverage={len(best_fresh_coverage)}/{len(SECTOR_INDICES)}")
-        return best_fresh
-    if cached is not None:
-        print(f"[SECTOR][ARCHIVE] CACHE_PRESERVED_AFTER_REFRESH_FAILURE date={day.date()} sector_coverage={len(cached_coverage)}/{len(SECTOR_INDICES)}")
-        return cached
     return pd.DataFrame()
 
 
@@ -1187,6 +1124,24 @@ def _remove_stale_unverified_candidate_mappings(
     return filtered
 
 
+def _scope_mapping_rows_to_candidates(
+    rows: list[dict[str, str]] | pd.DataFrame,
+    candidate_symbols: list[str],
+) -> pd.DataFrame:
+    """Return only current candidate mappings for persistent sector_map.csv.
+
+    Full official index constituent lists remain transient reference data used
+    to identify shortlisted members; they are not persisted as mapped stocks.
+    """
+    candidate_set = {_clean_symbol(symbol) for symbol in candidate_symbols} - {""}
+    frame = pd.DataFrame(rows, columns=MAP_COLUMNS) if not isinstance(rows, pd.DataFrame) else rows.copy()
+    if frame.empty:
+        return pd.DataFrame(columns=MAP_COLUMNS)
+    return frame[
+        frame["TckrSymb"].map(_clean_symbol).isin(candidate_set)
+    ][MAP_COLUMNS].drop_duplicates(subset=["TckrSymb"], keep="first").reset_index(drop=True)
+
+
 def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols: list[str] | None = None) -> dict[str, Any]:
     """Refresh sector_map.csv and sector_history.csv for a specific EOD date."""
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1265,13 +1220,26 @@ def refresh_sector_inputs(asof_date: Any, force: bool = False, candidate_symbols
             mappings.append(row)
             seen_symbols.add(symbol)
 
-    new_map = pd.DataFrame(mappings, columns=MAP_COLUMNS)
+    # Use all official index constituents in memory to determine whether a
+    # shortlisted symbol belongs to a tracked sector index, but persist only
+    # mappings for the current shortlisted/analysis-candidate symbols. The
+    # benchmark constituent feeds are reference data, not a request to map every
+    # constituent as a company candidate.
+    candidate_symbol_set = {_clean_symbol(symbol) for symbol in candidate_symbols} - {""}
+    new_map = _scope_mapping_rows_to_candidates(mappings, candidate_symbols)
     old_map = pd.DataFrame(columns=MAP_COLUMNS)
     if MAP_PATH.exists():
         try:
             candidate = pd.read_csv(MAP_PATH)
             if set(MAP_COLUMNS).issubset(candidate.columns):
                 old_map = candidate[MAP_COLUMNS]
+                # Keep the persistent mapping cache scoped to this run's shortlist
+                # only. Official sector-index constituents are fetched fresh and
+                # held in memory above for membership checks; they are not cached
+                # as if every constituent were a shortlisted stock.
+                old_map = old_map[
+                    old_map["TckrSymb"].map(_clean_symbol).isin(candidate_symbol_set)
+                ]
                 # A current official ETF-list match overrides stale cached company-sector rows.
                 if etf_symbols and not old_map.empty:
                     old_map = old_map[
