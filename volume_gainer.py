@@ -4,6 +4,7 @@ import zipfile
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter
+from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from datetime import datetime, timedelta, timezone
 from v8_layers_14_41 import (
     monitor_positions,
@@ -3241,7 +3242,7 @@ def main():
     )
 
     print(
-        "EOD VOLUME + RVOL + 5D "
+        "EOD DELIVERY + LIQUIDITY + VOLUME + RVOL + 5D "
         "+ PRICE/VOLUME + CLV "
         "+ TREND "
         "+ BREAKOUT/PULLBACK "
@@ -3333,6 +3334,42 @@ def main():
             HISTORY_DAYS
         )
     )
+
+    # --------------------------------------------------------
+    # STEP 3A: LIQUIDITY GATE — AFTER DELIVERY, BEFORE VOLUME/RVOL/TOP 20
+    # --------------------------------------------------------
+    # Use the prior 20 full EOD sessions' average traded value (TtlTrfVal, INR).
+    # ₹5 crore/day is the user's selected minimum. Missing turnover history is
+    # WAIT_FOR_DATA and never passes. Daily bhavcopy does not prove spread/depth.
+    print("\nSTEP 3A: Applying liquidity gate (20D average traded value >= ₹5 crore)...")
+    liquidity_audit_columns = [
+        "LiquiditySessions", "AvgDailyTradedValue20D",
+        "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus",
+    ]
+    if current.empty:
+        for col in liquidity_audit_columns:
+            current[col] = pd.Series(dtype="object")
+        liquidity_audit = current.copy()
+        print("[LIQUIDITY] Delivery shortlist is empty; no candidates proceed.")
+    else:
+        try:
+            current, liquidity_audit = apply_liquidity_filter(
+                current,
+                historical,
+                symbol_col="TckrSymb",
+                value_col="TtlTrfVal",
+                minimum_average_daily_value=MINIMUM_AVG_DAILY_TRADED_VALUE_INR,
+                required_sessions=20,
+            )
+        except Exception as exc:
+            print(f"[LIQUIDITY] WAIT_FOR_DATA: liquidity gate could not be verified: {exc}")
+            current = current.iloc[0:0].copy()
+            for col in liquidity_audit_columns:
+                current[col] = pd.Series(dtype="object")
+            liquidity_audit = current.copy()
+        os.makedirs("outputs", exist_ok=True)
+        liquidity_audit.to_csv("outputs/v8_liquidity_first_audit.csv", index=False)
+        print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
 
     # Keep the current session out of rolling-volume baselines, but include it
     # for indicators and price-structure calculations that describe today's EOD.
