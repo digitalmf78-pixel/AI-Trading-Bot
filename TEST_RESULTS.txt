@@ -1,0 +1,24 @@
+NSE V8 SECTOR + NEWS FIX — LOCAL TEST RESULTS
+Date: 2026-10-20
+
+PASS: Python compile check for staged project files.
+PASS: 27/27 V8 regression tests (test_v8_regression.py).
+PASS: 43/43 focused unittest cases (sector mapping, news matching, official API diagnostics, ETF mapping and existing regressions).
+PASS: 5/5 Liquidity filter pytest cases.
+PASS: 10/10 new sector/news focused regression tests.
+
+New coverage includes:
+- official index archive names with and without trailing "Index" resolve to exact sector labels;
+- historical archive parser maps mocked exact-date rows for all tracked benchmarks;
+- TEXTILES -> Nifty Non-Cyclical Consumer;
+- TRANSPORT SERVICES / LOGISTICS SOLUTION PROVIDER -> Nifty Transportation & Logistics;
+- CONSTRUCTION / CIVIL CONSTRUCTION -> Nifty Construction;
+- unknown classifications still fail closed;
+- exact official RSS/API symbol fields are accepted;
+- distinctive single-word issuer name matching;
+- generic single-word names do not match;
+- quote/chart pages are not treated as catalyst news;
+- five-day per-session Delivery >=60% gate remains in place.
+
+LIMITATION:
+These are local deterministic tests/mocked archive cases. Live GitHub Actions validation is still required to confirm the external NSE/Nifty Indices endpoints and current-day data return 23/23 exact-date tracked benchmark closes. No claim is made that this patch has already been committed to GitHub.
