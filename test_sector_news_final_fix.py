@@ -77,6 +77,26 @@ class SectorIndexAliasTests(unittest.TestCase):
 
 
 class NewsAnnouncementMatchingTests(unittest.TestCase):
+    def test_unrelated_global_rss_records_do_not_count_as_candidate_coverage(self):
+        # A successful global RSS fetch with other issuers' records is not coverage
+        # for this candidate when its issuer-filtered NSE API call failed.
+        self.assertEqual(
+            news._premarket_news_status(official_count=0, secondary_count=0, api_covered=False),
+            "WAIT_FOR_DATA",
+        )
+
+    def test_successful_empty_issuer_api_can_confirm_no_news(self):
+        self.assertEqual(
+            news._premarket_news_status(official_count=0, secondary_count=0, api_covered=True),
+            "NO_NEWS_FOUND",
+        )
+
+    def test_secondary_only_remains_unverified_when_official_api_covered(self):
+        self.assertEqual(
+            news._premarket_news_status(official_count=0, secondary_count=1, api_covered=True),
+            "SECONDARY_ONLY_UNVERIFIED",
+        )
+
     def test_distinctive_single_word_registered_company_name_matches(self):
         self.assertEqual(
             news._issuer_match_reason("MARICO", "Marico Limited files quarterly results", "Marico Limited"),

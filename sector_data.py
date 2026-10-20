@@ -269,6 +269,32 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
                         f"url_date={pd.Timestamp(day).date()} asof={pd.Timestamp(asof).date()} "
                         f"rows={health_rows!r}"
                     )
+                    # Explicitly report which configured indices are absent from the
+                    # official daily archive for this exact date. This is diagnostic
+                    # only: missing closes are never inferred or filled with another index.
+                    raw_index_names = sorted({
+                        str(value).strip() for value in frame[name_col].tolist()
+                        if str(value).strip()
+                    })
+                    archive_matched_sectors = {
+                        index_lookup[_normalise_index_name(raw_name)]
+                        for raw_name in raw_index_names
+                        if _normalise_index_name(raw_name) in index_lookup
+                    }
+                    expected_sectors = {item[0] for item in SECTOR_INDICES}
+                    missing_sectors = sorted(expected_sectors - archive_matched_sectors)
+                    unmatched_nifty_names = sorted(
+                        name for name in raw_index_names
+                        if "NIFTY" in _normalise_name(name)
+                        and _normalise_index_name(name) not in index_lookup
+                    )
+                    print(
+                        f"[SECTOR][ARCHIVE][INDEX_NAME_DIAGNOSTIC] "
+                        f"date={pd.Timestamp(day).date()} "
+                        f"expected={len(expected_sectors)} matched={len(archive_matched_sectors)} "
+                        f"missing_sectors={missing_sectors!r} "
+                        f"unmatched_nifty_names_sample={unmatched_nifty_names[:40]!r}"
+                    )
                 for _, row in frame.iterrows():
                     norm = _normalise_index_name(row.get(name_col, ""))
                     sector = index_lookup.get(norm)

@@ -599,6 +599,22 @@ def _news_window_bounds(eod_date, scan_mode=None, now=None):
     )
 
 
+def _premarket_news_status(official_count: int, secondary_count: int, api_covered: bool) -> str:
+    """Classify PREMARKET news only from issuer-specific evidence/coverage.
+
+    A global RSS feed containing an unrelated company's filing does not prove that
+    this candidate's issuer was covered. A successful empty issuer-filtered NSE API
+    response does count as candidate-specific coverage; a failed API does not.
+    """
+    if official_count > 0:
+        return "OFFICIAL_NEWS_FOUND"
+    if not api_covered:
+        return "WAIT_FOR_DATA"
+    if secondary_count > 0:
+        return "SECONDARY_ONLY_UNVERIFIED"
+    return "NO_NEWS_FOUND"
+
+
 def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
     """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
     if result.empty or "TckrSymb" not in result.columns:
@@ -859,23 +875,16 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             matched = frame[frame["TckrSymb"].astype(str).str.upper() == symbol] if not frame.empty else pd.DataFrame(columns=NEWS_COLUMNS)
             official = matched[matched["SourceType"].astype(str).str.lower().isin({"primary", "official", "exchange", "company", "regulator"})] if not matched.empty else pd.DataFrame(columns=NEWS_COLUMNS)
             secondary = matched[~matched.index.isin(official.index)] if not matched.empty else pd.DataFrame(columns=NEWS_COLUMNS)
+            news_status = _premarket_news_status(
+                official_count=len(official),
+                secondary_count=len(secondary),
+                api_covered=api_coverage.get(symbol, False),
+            )
             if not official.empty:
-                news_status = "OFFICIAL_NEWS_FOUND"
                 chosen = official.iloc[0]
-            elif not (
-                (status.get("NSE") == "available" and official_window_records > 0)
-                or api_coverage.get(symbol, False)
-            ):
-                # NO_NEWS_FOUND is allowed only when an official source actually
-                # covered this issuer/window; successful empty API responses count
-                # as coverage, while blocked/failed requests remain WAIT_FOR_DATA.
-                news_status = "WAIT_FOR_DATA"
-                chosen = secondary.iloc[0] if not secondary.empty else None
             elif not secondary.empty:
-                news_status = "SECONDARY_ONLY_UNVERIFIED"
                 chosen = secondary.iloc[0]
             else:
-                news_status = "NO_NEWS_FOUND"
                 chosen = None
             report_rows.append({
                 "TckrSymb": symbol,
