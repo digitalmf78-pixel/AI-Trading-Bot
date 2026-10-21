@@ -55,7 +55,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py; do
+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py risk_controls.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -73,13 +73,12 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py risk_controls.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
-
-          echo "===== DELIVERY / RVOL / LIQUIDITY SELECTION ORDER TESTS ====="
-          python -m pytest -q test_delivery_rule.py test_liquidity_filter.py test_selection_pipeline_order.py
+          echo "===== DELIVERY / LIQUIDITY / FUNDAMENTAL / PIPELINE TESTS ====="
+          python -m pytest -q test_delivery_rule.py test_liquidity_filter.py test_fundamental_filter.py test_risk_controls.py test_selection_pipeline_order.py
 
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
@@ -136,5 +135,6 @@ jobs:
           path: |
             outputs/
             data/inputs/*.csv
+            data/inputs/*.json
             data/reports/
           if-no-files-found: warn
