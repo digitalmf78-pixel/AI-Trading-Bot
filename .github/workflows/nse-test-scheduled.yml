@@ -78,6 +78,9 @@ jobs:
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
 
+          echo "===== DELIVERY / RVOL / LIQUIDITY SELECTION ORDER TESTS ====="
+          python -m pytest -q test_delivery_rule.py test_liquidity_filter.py test_selection_pipeline_order.py
+
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
 
