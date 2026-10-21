@@ -3356,40 +3356,12 @@ def main():
     )
 
     # --------------------------------------------------------
-    # STEP 3A: LIQUIDITY GATE — AFTER DELIVERY, BEFORE VOLUME/RVOL/TOP 20
+    # LIQUIDITY FILTER IS APPLIED AFTER RVOL TOP 20
     # --------------------------------------------------------
-    # Use the prior 20 full EOD sessions' average traded value (TtlTrfVal, INR).
-    # ₹5 crore/day is the user's selected minimum. Missing turnover history is
-    # WAIT_FOR_DATA and never passes. Daily bhavcopy does not prove spread/depth.
-    print("\nSTEP 3A: Applying liquidity gate (20D average traded value >= ₹5 crore)...")
-    liquidity_audit_columns = [
-        "LiquiditySessions", "AvgDailyTradedValue20D",
-        "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus",
-    ]
-    if current.empty:
-        for col in liquidity_audit_columns:
-            current[col] = pd.Series(dtype="object")
-        liquidity_audit = current.copy()
-        print("[LIQUIDITY] Delivery shortlist is empty; no candidates proceed.")
-    else:
-        try:
-            current, liquidity_audit = apply_liquidity_filter(
-                current,
-                historical,
-                symbol_col="TckrSymb",
-                value_col="TtlTrfVal",
-                minimum_average_daily_value=MINIMUM_AVG_DAILY_TRADED_VALUE_INR,
-                required_sessions=20,
-            )
-        except Exception as exc:
-            print(f"[LIQUIDITY] WAIT_FOR_DATA: liquidity gate could not be verified: {exc}")
-            current = current.iloc[0:0].copy()
-            for col in liquidity_audit_columns:
-                current[col] = pd.Series(dtype="object")
-            liquidity_audit = current.copy()
-        os.makedirs("outputs", exist_ok=True)
-        liquidity_audit.to_csv("outputs/v8_liquidity_first_audit.csv", index=False)
-        print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
+    # Selection order: Daily Delivery gate -> RVOL Top 20 -> Liquidity.
+    # Keep every Delivery-qualified candidate through RVOL ranking so the Top 20
+    # is not biased by liquidity before RVOL ranking. The liquidity gate is applied
+    # immediately after select_top20_by_rvol() below.
 
     # Keep the current session out of rolling-volume baselines, but include it
     # for indicators and price-structure calculations that describe today's EOD.
@@ -3431,7 +3403,44 @@ def main():
     print(f"[DELIVERY] Pre-RVOL daily gate retained {len(result)} of the Top 20 candidates; no average-based gate is applied.")
 
     # --------------------------------------------------------
-    # STEP 7: PRICE + VOLUME — only delivery-qualified Top 20
+    # STEP 6B: LIQUIDITY FILTER — AFTER RVOL TOP 20
+    # --------------------------------------------------------
+    # Use the prior 20 full EOD sessions' average traded value (TtlTrfVal, INR).
+    # ₹5 crore/day is the configured minimum. Missing turnover history is
+    # WAIT_FOR_DATA and never passes. Daily bhavcopy does not prove spread/depth.
+    print("\nSTEP 6B: Applying liquidity filter to RVOL Top 20 (20D average traded value >= ₹5 crore)...")
+    liquidity_audit_columns = [
+        "LiquiditySessions", "AvgDailyTradedValue20D",
+        "MinimumAverageDailyTradedValueINR", "MinimumAvgDailyTradedValueINR",
+        "LiquidityStatus", "LiquidityFilterStatus",
+    ]
+    if result.empty:
+        for col in liquidity_audit_columns:
+            result[col] = pd.Series(dtype="object")
+        liquidity_audit = result.copy()
+        print("[LIQUIDITY] RVOL Top 20 is empty; no candidates proceed.")
+    else:
+        try:
+            result, liquidity_audit = apply_liquidity_filter(
+                result,
+                historical,
+                symbol_col="TckrSymb",
+                value_col="TtlTrfVal",
+                minimum_average_daily_value=MINIMUM_AVG_DAILY_TRADED_VALUE_INR,
+                required_sessions=20,
+            )
+        except Exception as exc:
+            print(f"[LIQUIDITY] WAIT_FOR_DATA: liquidity filter could not be verified: {exc}")
+            result = result.iloc[0:0].copy()
+            for col in liquidity_audit_columns:
+                result[col] = pd.Series(dtype="object")
+            liquidity_audit = result.copy()
+        os.makedirs("outputs", exist_ok=True)
+        liquidity_audit.to_csv("outputs/v8_liquidity_top20_audit.csv", index=False)
+        print(f"[LIQUIDITY] Top-20 audit saved: outputs/v8_liquidity_top20_audit.csv; qualified={len(result)}")
+
+    # --------------------------------------------------------
+    # STEP 7: PRICE + VOLUME — only delivery-qualified, liquid Top 20
     # --------------------------------------------------------
     result = calculate_price_volume_relationship(result)
 
