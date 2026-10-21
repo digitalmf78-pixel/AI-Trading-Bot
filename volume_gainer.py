@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
+from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from datetime import datetime, timedelta, timezone
 from v8_layers_14_41 import (
     monitor_positions,
@@ -3287,6 +3288,11 @@ def main():
         f"{len(current)}"
     )
 
+    # Full stage audits are retained so the final report can explain every gate.
+    delivery_audit = pd.DataFrame()
+    liquidity_audit = pd.DataFrame()
+    fundamental_audit = pd.DataFrame()
+
     # --------------------------------------------------------
     # STEP 1B: OFFICIAL MAIN BOARD ONLY (SME EXCLUDED)
     # --------------------------------------------------------
@@ -3356,12 +3362,75 @@ def main():
     )
 
     # --------------------------------------------------------
-    # LIQUIDITY FILTER IS APPLIED AFTER RVOL TOP 20
+    # STEP 3A: LIQUIDITY GATE — AFTER DELIVERY, BEFORE VOLUME/RVOL/TOP 20
     # --------------------------------------------------------
-    # Selection order: Daily Delivery gate -> RVOL Top 20 -> Liquidity.
-    # Keep every Delivery-qualified candidate through RVOL ranking so the Top 20
-    # is not biased by liquidity before RVOL ranking. The liquidity gate is applied
-    # immediately after select_top20_by_rvol() below.
+    # Use the prior 20 full EOD sessions' average traded value (TtlTrfVal, INR).
+    # ₹5 crore/day is the user's selected minimum. Missing turnover history is
+    # WAIT_FOR_DATA and never passes. Daily bhavcopy does not prove spread/depth.
+    print("\nSTEP 3A: Applying liquidity gate (20D average traded value >= ₹5 crore)...")
+    liquidity_audit_columns = [
+        "LiquiditySessions", "AvgDailyTradedValue20D",
+        "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus",
+    ]
+    if current.empty:
+        for col in liquidity_audit_columns:
+            current[col] = pd.Series(dtype="object")
+        liquidity_audit = current.copy()
+        print("[LIQUIDITY] Delivery shortlist is empty; no candidates proceed.")
+    else:
+        try:
+            current, liquidity_audit = apply_liquidity_filter(
+                current,
+                historical,
+                symbol_col="TckrSymb",
+                value_col="TtlTrfVal",
+                minimum_average_daily_value=MINIMUM_AVG_DAILY_TRADED_VALUE_INR,
+                required_sessions=20,
+            )
+        except Exception as exc:
+            print(f"[LIQUIDITY] WAIT_FOR_DATA: liquidity gate could not be verified: {exc}")
+            current = current.iloc[0:0].copy()
+            for col in liquidity_audit_columns:
+                current[col] = pd.Series(dtype="object")
+            liquidity_audit = current.copy()
+        os.makedirs("outputs", exist_ok=True)
+        liquidity_audit.to_csv("outputs/v8_liquidity_first_audit.csv", index=False)
+        print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
+
+    # --------------------------------------------------------
+    # STEP 3B: FUNDAMENTAL QUALITY GATE — BEFORE RVOL/TECHNICAL RANKING
+    # --------------------------------------------------------
+    # Thresholds are intentionally not guessed. Missing metrics/source/config => WAIT_FOR_DATA.
+    print("\nSTEP 3B: Applying evidence-backed Fundamental Strength Filter...")
+    create_fundamental_templates()
+    try:
+        if current.empty:
+            fundamental_audit = current.copy()
+            for col in ["FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate", "FundamentalSource", "FundamentalSourceURL", "FundamentalMetricsCompletenessPct"]:
+                if col not in fundamental_audit.columns:
+                    fundamental_audit[col] = pd.Series(dtype="object")
+            fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
+            current = fundamental_audit.copy()
+        else:
+            current, fundamental_audit = apply_fundamental_filter(current, eod_date)
+        print(
+            "[FUNDAMENTAL] Audit saved: outputs/v8_fundamental_report.csv; "
+            f"PASS={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'PASS').sum()}; "
+            f"REJECT={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'REJECT').sum()}; "
+            f"WAIT_FOR_DATA={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'WAIT_FOR_DATA').sum()}"
+        )
+        # Only fully verified PASS candidates may enter ranking and score calculation.
+        current = current[current.get("FundamentalStatus", pd.Series("WAIT_FOR_DATA", index=current.index)).astype(str) == "PASS"].copy()
+    except Exception as exc:
+        print(f"[FUNDAMENTAL] WAIT_FOR_DATA: filter could not be verified: {exc}")
+        fundamental_audit = current.copy()
+        fundamental_audit["FundamentalStatus"] = "WAIT_FOR_DATA"
+        fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_FILTER_ERROR:{exc}"
+        fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
+        current = current.iloc[0:0].copy()
+        for col in ["FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate", "FundamentalSource", "FundamentalSourceURL", "FundamentalMetricsCompletenessPct"]:
+            if col not in current.columns:
+                current[col] = pd.Series(dtype="object")
 
     # Keep the current session out of rolling-volume baselines, but include it
     # for indicators and price-structure calculations that describe today's EOD.
@@ -3403,44 +3472,7 @@ def main():
     print(f"[DELIVERY] Pre-RVOL daily gate retained {len(result)} of the Top 20 candidates; no average-based gate is applied.")
 
     # --------------------------------------------------------
-    # STEP 6B: LIQUIDITY FILTER — AFTER RVOL TOP 20
-    # --------------------------------------------------------
-    # Use the prior 20 full EOD sessions' average traded value (TtlTrfVal, INR).
-    # ₹5 crore/day is the configured minimum. Missing turnover history is
-    # WAIT_FOR_DATA and never passes. Daily bhavcopy does not prove spread/depth.
-    print("\nSTEP 6B: Applying liquidity filter to RVOL Top 20 (20D average traded value >= ₹5 crore)...")
-    liquidity_audit_columns = [
-        "LiquiditySessions", "AvgDailyTradedValue20D",
-        "MinimumAverageDailyTradedValueINR", "MinimumAvgDailyTradedValueINR",
-        "LiquidityStatus", "LiquidityFilterStatus",
-    ]
-    if result.empty:
-        for col in liquidity_audit_columns:
-            result[col] = pd.Series(dtype="object")
-        liquidity_audit = result.copy()
-        print("[LIQUIDITY] RVOL Top 20 is empty; no candidates proceed.")
-    else:
-        try:
-            result, liquidity_audit = apply_liquidity_filter(
-                result,
-                historical,
-                symbol_col="TckrSymb",
-                value_col="TtlTrfVal",
-                minimum_average_daily_value=MINIMUM_AVG_DAILY_TRADED_VALUE_INR,
-                required_sessions=20,
-            )
-        except Exception as exc:
-            print(f"[LIQUIDITY] WAIT_FOR_DATA: liquidity filter could not be verified: {exc}")
-            result = result.iloc[0:0].copy()
-            for col in liquidity_audit_columns:
-                result[col] = pd.Series(dtype="object")
-            liquidity_audit = result.copy()
-        os.makedirs("outputs", exist_ok=True)
-        liquidity_audit.to_csv("outputs/v8_liquidity_top20_audit.csv", index=False)
-        print(f"[LIQUIDITY] Top-20 audit saved: outputs/v8_liquidity_top20_audit.csv; qualified={len(result)}")
-
-    # --------------------------------------------------------
-    # STEP 7: PRICE + VOLUME — only delivery-qualified, liquid Top 20
+    # STEP 7: PRICE + VOLUME — only delivery-qualified Top 20
     # --------------------------------------------------------
     result = calculate_price_volume_relationship(result)
 
@@ -3508,6 +3540,8 @@ def main():
     # to the costly news/sector/3+1 layers. The remaining universe is preserved
     # in the selection audit, not mislabeled as a final watchlist.
     result = select_top20_analysis_candidates(result, eod_date)
+    os.makedirs("outputs", exist_ok=True)
+    result.to_csv("outputs/v8_technical_report.csv", index=False)
 
     # Check only the selected technical candidates against official NSE RSS feeds
     # and secondary coverage before news confirmation layers are scored.
@@ -3579,6 +3613,33 @@ def main():
         next_day_report,
         position_report,
     )
+
+    # Consolidated, stage-labelled audit: every gate's PASS/REJECT/WAIT remains inspectable.
+    stage_frames = []
+    def _append_stage(frame, stage, status_col, reason_col=None, pass_values=None, reject_values=None):
+        if frame is None or frame.empty or status_col not in frame.columns:
+            return
+        temp = frame.copy()
+        temp["SelectionStage"] = stage
+        temp["SelectionStatus"] = temp[status_col].fillna("WAIT_FOR_DATA").astype(str)
+        if reason_col and reason_col in temp.columns:
+            temp["SelectionReason"] = temp[reason_col].fillna("").astype(str)
+        else:
+            temp["SelectionReason"] = temp["SelectionStatus"]
+        stage_frames.append(temp)
+    _append_stage(delivery_audit, "DELIVERY_5D", "DeliveryFilterStatus")
+    _append_stage(liquidity_audit, "LIQUIDITY_20D", "LiquidityFilterStatus")
+    _append_stage(fundamental_audit, "FUNDAMENTAL", "FundamentalStatus", "FundamentalReason")
+    _append_stage(result, "PORTFOLIO_RISK", "RiskControlStatus", "RiskControlReason")
+    _append_stage(result, "FINAL_EOD", "EODWatchlistStatus", "EODWatchlistReason")
+    if stage_frames:
+        selection_audit = pd.concat(stage_frames, ignore_index=True, sort=False)
+    else:
+        selection_audit = pd.DataFrame(columns=["TckrSymb", "SelectionStage", "SelectionStatus", "SelectionReason"])
+    selection_audit.to_csv("outputs/v8_selection_status_report.csv", index=False)
+    selection_audit[selection_audit["SelectionStatus"].astype(str).str.startswith(("PASS", "WATCH"))].to_csv("outputs/v8_passed_stocks.csv", index=False)
+    selection_audit[selection_audit["SelectionStatus"].astype(str).str.contains("REJECT|FILTERED_OUT|SKIP|FAIL", case=False, regex=True)].to_csv("outputs/v8_rejected_stocks.csv", index=False)
+    selection_audit[selection_audit["SelectionStatus"].astype(str).str.contains("WAIT_FOR_DATA", case=False)].to_csv("outputs/v8_wait_for_data_stocks.csv", index=False)
 
     print(
         "\nV8 reports saved under outputs/:"

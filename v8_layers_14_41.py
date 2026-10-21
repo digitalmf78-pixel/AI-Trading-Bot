@@ -15,6 +15,7 @@ import re
 from urllib.parse import urlparse
 
 import pandas as pd
+from risk_controls import apply_portfolio_risk_controls, create_risk_config_template
 
 
 INPUT_DIR = Path("data") / "inputs"
@@ -594,6 +595,7 @@ def run_eod_layers(
 ) -> pd.DataFrame:
     """Evaluate layers 14–24 and save the EOD watchlist report."""
     create_input_templates()
+    create_risk_config_template()
     sector_map = _read_csv(INPUT_DIR / "sector_map.csv", SECTOR_MAP_COLUMNS)
     sector_history = _read_csv(INPUT_DIR / "sector_history.csv", SECTOR_HISTORY_COLUMNS)
     news = _read_csv(INPUT_DIR / "news_evidence.csv", NEWS_COLUMNS)
@@ -778,6 +780,12 @@ def run_eod_layers(
             or (_num(row.get("PriceChangePct")) > 8 if pd.notna(_num(row.get("PriceChangePct"))) else False)
         )
         chase_values.append("CHASE" if extended else "CLEAR" if pd.notna(price) else "WAIT_FOR_DATA")
+    # Keep the EOD layer robust when an upstream hard gate leaves zero eligible
+    # candidates (for example, FundamentalStatus=WAIT_FOR_DATA for every symbol).
+    if "EntryZoneHigh" not in output.columns:
+        output["EntryZoneHigh"] = pd.Series(index=output.index, dtype="float64")
+    if "V8Score" not in output.columns:
+        output["V8Score"] = pd.Series(index=output.index, dtype="float64")
     output["EntryPricePlan"] = output["EntryZoneHigh"]
     output["StopLossPlan"] = rr_stops
     output["TargetPricePlan"] = rr_targets
@@ -789,13 +797,19 @@ def run_eod_layers(
     output["RiskRewardStatus"] = rr_status
     output["ChaseStatus"] = chase_values
 
+    # Explicit portfolio-level risk and position sizing. Missing verified account/
+    # exposure settings remain WAIT_FOR_DATA; no account size is guessed.
+    output = apply_portfolio_risk_controls(output)
+
     watch_statuses = []
     for _, row in output.iterrows():
         score_coverage = _num(row.get("V8ScoreCoveragePct"))
         required_data = [
+            row.get("FundamentalStatus", "WAIT_FOR_DATA"),
             row.get("SectorStrengthStatus"), row.get("MarketRegimeStatus"),
             row.get("DeliveryStatus"), row.get("AccumulationDistributionStatus"),
             row.get("NewsStatus"), row.get("RiskRewardStatus"),
+            row.get("RiskControlStatus", "WAIT_FOR_DATA"),
         ]
         if "WAIT_FOR_DATA" in required_data or pd.isna(score_coverage) or score_coverage < 100:
             watch_statuses.append("WAIT_FOR_DATA")
@@ -803,7 +817,9 @@ def run_eod_layers(
         rvol = _num(row.get("RVOL"))
         volume_reason_ok = not (pd.notna(rvol) and rvol >= 1.5) or row.get("VolumeReason") == "Demand-led"
         eligible = (
-            row.get("MandatoryConfirmationStatus") == "PASS"
+            row.get("FundamentalStatus") == "PASS"
+            and row.get("RiskControlStatus") == "PASS"
+            and row.get("MandatoryConfirmationStatus") == "PASS"
             and row.get("MarketRegime") != "RISK_OFF"
             and row.get("SectorStrengthStatus") == "PASS"
             and row.get("RiskRewardStatus") == "PASS"
@@ -817,6 +833,20 @@ def run_eod_layers(
         )
         watch_statuses.append("WATCH" if eligible else "SKIP")
     output["EODWatchlistStatus"] = watch_statuses
+    output["EODWatchlistReason"] = output["EODWatchlistStatus"].map(
+        lambda value: "ALL_REQUIRED_GATES_PASSED" if value == "WATCH"
+        else "REQUIRED_DATA_MISSING" if value == "WAIT_FOR_DATA"
+        else "ONE_OR_MORE_SELECTION_GATES_FAILED"
+    )
+    # Maximum four final shortlist stocks. Extra otherwise-qualified rows are
+    # retained in the full audit but are not promoted to the shortlist.
+    watch_rows = output[output["EODWatchlistStatus"] == "WATCH"].copy()
+    if not watch_rows.empty:
+        watch_rows = watch_rows.sort_values("V8Score", ascending=False)
+        extra_idx = watch_rows.index[4:]
+        if len(extra_idx):
+            output.loc[extra_idx, "EODWatchlistStatus"] = "SKIP"
+            output.loc[extra_idx, "EODWatchlistReason"] = "MAX_FINAL_SHORTLIST_CAP_4"
     output["EODLayerStatus"] = output["EODWatchlistStatus"].map(
         lambda value: "PASS" if value == "WATCH" else value
     )
@@ -825,6 +855,9 @@ def run_eod_layers(
     output.sort_values(["EODWatchlistStatus", "V8Score"], ascending=[True, False]).to_csv(
         OUTPUT_DIR / "v8_eod_watchlist.csv", index=False
     )
+    shortlist = output[output["EODWatchlistStatus"] == "WATCH"].copy()
+    shortlist = shortlist.sort_values("V8Score", ascending=False).head(4)
+    shortlist.to_csv(OUTPUT_DIR / "v8_final_shortlist.csv", index=False)
     return output
 
 

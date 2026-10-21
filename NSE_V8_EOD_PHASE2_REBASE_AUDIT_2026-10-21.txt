@@ -1,0 +1,31 @@
+NSE V8 EOD SYSTEM PHASE 2 — REBASE AUDIT
+Date: 2026-10-21
+
+Basis:
+- User-uploaded repository snapshot: AI-Trading-Bot-main (1)(5).zip
+- Latest supplied GitHub Actions log: logs_107294207435.zip
+- Actions checkout commit recorded in log: 3a9f4c5049ce582d0cd78521b11ccfad3b450a9e
+
+Important limitation:
+- The uploaded repository ZIP does not include .git metadata, so exact byte-for-byte commit identity cannot be proven from the ZIP alone.
+- Its volume_gainer.py pipeline matches the reported runtime ordering issue: liquidity is applied after RVOL Top 20.
+- This patch moves liquidity and fundamental quality ahead of RVOL ranking and updates the outdated pipeline-order assertion.
+
+Local validation on uploaded repository snapshot with this patch overlaid:
+- Python compile check: PASS
+- Main Board tests: 3 passed
+- Delivery / Liquidity / Pipeline / Fundamental / Risk tests: 25 passed
+- V8 regression: 27 passed
+- Sector / News / Cache unittest suite: 39 passed
+- News parser tests: 4 passed
+- Upcoming corporate event tests: 5 passed
+- Total: 103 tests passed across the listed suites.
+
+Not deployed:
+- No changes were pushed to GitHub by this audit.
+- Do not treat this patch as deployed until applied to the repository and a new GitHub Actions run verifies it.
+
+Configuration fail-closed behavior:
+- Fundamental thresholds and risk configuration are intentionally unconfigured (null); verified metrics are not auto-populated.
+- Until the user approves explicit thresholds/risk settings and verified fundamental data is supplied, affected stocks remain WAIT_FOR_DATA and the final shortlist may be empty.
+- No thresholds or account-risk settings were invented.
