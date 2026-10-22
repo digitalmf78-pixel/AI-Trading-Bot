@@ -110,6 +110,20 @@ jobs:
           python -u ./volume_gainer.py
           echo "===== NSE SCANNER FINISHED ====="
 
+      - name: Run RSI 30/40/50 Retest research using the same restored NSE cache
+        if: always()
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "===== RSI RETEST SOFTWARE TESTS ====="
+          python -m pytest -q test_rsi_retest_existing_cache.py
+          echo "===== RSI RETEST CACHE-ONLY RESEARCH ====="
+          python -u rsi_retest_existing_cache.py
+          echo "===== RSI RETEST CACHE COVERAGE ====="
+          cat outputs/rsi_retest_existing_cache/cache_coverage.csv || true
+          echo "===== RSI RETEST COMPARISON ====="
+          cat outputs/rsi_retest_existing_cache/rsi_retest_comparison.csv || true
+
       - name: Diagnose NSE V8 data files
         if: always()
         run: |
