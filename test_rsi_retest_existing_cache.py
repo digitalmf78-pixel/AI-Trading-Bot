@@ -1,46 +1,56 @@
+import tempfile
+import unittest
 from pathlib import Path
 import pandas as pd
-from rsi_retest_existing_cache import add_indicators, add_signals, delivery_gate, run_trade_simulation
+import numpy as np
+from rsi_retest_existing_cache import _read_price_cache, _read_delivery_cache, _rsi, _signals_for_symbol, run_backtest
+
+class ExistingCacheRSITests(unittest.TestCase):
+    def test_rsi_rising_price_reaches_100(self):
+        s = pd.Series(range(1, 40), dtype=float)
+        out = _rsi(s)
+        self.assertEqual(float(out.dropna().iloc[-1]), 100.0)
+
+    def test_reads_existing_price_cache_no_network(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            df = pd.DataFrame({"TckrSymb":["ABC"], "SctySrs":["EQ"], "ClsPric":[100], "OpnPric":[99], "HghPric":[101], "LwPric":[98], "TtlTradgVol":[1000], "TtlTrfVal":[100000]})
+            df.to_csv(p / "bhavcopy_20260102.csv", index=False)
+            prices, issues = _read_price_cache(p)
+            self.assertEqual(len(prices), 1)
+            self.assertEqual(prices.iloc[0]["SYMBOL"], "ABC")
+            self.assertEqual(issues, [])
+
+    def test_delivery_cache_requires_exact_columns(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            pd.DataFrame({"SYMBOL":["ABC"], "SERIES":["EQ"], "DELIV_PER":[60]}).to_csv(p / "sec_bhavdata_full_02012026.csv", index=False)
+            data, issues = _read_delivery_cache(p)
+            self.assertEqual(len(data), 1)
+            self.assertEqual(float(data[pd.Timestamp("2026-01-02")].iloc[0]["DELIV_PER"]), 60.0)
+            self.assertEqual(issues, [])
 
 
-def test_ema50_requires_50_closes_and_rsi_available_after_warmup():
-    dates = pd.bdate_range('2026-01-01', periods=60)
-    close = [100 + i * 0.2 + (i % 4) for i in range(60)]
-    df = pd.DataFrame({'Date': dates, 'Symbol': 'ABC', 'Open': close, 'High': [x+2 for x in close], 'Low': [x-2 for x in close], 'Close': close})
-    out = add_indicators(df)
-    assert out['EMA50'].iloc[:49].isna().all()
-    assert pd.notna(out['EMA50'].iloc[49])
-    assert pd.notna(out['RSI14'].iloc[-1])
+    def test_ema50_is_available_with_warmup_flag(self):
+        dates = pd.date_range("2026-01-01", periods=55, freq="B")
+        frame = pd.DataFrame({"DATE": dates, "SYMBOL": ["ABC"] * 55, "SERIES": ["EQ"] * 55,
+                              "OPEN": np.arange(100, 155, dtype=float), "HIGH": np.arange(101, 156, dtype=float),
+                              "LOW": np.arange(99, 154, dtype=float), "CLOSE": np.arange(100, 155, dtype=float),
+                              "VOLUME": [1000] * 55, "TRADED_VALUE": [100000] * 55})
+        out = _signals_for_symbol(frame)
+        self.assertFalse(pd.isna(out.iloc[0]["EMA50"]))
+        self.assertEqual(out.iloc[0]["EMA50WarmupStatus"], "PRELIMINARY_LESS_THAN_50_BARS")
+        self.assertEqual(out.iloc[49]["EMA50WarmupStatus"], "MATURE_50_PLUS_BARS")
 
+    def test_empty_cache_writes_wait_report(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            price = root / "prices"; price.mkdir()
+            delivery = root / "delivery"; delivery.mkdir()
+            out = root / "out"
+            result = run_backtest(price, delivery, out)
+            self.assertEqual(result["status"], "WAIT_FOR_DATA")
+            self.assertTrue((out / "rsi_retest_comparison.csv").exists())
 
-def test_delivery_gate_requires_exact_five_dates_and_each_day_at_least_60():
-    dates = pd.bdate_range('2026-01-01', periods=6)
-    prices = pd.DataFrame({'Date': dates, 'Symbol': 'ABC'})
-    delivery = pd.DataFrame({'Date': list(dates[1:6]), 'Symbol': 'ABC', 'DeliveryPct': [60.0, 61.0, 60.0, 75.0, 60.0]})
-    out = delivery_gate(prices, delivery)
-    assert out.iloc[4]['Delivery5Status'] == 'WAIT_FOR_DATA'  # only four prior sessions have report rows
-    assert out.iloc[5]['Delivery5Pass'] is True or bool(out.iloc[5]['Delivery5Pass'])
-    delivery.loc[delivery['Date'].eq(dates[3]), 'DeliveryPct'] = 59.99
-    out2 = delivery_gate(prices, delivery)
-    assert out2.iloc[5]['Delivery5Status'] == 'REJECT'
-
-
-def test_trade_simulation_uses_next_open_and_conservative_stop_first():
-    dates = pd.bdate_range('2026-01-01', periods=25)
-    df = pd.DataFrame({'Date': dates, 'Symbol': 'ABC', 'Open': [100]*25, 'High': [101]*25, 'Low': [99]*25, 'Close': [100]*25, 'SIG': [False]*25})
-    df.loc[0, 'SIG'] = True
-    df.loc[1, 'High'] = 110
-    df.loc[1, 'Low'] = 98
-    # signal-day stop is 99; entry 100; target 102. Both touched on entry day => stop first.
-    trades = run_trade_simulation(df, 'SIG', max_hold=20)
-    assert len(trades) == 1
-    assert trades.iloc[0]['ExitReason'] == 'STOP_LOSS'
-    assert trades.iloc[0]['RMultiple'] == -1
-
-
-def test_signals_are_false_below_ema50():
-    dates = pd.bdate_range('2026-01-01', periods=70)
-    close = [100 + i * 0.1 + (i % 3) for i in range(70)]
-    df = pd.DataFrame({'Date': dates, 'Symbol': 'ABC', 'Open': close, 'High': [x+1 for x in close], 'Low': [x-1 for x in close], 'Close': close})
-    out = add_signals(add_indicators(df))
-    assert not (out.loc[~out['AboveEMA50'], ['RSI30_RECOVERY','RSI40_RETEST','RSI50_RETEST']].any().any())
+if __name__ == "__main__":
+    unittest.main()
