@@ -110,19 +110,18 @@ jobs:
           python -u ./volume_gainer.py
           echo "===== NSE SCANNER FINISHED ====="
 
-      - name: Run RSI 30/40/50 Retest research using the same restored NSE cache
+      - name: Run RSI 30/40/50 retest comparison from existing cache
         if: always()
-        env:
-          PYTHONUNBUFFERED: "1"
         run: |
-          echo "===== RSI RETEST SOFTWARE TESTS ====="
+          set -e
+          echo "===== RSI RETEST UNIT TESTS ====="
           python -m pytest -q test_rsi_retest_existing_cache.py
-          echo "===== RSI RETEST CACHE-ONLY RESEARCH ====="
+          echo "===== RSI RETEST BACKTEST (NO NETWORK) ====="
           python -u rsi_retest_existing_cache.py
-          echo "===== RSI RETEST CACHE COVERAGE ====="
-          cat outputs/rsi_retest_existing_cache/cache_coverage.csv || true
-          echo "===== RSI RETEST COMPARISON ====="
-          cat outputs/rsi_retest_existing_cache/rsi_retest_comparison.csv || true
+          echo "===== RSI RETEST COMPARISON PREVIEW ====="
+          if [ -f outputs/rsi_retest/rsi_retest_comparison.csv ]; then cat outputs/rsi_retest/rsi_retest_comparison.csv; fi
+          echo "===== CACHE COVERAGE PREVIEW ====="
+          if [ -f outputs/rsi_retest/cache_coverage.csv ]; then cat outputs/rsi_retest/cache_coverage.csv; fi
 
       - name: Diagnose NSE V8 data files
         if: always()
@@ -148,6 +147,7 @@ jobs:
           name: nse-v8-reports-${{ github.run_id }}
           path: |
             outputs/
+            outputs/rsi_retest/
             data/inputs/*.csv
             data/inputs/*.json
             data/reports/
