@@ -24,16 +24,16 @@ METRIC_COLUMNS = [
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
 SOURCE_COLUMNS = [
-    "TckrSymb", "AsOfDate", "Source", "SourceURL", "FinancialPeriodEnd",
-    "PublicationDate", "PublicationDateStatus", "DataRetrievedAtUTC",
-    "ROECalculationMethod", "OfficialFilingURL", "OfficialFilingSource",
+    "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
+    "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
+    "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
 ]
 INPUT_COLUMNS = SOURCE_COLUMNS + METRIC_COLUMNS
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
     "FundamentalSource", "FundamentalSourceURL",
     "FundamentalMetricsCompletenessPct", "FundamentalScoreCoveragePct",
-    "FundamentalAssessmentStatus", "FundamentalScoreEligibilityStatus",
+    "FundamentalAssessmentStatus",
 ]
 SCORE_METRICS = {
     "RevenueGrowthPct": True,
@@ -147,25 +147,23 @@ def apply_fundamental_filter(
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                     reasons.append("INVALID_SOURCE_URL")
             asof = pd.to_datetime(asof_date, errors="coerce")
-            # Financial period end, publication date, and retrieval timestamp are
-            # distinct facts. Never compare the retrieval timestamp with EOD.
-            period_value = financial.get("FinancialPeriodEnd")
-            source_for_period = str(financial.get("Source", "")).lower()
-            if not _nonempty(period_value) and not ("yahoo" in source_for_period or "yfinance" in source_for_period):
-                period_value = financial.get("AsOfDate")  # legacy/manual records only
-            period_end = pd.to_datetime(period_value, errors="coerce")
+            period_end = pd.to_datetime(financial.get("FinancialPeriodEnd"), errors="coerce")
+            publication_date = pd.to_datetime(financial.get("PublicationDate"), errors="coerce")
+            publication_status = str(financial.get("PublicationDateStatus", "UNVERIFIED")).strip().upper()
+            alignment_status = str(financial.get("MetricPeriodAlignmentStatus", "UNVERIFIED")).strip().upper()
             if pd.isna(period_end):
                 reasons.append("FINANCIAL_PERIOD_END_UNVERIFIED")
             elif pd.notna(asof) and period_end.normalize() > asof.normalize():
                 reasons.append("FINANCIAL_PERIOD_END_AFTER_EOD")
-
-            publication_value = financial.get("PublicationDate")
-            publication_date = pd.to_datetime(publication_value, errors="coerce")
-            publication_status = str(financial.get("PublicationDateStatus", "")).strip().upper()
-            if pd.isna(publication_date) or publication_status != "VERIFIED":
+            if publication_status != "VERIFIED" or pd.isna(publication_date):
                 reasons.append("PUBLICATION_DATE_UNVERIFIED")
-            if pd.notna(publication_date) and pd.notna(asof) and publication_date.normalize() > asof.normalize():
+            elif pd.notna(asof) and publication_date.normalize() > asof.normalize():
                 reasons.append("PUBLICATION_DATE_AFTER_EOD")
+            if alignment_status != "VERIFIED":
+                reasons.append("METRIC_PERIOD_ALIGNMENT_UNVERIFIED")
+            report_date = pd.to_datetime(financial.get("AsOfDate"), errors="coerce")
+            if pd.notna(report_date) and pd.notna(asof) and report_date.normalize() > asof.normalize():
+                reasons.append("FUNDAMENTAL_AS_OF_DATE_AFTER_EOD")
 
         supplied_count = sum(_nonempty(row.get(col, pd.NA)) for col in METRIC_COLUMNS)
         score_count = sum(_nonempty(row.get(col, pd.NA)) and pd.notna(_number(row.get(col))) for col in SCORE_METRICS)
@@ -180,9 +178,11 @@ def apply_fundamental_filter(
         row["FundamentalStatus"] = status
         row["FundamentalAssessmentStatus"] = "NOT_SHORTLISTED_YET"
         row["FundamentalReason"] = ";".join(reasons) if reasons else "FUNDAMENTAL_DATA_COLLECTED_FOR_LATER_RANKING"
-        row["FundamentalAsOfDate"] = row.get("FinancialPeriodEnd", row.get("AsOfDate", pd.NA))
+        row["FundamentalAsOfDate"] = row.get("AsOfDate", pd.NA)
         row["FundamentalSource"] = row.get("Source", pd.NA)
         row["FundamentalSourceURL"] = row.get("SourceURL", pd.NA)
+        row["FundamentalPublicationDateStatus"] = row.get("PublicationDateStatus", "UNVERIFIED")
+        row["FundamentalFinancialPeriodEnd"] = row.get("FinancialPeriodEnd", pd.NA)
         enriched_rows.append(row)
 
     audit = pd.DataFrame(enriched_rows)
@@ -198,26 +198,20 @@ def apply_fundamental_filter(
         score_parts.append((values.rank(pct=True, ascending=higher_is_better) * 100.0).rename(metric + "PercentileScore"))
     score_frame = pd.concat(score_parts, axis=1) if score_parts else pd.DataFrame(index=audit.index)
     audit = pd.concat([audit, score_frame], axis=1)
-    # A numeric score is not enough for a point-in-time ranking. Require all six
-    # metrics AND a verified publication date no later than EOD AND a verified
-    # financial period no later than EOD. Unverified Yahoo data remains collected
-    # but cannot silently enter a historical ranking.
-    asof = pd.to_datetime(asof_date, errors="coerce")
-    pub_dates = pd.to_datetime(audit.get("PublicationDate", pd.Series(index=audit.index, dtype=object)), errors="coerce")
-    period_dates = pd.to_datetime(audit.get("FinancialPeriodEnd", pd.Series(index=audit.index, dtype=object)), errors="coerce")
-    pub_status = audit.get("PublicationDateStatus", pd.Series("", index=audit.index)).astype(str).str.strip().str.upper()
-    verified_publication = pub_status.eq("VERIFIED") & pub_dates.notna()
-    if pd.notna(asof):
-        verified_publication &= pub_dates.dt.normalize().le(asof.normalize())
-        verified_period = period_dates.notna() & period_dates.dt.normalize().le(asof.normalize())
-    else:
-        verified_period = period_dates.notna()
-    complete_score = audit["FundamentalScoreCoveragePct"].eq(100) & audit["FundamentalStatus"].eq("COMPLETE") & verified_publication & verified_period
-    audit["FundamentalScoreEligibilityStatus"] = "WAIT_FOR_VERIFIED_POINT_IN_TIME_DATA"
-    audit.loc[complete_score, "FundamentalScoreEligibilityStatus"] = "ELIGIBLE_FOR_FUNDAMENTAL_RANKING"
-    audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).where(complete_score).round(2)
+    complete_score = audit["FundamentalScoreCoveragePct"].eq(100)
+    publication_verified = audit.get("PublicationDateStatus", pd.Series("UNVERIFIED", index=audit.index)).astype(str).str.upper().eq("VERIFIED")
+    alignment_verified = audit.get("MetricPeriodAlignmentStatus", pd.Series("UNVERIFIED", index=audit.index)).astype(str).str.upper().eq("VERIFIED")
+    period_end = pd.to_datetime(audit.get("FinancialPeriodEnd", pd.Series(pd.NA, index=audit.index)), errors="coerce")
+    publication_date = pd.to_datetime(audit.get("PublicationDate", pd.Series(pd.NA, index=audit.index)), errors="coerce")
+    eod_cutoff = pd.to_datetime(asof_date, errors="coerce")
+    point_in_time_valid = period_end.notna() & publication_date.notna()
+    if pd.notna(eod_cutoff):
+        point_in_time_valid &= period_end.dt.normalize().le(eod_cutoff.normalize())
+        point_in_time_valid &= publication_date.dt.normalize().le(eod_cutoff.normalize())
+    score_eligible = complete_score & publication_verified & alignment_verified & point_in_time_valid
+    audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).where(score_eligible).round(2)
     audit["FundamentalRank"] = audit["FundamentalScore"].rank(method="min", ascending=False).astype("Int64")
-    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean (provisional); score only with six numeric metrics and verified publication/period dates on or before EOD"
+    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean; only when six numeric metrics, official publication date, period end, and metric-period alignment are verified point-in-time"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)

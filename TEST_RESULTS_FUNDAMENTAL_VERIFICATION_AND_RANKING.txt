@@ -1,0 +1,18 @@
+NSE V8 FUNDAMENTAL VERIFICATION & RANKING PATCH
+Date: 2026-10-23
+
+COMPILE
+PASS: py_compile volume_gainer.py fundamental_data_provider.py fundamental_filter.py fundamental_official_filings.py
+
+TARGETED TESTS
+PASS: 41 tests across Fundamental Provider, Fundamental Filter, Official Filing Verification, Delivery, Liquidity, and Pipeline modules.
+
+FULL TEST SUITE
+157 passed, 2 failed.
+Known unrelated/stale failures:
+- test_top50_rvol_selection.py::test_select_top50_by_rvol_returns_highest_fifty_and_ranks
+- test_top50_rvol_selection.py::test_rvol_wait_for_data_is_not_ranked
+Both call volume_gainer.select_top50_by_rvol, which is absent because the approved selection logic has no Top-50 cap. Not changed in this patch.
+
+LIVE CHECKS
+Not performed: no live NSE announcement endpoint or live Yahoo Finance verification during local test run.

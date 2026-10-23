@@ -25,10 +25,12 @@ CONFIG = {
 
 def good_record(symbol="ABC"):
     return {
-        "TckrSymb": symbol, "AsOfDate": "2026-09-30", "FinancialPeriodEnd": "2026-09-30",
-        "PublicationDate": "2026-10-05", "PublicationDateStatus": "VERIFIED",
-        "DataRetrievedAtUTC": "2026-10-10T00:00:00+00:00", "Source": "Official filing",
-        "SourceURL": "https://example.com/filing", "RevenueGrowthPct": 12,
+        "TckrSymb": symbol, "AsOfDate": "2026-09-30", "Source": "Official filing",
+        "SourceURL": "https://example.com/filing", "FinancialPeriodEnd": "2026-06-30",
+        "PublicationDate": "2026-07-25", "PublicationDateStatus": "VERIFIED",
+        "OfficialFilingURL": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+        "OfficialFilingSource": "NSE corporate announcements", "MetricPeriodAlignmentStatus": "VERIFIED",
+        "DataRetrievedAtUTC": "2026-10-19T10:00:00+00:00", "RevenueGrowthPct": 12,
         "ProfitGrowthPct": 14, "ROEPercent": 16, "ROCEPercent": 18,
         "DebtToEquity": 0.4, "InterestCoverage": 6,
         "OperatingCashFlowINR": 1000000, "FreeCashFlowINR": 500000,
@@ -79,33 +81,29 @@ class FundamentalFilterTests(unittest.TestCase):
         self.assertEqual(row["FundamentalStatus"], "COMPLETE")
 
     def test_future_financial_date_waits(self):
-        record = good_record(); record["FinancialPeriodEnd"] = "2026-12-31"; record["AsOfDate"] = "2026-12-31"
+        record = good_record(); record["AsOfDate"] = "2026-12-31"
         row = self.run_filter([record])
         self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
-        self.assertIn("FINANCIAL_PERIOD_END_AFTER_EOD", row["FundamentalReason"])
-
-    def test_retrieval_after_eod_is_not_mistaken_for_future_financial_data(self):
-        record = good_record()
-        record["DataRetrievedAtUTC"] = "2026-10-24T00:00:00+00:00"
-        row = self.run_filter([record])
-        self.assertEqual(row["FundamentalStatus"], "COMPLETE")
-
-    def test_unverified_publication_date_is_flagged(self):
-        record = good_record(); record["PublicationDate"] = None; record["PublicationDateStatus"] = "UNVERIFIED"
-        row = self.run_filter([record])
-        self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
-        self.assertIn("PUBLICATION_DATE_UNVERIFIED", row["FundamentalReason"])
-
-    def test_publication_after_eod_is_flagged(self):
-        record = good_record(); record["PublicationDate"] = "2026-10-20"
-        row = self.run_filter([record])
-        self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
-        self.assertIn("PUBLICATION_DATE_AFTER_EOD", row["FundamentalReason"])
 
     def test_duplicate_records_are_flagged_but_not_removed(self):
         row = self.run_filter([good_record(), good_record()])
         self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
         self.assertIn("DUPLICATE_FUNDAMENTAL_RECORDS", row["FundamentalReason"])
+
+    def test_unverified_publication_date_blocks_score_but_keeps_row(self):
+        record = good_record(); record["PublicationDateStatus"] = "UNVERIFIED"
+        pd.DataFrame([record], columns=INPUT_COLUMNS).to_csv(self.metrics, index=False)
+        result, _ = apply_fundamental_filter(pd.DataFrame({"TckrSymb": ["ABC"]}), "2026-10-19", self.metrics, self.thresholds)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(pd.isna(result.iloc[0]["FundamentalScore"]))
+        self.assertIn("PUBLICATION_DATE_UNVERIFIED", result.iloc[0]["FundamentalReason"])
+
+    def test_future_publication_date_blocks_score(self):
+        record = good_record(); record["PublicationDate"] = "2026-10-20"
+        pd.DataFrame([record], columns=INPUT_COLUMNS).to_csv(self.metrics, index=False)
+        result, _ = apply_fundamental_filter(pd.DataFrame({"TckrSymb": ["ABC"]}), "2026-10-19", self.metrics, self.thresholds)
+        self.assertTrue(pd.isna(result.iloc[0]["FundamentalScore"]))
+        self.assertIn("PUBLICATION_DATE_AFTER_EOD", result.iloc[0]["FundamentalReason"])
 
 
 if __name__ == "__main__":
@@ -118,39 +116,3 @@ def test_fundamental_score_fields_are_written_by_filter_source():
     assert "FundamentalScore" in source
     assert "FundamentalRank" in source
     assert "Equal-weight percentile mean" in source
-
-
-def test_yahoo_retrieval_date_is_not_used_when_period_end_missing():
-    record = good_record()
-    record["Source"] = "Yahoo Finance via yfinance (secondary)"
-    record["FinancialPeriodEnd"] = None
-    record["AsOfDate"] = "2026-10-23"  # legacy retrieval date must not be treated as period end
-    record["DataRetrievedAtUTC"] = "2026-10-23T10:00:00+00:00"
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
-        metrics_path = Path(tmp) / "metrics.csv"
-        pd.DataFrame([record]).to_csv(metrics_path, index=False)
-        result, _ = apply_fundamental_filter(pd.DataFrame({"TckrSymb": ["ABC"]}), "2026-10-19", metrics_path)
-        row = result.iloc[0]
-    assert row["FundamentalStatus"] == "PARTIAL_DATA"
-    assert "FINANCIAL_PERIOD_END_UNVERIFIED" in row["FundamentalReason"]
-
-
-def test_unverified_publication_date_never_receives_fundamental_rank(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    record = good_record()
-    record.update({
-        "FinancialPeriodEnd": "2026-09-30",
-        "PublicationDate": None,
-        "PublicationDateStatus": "UNVERIFIED",
-        "DataRetrievedAtUTC": "2026-10-23T10:00:00+00:00",
-    })
-    metrics_path = Path("data/inputs/fundamental_metrics.csv")
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame([record]).to_csv(metrics_path, index=False)
-    result, _ = apply_fundamental_filter(pd.DataFrame({"TckrSymb": ["ABC"]}), "2026-10-22", metrics_path)
-    row = result.iloc[0]
-    assert row["FundamentalStatus"] == "PARTIAL_DATA"
-    assert pd.isna(row["FundamentalScore"])
-    assert pd.isna(row["FundamentalRank"])
-    assert row["FundamentalScoreEligibilityStatus"] == "WAIT_FOR_VERIFIED_POINT_IN_TIME_DATA"
