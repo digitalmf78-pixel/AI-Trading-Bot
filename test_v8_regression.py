@@ -175,13 +175,13 @@ def test_news_gate_does_not_use_average_delivery_as_a_gate():
     assert news_catalyst._filter_catalyst_candidates(candidates).empty
 
 
-def test_delivery_gate_runs_before_rvol_top20_in_scanner_source():
+def test_rvol_top50_precedes_two_delivery_categories_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
-    delivery_step = source.index("STEP 2A: MANDATORY DELIVERY-FIRST GATE")
-    rvol_step = source.index("STEP 6: CURRENT RVOL")
-    top20_step = source.index("result = select_top20_by_rvol(result, eod_date)")
-    assert delivery_step < rvol_step < top20_step
-    assert "STEP 6A: MANDATORY FIVE-SESSION DELIVERY GATE — RVOL TOP 20 ONLY" not in source
+    top50_step = source.index("result = select_top50_by_rvol(result, eod_date)")
+    delivery_step = source.index("STEP 4: TWO INDEPENDENT DELIVERY CATEGORIES")
+    fundamental_step = source.index("STEP 5: FUNDAMENTAL CHECK AND RANKING")
+    assert top50_step < delivery_step < fundamental_step
+    assert "v8_primary_shortlist_top50.csv" in source
 
 
 def test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps():

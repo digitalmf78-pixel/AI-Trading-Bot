@@ -1,17 +1,20 @@
-"""Structural regression tests for the agreed NSE V8 EOD selection order."""
+"""Structural regression tests for the approved NSE V8 selection sequence."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
 
-def test_delivery_liquidity_fundamental_precede_rvol_and_technical():
+def test_mainboard_rvol_top50_delivery_categories_fundamental_then_technical():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    delivery = source.index("STEP 2A: MANDATORY DELIVERY-FIRST GATE")
-    liquidity = source.index("STEP 3A: LIQUIDITY GATE")
-    fundamental = source.index("STEP 3B: FUNDAMENTAL QUALITY GATE")
-    rvol = source.index("result = select_top20_by_rvol(result, eod_date)")
+    board = source.index("STEP 1B: OFFICIAL MAIN BOARD ONLY")
+    rvol = source.index("result = select_top50_by_rvol(result, eod_date)")
+    delivery = source.index("STEP 4: TWO INDEPENDENT DELIVERY CATEGORIES")
+    fundamental = source.index("STEP 5: FUNDAMENTAL CHECK AND RANKING")
     technical = source.index("STEP 7: PRICE + VOLUME")
-    assert delivery < liquidity < fundamental < rvol < technical
+    assert board < rvol < delivery < fundamental < technical
+    assert "v8_primary_shortlist_top50.csv" in source
+    assert "v8_delivery_category_a_avg60.csv" in source or "apply_delivery_categories" in source
+    assert "v8_fundamental_ranked_candidates.csv" in source
 
 
 def test_fundamental_pass_is_required_for_final_shortlist():
@@ -25,7 +28,7 @@ def test_reports_and_input_template_are_wired():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     assert "v8_fundamental_report.csv" in source
     assert 'v8_technical_report.csv' in source
-    assert "v8_selection_status_report.csv" in source
+    assert 'v8_selection_status_report.csv' in source
 
 
 def test_empty_eligible_universe_still_writes_empty_final_shortlist():

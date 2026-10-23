@@ -1,0 +1,43 @@
+NSE SWING TRADING V8.0 — TOP 50 + DUAL DELIVERY CHECKPOINT
+Date: 2026-10-23
+
+USER-APPROVED SELECTION ORDER
+1. Official NSE Main Board universe (exclude SME/ETF).
+2. Validate prior 5-session and prior 20-full-session volume history.
+3. Calculate RVOL = current EOD volume / average volume of the prior 20 full sessions.
+4. Rank by RVOL descending and select up to Top 50.
+5. Apply two independent Delivery categories to those Top 50:
+   A. AVG_DELIVERY_60: average Delivery % over five valid distinct sessions >=60.00%.
+   B. DAILY_DELIVERY_60: each of the five sessions individually >=60.00%.
+   Category B is a subset of Category A. Missing/ambiguous data => WAIT_FOR_DATA.
+6. Rank candidates using available, source-backed Fundamental Score and put verified PASS / stronger score first.
+7. Continue into existing technical/news/sector/risk/final checks.
+
+PATCH FILES
+- volume_gainer.py
+- delivery_categories.py (new)
+- fundamental_filter.py
+- test_delivery_categories.py (new)
+- test_top50_rvol_selection.py (new)
+- test_selection_pipeline_order.py
+- test_liquidity_filter.py
+- test_v8_regression.py
+- README_SELECTION_PIPELINE_TOP50_MARATHI.txt
+
+OUTPUTS
+- outputs/v8_primary_shortlist_top50.csv
+- outputs/v8_delivery_categories_audit.csv
+- outputs/v8_delivery_category_a_avg60.csv
+- outputs/v8_delivery_category_b_each_day60.csv
+- outputs/v8_fundamental_ranked_candidates.csv
+- outputs/v8_fundamental_report.csv
+
+LOCAL TESTS
+Focused suites: 49 passed.
+Expanded explicit test files: 138 passed, 1 existing/flaky empty-shortlist output test failed only when run with the whole set; the same test passes alone. The separate inline workflow test is not a pytest test and exits at module import, so it must not be collected by pytest.
+
+DATA/DEPLOYMENT LIMITATIONS
+- Latest supplied report shows delivery cache only 8 distinct dates (2026-10-13 through 2026-10-22).
+- data/inputs/fundamental_metrics.csv in the supplied report was empty.
+- Fundamental thresholds remain unconfigured. Score is ranking-only and does not override existing PASS/REJECT gates. Final shortlist may remain empty until verified fundamental data and thresholds are supplied.
+- No GitHub deployment was performed. Apply patch and verify with a new GitHub Actions run before calling it deployed.

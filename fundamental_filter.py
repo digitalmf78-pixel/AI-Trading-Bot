@@ -235,6 +235,50 @@ def apply_fundamental_filter(
     for col in STATUS_COLUMNS + METRIC_COLUMNS + SOURCE_COLUMNS:
         if col not in audit.columns:
             audit[col] = pd.NA
+
+    # Transparent relative Fundamental Score (0-100), used for ranking only.
+    # It does not override missing/stale evidence or configured PASS/REJECT gates.
+    # Each available numeric metric contributes an in-universe percentile; higher
+    # is better except DebtToEquity, where lower is better.
+    score_metrics = {
+        "RevenueGrowthPct": True,
+        "ProfitGrowthPct": True,
+        "ROEPercent": True,
+        "ROCEPercent": True,
+        "DebtToEquity": False,
+        "InterestCoverage": True,
+        "OperatingCashFlowINR": True,
+        "FreeCashFlowINR": True,
+    }
+    metric_percentiles = []
+    for metric, higher_is_better in score_metrics.items():
+        values = pd.to_numeric(audit[metric], errors="coerce")
+        ranks = values.rank(method="average", pct=True, ascending=higher_is_better)
+        # For lower-is-better metrics, ascending=True makes the smallest value
+        # rank lowest; invert to reward the smaller debt ratio.
+        if not higher_is_better:
+            ranks = 1.0 - ranks + (1.0 / max(int(values.notna().sum()), 1))
+            ranks = ranks.clip(0, 1)
+        metric_percentiles.append(ranks.rename(metric + "_Percentile"))
+    if metric_percentiles:
+        pct_frame = pd.concat(metric_percentiles, axis=1)
+        audit["FundamentalScoreCompletenessPct"] = (
+            pct_frame.notna().sum(axis=1) / len(score_metrics) * 100
+        ).round(2)
+        audit["FundamentalScore"] = (
+            pct_frame.mean(axis=1, skipna=True) * 100
+        ).round(2)
+        audit.loc[pct_frame.notna().sum(axis=1) < 4, "FundamentalScore"] = pd.NA
+    else:
+        audit["FundamentalScoreCompletenessPct"] = 0.0
+        audit["FundamentalScore"] = pd.NA
+    audit["FundamentalRank"] = audit["FundamentalScore"].rank(
+        method="min", ascending=False, na_option="bottom"
+    ).astype("Int64")
+    audit["FundamentalStrength"] = audit["FundamentalScore"].apply(
+        lambda score: "SCORED_STRONGER_RELATIVE" if pd.notna(score) else "WAIT_FOR_DATA"
+    )
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)
     audit[audit["FundamentalStatus"] == "PASS"].to_csv(OUTPUT_DIR / "v8_fundamental_passed.csv", index=False)
