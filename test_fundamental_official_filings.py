@@ -91,3 +91,58 @@ def test_fetch_failure_uses_cache_but_respects_eod_cutoff(tmp_path):
     diag = pd.read_csv(tmp_path/"diag.csv")
     assert "CUTOFF_SAFE_CACHE_FALLBACK" in set(diag["Status"])
     assert "FETCH_FAILED" in set(diag["Status"])
+
+
+class _FakeResponse:
+    def __init__(self, payload=None, error=None):
+        self._payload = payload or []
+        self._error = error
+
+    def raise_for_status(self):
+        if self._error:
+            raise RuntimeError(self._error)
+
+    def json(self):
+        return self._payload
+
+
+class _ChunkedFakeSession:
+    def __init__(self):
+        self.headers = {}
+        self.calls = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url, params, timeout))
+        if params is None:
+            return _FakeResponse({"ok": True})
+        return _FakeResponse([{
+            "symbol": "ABC",
+            "an_dt": "15-Sep-2026 17:30:00",
+            "desc": "Financial Results for the quarter ended on June 30, 2026",
+            "attchmntFile": "https://nsearchives.nseindia.com/corporate/abc-results.pdf",
+        }])
+
+
+def test_period_parser_accepts_ended_on_wording():
+    assert str(_period_end_from_description(
+        "Financial Results for the quarter ended on June 30, 2026"
+    )) == "2026-06-30"
+
+
+def test_fetcher_uses_bounded_windows_and_emits_parse_diagnostics():
+    from fundamental_official_filings import fetch_nse_financial_results
+
+    fake = _ChunkedFakeSession()
+    result = fetch_nse_financial_results(
+        "2026-10-22", lookback_days=60, session_factory=lambda: fake, window_days=30
+    )
+    # One NSE homepage request plus three bounded announcement requests.
+    assert len(fake.calls) == 4
+    assert len(result) == 1
+    assert result.loc[0, "TckrSymb"] == "ABC"
+    assert result.loc[0, "FinancialPeriodEnd"] == "2026-06-30"
+    assert result.loc[0, "PublicationDate"] == "2026-09-15"
+    summary = result.attrs["fetch_summary"]
+    assert summary["WindowsAttempted"] == 3
+    assert summary["RowsWithParsedPeriodEnd"] == 1
+    assert summary["MatchedFilingRows"] == 1

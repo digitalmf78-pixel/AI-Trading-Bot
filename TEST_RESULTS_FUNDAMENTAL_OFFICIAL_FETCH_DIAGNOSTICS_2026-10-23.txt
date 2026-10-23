@@ -1,0 +1,18 @@
+NSE V8 Fundamental Official Filing Fetch Diagnostics Fix — test results
+Date: 2026-10-23
+
+PASS: targeted pytest suite — 41 passed
+Command:
+pytest -q test_fundamental_official_filings.py test_fundamental_data_provider.py test_fundamental_filter.py test_delivery_filter_fallback.py test_liquidity_filter.py test_selection_pipeline_order.py
+
+PASS: V8 regression suite — 27 passed
+Command:
+python test_v8_regression.py
+
+PASS: Python compile check
+Command:
+python -m py_compile fundamental_official_filings.py fundamental_data_provider.py fundamental_filter.py
+
+Limitations:
+- No live NSE endpoint request was made in this local test run.
+- Tests use a mocked NSE session for chunked-window behavior.
