@@ -53,3 +53,41 @@ def test_missing_period_does_not_use_asof_date_as_period(tmp_path):
     out = apply_official_publication_dates(records, "2026-10-22", filings=filings,
         cache_path=tmp_path/"cache.csv", diagnostics_path=tmp_path/"diag.csv")
     assert out.loc[0, "PublicationDateStatus"] == "UNVERIFIED"
+
+
+def test_period_end_parser_handles_ordinal_and_combined_quarter_year():
+    assert str(_period_end_from_description("Financial Results for the quarter ended 30th June, 2026")) == "2026-06-30"
+    assert str(_period_end_from_description("Financial Results for the quarter and year ended March 31, 2026")) == "2026-03-31"
+    assert str(_period_end_from_description("Unaudited results for nine months ended 31st December 2025")) == "2025-12-31"
+
+
+def test_date_parser_handles_month_first_and_epoch_timestamp():
+    from fundamental_official_filings import _date
+    assert str(_date("06/30/2026")) == "2026-06-30"
+    assert str(_date("30-Jun-2026 17:20:00")) == "2026-06-30"
+    assert str(_date(1792953600)) == "2026-10-25"
+
+
+def test_fetch_failure_uses_cache_but_respects_eod_cutoff(tmp_path):
+    cache = tmp_path / "filings.csv"
+    pd.DataFrame([
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-06-30", "PublicationDate": "2026-07-25",
+         "PublicationDateStatus": "VERIFIED", "OfficialFilingURL": "https://www.nseindia.com/file.pdf",
+         "OfficialSource": "NSE corporate announcements"},
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-09-30", "PublicationDate": "2026-10-23",
+         "PublicationDateStatus": "VERIFIED", "OfficialFilingURL": "https://www.nseindia.com/file2.pdf",
+         "OfficialSource": "NSE corporate announcements"},
+    ]).to_csv(cache, index=False)
+    records = pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-06-30"},
+                            {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-09-30"}])
+    def failing_fetcher(_cutoff):
+        raise RuntimeError("NSE unavailable")
+    out = apply_official_publication_dates(
+        records, "2026-10-22", fetcher=failing_fetcher,
+        cache_path=cache, diagnostics_path=tmp_path/"diag.csv"
+    )
+    assert out.loc[0, "PublicationDateStatus"] == "VERIFIED"
+    assert out.loc[1, "PublicationDateStatus"] == "UNVERIFIED"
+    diag = pd.read_csv(tmp_path/"diag.csv")
+    assert "CUTOFF_SAFE_CACHE_FALLBACK" in set(diag["Status"])
+    assert "FETCH_FAILED" in set(diag["Status"])

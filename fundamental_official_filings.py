@@ -22,32 +22,79 @@ NSE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings
 
 
 def _date(value):
-    # Prefer unambiguous ISO dates before trying common NSE day-first formats.
-    parsed = pd.to_datetime(value, errors="coerce", format="%Y-%m-%d")
-    if pd.isna(parsed):
-        parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
-    return None if pd.isna(parsed) else parsed.date()
+    """Parse common NSE date strings without guessing ambiguous numeric dates.
+
+    Supports ISO dates, NSE day-first strings, month-first announcement strings,
+    timestamps, and Unix epoch seconds/milliseconds. Ambiguous slash dates are
+    interpreted day-first first because NSE announcement dates are day-first.
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            number = float(value)
+            if number > 10**12:
+                parsed = pd.to_datetime(number, unit="ms", utc=True, errors="coerce")
+            elif number > 10**9:
+                parsed = pd.to_datetime(number, unit="s", utc=True, errors="coerce")
+            else:
+                return None
+            return None if pd.isna(parsed) else parsed.date()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "nat", "<na>"}:
+        return None
+    # Normalize ordinal suffixes, e.g. 30th June 2026.
+    text = re.sub(r"(?i)\b(\d{1,2})(st|nd|rd|th)\b", r"\1", text)
+    # ISO is unambiguous. Slash-separated NSE dates are day-first when valid;
+    # if that interpretation is impossible (e.g. 06/30/2026), fall back to
+    # month-first. Named-month strings are parsed after these explicit cases.
+    parsed = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+    if not pd.isna(parsed):
+        return parsed.date()
+    if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", text):
+        first, second, _year = (int(part) for part in text.split("/"))
+        # If only one interpretation is valid, choose it. For truly ambiguous
+        # dates (both values <= 12), follow NSE's day-first convention.
+        dayfirst = not (second > 12 and first <= 12)
+        parsed = pd.to_datetime(text, dayfirst=dayfirst, errors="coerce")
+        if not pd.isna(parsed):
+            return parsed.date()
+    for dayfirst in (True, False):
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst)
+        if not pd.isna(parsed):
+            return parsed.date()
+    return None
 
 
 def _period_end_from_description(description: str):
-    """Extract only dates explicitly tied to a financial period end.
+    """Extract a date only when it is explicitly tied to a financial period end.
 
-    This deliberately avoids taking the first arbitrary date in an announcement,
-    which could be a board-meeting date rather than the statement period end.
+    Handles common NSE wording including ordinal dates and combined quarter/year
+    periods. It deliberately refuses a meeting date or an arbitrary date.
     """
     text = str(description or "")
-    patterns = [
-        r"(?:period|quarter|year|nine months|half year)\s+ended\s+(\d{1,2}[-/]\d{1,2}[-/]\d{4})",
-        r"(?:period|quarter|year|nine months|half year)\s+ended\s+(\d{1,2}[- ][A-Za-z]{3,9}[- ,]+\d{4})",
-        r"(?:period|quarter|year|nine months|half year)\s+ended\s+([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            parsed = _date(match.group(1))
-            if parsed:
-                return parsed
-    return None
+    normalized = re.sub(r"(?i)\b(\d{1,2})(st|nd|rd|th)\b", r"\1", text)
+    # Dates in the three common formats seen in corporate-announcement subjects.
+    date_pattern = (
+        r"(\d{1,2}[-/]\d{1,2}[-/]\d{4})"
+        r"|((?:\d{1,2})[- ]+[A-Za-z]{3,9}[- ,]+\d{4})"
+        r"|([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})"
+    )
+    # The period words may be combined ("quarter and year", "quarter and
+    # nine months"). The date must immediately follow an explicit 'ended'.
+    pattern = re.compile(
+        r"(?:period|quarter|year|nine\s+months|half\s+year|three\s+months)"
+        r"(?:\s+(?:and|/|&)?\s*(?:period|quarter|year|nine\s+months|half\s+year|three\s+months))*"
+        r"\s+ended\s+(?:" + date_pattern + r")",
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(normalized)
+    if not match:
+        return None
+    date_text = next((group for group in match.groups() if group), "")
+    return _date(date_text)
 
 
 def _announcement_date(item: dict):
@@ -173,14 +220,42 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
     output.loc[stale, "PublicationDateStatus"] = "UNVERIFIED"
     output.loc[stale, "PublicationDate"] = pd.NA
     diagnostics = []
+    cache_file = Path(cache_path)
+    fetch_error = None
     if filings is None:
         try:
-            filings = (fetcher or fetch_nse_financial_results)(cutoff.date().isoformat())
-            Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-            filings.to_csv(cache_path, index=False)
+            fetched = (fetcher or fetch_nse_financial_results)(cutoff.date().isoformat())
+            if fetched is None:
+                fetched = pd.DataFrame()
+            if not fetched.empty:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                fetched.to_csv(cache_file, index=False)
+                filings = fetched
+            else:
+                # An empty parsed response can mean NSE changed its schema or
+                # the endpoint returned a partial window. Do not erase a useful
+                # prior cache; it will be cutoff-filtered below.
+                filings = pd.DataFrame()
+                diagnostics.append({"Status": "LIVE_FETCH_EMPTY", "Reason": "Live NSE response produced no parseable financial-result filings"})
         except Exception as exc:
-            diagnostics.append({"Status": "FETCH_FAILED", "Reason": f"{type(exc).__name__}: {exc}"[:500]})
+            fetch_error = f"{type(exc).__name__}: {exc}"[:500]
+            diagnostics.append({"Status": "FETCH_FAILED", "Reason": fetch_error})
             filings = pd.DataFrame()
+
+        if (filings is None or filings.empty) and cache_file.exists() and cache_file.stat().st_size:
+            try:
+                cached = pd.read_csv(cache_file)
+                if not cached.empty:
+                    filings = cached
+                    diagnostics.append({
+                        "Status": "CUTOFF_SAFE_CACHE_FALLBACK",
+                        "Reason": "Using cached official filing records; publication/period dates are filtered against the requested EOD cutoff",
+                        "CachePath": str(cache_file),
+                        "CachedRows": len(cached),
+                    })
+            except Exception as cache_exc:
+                diagnostics.append({"Status": "CACHE_READ_FAILED", "Reason": f"{type(cache_exc).__name__}: {cache_exc}"[:300]})
+
     if filings is None or filings.empty:
         for _, row in output.iterrows():
             diagnostics.append({"TckrSymb": row.get("TckrSymb", ""), "Status": "UNVERIFIED", "Reason": "No official filing data available; publication date not inferred"})

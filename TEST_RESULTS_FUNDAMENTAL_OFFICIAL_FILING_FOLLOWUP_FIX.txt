@@ -1,0 +1,18 @@
+NSE V8 FUNDAMENTAL OFFICIAL FILING FOLLOW-UP FIX
+Repository source: AI-Trading-Bot-main (6).zip
+
+TARGETED TESTS
+PASS: 51 tests across Fundamental Provider, Fundamental Filter, Official Filing Verification, Delivery, Liquidity, Mainboard, Risk and Pipeline modules.
+
+COMPILE
+PASS: fundamental_official_filings.py, fundamental_data_provider.py, fundamental_filter.py, delivery_filter.py, liquidity_filter.py, volume_gainer.py
+
+LIVE CHECKS
+Not performed. No claim that the live NSE endpoint has been verified in this local run.
+
+SCOPE
+- Improved financial period-end description parsing.
+- Added safe fallback to previously cached official filings when live fetch fails or returns no parseable rows.
+- Cached records are still checked against the requested EOD cutoff.
+- No change to Delivery A/B, ₹2 crore liquidity threshold, RVOL rule or other pipeline modules.
+- Does not parse official filing attachments into financial metrics; metric period alignment remains unverified unless independently established.
