@@ -125,37 +125,43 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
                           series_col: str = "SctySrs", minimum_average: float = MINIMUM_AVERAGE,
                           sessions: list[tuple[date, pd.DataFrame]] | None = None,
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return qualifying candidates and full per-symbol audit.
+    """Annotate two independent Delivery categories and return Category-A pass rows.
 
-    Qualifies only when five distinct valid reports exist for the exact SYMBOL+SERIES
-    and EVERY session's Delivery % is >= the threshold (60.00% by default). The
-    ``minimum_average`` argument is retained for caller compatibility but is treated
-    as a per-session minimum. AvgDelivery5D is descriptive only.
+    Category A: average DELIV_PER across the latest five distinct valid sessions >= 60%.
+    Category B: each of those five sessions individually >= 60%.
+    Both require five valid session records. Missing data is WAIT_FOR_DATA.
+    Category B is reported separately; it is naturally a subset of Category A.
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()
     if symbol_col not in candidates.columns:
         raise ValueError(f"Candidate symbol column missing: {symbol_col}")
 
+    threshold = float(minimum_average)
     try:
         reports = sessions if sessions is not None else get_delivery_sessions(asof_date, 5, session=http_session)
         if len({day for day, _ in reports}) < 5:
             raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
+        reports = sorted(reports, key=lambda item: item[0])[-5:]
+        if len({day for day, _ in reports}) != 5:
+            raise RuntimeError("WAIT_FOR_DATA: exactly five distinct delivery sessions required")
     except RuntimeError as exc:
         if "WAIT_FOR_DATA" not in str(exc):
             raise
         print(f"[DELIVERY] {exc}")
         audit = candidates.copy()
         audit["DeliverySessions"] = 0
+        audit["DeliveryDailyPassCount"] = 0
+        audit["DeliveryMin5D"] = float("nan")
         audit["AvgDelivery5D"] = float("nan")
         audit["LatestDeliveryPct"] = float("nan")
+        audit["DeliveryCategoryAStatus"] = "WAIT_FOR_DATA"
+        audit["DeliveryCategoryBStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
         AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-        audit_path = AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
-        audit.to_csv(audit_path, index=False)
-        print("[DELIVERY] No candidates allowed through because required data is missing.")
-        print(f"[DELIVERY] WAIT_FOR_DATA audit saved: {audit_path}")
+        audit.to_csv(AUDIT_DIR / f"delivery_dual_category_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv", index=False)
+        audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv", index=False)
         return candidates.iloc[0:0].copy(), audit
 
     pieces = []
@@ -169,62 +175,68 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
         frame = frame[frame["DELIV_PER"].between(0, 100, inclusive="both")]
         frame["REPORT_DATE"] = report_date.isoformat()
-        # A duplicate symbol/series/date row must not inflate the five-session count.
-        frame = frame.drop_duplicates(["SYMBOL", "SERIES", "REPORT_DATE"], keep="last")
+        # Duplicates for a symbol/series/day are ambiguous and cannot qualify.
+        duplicate_keys = frame.duplicated(["SYMBOL", "SERIES"], keep=False)
+        if duplicate_keys.any():
+            frame = frame.loc[~duplicate_keys].copy()
         pieces.append(frame)
 
-    all_delivery = pd.concat(pieces, ignore_index=True)
+    all_delivery = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER", "REPORT_DATE"])
     candidate = candidates.copy()
     candidate["_SYMBOL_KEY"] = candidate[symbol_col].astype(str).str.strip().str.upper()
-    if series_col in candidate.columns:
-        candidate["_SERIES_KEY"] = candidate[series_col].astype(str).str.strip().str.upper()
-    else:
-        candidate["_SERIES_KEY"] = "EQ"
-
+    candidate["_SERIES_KEY"] = candidate[series_col].astype(str).str.strip().str.upper() if series_col in candidate.columns else "EQ"
+    report_dates = [day.isoformat() for day, _ in reports]
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
         matches = all_delivery[(all_delivery["SYMBOL"] == sym) & (all_delivery["SERIES"] == ser)]
-        distinct = matches.drop_duplicates("REPORT_DATE")
-        count = int(distinct["REPORT_DATE"].nunique())
-        avg = float(distinct["DELIV_PER"].mean()) if count == 5 else float("nan")
-        by_date = {r["REPORT_DATE"]: float(r["DELIV_PER"]) for _, r in distinct.iterrows()}
-        daily_values = list(by_date.values())
-        daily_pass_count = sum(value >= minimum_average for value in daily_values)
-        daily_min = min(daily_values) if count == 5 else float("nan")
+        by_date = {str(r["REPORT_DATE"]): float(r["DELIV_PER"]) for _, r in matches.iterrows()}
+        values = [by_date[d] for d in report_dates if d in by_date]
+        count = len(values)
+        avg = float(sum(values) / 5) if count == 5 else float("nan")
+        daily_pass_count = sum(v >= threshold for v in values)
+        daily_min = min(values) if count == 5 else float("nan")
         if count != 5:
-            status = "WAIT_FOR_DATA"
-        elif all(value >= minimum_average for value in daily_values):
-            status = "PASS_GE_60_PERCENT"
+            category_a = category_b = "WAIT_FOR_DATA"
+            overall = "WAIT_FOR_DATA"
         else:
-            status = "FILTERED_OUT_LT_60_PERCENT"
+            category_a = "PASS_AVG_GE_60_PERCENT" if avg >= threshold else "FILTERED_OUT_AVG_LT_60_PERCENT"
+            category_b = "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values) else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+            # Main pipeline continues on Category A; Category B remains an independent report.
+            overall = "PASS_GE_60_PERCENT" if category_a == "PASS_AVG_GE_60_PERCENT" else "FILTERED_OUT_LT_60_PERCENT"
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
             "DeliverySessions": count,
             "DeliveryDailyPassCount": daily_pass_count,
             "DeliveryMin5D": daily_min,
-            "AvgDelivery5D": avg,  # reporting only; never used to qualify a stock
+            "AvgDelivery5D": avg,
             "LatestDeliveryPct": by_date.get(_parse_date(asof_date).isoformat(), float("nan")),
-            "DeliveryStatus": status,
-            "DeliveryFilterStatus": status,
+            "DeliveryCategoryAStatus": category_a,
+            "DeliveryCategoryBStatus": category_b,
+            "DeliveryStatus": overall,
+            "DeliveryFilterStatus": overall,
         })
-        for i, (report_date, _) in enumerate(reports, start=1):
-            record[f"Delivery_{report_date.isoformat()}"] = by_date.get(report_date.isoformat(), float("nan"))
+        for report_date in report_dates:
+            record[f"Delivery_{report_date}"] = by_date.get(report_date, float("nan"))
         audits.append(record)
 
     audit = pd.DataFrame(audits)
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-    audit_path = AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
+    audit_path = AUDIT_DIR / f"delivery_dual_category_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
     audit.to_csv(audit_path, index=False)
-    qualified = audit[audit["DeliveryStatus"] == "PASS_GE_60_PERCENT"].copy()
-    print(f"[DELIVERY] Candidates checked: {len(audit)}")
-    print(f"[DELIVERY] Qualified (each of 5 sessions >={minimum_average:.1f}%): {len(qualified)}")
+    # Category-specific standalone outputs make the two conditions easy to compare.
+    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"].copy()
+    category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"].copy()
+    category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_avg60.csv", index=False)
+    category_b.to_csv(AUDIT_DIR / "v8_delivery_category_b_each_day60.csv", index=False)
+    # Compatibility report path used by earlier project dashboards.
+    audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv", index=False)
+    print(f"[DELIVERY] Category A average >= {threshold:.2f}%: {len(category_a)}")
+    print(f"[DELIVERY] Category B every day >= {threshold:.2f}%: {len(category_b)}")
     print(f"[DELIVERY] WAIT_FOR_DATA: {(audit['DeliveryStatus'] == 'WAIT_FOR_DATA').sum()}")
-    print(f"[DELIVERY] Filtered out (at least one session < {minimum_average:.1f}%): {(audit['DeliveryStatus'] == 'FILTERED_OUT_LT_60_PERCENT').sum()}")
-    print(f"[DELIVERY] Audit saved: {audit_path}")
+    print(f"[DELIVERY] Dual-category audit saved: {audit_path}")
 
-    # Restore original candidate columns plus audit metrics.
-    metric_cols = [c for c in audit.columns if c not in candidates.columns]
-    qualified_symbols = qualified[[symbol_col] + metric_cols].copy()
+    metric_cols = [col for col in audit.columns if col not in candidates.columns]
+    qualified_symbols = category_a[[symbol_col] + metric_cols].copy()
     output = candidates.merge(qualified_symbols, on=symbol_col, how="inner")
     return output, audit

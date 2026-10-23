@@ -1,0 +1,38 @@
+NSE V8.0 — REGRESSION FIX VERIFICATION
+Date: 2026-10-23
+
+Issue found in uploaded GitHub Actions log logs_108201586365.zip:
+- Compile checks passed.
+- Mainboard tests passed (3/3).
+- Delivery/Liquidity/Fundamental/Risk/Pipeline tests passed (25/25 in the uploaded run; re-run locally against patched files passed 29/29).
+- V8 regression test failed at the test list because it referenced an undefined/stale function name.
+- Report artifact was uploaded, but outputs/v8_layer_status_summary.csv and outputs/v8_eod_watchlist.csv were absent in this run. Therefore no final watchlist was produced.
+
+Root cause in the replacement test file:
+- Test list referenced test_news_gate_does_not_use_average_delivery_as_a_gate.
+- Actual function is test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate.
+- Corrected the test list reference; did not weaken or remove the test.
+
+Local verification on the user's uploaded repository ZIP with stock-selection patch overlaid:
+- py_compile: PASS
+- test_v8_regression.py: 27/27 PASS
+- test_main_board_filter.py: 3/3 PASS
+- delivery/liquidity/fundamental/risk/pipeline pytest group: 29/29 PASS
+- listed sector/news/cache unittest group: 39/39 PASS
+- test_news_catalyst_parser.py: 4/4 PASS
+- test_upcoming_corporate_events.py: 5/5 PASS
+- Total across these explicitly run groups: 107 passing checks.
+
+Important boundary:
+- This verifies local tests against the uploaded repository and patched files only.
+- It does NOT prove that GitHub has received the patch or that live NSE integration succeeded.
+- The uploaded run's cache preview showed 53 price dates but only 8 delivery dates (2026-10-13 to 2026-10-22); live selection may return WAIT_FOR_DATA for candidates lacking five valid distinct delivery sessions.
+- Final watchlist and layer summary were missing in the failed run; rerun GitHub Actions after applying the corrected patch and inspect the new report artifact.
+
+Selection rules preserved:
+- all eligible NSE Mainboard equity stocks;
+- RVOL strictly > 1.5, no Top-20/Top-50 cap;
+- Category A: average delivery across 5 valid distinct sessions >= 60%;
+- Category B: each of those 5 sessions individually >= 60%;
+- fewer than 5 valid sessions => WAIT_FOR_DATA;
+- liquidity, fundamentals, technical, news, sector, and risk modules remain in place.

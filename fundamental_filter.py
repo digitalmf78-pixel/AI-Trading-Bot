@@ -236,49 +236,27 @@ def apply_fundamental_filter(
         if col not in audit.columns:
             audit[col] = pd.NA
 
-    # Transparent relative Fundamental Score (0-100), used for ranking only.
-    # It does not override missing/stale evidence or configured PASS/REJECT gates.
-    # Each available numeric metric contributes an in-universe percentile; higher
-    # is better except DebtToEquity, where lower is better.
+    # Transparent relative score: six quantitative fundamentals, equal weight.
+    # Percentile ranks are computed only within this screened candidate set; this
+    # is a ranking aid, not a substitute for the configured hard eligibility gate.
     score_metrics = {
         "RevenueGrowthPct": True,
         "ProfitGrowthPct": True,
         "ROEPercent": True,
         "ROCEPercent": True,
-        "DebtToEquity": False,
+        "DebtToEquity": False,  # lower leverage is better
         "InterestCoverage": True,
-        "OperatingCashFlowINR": True,
-        "FreeCashFlowINR": True,
     }
-    metric_percentiles = []
+    score_parts = []
     for metric, higher_is_better in score_metrics.items():
-        values = pd.to_numeric(audit[metric], errors="coerce")
-        ranks = values.rank(method="average", pct=True, ascending=higher_is_better)
-        # For lower-is-better metrics, ascending=True makes the smallest value
-        # rank lowest; invert to reward the smaller debt ratio.
-        if not higher_is_better:
-            ranks = 1.0 - ranks + (1.0 / max(int(values.notna().sum()), 1))
-            ranks = ranks.clip(0, 1)
-        metric_percentiles.append(ranks.rename(metric + "_Percentile"))
-    if metric_percentiles:
-        pct_frame = pd.concat(metric_percentiles, axis=1)
-        audit["FundamentalScoreCompletenessPct"] = (
-            pct_frame.notna().sum(axis=1) / len(score_metrics) * 100
-        ).round(2)
-        audit["FundamentalScore"] = (
-            pct_frame.mean(axis=1, skipna=True) * 100
-        ).round(2)
-        audit.loc[pct_frame.notna().sum(axis=1) < 4, "FundamentalScore"] = pd.NA
-    else:
-        audit["FundamentalScoreCompletenessPct"] = 0.0
-        audit["FundamentalScore"] = pd.NA
-    audit["FundamentalRank"] = audit["FundamentalScore"].rank(
-        method="min", ascending=False, na_option="bottom"
-    ).astype("Int64")
-    audit["FundamentalStrength"] = audit["FundamentalScore"].apply(
-        lambda score: "SCORED_STRONGER_RELATIVE" if pd.notna(score) else "WAIT_FOR_DATA"
-    )
-
+        values = pd.to_numeric(audit.get(metric, pd.Series(index=audit.index, dtype=float)), errors="coerce")
+        pct = values.rank(pct=True, ascending=higher_is_better) * 100.0
+        score_parts.append(pct.rename(metric + "PercentileScore"))
+    score_frame = pd.concat(score_parts, axis=1)
+    audit = pd.concat([audit, score_frame], axis=1)
+    audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).round(2)
+    audit["FundamentalRank"] = audit["FundamentalScore"].rank(method="min", ascending=False).astype("Int64")
+    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean: revenue growth, profit growth, ROE, ROCE, inverse debt/equity, interest coverage"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)
     audit[audit["FundamentalStatus"] == "PASS"].to_csv(OUTPUT_DIR / "v8_fundamental_passed.csv", index=False)

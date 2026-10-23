@@ -258,43 +258,37 @@ def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
 
 
 def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
-    """Keep only candidates that passed the five-daily-session Delivery gate.
+    """Honor the main scanner's Category-A average Delivery gate.
 
-    AvgDelivery5D is display-only and must never qualify a candidate. Prefer
-    checking the five daily evidence columns when present; otherwise trust the
-    explicit status produced by delivery_filter.py. Missing evidence fails closed.
+    Category B (every day >=60%) remains separately visible and is not required
+    for Category-A candidates to proceed. If the dual-category status is absent,
+    preserve the legacy fail-closed daily-status behavior.
     """
     filtered = candidates.copy()
-    daily_cols = [c for c in filtered.columns if str(c).startswith("Delivery_")]
     before = len(filtered)
-    if len(daily_cols) >= 5:
-        daily = filtered[daily_cols].apply(pd.to_numeric, errors="coerce")
-        daily_pass = daily.notna().sum(axis=1).eq(5) & daily.ge(60.0).all(axis=1)
-        filtered = filtered[daily_pass].copy()
-        print(
-            f"[NEWS-DIAG] Daily Delivery gate: before={before}, after={len(filtered)}, "
-            f"removed={before-len(filtered)}, rule=each_of_5_sessions>=60%"
-        )
-    elif "DeliveryFilterStatus" in filtered.columns:
-        statuses = filtered["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
-        allowed = {"PASS_GE_60_PERCENT", "PASS_GT_60_PERCENT", "PASS_AT_OR_ABOVE_60_PERCENT", "PASS"}
-        filtered = filtered[statuses.isin(allowed)].copy()
-        print(
-            f"[NEWS-DIAG] Delivery status gate: before={before}, after={len(filtered)}, "
-            f"removed={before-len(filtered)}, rule=delivery-first status (each of 5 sessions >=60%)"
-        )
+    if "DeliveryCategoryAStatus" in filtered.columns:
+        statuses = filtered["DeliveryCategoryAStatus"].astype(str).str.upper().str.strip()
+        filtered = filtered[statuses.eq("PASS_AVG_GE_60_PERCENT")].copy()
+        print(f"[NEWS-DIAG] Delivery Category A gate: before={before}, after={len(filtered)}, rule=5-session average>=60%")
     else:
-        filtered = filtered.iloc[0:0].copy()
-        print("[NEWS-DIAG] Delivery evidence/status missing; fail-closed with zero candidates.")
-
+        daily_cols = [c for c in filtered.columns if str(c).startswith("Delivery_")]
+        if len(daily_cols) >= 5:
+            daily = filtered[daily_cols].apply(pd.to_numeric, errors="coerce")
+            daily_pass = daily.notna().sum(axis=1).eq(5) & daily.ge(60.0).all(axis=1)
+            filtered = filtered[daily_pass].copy()
+            print(f"[NEWS-DIAG] Legacy daily Delivery gate: before={before}, after={len(filtered)}, rule=each_of_5_sessions>=60%")
+        elif "DeliveryFilterStatus" in filtered.columns:
+            statuses = filtered["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
+            allowed = {"PASS_GE_60_PERCENT", "PASS_GT_60_PERCENT", "PASS_AT_OR_ABOVE_60_PERCENT", "PASS"}
+            filtered = filtered[statuses.isin(allowed)].copy()
+        else:
+            filtered = filtered.iloc[0:0].copy()
+            print("[NEWS-DIAG] Delivery evidence/status missing; fail-closed with zero candidates.")
     if "SetupType" in filtered.columns:
         setup = filtered["SetupType"].astype(str).str.upper().str.strip()
         before_setup = len(filtered)
         filtered = filtered[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
-        print(
-            f"[NEWS-DIAG] SetupType gate: before={before_setup}, after={len(filtered)}, "
-            f"removed={before_setup-len(filtered)}"
-        )
+        print(f"[NEWS-DIAG] SetupType gate: before={before_setup}, after={len(filtered)}")
     return filtered
 
 
@@ -820,7 +814,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     nse_partial = False
     official_window_records = 0
 
-    # Read each exchange feed once, then map company names/symbols to the Top 20.
+    # Read each exchange feed once, then map company names/symbols to all RVOL > 1.5 candidates.
     for feed_name, feed_url in NSE_FEEDS.items():
         try:
             items = _rss_items(feed_url)
@@ -1095,7 +1089,7 @@ def _eod_market_close(eod_date) -> pd.Timestamp:
 def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFrame) -> None:
     candidates = result.copy()
     candidates["RVOL"] = pd.to_numeric(candidates.get("RVOL"), errors="coerce")
-    candidates = candidates.sort_values("RVOL", ascending=False).head(20)
+    candidates = candidates.sort_values("RVOL", ascending=False, na_position="last")
     report_rows = []
     for _, row in candidates.iterrows():
         symbol = str(row.get("TckrSymb", "")).strip()
@@ -1120,7 +1114,7 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
             "SecondarySourceCount": len(secondary),
         })
     Path("outputs").mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(report_rows).to_csv("outputs/v8_catalyst_top20.csv", index=False)
+    pd.DataFrame(report_rows).to_csv("outputs/v8_catalyst_rvol_gt_1_5.csv", index=False)
 
 
 def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str]) -> list[str]:
@@ -1143,7 +1137,7 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
     candidates = result.copy()
     if "RVOL" in candidates.columns:
         candidates["RVOL"] = pd.to_numeric(candidates["RVOL"], errors="coerce")
-        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last").head(20)
+        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last")
     market_close = _eod_market_close(eod_date)
 
     def val(row, key, digits=2, suffix=""):

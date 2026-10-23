@@ -89,3 +89,11 @@ class FundamentalFilterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_fundamental_score_fields_are_written_by_filter_source():
+    from pathlib import Path
+    source = Path("fundamental_filter.py").read_text(encoding="utf-8")
+    assert "FundamentalScore" in source
+    assert "FundamentalRank" in source
+    assert "Equal-weight percentile mean" in source

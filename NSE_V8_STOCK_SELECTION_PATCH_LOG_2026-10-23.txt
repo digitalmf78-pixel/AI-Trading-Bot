@@ -1,0 +1,24 @@
+NSE V8 STOCK SELECTION PATCH LOG — 2026-10-23
+
+Confirmed user rules:
+- NSE Mainboard universe.
+- RVOL = current EOD volume / average volume of prior 20 complete sessions.
+- Keep every stock with RVOL strictly greater than 1.5; no Top 20 or Top 50 cap at RVOL selection.
+- Category A Delivery: average DELIV_PER across 5 distinct valid sessions >= 60%.
+- Category B Delivery: DELIV_PER >= 60% on each of those 5 sessions.
+- Fewer than five valid distinct delivery sessions => WAIT_FOR_DATA.
+- Keep liquidity and existing technical/news/sector/risk filters.
+- Rank eligible Fundamental PASS stocks by transparent FundamentalScore, RVOL as tie-breaker.
+
+Changed files:
+- volume_gainer.py: selection order now RVOL >1.5 -> dual Delivery -> existing liquidity -> fundamental -> existing technical pipeline; removed RVOL Top 20 cap and later technical candidate cap.
+- delivery_filter.py: computes both categories and writes separate CSV reports.
+- fundamental_filter.py: adds equal-weight percentile score and rank for six quantitative metrics.
+- news_catalyst.py: uses Category A eligibility for downstream news flow and no longer truncates to 20 candidates.
+- relevant tests updated.
+
+Test results:
+- python -m py_compile: PASS for changed Python files.
+- python -m pytest -q test_*.py: 137 passed.
+- Live NSE request not run successfully because this environment has no network/DNS access.
+- GitHub Actions/deployment not performed or verified.

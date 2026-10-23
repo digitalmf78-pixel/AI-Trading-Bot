@@ -122,17 +122,17 @@ def test_sector_mapping_uses_exact_official_nse_industry_fallbacks():
         finally:
             os.chdir(old_cwd)
 
-def test_delivery_requires_each_of_five_sessions_at_least_60_percent():
+def test_delivery_average_category_passes_while_daily_category_fails():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
         dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
-        # Mean is above 60, but one session is below 60: must reject.
         values = [50.0, 75.0, 65.0, 70.0, 80.0]
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert qualified.empty
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
+        assert len(qualified) == 1
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         assert audit.iloc[0]["AvgDelivery5D"] >= 60.0
         assert audit.iloc[0]["DeliveryMin5D"] == 50.0
 
@@ -147,6 +147,8 @@ def test_delivery_exactly_60_each_day_passes():
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
         assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryDailyPassCount"] == 5
 
 
@@ -158,30 +160,37 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
                     for day, value in zip(dates, [60.0, 60.0, 59.99, 80.0, 90.0])]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert qualified.empty
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
+        assert len(qualified) == 1  # Average category passes despite one day below 60.
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
         assert audit.iloc[0]["DeliveryFilterStatus"] == "WAIT_FOR_DATA"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "WAIT_FOR_DATA"
+        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
 
 
-def test_news_gate_does_not_use_average_delivery_as_a_gate():
+def test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate():
     candidates = pd.DataFrame([{
-        "TckrSymb": "ABC", "AvgDelivery5D": 80.0,
-        "DeliveryFilterStatus": "FILTERED_OUT_LT_60_PERCENT",
-        **{f"Delivery_2026-10-{day:02d}": value for day, value in zip([19, 16, 15, 14, 13], [70, 80, 75, 59.9, 90])},
-        "SetupType": "Breakout",
+        "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
+        "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
+        "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
+        "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
-    assert news_catalyst._filter_catalyst_candidates(candidates).empty
+    assert len(news_catalyst._filter_catalyst_candidates(candidates)) == 1
 
 
-def test_rvol_top50_precedes_two_delivery_categories_in_scanner_source():
+def test_rvol_threshold_precedes_dual_delivery_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
-    top50_step = source.index("result = select_top50_by_rvol(result, eod_date)")
-    delivery_step = source.index("STEP 4: TWO INDEPENDENT DELIVERY CATEGORIES")
-    fundamental_step = source.index("STEP 5: FUNDAMENTAL CHECK AND RANKING")
-    assert top50_step < delivery_step < fundamental_step
-    assert "v8_primary_shortlist_top50.csv" in source
+    rvol_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
+    delivery_step = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
+    liquidity_step = source.index("STEP 5: EXISTING LIQUIDITY FILTER")
+    fundamental_step = source.index("STEP 6: EXISTING FUNDAMENTAL FILTER")
+    technical_step = source.index("STEP 7: PRICE + VOLUME")
+    assert rvol_step < delivery_step < liquidity_step < fundamental_step < technical_step
+    assert "def select_rvol_above_threshold" in source
+    assert "minimum_rvol=1.5" in source
+    assert ".head(50)" not in source[source.index("def select_rvol_above_threshold"):source.index("# PRICE + VOLUME")]
 
 
 def test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps():
@@ -591,11 +600,11 @@ if __name__ == "__main__":
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
-        test_delivery_requires_each_of_five_sessions_at_least_60_percent,
+        test_delivery_average_category_passes_while_daily_category_fails,
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
-        test_news_gate_does_not_use_average_delivery_as_a_gate,
-        test_delivery_gate_runs_before_rvol_top20_in_scanner_source,
+        test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate,
+        test_rvol_threshold_precedes_dual_delivery_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
         test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,

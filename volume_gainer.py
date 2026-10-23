@@ -4,7 +4,6 @@ import zipfile
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter
-from delivery_categories import apply_delivery_categories
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from datetime import datetime, timedelta, timezone
@@ -875,7 +874,7 @@ def calculate_5d_volume(
 ):
 
     print(
-        "\nSTEP 5: 5D Volume History Completeness..."
+        "\nSTEP 5: 5D Volume Analysis / descriptive pattern metrics..."
     )
 
     recent = historical[-5:]
@@ -1010,10 +1009,10 @@ def calculate_5d_volume(
 def prepare_primary_shortlist(result, eod_date):
     """Keep candidates with complete volume history; delivery is the requested gate.
 
-    The user-confirmed selection rule is average delivery percentage greater than
-    or equal to 60% over the latest five valid sessions. A 3-of-5 low-volume rule is
-    NOT used as a filter or setup requirement. Five-session volume-pattern and
-    prior-20-session baseline data are still validated for reliable RVOL/analysis.
+    Delivery Category A (five-session average >=60%) has already been applied after
+    RVOL >1.5. Category B (each of five daily values >=60%) is reported separately.
+    A 3-of-5 low-volume rule is NOT used as a filter. Five-session volume-pattern
+    and prior-20-session baseline data are still validated for reliable analysis.
     Incomplete history remains WAIT_FOR_DATA.
     """
     if result is None or result.empty:
@@ -1040,7 +1039,7 @@ def prepare_primary_shortlist(result, eod_date):
         "PASS" if is_complete else "WAIT_FOR_DATA" for is_complete in complete
     ]
     frame["PrimaryShortlistReason"] = [
-        "PASS_CATEGORY_A_AVERAGE_DELIVERY_GE_60_AND_COMPLETE_5D_AND_PRIOR_20D_HISTORY"
+        "PASS_RVOL_DELIVERY_CATEGORY_A_AND_COMPLETE_5D_AND_PRIOR_20D_HISTORY"
         if is_complete else "WAIT_INSUFFICIENT_5D_OR_PRIOR_20D_VOLUME_HISTORY"
         for is_complete in complete
     ]
@@ -1065,41 +1064,42 @@ def prepare_primary_shortlist(result, eod_date):
     print(
         f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. "
-        "RVOL Top 50 is selected before the two Delivery categories; Category A average >=60% feeds technical analysis. "
+        "Dual Delivery Categories are applied after RVOL > 1.5; Category A average >=60% is the downstream gate. "
         f"Audit: {audit_path}"
     )
     return primary
 
 
-def select_top50_by_rvol(result, eod_date):
-    """Select the 50 highest-RVOL candidates after validating 5D/20D volume history."""
-    if result is None or result.empty:
-        print("[TOP 50] Candidate set is empty; no detailed analysis candidates.")
-        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
+    """Keep every valid Main Board candidate with RVOL strictly greater than 1.5.
 
+    There is deliberately no Top-20/Top-50 cap here. Missing 20-session baselines
+    stay WAIT_FOR_DATA and never qualify.
+    """
+    if result is None or result.empty:
+        print("[RVOL > 1.5] No candidates available.")
+        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
     frame = result.copy()
-    if "RVOL" not in frame.columns:
-        frame["RVOL"] = pd.NA
-    frame["RVOL"] = pd.to_numeric(frame["RVOL"], errors="coerce")
+    frame["RVOL"] = pd.to_numeric(frame.get("RVOL", pd.Series(index=frame.index, dtype=float)), errors="coerce")
     if "RVOLStatus" not in frame.columns:
         frame["RVOLStatus"] = "WAIT_FOR_DATA"
-    frame = frame[
-        frame["RVOLStatus"].astype(str).eq("PASS")
-        & frame["RVOL"].notna()
-        & (frame["RVOL"] > 0)
-    ].copy()
-    frame = frame.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort").head(50).copy()
-    frame["PrimaryCandidateRank"] = range(1, len(frame) + 1)
-    out_path = os.path.join("outputs", "v8_primary_shortlist_top50.csv")
-    os.makedirs("outputs", exist_ok=True)
-    frame.to_csv(out_path, index=False)
-    print(f"[TOP 50] RVOL-ranked candidates={len(frame)} (max 50), saved: {out_path}")
-    return frame
-
-
-# Compatibility wrapper for older imports; current pipeline uses Top 50.
-def select_top20_by_rvol(result, eod_date):
-    return select_top50_by_rvol(result, eod_date)
+    frame["RVOLThreshold"] = float(minimum_rvol)
+    frame["RVOLThresholdStatus"] = frame.apply(
+        lambda row: "PASS_RVOL_GT_1_5" if str(row.get("RVOLStatus", "")).upper() == "PASS"
+        and pd.notna(row.get("RVOL")) and float(row.get("RVOL")) > float(minimum_rvol)
+        else ("WAIT_FOR_DATA" if str(row.get("RVOLStatus", "")).upper() != "PASS" or pd.isna(row.get("RVOL")) else "REJECT_RVOL_LE_1_5"),
+        axis=1,
+    )
+    audit_dir = os.path.join("outputs")
+    os.makedirs(audit_dir, exist_ok=True)
+    audit_path = os.path.join(audit_dir, "v8_rvol_gt_1_5_audit.csv")
+    frame.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort").to_csv(audit_path, index=False)
+    selected = frame[frame["RVOLThresholdStatus"] == "PASS_RVOL_GT_1_5"].copy()
+    selected = selected.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort")
+    selected["RVOLRank"] = range(1, len(selected) + 1)
+    selected.to_csv(os.path.join(audit_dir, "v8_rvol_gt_1_5_candidates.csv"), index=False)
+    print(f"[RVOL > 1.5] Candidates={len(selected)}; no Top-50 cap. Audit: {audit_path}")
+    return selected
 
 
 # ============================================================
@@ -2783,12 +2783,13 @@ def calculate_relative_strength_nifty(
 # ============================================================
 
 def select_top20_analysis_candidates(result, eod_date):
-    """Select up to 20 technical candidates after the Top 50 + Delivery categories.
+    """Annotate every RVOL > 1.5 technical candidate after core EOD screens.
 
-    DeliveryFilterStatus means Category A (five-session average >=60%) passed.
-    Category B (each of five days >=60%) remains a separately reported subset.
-    Candidates must also have valid RVOL data and pass existing technical setup
-    checks. Final sector/news/3+1, risk/reward and chase gates remain downstream.
+    Delivery Category A has passed: the average Delivery % across five valid sessions is >= 60.00%; Category B separately marks every day >=60.00%. A candidate
+    must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
+    trend/candle and setup-specific volume rules. Negative relative strength is
+    retained as a scoring/ranking warning, not a standalone hard rejection.
+    Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
     """
     if result is None or result.empty:
         print("[CANDIDATE SCREEN] No rows available; no candidates selected.")
@@ -2827,8 +2828,8 @@ def select_top20_analysis_candidates(result, eod_date):
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
         # Defensive audit check: the mandatory delivery gate must already have passed.
-        if delivery != "PASS_GE_60_PERCENT":
-            reasons.append("EACH_OF_FIVE_DAILY_DELIVERY_VALUES_NOT_GE_60_OR_DATA_MISSING")
+        if delivery not in {"PASS_GE_60_PERCENT", "PASS_AVG_GE_60_PERCENT"}:
+            reasons.append("DELIVERY_CATEGORY_A_AVERAGE_NOT_GE_60_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
@@ -2879,10 +2880,8 @@ def select_top20_analysis_candidates(result, eod_date):
         })
 
     audit = pd.DataFrame(audit_rows)
-    # Keep all RVOL Top-20 rows flowing through sector/news/3+1 evidence collection.
-    # The technical screen is recorded as a hard final eligibility gate, not an
-    # early data-collection gate; otherwise rejected rows never receive evidence
-    # and the audit cannot explain missing sector/news data across the shortlist.
+    # Keep every RVOL > 1.5 row flowing through sector/news/3+1 evidence collection.
+    # The technical screen is recorded as a hard final eligibility gate, not an early data-collection gate.
     audit["TckrSymb"] = audit["TckrSymb"].astype(str).str.strip().str.upper()
     frame["TckrSymb"] = frame["TckrSymb"].astype(str).str.strip().str.upper()
     audit_map = audit.set_index("TckrSymb")[[
@@ -2898,29 +2897,29 @@ def select_top20_analysis_candidates(result, eod_date):
     frame = frame.sort_values(
         ["RVOL", "CLV", "RelativeStrengthNifty"],
         ascending=[False, False, False], na_position="last", kind="mergesort",
-    ).head(20).copy()
+    ).copy()
     frame["CandidateRank"] = range(1, len(frame) + 1)
 
     ranks = dict(zip(frame["TckrSymb"].astype(str).str.upper(), frame["CandidateRank"]))
     audit["CandidateRank"] = audit["TckrSymb"].map(ranks)
-    audit.loc[audit["CandidateScreenStatus"].eq("PASS") & audit["CandidateRank"].isna(), "CandidateScreenStatus"] = "PASS_CORE_SCREEN_OUTSIDE_TOP20"
+    audit.loc[audit["CandidateScreenStatus"].eq("PASS") & audit["CandidateRank"].isna(), "CandidateScreenStatus"] = "PASS"
     audit_path = os.path.join("data", "reports", f"v8_candidate_selection_audit_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv")
     os.makedirs(os.path.dirname(audit_path), exist_ok=True)
     audit.to_csv(audit_path, index=False)
     os.makedirs("outputs", exist_ok=True)
-    frame.to_csv(os.path.join("outputs", "v8_pre_news_top20_candidates.csv"), index=False)
+    frame.to_csv(os.path.join("outputs", "v8_pre_news_rvol_gt_1_5_candidates.csv"), index=False)
 
     counts = audit["CandidateScreenStatus"].value_counts().to_dict()
     passed = int(audit["CandidateScreenStatus"].eq("PASS").sum())
     print("[CANDIDATE SCREEN] Audit: " + audit_path)
-    print(f"[CANDIDATE SCREEN] Core technical pass within RVOL Top-20: {passed}/{len(frame)}")
-    print(f"[CANDIDATE SCREEN] Continuing all Top-20 into news/sector/EOD evidence analysis: {len(frame)} (max 20; no forced fill)")
+    print(f"[CANDIDATE SCREEN] Core technical pass among RVOL > 1.5 candidates: {passed}/{len(frame)}")
+    print(f"[CANDIDATE SCREEN] Continuing all RVOL > 1.5 candidates into news/sector/EOD evidence analysis: {len(frame)} (no Top-20/Top-50 cap)")
     print(f"[CANDIDATE SCREEN] Status counts: {counts}")
     return frame
 
 
 # ============================================================
-# DISPLAY TOP 20
+# DISPLAY ALL QUALIFYING RVOL CANDIDATES
 # ============================================================
 
 def display_top20(result):
@@ -2931,21 +2930,14 @@ def display_top20(result):
     )
 
     print(
-        "TOP V8 TECHNICAL CANDIDATES (MAX 20)"
+        "V8 TECHNICAL CANDIDATES (RVOL > 1.5; NO RVOL CAP)"
     )
 
     print(
         "=" * 110
     )
 
-    display = (
-        result
-        .sort_values(
-            by="RVOL",
-            ascending=False
-        )
-        .head(20)
-    )
+    display = result.sort_values(by="RVOL", ascending=False, na_position="last")
 
     for i, (_, row) in enumerate(
         display.iterrows(),
@@ -3252,7 +3244,7 @@ def main():
     )
 
     print(
-        "EOD DELIVERY + LIQUIDITY + VOLUME + RVOL + 5D "
+        "NSE MAINBOARD + RVOL > 1.5 + DUAL DELIVERY + LIQUIDITY + FUNDAMENTALS + 5D "
         "+ PRICE/VOLUME + CLV "
         "+ TREND "
         "+ BREAKOUT/PULLBACK "
@@ -3321,125 +3313,116 @@ def main():
     print(f"Current verified Main Board symbols: {len(current)}")
 
     # --------------------------------------------------------
-    # STEP 3: BUILD 5D/20D VOLUME HISTORY AND CALCULATE RVOL
+    # STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY
     # --------------------------------------------------------
-    # New approved order: Main Board universe -> RVOL Top 50 -> two Delivery lists.
     historical = collect_historical_days(eod_date, HISTORY_DAYS)
     avg_volume = calculate_average_volume(historical)
-    result = current.merge(avg_volume, on="TckrSymb", how="left")
-    result = calculate_5d_volume(result, historical)
-    result = prepare_primary_shortlist(result, eod_date)
-    result = calculate_rvol(result, avg_volume)
-    result = select_top50_by_rvol(result, eod_date)
+    print("\nSTEP 3A: Calculate RVOL for the full verified Main Board universe...")
+    current = calculate_rvol(current, avg_volume)
+    current = select_rvol_above_threshold(current, eod_date, minimum_rvol=1.5)
 
     # --------------------------------------------------------
-    # STEP 4: TWO INDEPENDENT DELIVERY CATEGORIES ON RVOL TOP 50
+    # STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5
     # --------------------------------------------------------
-    print("\\nSTEP 4: Applying both five-session Delivery categories to RVOL Top 50...")
-    try:
-        current, delivery_audit = apply_delivery_categories(result, eod_date)
-        os.makedirs("outputs", exist_ok=True)
-        delivery_audit.to_csv("outputs/v8_delivery_first_audit.csv", index=False)
-        print(
-            f"[DELIVERY] Category A (5D average >=60%)="
-            f"{int((delivery_audit.get('CategoryAStatus', pd.Series(dtype=str)) == 'PASS').sum())}; "
-            f"Category B (each of 5 days >=60%)="
-            f"{int((delivery_audit.get('CategoryBStatus', pd.Series(dtype=str)) == 'PASS').sum())}; "
-            f"WAIT_FOR_DATA="
-            f"{int((delivery_audit.get('DeliveryCategoryStatus', pd.Series(dtype=str)) == 'WAIT_FOR_DATA').sum())}"
-        )
-    except Exception as exc:
-        print(f"[DELIVERY CATEGORIES] WAIT_FOR_DATA: {exc}")
-        delivery_audit = result.copy()
-        for col in ["DeliverySessions", "AvgDelivery5D", "DeliveryMin5D"]:
-            delivery_audit[col] = pd.NA
-        delivery_audit["CategoryAStatus"] = "WAIT_FOR_DATA"
-        delivery_audit["CategoryBStatus"] = "WAIT_FOR_DATA"
-        delivery_audit["DeliveryCategoryA"] = False
-        delivery_audit["DeliveryCategoryB"] = False
-        delivery_audit["DeliveryCategoryStatus"] = "WAIT_FOR_DATA"
-        delivery_audit.to_csv("outputs/v8_delivery_categories_audit.csv", index=False)
-        delivery_audit.to_csv("outputs/v8_delivery_first_audit.csv", index=False)
-        pd.DataFrame(columns=list(delivery_audit.columns)).to_csv(
-            "outputs/v8_delivery_category_a_avg60.csv", index=False
-        )
-        pd.DataFrame(columns=list(delivery_audit.columns)).to_csv(
-            "outputs/v8_delivery_category_b_each_day60.csv", index=False
-        )
-        current = result.iloc[0:0].copy()
-
-    # The user's requested sequence does not use liquidity as an earlier gate.
-    # Preserve a visible status for audits instead of silently dropping candidates.
-    if not current.empty:
-        current["LiquidityStatus"] = "NOT_USED_AS_SELECTION_GATE_IN_APPROVED_SEQUENCE"
-        current["LiquidityFilterStatus"] = current["LiquidityStatus"]
+    print("\nSTEP 4: Applying separate 5-session Delivery Categories after RVOL > 1.5...")
+    if current.empty:
+        delivery_audit = current.copy()
+        for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
+            if col not in current.columns:
+                current[col] = pd.Series(dtype="object")
     else:
-        current["LiquidityStatus"] = pd.Series(dtype="object")
-        current["LiquidityFilterStatus"] = pd.Series(dtype="object")
+        try:
+            delivery_qualified, delivery_audit = apply_delivery_filter(
+                current, eod_date, symbol_col="TckrSymb", series_col="SctySrs", minimum_average=60.0
+            )
+            os.makedirs("outputs", exist_ok=True)
+            delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
+            current = delivery_qualified.copy()
+            if not current.empty:
+                current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
+            print(f"[DELIVERY] Category A (5-day average >=60%) qualified={len(current)}")
+            print("[DELIVERY] Category B (each of 5 days >=60%) is written as an independent report.")
+        except Exception as exc:
+            print(f"[DELIVERY] WAIT_FOR_DATA: delivery categories could not be verified: {exc}")
+            current = current.iloc[0:0].copy()
+            delivery_audit = current.copy()
+            for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
+                if col not in current.columns:
+                    current[col] = pd.Series(dtype="object")
 
     # --------------------------------------------------------
-    # STEP 5: FUNDAMENTAL CHECK AND RANKING
+    # STEP 5: EXISTING LIQUIDITY FILTER — KEEP IT
     # --------------------------------------------------------
-    # Fundamental data is evidence-first. Missing data remains WAIT_FOR_DATA.
-    # Candidates are not silently removed here; verified PASS records rank first.
-    print("\\nSTEP 5: Scoring/ranking fundamental evidence for Delivery-qualified RVOL Top 50...")
+    print("\nSTEP 5: Applying existing liquidity gate (20D average traded value >= ₹5 crore)...")
+    liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
+    if current.empty:
+        for col in liquidity_audit_columns:
+            current[col] = pd.Series(dtype="object")
+        liquidity_audit = current.copy()
+    else:
+        try:
+            current, liquidity_audit = apply_liquidity_filter(
+                current, historical, symbol_col="TckrSymb", value_col="TtlTrfVal",
+                minimum_average_daily_value=MINIMUM_AVG_DAILY_TRADED_VALUE_INR, required_sessions=20,
+            )
+        except Exception as exc:
+            print(f"[LIQUIDITY] WAIT_FOR_DATA: liquidity gate could not be verified: {exc}")
+            current = current.iloc[0:0].copy()
+            for col in liquidity_audit_columns:
+                current[col] = pd.Series(dtype="object")
+            liquidity_audit = current.copy()
+    os.makedirs("outputs", exist_ok=True)
+    liquidity_audit.to_csv("outputs/v8_liquidity_first_audit.csv", index=False)
+    print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
+
+    # --------------------------------------------------------
+    # STEP 6: EXISTING FUNDAMENTAL FILTER — KEEP IT
+    # --------------------------------------------------------
+    print("\nSTEP 6: Applying existing evidence-backed Fundamental Strength Filter...")
     create_fundamental_templates()
     try:
         if current.empty:
             fundamental_audit = current.copy()
-            for col in [
-                "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
-                "FundamentalSource", "FundamentalSourceURL",
-                "FundamentalMetricsCompletenessPct", "FundamentalScore",
-                "FundamentalScoreCompletenessPct", "FundamentalRank",
-            ]:
+            for col in ["FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate", "FundamentalSource", "FundamentalSourceURL", "FundamentalMetricsCompletenessPct"]:
                 if col not in fundamental_audit.columns:
                     fundamental_audit[col] = pd.Series(dtype="object")
             fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
-            current = fundamental_audit.copy()
         else:
             current, fundamental_audit = apply_fundamental_filter(current, eod_date)
-        current["_FundamentalPassSort"] = current.get(
-            "FundamentalStatus", pd.Series("WAIT_FOR_DATA", index=current.index)
-        ).astype(str).map({"PASS": 0, "WAIT_FOR_DATA": 1, "REJECT": 2}).fillna(3)
-        if "FundamentalScore" in current.columns:
-            current["FundamentalScore"] = pd.to_numeric(current["FundamentalScore"], errors="coerce")
-            current = current.sort_values(
-                ["_FundamentalPassSort", "FundamentalScore", "RVOL"],
-                ascending=[True, False, False], na_position="last", kind="mergesort"
-            )
-        else:
-            current = current.sort_values(
-                ["_FundamentalPassSort", "RVOL"],
-                ascending=[True, False], na_position="last", kind="mergesort"
-            )
-        current = current.drop(columns=["_FundamentalPassSort"], errors="ignore")
-        if "FundamentalRank" not in current.columns:
-            current["FundamentalRank"] = range(1, len(current) + 1)
-        else:
-            current["FundamentalRank"] = range(1, len(current) + 1)
-        current.to_csv("outputs/v8_fundamental_ranked_candidates.csv", index=False)
-        print(
-            "[FUNDAMENTAL] Ranked candidates saved: outputs/v8_fundamental_ranked_candidates.csv; "
-            f"PASS={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'PASS').sum()}; "
-            f"WAIT_FOR_DATA={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'WAIT_FOR_DATA').sum()}"
-        )
+            current = current[current.get("FundamentalStatus", pd.Series("WAIT_FOR_DATA", index=current.index)).astype(str) == "PASS"].copy()
+            if not current.empty:
+                current["FundamentalScore"] = pd.to_numeric(current.get("FundamentalScore"), errors="coerce")
+                current["RVOL"] = pd.to_numeric(current.get("RVOL"), errors="coerce")
+                current = current.sort_values(["FundamentalScore", "RVOL"], ascending=[False, False], na_position="last", kind="mergesort").copy()
+                current["FundamentalRank"] = range(1, len(current) + 1)
+                current.to_csv("outputs/v8_fundamental_ranked_candidates.csv", index=False)
+        print(f"[FUNDAMENTAL] PASS={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'PASS').sum()}; REJECT={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'REJECT').sum()}; WAIT_FOR_DATA={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'WAIT_FOR_DATA').sum()}")
     except Exception as exc:
-        print(f"[FUNDAMENTAL] WAIT_FOR_DATA: ranking could not be verified: {exc}")
+        print(f"[FUNDAMENTAL] WAIT_FOR_DATA: filter could not be verified: {exc}")
         fundamental_audit = current.copy()
         fundamental_audit["FundamentalStatus"] = "WAIT_FOR_DATA"
         fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_FILTER_ERROR:{exc}"
         fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
         current = current.iloc[0:0].copy()
 
-    # Keep current EOD out of rolling-volume baselines but include it for indicators.
+    # Calculate 5-session descriptive volume patterns only after the required
+    # RVOL, Delivery, Liquidity, and Fundamental stages have passed.
+    result = current.merge(avg_volume, on="TckrSymb", how="left", suffixes=("", "_baseline")) if "AvgVolume20D" not in current.columns else current.copy()
+    result = calculate_5d_volume(result, historical)
+    result = prepare_primary_shortlist(result, eod_date)
+    result = calculate_rvol(result, avg_volume)
+
+    # Keep the current session out of rolling-volume baselines, but include it
+    # for indicators and price-structure calculations that describe today's EOD.
     current_history = current.copy()
     current_history["Date"] = pd.Timestamp(eod_date)
     analysis_history = historical + [current_history]
-    result = current.copy()
+
+    # RVOL threshold and both Delivery categories have already been applied.
+    # All remaining existing technical modules continue without a Top-50 cap.
 
     # --------------------------------------------------------
-    # STEP 7: PRICE + VOLUME — only delivery-qualified Top 20
+    # STEP 7: PRICE + VOLUME — all candidates that passed prior gates
     # --------------------------------------------------------
     result = calculate_price_volume_relationship(result)
 
