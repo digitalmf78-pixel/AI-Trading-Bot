@@ -87,7 +87,7 @@ def _period_end_from_description(description: str):
     pattern = re.compile(
         r"(?:period|quarter|year|nine\s+months|half\s+year|three\s+months)"
         r"(?:\s+(?:and|/|&)?\s*(?:period|quarter|year|nine\s+months|half\s+year|three\s+months))*"
-        r"\s+ended\s+(?:on\s+)?(?:" + date_pattern + r")",
+        r"\s+ended\s+(?:" + date_pattern + r")",
         flags=re.IGNORECASE,
     )
     match = pattern.search(normalized)
@@ -128,32 +128,8 @@ def _announcement_period_end(item: dict, description: str):
     return _period_end_from_description(description)
 
 
-def _unwrap_nse_payload(payload):
-    """Normalize the common NSE response wrappers into a list of announcement dicts."""
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        for key in ("data", "rows", "announcements", "records"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return value
-    raise ValueError("Unexpected NSE corporate-announcements response schema")
-
-
-def fetch_nse_financial_results(
-    asof_date,
-    lookback_days: int = 450,
-    session_factory=None,
-    window_days: int = 30,
-):
-    """Fetch NSE corporate announcements in small date windows through EOD.
-
-    NSE's announcements endpoint can return incomplete/large responses for a
-    long single request. Fetch bounded windows, keep partial successes, and
-    expose request/parser counts in DataFrame.attrs for the audit report.
-    A filing is returned only when its own announcement explicitly identifies
-    a financial period end; publication date is never substituted for period.
-    """
+def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_factory=None):
+    """Fetch NSE corporate announcements through the requested EOD date."""
     import requests
 
     cutoff = pd.to_datetime(asof_date, errors="coerce")
@@ -161,123 +137,67 @@ def fetch_nse_financial_results(
         raise ValueError(f"Invalid asof_date: {asof_date}")
     end_date = cutoff.date()
     start_date = end_date - timedelta(days=max(1, int(lookback_days)))
-    window_days = max(7, int(window_days))
     session = session_factory() if session_factory else requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Referer": NSE_FILINGS_PAGE,
     })
-    home = session.get(NSE_HOME, timeout=20)
-    home.raise_for_status()
+    # NSE's landing page is frequently blocked (HTTP 403) in hosted CI runners.
+    # Treat the homepage request as a best-effort cookie warm-up, not a hard
+    # prerequisite: still try the official announcements API. The API response
+    # itself must pass status/schema checks before any filing can be accepted.
+    try:
+        home = session.get(NSE_HOME, timeout=20)
+        if getattr(home, "status_code", 200) >= 400:
+            print(f"[FUNDAMENTAL OFFICIAL DATE] homepage warm-up HTTP {home.status_code}; trying official API anyway")
+        else:
+            home.raise_for_status()
+    except Exception as exc:
+        print(f"[FUNDAMENTAL OFFICIAL DATE] homepage warm-up failed ({type(exc).__name__}: {exc}); trying official API anyway")
+    params = {"index": "equities", "from_date": start_date.strftime("%d-%m-%Y"), "to_date": end_date.strftime("%d-%m-%Y")}
+    response = session.get(NSE_API, params=params, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    if isinstance(payload, dict):
+        for key in ("data", "rows", "announcements"):
+            if isinstance(payload.get(key), list):
+                payload = payload[key]
+                break
+    if not isinstance(payload, list):
+        raise ValueError("Unexpected NSE corporate-announcements response schema")
 
     rows = []
-    failed_windows = []
-    total_announcement_rows = 0
-    financial_subject_rows = 0
-    dated_financial_rows = 0
-    period_parsed_rows = 0
-    window_count = 0
-    window_start = start_date
-    while window_start <= end_date:
-        window_end = min(end_date, window_start + timedelta(days=window_days - 1))
-        params = {
-            "index": "equities",
-            "from_date": window_start.strftime("%d-%m-%Y"),
-            "to_date": window_end.strftime("%d-%m-%Y"),
-        }
-        window_count += 1
-        try:
-            response = session.get(NSE_API, params=params, timeout=30)
-            response.raise_for_status()
-            payload = _unwrap_nse_payload(response.json())
-            total_announcement_rows += len(payload)
-        except Exception as exc:
-            failed_windows.append({
-                "from_date": params["from_date"],
-                "to_date": params["to_date"],
-                "error": f"{type(exc).__name__}: {exc}"[:250],
-            })
-            window_start = window_end + timedelta(days=1)
+    for item in payload:
+        if not isinstance(item, dict):
             continue
-
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            desc = _announcement_description(item)
-            lower = desc.lower()
-            if not any(term in lower for term in (
-                "financial results", "financial result", "unaudited results",
-                "audited results", "integrated filing - financial",
-                "financial results for",
-            )):
-                continue
-            financial_subject_rows += 1
-            pub_date = _announcement_date(item)
-            if not pub_date or pub_date > end_date or pub_date < window_start or pub_date > window_end:
-                continue
-            dated_financial_rows += 1
-            symbol = _announcement_symbol(item)
-            period_end = _announcement_period_end(item, desc)
-            if not symbol or not period_end:
-                continue
-            period_parsed_rows += 1
-            attachment = str(
-                item.get("attchmntFile")
-                or item.get("attachment")
-                or item.get("attachmentFile")
-                or item.get("url")
-                or ""
-            ).strip()
-            if attachment.startswith("/"):
-                attachment = "https://www.nseindia.com" + attachment
-            if not attachment.startswith(("https://", "http://")):
-                attachment = NSE_FILINGS_PAGE
-            rows.append({
-                "TckrSymb": symbol,
-                "FinancialPeriodEnd": period_end.isoformat(),
-                "PublicationDate": pub_date.isoformat(),
-                "PublicationDateStatus": "VERIFIED",
-                "FilingDescription": desc,
-                "OfficialFilingURL": attachment,
-                "OfficialSource": "NSE corporate announcements",
-                "RetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
-                "FetchWindowStart": window_start.isoformat(),
-                "FetchWindowEnd": window_end.isoformat(),
-            })
-        window_start = window_end + timedelta(days=1)
-
-    columns = [
-        "TckrSymb", "FinancialPeriodEnd", "PublicationDate",
-        "PublicationDateStatus", "FilingDescription", "OfficialFilingURL",
-        "OfficialSource", "RetrievedAtUTC", "FetchWindowStart", "FetchWindowEnd",
-    ]
-    result = pd.DataFrame(rows, columns=columns)
-    if not result.empty:
-        result = result.drop_duplicates(
-            subset=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL"],
-            keep="last",
-        ).reset_index(drop=True)
-    result.attrs["fetch_summary"] = {
-        "RequestedStartDate": start_date.isoformat(),
-        "RequestedEndDate": end_date.isoformat(),
-        "WindowDays": window_days,
-        "WindowsAttempted": window_count,
-        "WindowsFailed": len(failed_windows),
-        "AnnouncementRows": total_announcement_rows,
-        "FinancialSubjectRows": financial_subject_rows,
-        "FinancialRowsWithDate": dated_financial_rows,
-        "RowsWithParsedPeriodEnd": period_parsed_rows,
-        "MatchedFilingRows": len(result),
-        "FailedWindows": failed_windows[:20],
-    }
-    if failed_windows and not rows:
-        raise RuntimeError(
-            f"All/remaining NSE announcement windows failed; "
-            f"windows_failed={len(failed_windows)}/{window_count}; "
-            f"first_error={failed_windows[0]['error']}"
-        )
-    return result
+        desc = _announcement_description(item)
+        lower = desc.lower()
+        if not any(term in lower for term in ("financial results", "financial result", "unaudited results", "audited results", "integrated filing - financial")):
+            continue
+        pub_date = _announcement_date(item)
+        if not pub_date or pub_date > end_date or pub_date < start_date:
+            continue
+        symbol = _announcement_symbol(item)
+        period_end = _announcement_period_end(item, desc)
+        if not symbol or not period_end:
+            continue
+        attachment = str(item.get("attchmntFile", item.get("attachment", item.get("url", ""))) or "").strip()
+        if attachment.startswith("/"):
+            attachment = "https://www.nseindia.com" + attachment
+        if not attachment.startswith("https://"):
+            attachment = NSE_FILINGS_PAGE
+        rows.append({
+            "TckrSymb": symbol,
+            "FinancialPeriodEnd": period_end.isoformat(),
+            "PublicationDate": pub_date.isoformat(),
+            "PublicationDateStatus": "VERIFIED",
+            "FilingDescription": desc,
+            "OfficialFilingURL": attachment,
+            "OfficialSource": "NSE corporate announcements",
+            "RetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
+        })
+    return pd.DataFrame(rows, columns=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus", "FilingDescription", "OfficialFilingURL", "OfficialSource", "RetrievedAtUTC"])
 
 
 def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: pd.DataFrame | None = None,
@@ -317,33 +237,16 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
             fetched = (fetcher or fetch_nse_financial_results)(cutoff.date().isoformat())
             if fetched is None:
                 fetched = pd.DataFrame()
-            fetch_summary = getattr(fetched, "attrs", {}).get("fetch_summary", {})
-            if fetch_summary:
-                diagnostics.append({"Status": "LIVE_FETCH_SUMMARY", **fetch_summary})
-                if int(fetch_summary.get("WindowsFailed", 0) or 0):
-                    diagnostics.append({
-                        "Status": "LIVE_FETCH_PARTIAL",
-                        "Reason": "Some NSE announcement windows failed; successful windows were retained",
-                        "WindowsFailed": fetch_summary.get("WindowsFailed"),
-                        "WindowsAttempted": fetch_summary.get("WindowsAttempted"),
-                    })
             if not fetched.empty:
                 cache_file.parent.mkdir(parents=True, exist_ok=True)
                 fetched.to_csv(cache_file, index=False)
                 filings = fetched
             else:
-                # Keep the counters: an empty parsed result can mean no financial
-                # announcements, a changed NSE schema, or descriptions without
-                # parseable period-end dates. Do not erase a useful prior cache.
+                # An empty parsed response can mean NSE changed its schema or
+                # the endpoint returned a partial window. Do not erase a useful
+                # prior cache; it will be cutoff-filtered below.
                 filings = pd.DataFrame()
-                diagnostics.append({
-                    "Status": "LIVE_FETCH_EMPTY",
-                    "Reason": "No filing rows with an explicit financial period end were parsed",
-                    "AnnouncementRows": fetch_summary.get("AnnouncementRows", pd.NA),
-                    "FinancialSubjectRows": fetch_summary.get("FinancialSubjectRows", pd.NA),
-                    "FinancialRowsWithDate": fetch_summary.get("FinancialRowsWithDate", pd.NA),
-                    "RowsWithParsedPeriodEnd": fetch_summary.get("RowsWithParsedPeriodEnd", pd.NA),
-                })
+                diagnostics.append({"Status": "LIVE_FETCH_EMPTY", "Reason": "Live NSE response produced no parseable financial-result filings"})
         except Exception as exc:
             fetch_error = f"{type(exc).__name__}: {exc}"[:500]
             diagnostics.append({"Status": "FETCH_FAILED", "Reason": fetch_error})
