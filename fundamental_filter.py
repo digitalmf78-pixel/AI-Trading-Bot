@@ -23,7 +23,7 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
-SOURCE_COLUMNS = ["TckrSymb", "AsOfDate", "Source", "SourceURL"]
+SOURCE_COLUMNS = ["TckrSymb", "AsOfDate", "Source", "SourceURL", "FinancialPeriodEnd"]
 INPUT_COLUMNS = SOURCE_COLUMNS + METRIC_COLUMNS
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",

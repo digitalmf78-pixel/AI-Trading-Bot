@@ -6,6 +6,7 @@ import pandas as pd
 from delivery_filter import apply_delivery_filter
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
+from fundamental_data_provider import collect_missing_fundamentals
 from datetime import datetime, timedelta, timezone
 from v8_layers_14_41 import (
     monitor_positions,
@@ -3371,6 +3372,17 @@ def main():
                                 "v8_delivery_a_fundamentals.csv", "v8_delivery_b_fundamentals.csv", "v8_delivery_ab_combined_fundamentals.csv"]:
                 fundamental_audit.to_csv(os.path.join("outputs", report_name), index=False)
         else:
+            # Fetch available fundamentals for every unique symbol in Delivery A/B.
+            # Provider failures and missing metrics are recorded, never used to reject.
+            try:
+                collect_missing_fundamentals(fundamental_universe)
+            except Exception as provider_exc:
+                os.makedirs("outputs", exist_ok=True)
+                pd.DataFrame([{
+                    "ProviderStatus": "PROVIDER_STAGE_ERROR",
+                    "ProviderReason": f"{type(provider_exc).__name__}: {provider_exc}",
+                }]).to_csv("outputs/v8_fundamental_provider_diagnostics.csv", index=False)
+                print(f"[FUNDAMENTAL PROVIDER] Stage error; keep all candidates: {provider_exc}")
             _, fundamental_audit = apply_fundamental_filter(fundamental_universe, eod_date)
             a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
             b_mask = fundamental_audit.get("DeliveryCategoryBStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")

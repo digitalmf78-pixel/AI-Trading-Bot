@@ -1,0 +1,13 @@
+NSE V8.0 FUNDAMENTAL AUTO-PROVIDER — LOCAL TEST RESULTS
+Date: 2026-10-23
+
+PASS: py_compile volume_gainer.py fundamental_filter.py fundamental_data_provider.py
+PASS: Focused pytest suite: 63 passed
+PASS: Relevant unittest modules: 39 tests passed
+PASS: Parser and upcoming corporate event tests: 9 passed
+PASS: V8 regression script: all 27 regression tests passed
+
+Limitations:
+- No live Yahoo Finance/NSE calls could be validated in this environment.
+- GitHub Actions deployment has not been performed from this chat.
+- A full pytest collection is not counted as passing because delivery_60_valuation_watchlist_inline_test.py runs script side effects and raises SystemExit during import.

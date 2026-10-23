@@ -1,0 +1,34 @@
+NSE V8.0 FUNDAMENTAL AUTO-PROVIDER CHECKPOINT
+Date: 2026-10-23
+
+User-approved selection sequence:
+NSE Mainboard -> RVOL > 1.5 (no Top-20/Top-50 cap) -> Delivery A/B -> collect fundamentals for every unique stock in A union B -> strong-fundamental shortlist later.
+
+Delivery rules preserved:
+- Category A: average delivery over 5 valid distinct sessions >= 60%.
+- Category B: every one of the same 5 valid distinct sessions >= 60%.
+- Fewer than 5 valid sessions => WAIT_FOR_DATA.
+- Missing fundamentals must not reject a stock during collection.
+- Existing liquidity, technical, news, sector, risk, and downstream modules are not removed.
+
+What changed in this patch:
+- Added fundamental_data_provider.py.
+- In the Fundamental Collection stage, fetch missing metrics for every unique symbol in Delivery A/B using Yahoo Finance via yfinance, where provider data is available.
+- Preserve existing manually provided metric values; provider fills blanks only.
+- Provider failures and missing metrics are logged per symbol in outputs/v8_fundamental_provider_diagnostics.csv.
+- Added FinancialPeriodEnd to fundamental inputs/reports.
+- Updated NSE Data Test workflow to install yfinance, compile the provider, run mocked provider tests, and preview fundamental report row counts.
+
+Local tests:
+- py_compile: PASS
+- focused pytest: 63 PASS
+- related unittest modules: 39 PASS
+- parser/corporate event tests: 9 PASS
+- test_v8_regression.py: 27/27 PASS
+- Full pytest collection is not reported as passed: delivery_60_valuation_watchlist_inline_test.py runs side effects/SystemExit during collection.
+- Live Yahoo Finance, NSE access, and GitHub Actions deployment are NOT verified locally.
+
+Important:
+Yahoo Finance is a secondary provider. Values must be source-tagged and verified against official filings where possible. Missing data remains missing; do not fabricate values and do not create a strong-fundamental shortlist in this stage.
+
+The uploaded report ZIP previously provided was nse-v8-reports-39924377437.zip, which is older than the current log run 39930356799. Validate the artifact from run 39930356799 after applying this patch.
