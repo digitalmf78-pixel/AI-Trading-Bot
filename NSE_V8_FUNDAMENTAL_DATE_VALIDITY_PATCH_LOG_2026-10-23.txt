@@ -1,0 +1,20 @@
+NSE V8 FUNDAMENTAL DATE VALIDITY PATCH
+Date: 2026-10-23
+
+Root cause:
+- Yahoo provider previously wrote the script retrieval date into AsOfDate.
+- Fundamental filter interpreted AsOfDate as the public availability date, causing historical EOD runs to mark provider data as future-dated.
+- nextFiscalYearEnd could be misidentified as the financial period end.
+
+Fix:
+- Add DataRetrievedAtUTC as a separate retrieval timestamp.
+- Leave AsOfDate blank for Yahoo data unless a genuine publication/availability date is known.
+- Report PUBLICATION_DATE_UNVERIFIED when publication date is missing.
+- Do not use nextFiscalYearEnd as the financial period end.
+- Flag FinancialPeriodEnd after EOD as FINANCIAL_PERIOD_END_AFTER_EOD.
+- Keep collection non-blocking: no Delivery A/B candidates are rejected due to missing or unverified fundamentals.
+
+Validation:
+- py_compile: PASS for fundamental_data_provider.py, fundamental_filter.py, test_fundamental_data_provider.py, test_fundamental_filter.py
+- Focused pytest: 13 passed
+- Live Yahoo Finance and GitHub Actions execution were not tested from this environment.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
-BASE_COLUMNS = ["TckrSymb", "AsOfDate", "Source", "SourceURL"] + METRIC_COLUMNS
+BASE_COLUMNS = ["TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL"] + METRIC_COLUMNS
 
 
 def _present(value: Any) -> bool:
@@ -88,7 +88,7 @@ def _growth_from_statement(statement: pd.DataFrame, possible_rows: list[str]):
 
 
 def _financial_period_end(ticker_obj, info: dict) -> str:
-    for key in ("mostRecentQuarter", "lastFiscalYearEnd", "nextFiscalYearEnd"):
+    for key in ("mostRecentQuarter", "lastFiscalYearEnd"):
         value = info.get(key)
         if value:
             try:
@@ -109,7 +109,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
     record = {col: pd.NA for col in BASE_COLUMNS}
-    record.update({"TckrSymb": symbol, "AsOfDate": date.today().isoformat(), "Source": "Yahoo Finance via yfinance (secondary; verify against filings)", "SourceURL": url})
+    record.update({"TckrSymb": symbol, "AsOfDate": pd.NA, "DataRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "Source": "Yahoo Finance via yfinance (secondary; verify against filings)", "SourceURL": url})
     try:
         if ticker_factory is None:
             import yfinance as yf  # type: ignore
@@ -266,7 +266,7 @@ def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | P
         for col in BASE_COLUMNS + ["FinancialPeriodEnd"]:
             if col not in merged:
                 merged[col] = pd.NA
-        for col in METRIC_COLUMNS + ["AsOfDate", "Source", "SourceURL"]:
+        for col in METRIC_COLUMNS + ["AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL"]:
             if not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
         if not _present(merged.get("TckrSymb")):

@@ -97,3 +97,18 @@ def test_fundamental_score_fields_are_written_by_filter_source():
     assert "FundamentalScore" in source
     assert "FundamentalRank" in source
     assert "Equal-weight percentile mean" in source
+
+
+    def test_missing_publication_date_is_unverified_not_falsely_future_dated(self):
+        record = good_record()
+        record["AsOfDate"] = None
+        row = self.run_filter([record])
+        self.assertIn("PUBLICATION_DATE_UNVERIFIED", row["FundamentalReason"])
+        self.assertNotIn("FINANCIAL_AS_OF_DATE_AFTER_EOD", row["FundamentalReason"])
+
+    def test_financial_period_ending_after_eod_is_flagged(self):
+        record = good_record()
+        record["FinancialPeriodEnd"] = "2026-10-25"
+        row = self.run_filter([record])
+        self.assertIn("FINANCIAL_PERIOD_END_AFTER_EOD", row["FundamentalReason"])
+        self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")

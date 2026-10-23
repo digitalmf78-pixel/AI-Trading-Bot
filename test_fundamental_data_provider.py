@@ -77,3 +77,28 @@ def test_disabled_provider_does_not_drop_candidates_or_call_provider(tmp_path, m
     assert set(result["TckrSymb"]) == {"AAA", "BBB"}
     diagnostics = pd.read_csv("outputs/v8_fundamental_provider_diagnostics.csv")
     assert set(diagnostics["ProviderStatus"]) == {"DISABLED"}
+
+
+def test_provider_does_not_mislabel_retrieval_date_as_publication_date(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    candidates = pd.DataFrame({"TckrSymb": ["AAA"]})
+    result = collect_missing_fundamentals(
+        candidates,
+        metrics_path=Path("data/inputs/fundamental_metrics.csv"),
+        enabled=True,
+        ticker_factory=FakeTicker,
+        pause_seconds=0,
+    )
+    aaa = result.set_index("TckrSymb").loc["AAA"]
+    assert pd.isna(aaa["AsOfDate"]) or str(aaa["AsOfDate"]).strip() in {"", "nan", "<NA>"}
+    assert pd.notna(aaa["DataRetrievedAtUTC"])
+
+
+def test_future_fiscal_year_end_is_not_used_as_financial_period_end():
+    from fundamental_data_provider import _financial_period_end
+
+    class EmptyTicker:
+        financials = pd.DataFrame()
+
+    result = _financial_period_end(EmptyTicker(), {"nextFiscalYearEnd": 1893456000})
+    assert result == ""
