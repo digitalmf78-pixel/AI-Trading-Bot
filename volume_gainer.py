@@ -3375,7 +3375,7 @@ def main():
             # Fetch available fundamentals for every unique symbol in Delivery A/B.
             # Provider failures and missing metrics are recorded, never used to reject.
             try:
-                collect_missing_fundamentals(fundamental_universe, asof_date=eod_date)
+                collect_missing_fundamentals(fundamental_universe)
             except Exception as provider_exc:
                 os.makedirs("outputs", exist_ok=True)
                 pd.DataFrame([{
@@ -3408,9 +3408,9 @@ def main():
         ].copy() if not fundamental_audit.empty else pd.DataFrame()
 
     # --------------------------------------------------------
-    # STEP 6: EXISTING LIQUIDITY FILTER — KEEP IT
+    # STEP 6: EXISTING LIQUIDITY FILTER — THRESHOLD RELAXED TO ₹2 CRORE
     # --------------------------------------------------------
-    print("\nSTEP 6: Applying existing liquidity gate (20D average traded value >= ₹5 crore)...")
+    print("\nSTEP 6: Applying existing liquidity gate (20D average traded value >= ₹2 crore)...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
     if current.empty:
         for col in liquidity_audit_columns:

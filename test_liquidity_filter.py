@@ -9,20 +9,28 @@ def history_for(values, symbol="ABC"):
     return [pd.DataFrame([{"TckrSymb": symbol, "TtlTrfVal": value}]) for value in values]
 
 
-def test_average_daily_traded_value_exactly_five_crore_passes():
+def test_average_daily_traded_value_exactly_two_crore_passes():
     candidates = pd.DataFrame([{"TckrSymb": "ABC", "DeliveryFilterStatus": "PASS_GE_60_PERCENT"}])
-    qualified, audit = apply_liquidity_filter(candidates, history_for([50_000_000] * 20))
+    qualified, audit = apply_liquidity_filter(candidates, history_for([20_000_000] * 20))
     assert len(qualified) == 1
-    assert audit.iloc[0]["LiquidityStatus"] == "PASS_GE_5CR_AVG_DAILY_VALUE"
-    assert audit.iloc[0]["AvgDailyTradedValue20D"] == 50_000_000
+    assert audit.iloc[0]["LiquidityStatus"] == "PASS_GE_2CR_AVG_DAILY_VALUE"
+    assert audit.iloc[0]["AvgDailyTradedValue20D"] == 20_000_000
 
 
-def test_average_daily_traded_value_below_five_crore_rejects():
+def test_average_daily_traded_value_below_two_crore_rejects():
     candidates = pd.DataFrame([{"TckrSymb": "ABC"}])
-    qualified, audit = apply_liquidity_filter(candidates, history_for([49_999_999] * 20))
+    qualified, audit = apply_liquidity_filter(candidates, history_for([19_999_999] * 20))
     assert qualified.empty
-    assert audit.iloc[0]["LiquidityStatus"] == "FILTERED_OUT_LT_5CR_AVG_DAILY_VALUE"
+    assert audit.iloc[0]["LiquidityStatus"] == "FILTERED_OUT_LT_2CR_AVG_DAILY_VALUE"
 
+
+
+def test_average_between_two_and_five_crore_now_passes():
+    candidates = pd.DataFrame([{"TckrSymb": "ABC"}])
+    qualified, audit = apply_liquidity_filter(candidates, history_for([30_000_000] * 20))
+    assert len(qualified) == 1
+    assert audit.iloc[0]["LiquidityStatus"] == "PASS_GE_2CR_AVG_DAILY_VALUE"
+    assert audit.iloc[0]["AvgDailyTradedValue20D"] == 30_000_000
 
 def test_missing_session_is_wait_for_data_not_pass():
     candidates = pd.DataFrame([{"TckrSymb": "ABC"}])

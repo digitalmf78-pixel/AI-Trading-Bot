@@ -1,7 +1,7 @@
 """NSE V8 liquidity gate based on prior 20 complete EOD sessions.
 
 Eligibility rule: mean daily traded value (NSE CM Bhavcopy TtlTrfVal, INR)
-across 20 distinct prior sessions must be >= INR 5 crore. If a full 20-session
+across 20 distinct prior sessions must be >= INR 2 crore. If a full 20-session
 history or a valid traded-value observation is missing, status is WAIT_FOR_DATA.
 This is a turnover-based liquidity proxy; it does not claim to validate bid-ask
 spread or market depth, which are not present in the daily bhavcopy.
@@ -13,7 +13,7 @@ from typing import Iterable
 
 import pandas as pd
 
-MINIMUM_AVG_DAILY_TRADED_VALUE_INR = 50_000_000.0  # ₹5 crore
+MINIMUM_AVG_DAILY_TRADED_VALUE_INR = 20_000_000.0  # ₹2 crore (relaxed from ₹5 crore)
 REQUIRED_LIQUIDITY_SESSIONS = 20
 VALUE_COLUMN = "TtlTrfVal"
 
@@ -78,10 +78,10 @@ def apply_liquidity_filter(
             status = "WAIT_FOR_DATA"
             session_count = sum(value is not None for value in values) if values else 0
         elif average_value >= float(minimum_average_daily_value):
-            status = "PASS_GE_5CR_AVG_DAILY_VALUE"
+            status = "PASS_GE_2CR_AVG_DAILY_VALUE"
             session_count = required_sessions
         else:
-            status = "FILTERED_OUT_LT_5CR_AVG_DAILY_VALUE"
+            status = "FILTERED_OUT_LT_2CR_AVG_DAILY_VALUE"
             session_count = required_sessions
         record.update({
             "LiquiditySessions": int(session_count),
@@ -93,7 +93,7 @@ def apply_liquidity_filter(
         rows.append(record)
 
     audit = pd.DataFrame(rows)
-    qualified = audit[audit["LiquidityStatus"] == "PASS_GE_5CR_AVG_DAILY_VALUE"].copy()
+    qualified = audit[audit["LiquidityStatus"] == "PASS_GE_2CR_AVG_DAILY_VALUE"].copy()
     print(f"[LIQUIDITY] Threshold: average daily traded value >= ₹{minimum_average_daily_value:,.0f} over {required_sessions} prior sessions")
-    print(f"[LIQUIDITY] PASS: {len(qualified)}; REJECT: {(audit['LiquidityStatus'] == 'FILTERED_OUT_LT_5CR_AVG_DAILY_VALUE').sum()}; WAIT_FOR_DATA: {(audit['LiquidityStatus'] == 'WAIT_FOR_DATA').sum()}")
+    print(f"[LIQUIDITY] PASS: {len(qualified)}; REJECT: {(audit['LiquidityStatus'] == 'FILTERED_OUT_LT_2CR_AVG_DAILY_VALUE').sum()}; WAIT_FOR_DATA: {(audit['LiquidityStatus'] == 'WAIT_FOR_DATA').sum()}")
     return qualified, audit
