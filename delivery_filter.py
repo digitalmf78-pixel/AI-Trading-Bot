@@ -1,9 +1,13 @@
-"""NSE EOD five-session delivery-first shortlist filter.
+"""NSE EOD five-session dual-category delivery filter.
 
-Rule: each of the latest five distinct valid NSE trading sessions must have
-Delivery % >= 60.00%. Average delivery is retained for reporting only and never
-determines eligibility. Missing/invalid session data never PASS.
+Category A passes when the five-session average Delivery % is >= 60.00%.
+Category B passes when each of those five sessions is >= 60.00%.
+Use the latest five distinct valid reports dated on or before the EOD as-of date.
+If the current day's report has not been published, skip that unavailable date,
+log it, and use prior valid reports; never relabel old data as current-day data.
+Fewer than five valid distinct reports means WAIT_FOR_DATA.
 """
+
 from __future__ import annotations
 
 import io
@@ -85,7 +89,14 @@ def _read_cached_or_download(session: requests.Session, session_date: date) -> p
 
 def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_days: int = 35,
                           session: requests.Session | None = None) -> list[tuple[date, pd.DataFrame]]:
-    """Return latest `required_sessions` distinct valid reports, including asof_date."""
+    """Return latest distinct valid reports on or before ``asof_date``.
+
+    A missing report for the as-of date is not by itself fatal: NSE's delivery
+    file may publish later than the price bhavcopy. In that case, continue
+    searching backwards and use the latest five valid distinct report dates.
+    The actual dates are retained in the output; older data is never relabelled.
+    If fewer than ``required_sessions`` valid reports are found, fail closed.
+    """
     asof = _parse_date(asof_date)
     http = session or requests.Session()
     http.headers.update(HEADERS)
@@ -98,12 +109,11 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
             continue
         frame = _read_cached_or_download(http, day)
         if frame is None:
-            # The requested as-of session must be present: silently replacing it
-            # with an older report would violate the user's current-day rule.
             if offset == 0:
-                raise RuntimeError(
-                    f"WAIT_FOR_DATA: current EOD delivery report for {asof.isoformat()} is unavailable; "
-                    "cannot substitute an older session"
+                print(
+                    f"[DELIVERY] As-of report {asof.isoformat()} is not available yet; "
+                    "searching backward for the latest five valid distinct delivery sessions. "
+                    "Older report dates will remain explicitly labelled."
                 )
             continue
         if day in seen:
@@ -186,6 +196,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     candidate["_SYMBOL_KEY"] = candidate[symbol_col].astype(str).str.strip().str.upper()
     candidate["_SERIES_KEY"] = candidate[series_col].astype(str).str.strip().str.upper() if series_col in candidate.columns else "EQ"
     report_dates = [day.isoformat() for day, _ in reports]
+    latest_valid_report_date = reports[-1][0].isoformat()
+    asof_report_available = _parse_date(asof_date).isoformat() in report_dates
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
@@ -210,7 +222,13 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliveryDailyPassCount": daily_pass_count,
             "DeliveryMin5D": daily_min,
             "AvgDelivery5D": avg,
-            "LatestDeliveryPct": by_date.get(_parse_date(asof_date).isoformat(), float("nan")),
+            # This is the latest VALID delivery report in the selected window,
+            # not necessarily the price EOD as-of date when NSE has not published it yet.
+            "LatestDeliveryPct": by_date.get(latest_valid_report_date, float("nan")),
+            "DeliveryAsOfDate": _parse_date(asof_date).isoformat(),
+            "DeliveryAsOfReportAvailable": asof_report_available,
+            "DeliveryWindowStartDate": report_dates[0],
+            "DeliveryWindowEndDate": report_dates[-1],
             "DeliveryCategoryAStatus": category_a,
             "DeliveryCategoryBStatus": category_b,
             "DeliveryStatus": overall,

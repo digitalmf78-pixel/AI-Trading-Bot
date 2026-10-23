@@ -1,0 +1,9 @@
+NSE V8 Delivery As-of Report Availability Fix
+Date: 2026-10-23
+
+Local checks:
+- python -m py_compile delivery_filter.py test_delivery_filter_fallback.py: PASS
+- pytest focused Delivery/Liquidity/Fundamental/Risk/Pipeline suite plus new fallback tests: 36 passed
+- python -u test_v8_regression.py: PASS (all 27 V8 regression tests)
+
+Live NSE request was not executed by this patch test. The new tests mock report availability and validate fallback behavior.
