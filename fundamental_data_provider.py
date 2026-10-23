@@ -406,6 +406,13 @@ def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | P
             combined[col] = pd.NA
     # Preserve all existing records (including symbols outside today's universe).
     combined = combined.drop_duplicates(subset=["TckrSymb"], keep="last")
+    # Verify publication dates only against exact NSE official result-announcement
+    # matches (same symbol + financial period end). Network failures are non-fatal.
+    try:
+        from fundamental_official_filings import apply_official_publication_dates
+        combined = apply_official_publication_dates(combined, asof_date=asof_date)
+    except Exception as official_date_exc:
+        print(f"[FUNDAMENTAL OFFICIAL DATE] verification unavailable; retain UNVERIFIED dates: {type(official_date_exc).__name__}: {official_date_exc}")
     combined.to_csv(path, index=False)
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
     print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; diagnostics={DIAGNOSTICS_PATH}")

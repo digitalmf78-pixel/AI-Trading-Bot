@@ -26,6 +26,7 @@ METRIC_COLUMNS = [
 SOURCE_COLUMNS = [
     "TckrSymb", "AsOfDate", "Source", "SourceURL", "FinancialPeriodEnd",
     "PublicationDate", "PublicationDateStatus", "DataRetrievedAtUTC",
+    "ROECalculationMethod", "OfficialFilingURL", "OfficialFilingSource",
 ]
 INPUT_COLUMNS = SOURCE_COLUMNS + METRIC_COLUMNS
 STATUS_COLUMNS = [
