@@ -134,3 +134,23 @@ def test_yahoo_retrieval_date_is_not_used_when_period_end_missing():
         row = result.iloc[0]
     assert row["FundamentalStatus"] == "PARTIAL_DATA"
     assert "FINANCIAL_PERIOD_END_UNVERIFIED" in row["FundamentalReason"]
+
+
+def test_unverified_publication_date_never_receives_fundamental_rank(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    record = good_record()
+    record.update({
+        "FinancialPeriodEnd": "2026-09-30",
+        "PublicationDate": None,
+        "PublicationDateStatus": "UNVERIFIED",
+        "DataRetrievedAtUTC": "2026-10-23T10:00:00+00:00",
+    })
+    metrics_path = Path("data/inputs/fundamental_metrics.csv")
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([record]).to_csv(metrics_path, index=False)
+    result, _ = apply_fundamental_filter(pd.DataFrame({"TckrSymb": ["ABC"]}), "2026-10-22", metrics_path)
+    row = result.iloc[0]
+    assert row["FundamentalStatus"] == "PARTIAL_DATA"
+    assert pd.isna(row["FundamentalScore"])
+    assert pd.isna(row["FundamentalRank"])
+    assert row["FundamentalScoreEligibilityStatus"] == "WAIT_FOR_VERIFIED_POINT_IN_TIME_DATA"

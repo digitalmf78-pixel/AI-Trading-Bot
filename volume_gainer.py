@@ -3375,7 +3375,7 @@ def main():
             # Fetch available fundamentals for every unique symbol in Delivery A/B.
             # Provider failures and missing metrics are recorded, never used to reject.
             try:
-                collect_missing_fundamentals(fundamental_universe)
+                collect_missing_fundamentals(fundamental_universe, asof_date=eod_date)
             except Exception as provider_exc:
                 os.makedirs("outputs", exist_ok=True)
                 pd.DataFrame([{

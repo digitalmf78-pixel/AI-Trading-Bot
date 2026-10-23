@@ -52,6 +52,8 @@ def test_fetches_each_unique_delivery_candidate_and_writes_diagnostics(tmp_path,
     assert round(float(aaa["InterestCoverage"]), 2) == 8.0
     assert aaa["PublicationDateStatus"] == "UNVERIFIED"
     assert pd.notna(aaa["DataRetrievedAtUTC"])
+    assert aaa["PublicationDateStatus"] == "UNVERIFIED"
+    assert pd.notna(aaa["DataRetrievedAtUTC"])
     assert aaa["AsOfDate"] == aaa["FinancialPeriodEnd"]
 
 
@@ -91,3 +93,51 @@ def test_future_fiscal_year_end_is_not_used_as_financial_period(monkeypatch):
 
     info = {"nextFiscalYearEnd": 1893456000, "mostRecentQuarter": 1792454400}
     assert _financial_period_end(PeriodTicker(), info) == "2026-10-20"
+
+
+def test_roe_is_derived_from_statements_when_provider_info_missing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    class ROEFallbackTicker(FakeTicker):
+        def __init__(self, symbol):
+            super().__init__(symbol)
+            self.info.pop("returnOnEquity", None)
+            dates = pd.to_datetime(["2026-03-31", "2025-03-31"])
+            self.quarterly_income_stmt = pd.DataFrame(
+                [[200, 160]], index=["Net Income"], columns=dates
+            )
+            self.quarterly_balance_sheet = pd.DataFrame(
+                [[1000, 800]], index=["Stockholders Equity"], columns=dates
+            )
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}),
+        metrics_path=Path("data/inputs/fundamental_metrics.csv"),
+        enabled=True, ticker_factory=ROEFallbackTicker, pause_seconds=0,
+        asof_date="2026-03-31",
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    # Net income 200 / average equity ((1000 + 800) / 2) = 11.11%.
+    assert round(float(row["ROEPercent"]), 2) == 22.22
+    assert str(row["ROECalculationMethod"]).startswith("NET_INCOME_DIVIDED_BY_")
+
+
+def test_statement_periods_after_eod_are_not_used_for_period_end(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    class FutureStatementTicker(FakeTicker):
+        def __init__(self, symbol):
+            super().__init__(symbol)
+            self.quarterly_income_stmt = pd.DataFrame(
+                [[999, 100]], index=["Net Income"],
+                columns=pd.to_datetime(["2026-12-31", "2026-03-31"]),
+            )
+            self.quarterly_balance_sheet = pd.DataFrame(
+                [[1000, 800]], index=["Stockholders Equity"],
+                columns=pd.to_datetime(["2026-12-31", "2026-03-31"]),
+            )
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}),
+        metrics_path=Path("data/inputs/fundamental_metrics.csv"),
+        enabled=True, ticker_factory=FutureStatementTicker, pause_seconds=0,
+        asof_date="2026-10-22",
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    assert row["FinancialPeriodEnd"] != "2026-12-31"

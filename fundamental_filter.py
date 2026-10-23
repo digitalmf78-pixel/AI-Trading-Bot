@@ -32,7 +32,7 @@ STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
     "FundamentalSource", "FundamentalSourceURL",
     "FundamentalMetricsCompletenessPct", "FundamentalScoreCoveragePct",
-    "FundamentalAssessmentStatus",
+    "FundamentalAssessmentStatus", "FundamentalScoreEligibilityStatus",
 ]
 SCORE_METRICS = {
     "RevenueGrowthPct": True,
@@ -197,10 +197,26 @@ def apply_fundamental_filter(
         score_parts.append((values.rank(pct=True, ascending=higher_is_better) * 100.0).rename(metric + "PercentileScore"))
     score_frame = pd.concat(score_parts, axis=1) if score_parts else pd.DataFrame(index=audit.index)
     audit = pd.concat([audit, score_frame], axis=1)
-    complete_score = audit["FundamentalScoreCoveragePct"].eq(100)
+    # A numeric score is not enough for a point-in-time ranking. Require all six
+    # metrics AND a verified publication date no later than EOD AND a verified
+    # financial period no later than EOD. Unverified Yahoo data remains collected
+    # but cannot silently enter a historical ranking.
+    asof = pd.to_datetime(asof_date, errors="coerce")
+    pub_dates = pd.to_datetime(audit.get("PublicationDate", pd.Series(index=audit.index, dtype=object)), errors="coerce")
+    period_dates = pd.to_datetime(audit.get("FinancialPeriodEnd", pd.Series(index=audit.index, dtype=object)), errors="coerce")
+    pub_status = audit.get("PublicationDateStatus", pd.Series("", index=audit.index)).astype(str).str.strip().str.upper()
+    verified_publication = pub_status.eq("VERIFIED") & pub_dates.notna()
+    if pd.notna(asof):
+        verified_publication &= pub_dates.dt.normalize().le(asof.normalize())
+        verified_period = period_dates.notna() & period_dates.dt.normalize().le(asof.normalize())
+    else:
+        verified_period = period_dates.notna()
+    complete_score = audit["FundamentalScoreCoveragePct"].eq(100) & audit["FundamentalStatus"].eq("COMPLETE") & verified_publication & verified_period
+    audit["FundamentalScoreEligibilityStatus"] = "WAIT_FOR_VERIFIED_POINT_IN_TIME_DATA"
+    audit.loc[complete_score, "FundamentalScoreEligibilityStatus"] = "ELIGIBLE_FOR_FUNDAMENTAL_RANKING"
     audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).where(complete_score).round(2)
     audit["FundamentalRank"] = audit["FundamentalScore"].rank(method="min", ascending=False).astype("Int64")
-    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean (provisional); score only when all six ranking metrics are available"
+    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean (provisional); score only with six numeric metrics and verified publication/period dates on or before EOD"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)

@@ -27,7 +27,8 @@ METRIC_COLUMNS = [
 ]
 BASE_COLUMNS = [
     "TckrSymb", "AsOfDate", "FinancialPeriodEnd", "PublicationDate",
-    "PublicationDateStatus", "DataRetrievedAtUTC", "Source", "SourceURL",
+    "PublicationDateStatus", "DataRetrievedAtUTC", "ROECalculationMethod",
+    "Source", "SourceURL",
 ] + METRIC_COLUMNS
 
 
@@ -90,31 +91,89 @@ def _growth_from_statement(statement: pd.DataFrame, possible_rows: list[str]):
         return pd.NA
 
 
-def _financial_period_end(ticker_obj, info: dict) -> str:
-    """Return an observed financial-statement period end, never a forecast date.
+def _statement_columns_asof(statement: pd.DataFrame, asof_date=None) -> pd.DataFrame:
+    """Return statement columns with period-end dates no later than EOD.
 
-    `nextFiscalYearEnd` is intentionally excluded because it describes a future
-    fiscal boundary, not the period covered by currently available statements.
+    If a point-in-time cutoff is supplied and statement column dates cannot be
+    parsed, return an empty frame rather than risk future-period leakage.
     """
-    try:
-        fin = ticker_obj.financials
-        if isinstance(fin, pd.DataFrame) and len(fin.columns):
-            parsed = pd.to_datetime(fin.columns[0], errors="coerce")
-            if pd.notna(parsed):
-                return parsed.date().isoformat()
-    except Exception:
-        pass
-    for key in ("lastFiscalYearEnd", "mostRecentQuarter"):
+    if not isinstance(statement, pd.DataFrame) or statement.empty:
+        return pd.DataFrame()
+    if asof_date is None:
+        return statement
+    cutoff = pd.to_datetime(asof_date, errors="coerce")
+    if pd.isna(cutoff):
+        return pd.DataFrame()
+    allowed = []
+    for col in statement.columns:
+        period = pd.to_datetime(col, errors="coerce")
+        if pd.notna(period) and period.normalize() <= cutoff.normalize():
+            allowed.append(col)
+    return statement.loc[:, allowed] if allowed else pd.DataFrame()
+
+
+def _financial_period_end(ticker_obj, info: dict, asof_date=None) -> str:
+    """Find the latest observable statement period on/before the EOD cutoff."""
+    candidates = []
+    for attr in ("financials", "balance_sheet", "cashflow",
+                 "income_stmt", "quarterly_income_stmt", "quarterly_balance_sheet", "quarterly_cashflow"):
+        try:
+            statement = getattr(ticker_obj, attr)
+        except Exception:
+            continue
+        if isinstance(statement, pd.DataFrame) and not statement.empty:
+            for col in statement.columns:
+                parsed = pd.to_datetime(col, errors="coerce")
+                if pd.notna(parsed):
+                    candidates.append(parsed.normalize())
+    cutoff = pd.to_datetime(asof_date, errors="coerce") if asof_date is not None else pd.NaT
+    candidates = [d for d in candidates if pd.isna(cutoff) or d <= cutoff.normalize()]
+    if candidates:
+        return max(candidates).date().isoformat()
+
+    # Info timestamps are fallback metadata only; never use nextFiscalYearEnd.
+    for key in ("mostRecentQuarter", "lastFiscalYearEnd"):
         value = info.get(key)
         if value:
             try:
-                return datetime.fromtimestamp(int(value), tz=timezone.utc).date().isoformat()
+                parsed = datetime.fromtimestamp(int(value), tz=timezone.utc).date()
+                if asof_date is None or parsed <= pd.to_datetime(asof_date).date():
+                    return parsed.isoformat()
             except (TypeError, ValueError, OSError, OverflowError):
                 pass
     return ""
 
 
-def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
+def _roe_from_statements(financials: pd.DataFrame, balance_sheet: pd.DataFrame):
+    """Calculate a transparent ROE fallback when provider ROE is absent.
+
+    Prefer net income divided by average opening/closing equity. If only one
+    equity period is available, use ending equity as a clearly labelled proxy.
+    The output is a calculated metric, not a provider-reported ROE.
+    """
+    net_income = _safe_statement_value(financials, [
+        "Net Income", "Net Income Common Stockholders",
+        "Net Income From Continuing Operation Net Minority Interest",
+    ])
+    equity_rows = ["Stockholders Equity", "Total Stockholder Equity",
+                   "Common Stock Equity", "Total Equity Gross Minority Interest"]
+    latest_equity = _safe_statement_value(balance_sheet, equity_rows, 0)
+    prior_equity = _safe_statement_value(balance_sheet, equity_rows, 1)
+    if not (_present(net_income) and _present(latest_equity)):
+        return pd.NA, "UNAVAILABLE_MISSING_NET_INCOME_OR_EQUITY"
+    denominator = float(latest_equity)
+    method = "NET_INCOME_DIVIDED_BY_ENDING_EQUITY_PROXY"
+    if _present(prior_equity):
+        average_equity = (float(latest_equity) + float(prior_equity)) / 2.0
+        if average_equity != 0:
+            denominator = average_equity
+            method = "NET_INCOME_DIVIDED_BY_AVERAGE_EQUITY"
+    if denominator == 0:
+        return pd.NA, "UNAVAILABLE_ZERO_EQUITY"
+    return float(net_income) / denominator * 100.0, method
+
+
+def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -128,6 +187,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         "PublicationDate": pd.NA,
         "PublicationDateStatus": "UNVERIFIED",
         "DataRetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
+        "ROECalculationMethod": "PROVIDER_REPORTED_OR_NOT_YET_CALCULATED",
         "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
         "SourceURL": url,
     })
@@ -140,6 +200,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         revenue_growth = _first_number(info, ["revenueGrowth"], 100.0)
         profit_growth = _first_number(info, ["earningsGrowth", "earningsQuarterlyGrowth"], 100.0)
         roe = _first_number(info, ["returnOnEquity"], 100.0)
+        roe_method = "YAHOO_INFO_RETURN_ON_EQUITY" if _present(roe) else "MISSING_PROVIDER_ROE"
         debt_to_equity = _first_number(info, ["debtToEquity"])
         # Yahoo commonly reports debtToEquity as a percentage (e.g. 80 means 0.8x).
         if _present(debt_to_equity):
@@ -158,8 +219,14 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         cashflow = pd.DataFrame()
         # Statements are only requested when needed, so a provider's partial info
         # response can still produce useful, explicitly partial data.
-        need_statements = not _present(revenue_growth) or not _present(profit_growth) or not _present(ocf) or not _present(fcf) or not _present(interest_expense) or not _present(assets) or not _present(current_liabilities) or not _present(equity) or not _present(total_debt)
+        need_statements = (not _present(revenue_growth) or not _present(profit_growth) or
+                           not _present(roe) or not _present(ocf) or not _present(fcf) or
+                           not _present(interest_expense) or not _present(assets) or
+                           not _present(current_liabilities) or not _present(equity) or
+                           not _present(total_debt))
         if need_statements:
+            # Use annual statements first for year-over-year growth calculations;
+            # quarterly statements are a fallback only when annual data is absent.
             try:
                 financials = ticker.financials
             except Exception:
@@ -172,6 +239,24 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
                 cashflow = ticker.cashflow
             except Exception:
                 cashflow = pd.DataFrame()
+            financials = _statement_columns_asof(financials, asof_date)
+            balance_sheet = _statement_columns_asof(balance_sheet, asof_date)
+            cashflow = _statement_columns_asof(cashflow, asof_date)
+            if financials.empty:
+                try:
+                    financials = _statement_columns_asof(getattr(ticker, "quarterly_income_stmt", pd.DataFrame()), asof_date)
+                except Exception:
+                    financials = pd.DataFrame()
+            if balance_sheet.empty:
+                try:
+                    balance_sheet = _statement_columns_asof(getattr(ticker, "quarterly_balance_sheet", pd.DataFrame()), asof_date)
+                except Exception:
+                    balance_sheet = pd.DataFrame()
+            if cashflow.empty:
+                try:
+                    cashflow = _statement_columns_asof(getattr(ticker, "quarterly_cashflow", pd.DataFrame()), asof_date)
+                except Exception:
+                    cashflow = pd.DataFrame()
 
         if not _present(revenue_growth):
             revenue_growth = _growth_from_statement(financials, ["Total Revenue", "Operating Revenue"])
@@ -198,6 +283,8 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             total_debt = _safe_statement_value(balance_sheet, ["Total Debt", "Long Term Debt And Capital Lease Obligation"])
         if not _present(debt_to_equity) and _present(total_debt) and _present(equity) and float(equity) != 0:
             debt_to_equity = float(total_debt) / float(equity)
+        if not _present(roe):
+            roe, roe_method = _roe_from_statements(financials, balance_sheet)
 
         roce = pd.NA
         if _present(ebit) and _present(assets) and _present(current_liabilities):
@@ -227,7 +314,8 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         )
         valuation_multiple = _first_number(info, ["trailingPE", "forwardPE"])
         record["ValuationStatus"] = "VALUATION_MULTIPLE_AVAILABLE" if _present(valuation_multiple) else "VALUATION_DATA_MISSING"
-        period_end = _financial_period_end(ticker, info)
+        record["ROECalculationMethod"] = roe_method
+        period_end = _financial_period_end(ticker, info, asof_date=asof_date)
         record["FinancialPeriodEnd"] = period_end if period_end else pd.NA
         record["AsOfDate"] = period_end if period_end else pd.NA
         # Yahoo's generic yfinance info/statement endpoints do not reliably
@@ -242,6 +330,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         diagnostic["PublicationDate"] = record.get("PublicationDate", "")
         diagnostic["PublicationDateStatus"] = record.get("PublicationDateStatus", "UNVERIFIED")
         diagnostic["DataRetrievedAtUTC"] = record.get("DataRetrievedAtUTC", "")
+        diagnostic["ROECalculationMethod"] = roe_method
         diagnostic["MetricsAvailable"] = metric_count
     except Exception as exc:
         diagnostic["ProviderStatus"] = "PROVIDER_ERROR"
@@ -250,7 +339,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     return record, diagnostic
 
 
-def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | Path = METRICS_PATH, enabled: bool | None = None, ticker_factory=None, pause_seconds: float = 0.15) -> pd.DataFrame:
+def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | Path = METRICS_PATH, enabled: bool | None = None, ticker_factory=None, pause_seconds: float = 0.15, asof_date=None) -> pd.DataFrame:
     """Fetch missing fundamentals for every unique Delivery A/B symbol.
 
     Existing manual records are authoritative. Provider failures remain visible
@@ -291,13 +380,13 @@ def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | P
         if not missing:
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "all metrics already populated in input CSV", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS)})
             continue
-        fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory)
+        fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory, asof_date=asof_date)
         # Never overwrite a manually supplied value with provider data.
         merged = dict(current)
         for col in BASE_COLUMNS + ["FinancialPeriodEnd"]:
             if col not in merged:
                 merged[col] = pd.NA
-        for col in METRIC_COLUMNS + ["AsOfDate", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus", "DataRetrievedAtUTC", "Source", "SourceURL"]:
+        for col in METRIC_COLUMNS + ["AsOfDate", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus", "DataRetrievedAtUTC", "ROECalculationMethod", "Source", "SourceURL"]:
             if not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
         if not _present(merged.get("TckrSymb")):
