@@ -3351,9 +3351,54 @@ def main():
                     current[col] = pd.Series(dtype="object")
 
     # --------------------------------------------------------
-    # STEP 5: EXISTING LIQUIDITY FILTER — KEEP IT
+    # STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS
     # --------------------------------------------------------
-    print("\nSTEP 5: Applying existing liquidity gate (20D average traded value >= ₹5 crore)...")
+    print("\nSTEP 5: Collecting available fundamental data for every Delivery A/B stock; no fundamental rejection at this stage...")
+    create_fundamental_templates()
+    try:
+        if delivery_audit is None or delivery_audit.empty:
+            fundamental_universe = pd.DataFrame()
+        else:
+            a_pass = delivery_audit.get("DeliveryCategoryAStatus", pd.Series("", index=delivery_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
+            b_pass = delivery_audit.get("DeliveryCategoryBStatus", pd.Series("", index=delivery_audit.index)).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
+            fundamental_universe = delivery_audit.loc[a_pass | b_pass].copy()
+            if "TckrSymb" in fundamental_universe.columns:
+                fundamental_universe = fundamental_universe.drop_duplicates(subset=["TckrSymb"], keep="first")
+        if fundamental_universe.empty:
+            fundamental_audit = fundamental_universe.copy()
+            fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
+            for report_name in ["v8_fundamental_complete_data.csv", "v8_fundamental_partial_data.csv", "v8_fundamental_missing_data.csv",
+                                "v8_delivery_a_fundamentals.csv", "v8_delivery_b_fundamentals.csv", "v8_delivery_ab_combined_fundamentals.csv"]:
+                fundamental_audit.to_csv(os.path.join("outputs", report_name), index=False)
+        else:
+            _, fundamental_audit = apply_fundamental_filter(fundamental_universe, eod_date)
+            a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
+            b_mask = fundamental_audit.get("DeliveryCategoryBStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
+            fundamental_audit.loc[a_mask].to_csv("outputs/v8_delivery_a_fundamentals.csv", index=False)
+            fundamental_audit.loc[b_mask].to_csv("outputs/v8_delivery_b_fundamentals.csv", index=False)
+            fundamental_audit.to_csv("outputs/v8_delivery_ab_combined_fundamentals.csv", index=False)
+        # Continue the main pipeline with all Category-A candidates. Fundamental
+        # availability/score is metadata only here; it does not reject candidates.
+        current = fundamental_audit[
+            fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
+        ].copy() if not fundamental_audit.empty else fundamental_audit.copy()
+        print(f"[FUNDAMENTAL COLLECTION] Category A rows={int((fundamental_audit.get('DeliveryCategoryAStatus', pd.Series(dtype=str)).astype(str) == 'PASS_AVG_GE_60_PERCENT').sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; all rows retained regardless of fundamental data status.")
+    except Exception as exc:
+        print(f"[FUNDAMENTAL COLLECTION] Collection annotation failed; keep Delivery-A candidates and mark data unavailable: {exc}")
+        fundamental_audit = delivery_audit.copy() if isinstance(delivery_audit, pd.DataFrame) else pd.DataFrame()
+        if not fundamental_audit.empty:
+            fundamental_audit["FundamentalStatus"] = "MISSING_DATA"
+            fundamental_audit["FundamentalAssessmentStatus"] = "NOT_SHORTLISTED_YET"
+            fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_COLLECTION_ERROR:{exc}"
+            fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
+        current = fundamental_audit[
+            fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
+        ].copy() if not fundamental_audit.empty else pd.DataFrame()
+
+    # --------------------------------------------------------
+    # STEP 6: EXISTING LIQUIDITY FILTER — KEEP IT
+    # --------------------------------------------------------
+    print("\nSTEP 6: Applying existing liquidity gate (20D average traded value >= ₹5 crore)...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
     if current.empty:
         for col in liquidity_audit_columns:
@@ -3375,36 +3420,6 @@ def main():
     liquidity_audit.to_csv("outputs/v8_liquidity_first_audit.csv", index=False)
     print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
 
-    # --------------------------------------------------------
-    # STEP 6: EXISTING FUNDAMENTAL FILTER — KEEP IT
-    # --------------------------------------------------------
-    print("\nSTEP 6: Applying existing evidence-backed Fundamental Strength Filter...")
-    create_fundamental_templates()
-    try:
-        if current.empty:
-            fundamental_audit = current.copy()
-            for col in ["FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate", "FundamentalSource", "FundamentalSourceURL", "FundamentalMetricsCompletenessPct"]:
-                if col not in fundamental_audit.columns:
-                    fundamental_audit[col] = pd.Series(dtype="object")
-            fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
-        else:
-            current, fundamental_audit = apply_fundamental_filter(current, eod_date)
-            current = current[current.get("FundamentalStatus", pd.Series("WAIT_FOR_DATA", index=current.index)).astype(str) == "PASS"].copy()
-            if not current.empty:
-                current["FundamentalScore"] = pd.to_numeric(current.get("FundamentalScore"), errors="coerce")
-                current["RVOL"] = pd.to_numeric(current.get("RVOL"), errors="coerce")
-                current = current.sort_values(["FundamentalScore", "RVOL"], ascending=[False, False], na_position="last", kind="mergesort").copy()
-                current["FundamentalRank"] = range(1, len(current) + 1)
-                current.to_csv("outputs/v8_fundamental_ranked_candidates.csv", index=False)
-        print(f"[FUNDAMENTAL] PASS={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'PASS').sum()}; REJECT={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'REJECT').sum()}; WAIT_FOR_DATA={(fundamental_audit.get('FundamentalStatus', pd.Series(dtype=str)) == 'WAIT_FOR_DATA').sum()}")
-    except Exception as exc:
-        print(f"[FUNDAMENTAL] WAIT_FOR_DATA: filter could not be verified: {exc}")
-        fundamental_audit = current.copy()
-        fundamental_audit["FundamentalStatus"] = "WAIT_FOR_DATA"
-        fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_FILTER_ERROR:{exc}"
-        fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
-        current = current.iloc[0:0].copy()
-
     # Calculate 5-session descriptive volume patterns only after the required
     # RVOL, Delivery, Liquidity, and Fundamental stages have passed.
     result = current.merge(avg_volume, on="TckrSymb", how="left", suffixes=("", "_baseline")) if "AvgVolume20D" not in current.columns else current.copy()
@@ -3422,7 +3437,7 @@ def main():
     # All remaining existing technical modules continue without a Top-50 cap.
 
     # --------------------------------------------------------
-    # STEP 7: PRICE + VOLUME — all candidates that passed prior gates
+    # STEP 7: PRICE + VOLUME — all candidates that passed non-fundamental gates
     # --------------------------------------------------------
     result = calculate_price_volume_relationship(result)
 

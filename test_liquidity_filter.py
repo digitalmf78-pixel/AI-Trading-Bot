@@ -39,13 +39,13 @@ def test_missing_traded_value_column_is_wait_for_data_not_pass():
     assert audit.iloc[0]["LiquidityStatus"] == "WAIT_FOR_DATA"
 
 
-def test_pipeline_order_rvol_then_delivery_liquidity_fundamental():
+def test_pipeline_order_rvol_delivery_fundamentals_then_liquidity():
     from pathlib import Path
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
     rvol = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
     delivery = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
-    liquidity = source.index("STEP 5: EXISTING LIQUIDITY FILTER")
-    fundamental = source.index("STEP 6: EXISTING FUNDAMENTAL FILTER")
+    fundamental = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
+    liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     technical = source.index("STEP 7: PRICE + VOLUME")
-    assert rvol < delivery < liquidity < fundamental < technical
+    assert rvol < delivery < fundamental < liquidity < technical
     assert "AvgDailyTradedValue20D" in source

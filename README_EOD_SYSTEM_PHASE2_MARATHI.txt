@@ -1,3 +1,5 @@
+SUPERSEDED FOR FUNDAMENTAL SEQUENCING (2026-10-23): This historical Phase 2 note describes the earlier hard Fundamental gate. The latest approved workflow collects fundamentals for all Delivery A/B stocks and defers strong-fundamental rejection/shortlisting to a later stage. Other risk and technical gates remain.
+
 NSE V8 EOD SYSTEM — PHASE 2 FUNDAMENTAL GATE
 
 काय बदलले:

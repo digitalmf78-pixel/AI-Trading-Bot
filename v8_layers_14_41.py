@@ -804,8 +804,11 @@ def run_eod_layers(
     watch_statuses = []
     for _, row in output.iterrows():
         score_coverage = _num(row.get("V8ScoreCoveragePct"))
+        # Fundamental data is collected for every Delivery-A/B stock, but the
+        # strong-fundamental shortlist is deliberately deferred to a later stage.
+        # Missing fundamental fields must not block this interim technical/risk
+        # review; their completeness and provisional score remain visible in reports.
         required_data = [
-            row.get("FundamentalStatus", "WAIT_FOR_DATA"),
             row.get("SectorStrengthStatus"), row.get("MarketRegimeStatus"),
             row.get("DeliveryStatus"), row.get("AccumulationDistributionStatus"),
             row.get("NewsStatus"), row.get("RiskRewardStatus"),
@@ -817,8 +820,7 @@ def run_eod_layers(
         rvol = _num(row.get("RVOL"))
         volume_reason_ok = not (pd.notna(rvol) and rvol >= 1.5) or row.get("VolumeReason") == "Demand-led"
         eligible = (
-            row.get("FundamentalStatus") == "PASS"
-            and row.get("RiskControlStatus") == "PASS"
+            row.get("RiskControlStatus") == "PASS"
             and row.get("MandatoryConfirmationStatus") == "PASS"
             and row.get("MarketRegime") != "RISK_OFF"
             and row.get("SectorStrengthStatus") == "PASS"

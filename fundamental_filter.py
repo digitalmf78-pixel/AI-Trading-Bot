@@ -1,8 +1,9 @@
-"""Evidence-first fundamental filter for NSE V8 EOD.
+"""Fundamental data collection and provisional scoring for NSE V8.
 
-The filter never invents financial data or silently assumes thresholds. A stock
-passes only when required metrics, source evidence, freshness policy, and all
-configured thresholds are present. Missing inputs/configuration => WAIT_FOR_DATA.
+This stage is intentionally NOT a hard eligibility filter. Every stock that
+passes Delivery Category A or B remains in the fundamental collection reports,
+even when its financial data is missing or incomplete. Strong-fundamental
+shortlisting is a later, separate decision.
 """
 from __future__ import annotations
 
@@ -24,25 +25,31 @@ METRIC_COLUMNS = [
 ]
 SOURCE_COLUMNS = ["TckrSymb", "AsOfDate", "Source", "SourceURL"]
 INPUT_COLUMNS = SOURCE_COLUMNS + METRIC_COLUMNS
-THRESHOLD_KEYS = [
-    "min_revenue_growth_pct", "min_profit_growth_pct", "min_roe_pct",
-    "min_roce_pct", "max_debt_to_equity", "min_interest_coverage",
-    "require_positive_operating_cash_flow", "require_positive_free_cash_flow",
-    "acceptable_earnings_quality_status", "acceptable_valuation_status",
-    "max_data_age_days",
-]
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
-    "FundamentalSource", "FundamentalSourceURL", "FundamentalMetricsCompletenessPct",
+    "FundamentalSource", "FundamentalSourceURL",
+    "FundamentalMetricsCompletenessPct", "FundamentalScoreCoveragePct",
+    "FundamentalAssessmentStatus",
 ]
+SCORE_METRICS = {
+    "RevenueGrowthPct": True,
+    "ProfitGrowthPct": True,
+    "ROEPercent": True,
+    "ROCEPercent": True,
+    "DebtToEquity": False,
+    "InterestCoverage": True,
+}
 
 
 def create_fundamental_templates() -> None:
+    """Create blank input templates if missing; never fabricate financial data."""
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if not METRICS_PATH.exists():
         pd.DataFrame(columns=INPUT_COLUMNS).to_csv(METRICS_PATH, index=False)
     if not THRESHOLDS_PATH.exists():
+        # Retained for backward compatibility. Thresholds are not used during
+        # collection; they belong to the later strong-fundamental shortlist.
         template = {
             "min_revenue_growth_pct": None,
             "min_profit_growth_pct": None,
@@ -67,36 +74,7 @@ def _number(value):
     return pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
 
 
-def _thresholds_ready(config: dict) -> tuple[bool, list[str]]:
-    missing = []
-    for key in THRESHOLD_KEYS:
-        value = config.get(key)
-        if value is None or value == "":
-            missing.append(key)
-    if not isinstance(config.get("require_positive_operating_cash_flow"), bool):
-        if "require_positive_operating_cash_flow" not in missing:
-            missing.append("require_positive_operating_cash_flow")
-    if not isinstance(config.get("require_positive_free_cash_flow"), bool):
-        if "require_positive_free_cash_flow" not in missing:
-            missing.append("require_positive_free_cash_flow")
-    for key in ("acceptable_earnings_quality_status", "acceptable_valuation_status"):
-        if not isinstance(config.get(key), list) or not config.get(key):
-            if key not in missing:
-                missing.append(key)
-    for key in ["min_revenue_growth_pct", "min_profit_growth_pct", "min_roe_pct", "min_roce_pct", "max_debt_to_equity", "min_interest_coverage", "max_data_age_days"]:
-        if key not in missing:
-            try:
-                number = float(config[key])
-                if not pd.notna(number):
-                    missing.append("INVALID:" + key)
-                elif key in {"max_debt_to_equity", "min_interest_coverage", "max_data_age_days"} and number < 0:
-                    missing.append("INVALID:" + key)
-            except (TypeError, ValueError):
-                missing.append("INVALID:" + key)
-    return not missing, missing
-
-
-def _load_inputs(metrics_path: Path, thresholds_path: Path):
+def _load_inputs(metrics_path: Path):
     if metrics_path.exists() and metrics_path.stat().st_size:
         try:
             metrics = pd.read_csv(metrics_path)
@@ -107,14 +85,7 @@ def _load_inputs(metrics_path: Path, thresholds_path: Path):
     for col in INPUT_COLUMNS:
         if col not in metrics.columns:
             metrics[col] = pd.NA
-    if thresholds_path.exists():
-        try:
-            config = json.loads(thresholds_path.read_text(encoding="utf-8"))
-        except Exception:
-            config = {}
-    else:
-        config = {}
-    return metrics[INPUT_COLUMNS].copy(), config
+    return metrics[INPUT_COLUMNS].copy()
 
 
 def apply_fundamental_filter(
@@ -123,36 +94,32 @@ def apply_fundamental_filter(
     metrics_path: str | Path = METRICS_PATH,
     thresholds_path: str | Path = THRESHOLDS_PATH,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Annotate candidates and return (candidate frame, complete audit frame).
+    """Enrich every candidate with available fundamentals; never remove a row.
 
-    This function does not remove rows. The caller must explicitly send only
-    FundamentalStatus == PASS to ranking; retaining the audit rows is deliberate.
+    `thresholds_path` remains in the signature for backward compatibility but
+    is deliberately not used to reject candidates at the data-collection stage.
+    Returns (enriched candidates, audit report).
     """
-    metrics_path, thresholds_path = Path(metrics_path), Path(thresholds_path)
-    metrics, config = _load_inputs(metrics_path, thresholds_path)
-    ready, missing_thresholds = _thresholds_ready(config)
+    del thresholds_path  # thresholds are reserved for a future shortlist stage
+    metrics = _load_inputs(Path(metrics_path))
     output = candidates.copy()
     if "TckrSymb" not in output.columns:
         output["TckrSymb"] = pd.Series(dtype="object")
     output["TckrSymb"] = output["TckrSymb"].astype(str).str.strip().str.upper()
 
-    metric_rows = {}
-    duplicates = set()
-    if not metrics.empty:
-        metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
-        counts = metrics["TckrSymb"].value_counts()
-        duplicates = set(counts[counts > 1].index)
-        metric_rows = {
-            str(row["TckrSymb"]): row
-            for _, row in metrics.iterrows()
-            if str(row["TckrSymb"]).strip()
-        }
+    metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
+    counts = metrics["TckrSymb"].value_counts() if not metrics.empty else pd.Series(dtype=int)
+    duplicates = set(counts[counts > 1].index)
+    metric_rows = {
+        str(row["TckrSymb"]): row
+        for _, row in metrics.iterrows()
+        if str(row["TckrSymb"]).strip() and str(row["TckrSymb"]).lower() != "nan"
+    }
 
     enriched_rows = []
-    asof = pd.to_datetime(asof_date, errors="coerce")
     for _, candidate in output.iterrows():
-        symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         row = candidate.to_dict()
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
         financial = metric_rows.get(symbol)
         reasons = []
         if symbol in duplicates:
@@ -161,74 +128,43 @@ def apply_fundamental_filter(
             reasons.append("FUNDAMENTAL_RECORD_MISSING")
         else:
             for col in INPUT_COLUMNS:
-                if col in SOURCE_COLUMNS + METRIC_COLUMNS:
-                    row[col] = financial.get(col, pd.NA)
-            missing_fields = [col for col in INPUT_COLUMNS if not _nonempty(financial.get(col, pd.NA))]
-            if missing_fields:
-                reasons.append("MISSING_CRITICAL_FIELDS:" + ",".join(missing_fields))
+                row[col] = financial.get(col, pd.NA)
+            missing_metrics = [col for col in METRIC_COLUMNS if not _nonempty(financial.get(col, pd.NA))]
+            if missing_metrics:
+                reasons.append("MISSING_METRICS:" + ",".join(missing_metrics))
+            source_name = str(financial.get("Source", "")).strip()
+            if not source_name or source_name.lower() == "nan":
+                reasons.append("SOURCE_NAME_MISSING")
             source_url = str(financial.get("SourceURL", "")).strip()
-            if source_url:
+            if not source_url or source_url.lower() == "nan":
+                reasons.append("SOURCE_URL_MISSING")
+            else:
                 parsed = urlparse(source_url)
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                     reasons.append("INVALID_SOURCE_URL")
             report_date = pd.to_datetime(financial.get("AsOfDate"), errors="coerce")
-            if pd.isna(report_date) or pd.isna(asof):
+            asof = pd.to_datetime(asof_date, errors="coerce")
+            if pd.isna(report_date):
                 reasons.append("INVALID_FINANCIAL_AS_OF_DATE")
-            elif report_date.normalize() > asof.normalize():
+            elif pd.notna(asof) and report_date.normalize() > asof.normalize():
                 reasons.append("FINANCIAL_AS_OF_DATE_AFTER_EOD")
-            elif ready and (asof.normalize() - report_date.normalize()).days > int(config["max_data_age_days"]):
-                reasons.append("FUNDAMENTAL_DATA_STALE")
-
-        if not ready:
-            reasons.append("THRESHOLDS_NOT_CONFIGURED:" + ",".join(missing_thresholds))
-
-        if financial is not None and not reasons:
-            numeric_map = {
-                "RevenueGrowthPct": "min_revenue_growth_pct",
-                "ProfitGrowthPct": "min_profit_growth_pct",
-                "ROEPercent": "min_roe_pct",
-                "ROCEPercent": "min_roce_pct",
-                "DebtToEquity": "max_debt_to_equity",
-                "InterestCoverage": "min_interest_coverage",
-            }
-            for metric, threshold in numeric_map.items():
-                value = _number(financial.get(metric))
-                if pd.isna(value):
-                    reasons.append("INVALID_NUMERIC:" + metric)
-                elif threshold.startswith("min_") and value < float(config[threshold]):
-                    reasons.append("THRESHOLD_FAIL:" + metric)
-                elif threshold == "max_debt_to_equity" and value > float(config[threshold]):
-                    reasons.append("THRESHOLD_FAIL:" + metric)
-            for metric, key in [("OperatingCashFlowINR", "require_positive_operating_cash_flow"),
-                                ("FreeCashFlowINR", "require_positive_free_cash_flow")]:
-                value = _number(financial.get(metric))
-                if pd.isna(value):
-                    reasons.append("INVALID_NUMERIC:" + metric)
-                elif config[key] and value <= 0:
-                    reasons.append("THRESHOLD_FAIL:" + metric)
-            if str(financial.get("EarningsQualityStatus", "")).strip().upper() not in {
-                str(v).strip().upper() for v in config["acceptable_earnings_quality_status"]
-            }:
-                reasons.append("THRESHOLD_FAIL:EarningsQualityStatus")
-            if str(financial.get("ValuationStatus", "")).strip().upper() not in {
-                str(v).strip().upper() for v in config["acceptable_valuation_status"]
-            }:
-                reasons.append("THRESHOLD_FAIL:ValuationStatus")
-
-        if any(reason.startswith("THRESHOLD_FAIL:") for reason in reasons):
-            status = "REJECT"
-        elif reasons:
-            status = "WAIT_FOR_DATA"
-        else:
-            status = "PASS"
 
         supplied_count = sum(_nonempty(row.get(col, pd.NA)) for col in METRIC_COLUMNS)
+        score_count = sum(_nonempty(row.get(col, pd.NA)) and pd.notna(_number(row.get(col))) for col in SCORE_METRICS)
+        row["FundamentalMetricsCompletenessPct"] = round(supplied_count / len(METRIC_COLUMNS) * 100, 2)
+        row["FundamentalScoreCoveragePct"] = round(score_count / len(SCORE_METRICS) * 100, 2)
+        if financial is None or supplied_count == 0:
+            status = "MISSING_DATA"
+        elif supplied_count < len(METRIC_COLUMNS) or reasons:
+            status = "PARTIAL_DATA"
+        else:
+            status = "COMPLETE"
         row["FundamentalStatus"] = status
-        row["FundamentalReason"] = ";".join(reasons) if reasons else "ALL_CONFIGURED_FUNDAMENTAL_CHECKS_PASSED"
+        row["FundamentalAssessmentStatus"] = "NOT_SHORTLISTED_YET"
+        row["FundamentalReason"] = ";".join(reasons) if reasons else "FUNDAMENTAL_DATA_COLLECTED_FOR_LATER_RANKING"
         row["FundamentalAsOfDate"] = row.get("AsOfDate", pd.NA)
         row["FundamentalSource"] = row.get("Source", pd.NA)
         row["FundamentalSourceURL"] = row.get("SourceURL", pd.NA)
-        row["FundamentalMetricsCompletenessPct"] = round(supplied_count / len(METRIC_COLUMNS) * 100, 2)
         enriched_rows.append(row)
 
     audit = pd.DataFrame(enriched_rows)
@@ -236,30 +172,22 @@ def apply_fundamental_filter(
         if col not in audit.columns:
             audit[col] = pd.NA
 
-    # Transparent relative score: six quantitative fundamentals, equal weight.
-    # Percentile ranks are computed only within this screened candidate set; this
-    # is a ranking aid, not a substitute for the configured hard eligibility gate.
-    score_metrics = {
-        "RevenueGrowthPct": True,
-        "ProfitGrowthPct": True,
-        "ROEPercent": True,
-        "ROCEPercent": True,
-        "DebtToEquity": False,  # lower leverage is better
-        "InterestCoverage": True,
-    }
+    # A score is produced only when all six numeric ranking metrics are present.
+    # This prevents incomplete records from receiving misleading high ranks.
     score_parts = []
-    for metric, higher_is_better in score_metrics.items():
+    for metric, higher_is_better in SCORE_METRICS.items():
         values = pd.to_numeric(audit.get(metric, pd.Series(index=audit.index, dtype=float)), errors="coerce")
-        pct = values.rank(pct=True, ascending=higher_is_better) * 100.0
-        score_parts.append(pct.rename(metric + "PercentileScore"))
-    score_frame = pd.concat(score_parts, axis=1)
+        score_parts.append((values.rank(pct=True, ascending=higher_is_better) * 100.0).rename(metric + "PercentileScore"))
+    score_frame = pd.concat(score_parts, axis=1) if score_parts else pd.DataFrame(index=audit.index)
     audit = pd.concat([audit, score_frame], axis=1)
-    audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).round(2)
+    complete_score = audit["FundamentalScoreCoveragePct"].eq(100)
+    audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).where(complete_score).round(2)
     audit["FundamentalRank"] = audit["FundamentalScore"].rank(method="min", ascending=False).astype("Int64")
-    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean: revenue growth, profit growth, ROE, ROCE, inverse debt/equity, interest coverage"
+    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean (provisional); score only when all six ranking metrics are available"
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)
-    audit[audit["FundamentalStatus"] == "PASS"].to_csv(OUTPUT_DIR / "v8_fundamental_passed.csv", index=False)
-    audit[audit["FundamentalStatus"] == "REJECT"].to_csv(OUTPUT_DIR / "v8_fundamental_rejected.csv", index=False)
-    audit[audit["FundamentalStatus"] == "WAIT_FOR_DATA"].to_csv(OUTPUT_DIR / "v8_fundamental_wait_for_data.csv", index=False)
+    audit[audit["FundamentalStatus"] == "COMPLETE"].to_csv(OUTPUT_DIR / "v8_fundamental_complete_data.csv", index=False)
+    audit[audit["FundamentalStatus"] == "PARTIAL_DATA"].to_csv(OUTPUT_DIR / "v8_fundamental_partial_data.csv", index=False)
+    audit[audit["FundamentalStatus"] == "MISSING_DATA"].to_csv(OUTPUT_DIR / "v8_fundamental_missing_data.csv", index=False)
     return audit.copy(), audit.copy()

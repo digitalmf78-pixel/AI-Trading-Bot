@@ -1,0 +1,12 @@
+NSE V8.0 Fundamental Collection Stage — Test Results
+Date: 2026-10-23
+
+PASS
+- Python compile checks for repository Python files.
+- Focused fundamental/delivery/liquidity/regression tests: 52 passed.
+- Full `test_*.py` suite: 138 passed.
+
+LIMITATIONS
+- No live NSE integration test: this environment could not resolve nsearchives.nseindia.com (network/DNS unavailable).
+- No GitHub Actions deployment from this session.
+- Fundamental data source remains data/inputs/fundamental_metrics.csv; missing values are reported, not fetched or fabricated.

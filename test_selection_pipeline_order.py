@@ -3,14 +3,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def test_rvol_precedes_delivery_liquidity_fundamental_and_technical():
+def test_rvol_delivery_fundamental_collection_precedes_liquidity_and_technical():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     rvol = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
     delivery = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
-    liquidity = source.index("STEP 5: EXISTING LIQUIDITY FILTER")
-    fundamental = source.index("STEP 6: EXISTING FUNDAMENTAL FILTER")
+    fundamental = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
+    liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     technical = source.index("STEP 7: PRICE + VOLUME")
-    assert rvol < delivery < liquidity < fundamental < technical
+    assert rvol < delivery < fundamental < liquidity < technical
 
 
 def test_rvol_has_no_top_50_or_top_20_cap():
@@ -32,10 +32,10 @@ def test_dual_delivery_categories_are_written_separately():
     assert "v8_delivery_category_b_each_day60.csv" in source
 
 
-def test_fundamental_pass_is_required_for_final_shortlist():
+def test_fundamental_is_collection_only_until_later_shortlist():
     source = (ROOT / "v8_layers_14_41.py").read_text(encoding="utf-8")
-    assert 'row.get("FundamentalStatus", "WAIT_FOR_DATA")' in source
-    assert 'row.get("FundamentalStatus") == "PASS"' in source
+    assert 'row.get("FundamentalStatus") == "PASS"' not in source
+    assert "strong-fundamental shortlist is deliberately deferred" in source
     assert 'head(4)' in source
 
 
@@ -76,3 +76,15 @@ def test_rvol_selector_keeps_all_qualifying_stocks_without_top_cap(tmp_path, mon
     assert len(selected) == 75
     assert selected["RVOL"].min() > 1.5
     assert selected["RVOLRank"].tolist() == list(range(1, 76))
+
+
+def test_fundamental_collection_covers_delivery_a_and_b_without_rejection():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    assert "DeliveryCategoryAStatus" in source and "DeliveryCategoryBStatus" in source
+    assert "v8_delivery_a_fundamentals.csv" in source
+    assert "v8_delivery_b_fundamentals.csv" in source
+    assert "v8_delivery_ab_combined_fundamentals.csv" in source
+    assert "all rows retained regardless of fundamental data status" in source
+    fundamental = (ROOT / "fundamental_filter.py").read_text(encoding="utf-8")
+    assert "never remove a row" in fundamental
+    assert '"NOT_SHORTLISTED_YET"' in fundamental

@@ -1,0 +1,33 @@
+NSE SWING TRADING V8.0 — CHECKPOINT
+Date: 2026-10-23
+
+USER-APPROVED LOGIC
+- Mainboard eligible universe.
+- RVOL > 1.5; no Top 20/Top 50 cap.
+- Delivery A: 5 distinct valid sessions average Delivery >= 60%.
+- Delivery B: each of the same 5 sessions Delivery >= 60%.
+- Collect fundamental data for every stock in A/B union; do not reject at collection stage.
+- Strong-fundamental shortlist will be built later.
+- Preserve liquidity, technical, news, sector and risk modules.
+
+CHANGES IN THIS PATCH
+- Moved fundamental data collection immediately after dual Delivery evaluation and before liquidity.
+- The collection universe is the union of Delivery A/B passing stocks, deduplicated by symbol. Category B is normally a subset of A under these thresholds.
+- Added separate A, B and combined fundamental reports.
+- Fundamental status is now data completeness (`COMPLETE`, `PARTIAL_DATA`, `MISSING_DATA`), not a PASS/REJECT gate.
+- Removed FundamentalStatus PASS as a hard condition from interim EOD watchlist logic; other technical/news/sector/risk gates remain.
+- Fundamental score is provisional and only available when all six numeric ranking metrics exist.
+- No fundamental values are fabricated. Existing `data/inputs/fundamental_metrics.csv` is the input source; automatic financial-data ingestion is still not configured.
+
+TESTS
+- Python compile: PASS.
+- `python -m pytest -q test_*.py`: 138 passed.
+- A whole-directory pytest run also tried to import `delivery_60_valuation_watchlist_inline_test.py`, which intentionally calls `SystemExit(0)` at module import; use the repository's `test_*.py` suite command above.
+- Live NSE access unavailable in this environment; runtime data and GitHub Actions not verified here.
+
+NEXT
+1. Download patch ZIP.
+2. Replace the included files in the GitHub repository and commit/push.
+3. Run the NSE Data Test workflow.
+4. Upload the fresh logs_*.zip and nse-v8-reports-*.zip.
+5. Verify counts and that fundamental reports contain every A/B candidate, including rows with missing metrics.

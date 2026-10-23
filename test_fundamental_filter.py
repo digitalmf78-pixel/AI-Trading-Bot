@@ -53,38 +53,38 @@ class FundamentalFilterTests(unittest.TestCase):
         return result.iloc[0]
 
     def test_complete_qualified_record_passes(self):
-        self.assertEqual(self.run_filter([good_record()])["FundamentalStatus"], "PASS")
+        self.assertEqual(self.run_filter([good_record()])["FundamentalStatus"], "COMPLETE")
 
     def test_missing_record_waits(self):
         row = self.run_filter([])
-        self.assertEqual(row["FundamentalStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(row["FundamentalStatus"], "MISSING_DATA")
         self.assertIn("FUNDAMENTAL_RECORD_MISSING", row["FundamentalReason"])
 
     def test_missing_metric_waits(self):
         record = good_record(); record["ROCEPercent"] = None
         row = self.run_filter([record])
-        self.assertEqual(row["FundamentalStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
 
-    def test_threshold_failure_rejects(self):
+    def test_weak_metric_is_collected_not_rejected(self):
         record = good_record(); record["DebtToEquity"] = 3
         row = self.run_filter([record])
-        self.assertEqual(row["FundamentalStatus"], "REJECT")
-        self.assertIn("THRESHOLD_FAIL:DebtToEquity", row["FundamentalReason"])
+        self.assertEqual(row["FundamentalStatus"], "COMPLETE")
+        self.assertEqual(row["FundamentalAssessmentStatus"], "NOT_SHORTLISTED_YET")
 
-    def test_unconfigured_thresholds_wait(self):
+    def test_unconfigured_thresholds_do_not_block_collection(self):
         self.thresholds.write_text(json.dumps({key: None for key in CONFIG}), encoding="utf-8")
         row = self.run_filter([good_record()])
-        self.assertEqual(row["FundamentalStatus"], "WAIT_FOR_DATA")
-        self.assertIn("THRESHOLDS_NOT_CONFIGURED", row["FundamentalReason"])
+        self.assertEqual(row["FundamentalStatus"], "COMPLETE")
 
     def test_future_financial_date_waits(self):
         record = good_record(); record["AsOfDate"] = "2026-12-31"
         row = self.run_filter([record])
-        self.assertEqual(row["FundamentalStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
 
-    def test_duplicate_records_wait(self):
+    def test_duplicate_records_are_flagged_but_not_removed(self):
         row = self.run_filter([good_record(), good_record()])
-        self.assertEqual(row["FundamentalStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(row["FundamentalStatus"], "PARTIAL_DATA")
+        self.assertIn("DUPLICATE_FUNDAMENTAL_RECORDS", row["FundamentalReason"])
 
 
 if __name__ == "__main__":

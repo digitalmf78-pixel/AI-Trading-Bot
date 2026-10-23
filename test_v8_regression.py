@@ -184,10 +184,10 @@ def test_rvol_threshold_precedes_dual_delivery_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
     rvol_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
     delivery_step = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
-    liquidity_step = source.index("STEP 5: EXISTING LIQUIDITY FILTER")
-    fundamental_step = source.index("STEP 6: EXISTING FUNDAMENTAL FILTER")
+    fundamental_step = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
+    liquidity_step = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     technical_step = source.index("STEP 7: PRICE + VOLUME")
-    assert rvol_step < delivery_step < liquidity_step < fundamental_step < technical_step
+    assert rvol_step < delivery_step < fundamental_step < liquidity_step < technical_step
     assert "def select_rvol_above_threshold" in source
     assert "minimum_rvol=1.5" in source
     assert ".head(50)" not in source[source.index("def select_rvol_above_threshold"):source.index("# PRICE + VOLUME")]
