@@ -23,7 +23,10 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
-SOURCE_COLUMNS = ["TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL", "FinancialPeriodEnd"]
+SOURCE_COLUMNS = [
+    "TckrSymb", "AsOfDate", "Source", "SourceURL", "FinancialPeriodEnd",
+    "PublicationDate", "PublicationDateStatus", "DataRetrievedAtUTC",
+]
 INPUT_COLUMNS = SOURCE_COLUMNS + METRIC_COLUMNS
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
@@ -142,21 +145,26 @@ def apply_fundamental_filter(
                 parsed = urlparse(source_url)
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                     reasons.append("INVALID_SOURCE_URL")
-            # AsOfDate means the date the financial information was publicly
-            # available, not the date this script downloaded it. A missing
-            # publication date must remain unverified rather than being
-            # replaced with today's retrieval date (which creates look-ahead
-            # false positives in historical EOD runs).
-            report_date = pd.to_datetime(financial.get("AsOfDate"), errors="coerce")
             asof = pd.to_datetime(asof_date, errors="coerce")
-            if pd.isna(report_date):
-                reasons.append("PUBLICATION_DATE_UNVERIFIED")
-            elif pd.notna(asof) and report_date.normalize() > asof.normalize():
-                reasons.append("FINANCIAL_AS_OF_DATE_AFTER_EOD")
-
-            period_end = pd.to_datetime(financial.get("FinancialPeriodEnd"), errors="coerce")
-            if pd.notna(period_end) and pd.notna(asof) and period_end.normalize() > asof.normalize():
+            # Financial period end, publication date, and retrieval timestamp are
+            # distinct facts. Never compare the retrieval timestamp with EOD.
+            period_value = financial.get("FinancialPeriodEnd")
+            source_for_period = str(financial.get("Source", "")).lower()
+            if not _nonempty(period_value) and not ("yahoo" in source_for_period or "yfinance" in source_for_period):
+                period_value = financial.get("AsOfDate")  # legacy/manual records only
+            period_end = pd.to_datetime(period_value, errors="coerce")
+            if pd.isna(period_end):
+                reasons.append("FINANCIAL_PERIOD_END_UNVERIFIED")
+            elif pd.notna(asof) and period_end.normalize() > asof.normalize():
                 reasons.append("FINANCIAL_PERIOD_END_AFTER_EOD")
+
+            publication_value = financial.get("PublicationDate")
+            publication_date = pd.to_datetime(publication_value, errors="coerce")
+            publication_status = str(financial.get("PublicationDateStatus", "")).strip().upper()
+            if pd.isna(publication_date) or publication_status != "VERIFIED":
+                reasons.append("PUBLICATION_DATE_UNVERIFIED")
+            if pd.notna(publication_date) and pd.notna(asof) and publication_date.normalize() > asof.normalize():
+                reasons.append("PUBLICATION_DATE_AFTER_EOD")
 
         supplied_count = sum(_nonempty(row.get(col, pd.NA)) for col in METRIC_COLUMNS)
         score_count = sum(_nonempty(row.get(col, pd.NA)) and pd.notna(_number(row.get(col))) for col in SCORE_METRICS)
@@ -171,7 +179,7 @@ def apply_fundamental_filter(
         row["FundamentalStatus"] = status
         row["FundamentalAssessmentStatus"] = "NOT_SHORTLISTED_YET"
         row["FundamentalReason"] = ";".join(reasons) if reasons else "FUNDAMENTAL_DATA_COLLECTED_FOR_LATER_RANKING"
-        row["FundamentalAsOfDate"] = row.get("AsOfDate", pd.NA)
+        row["FundamentalAsOfDate"] = row.get("FinancialPeriodEnd", row.get("AsOfDate", pd.NA))
         row["FundamentalSource"] = row.get("Source", pd.NA)
         row["FundamentalSourceURL"] = row.get("SourceURL", pd.NA)
         enriched_rows.append(row)

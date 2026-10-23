@@ -25,7 +25,10 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
-BASE_COLUMNS = ["TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL"] + METRIC_COLUMNS
+BASE_COLUMNS = [
+    "TckrSymb", "AsOfDate", "FinancialPeriodEnd", "PublicationDate",
+    "PublicationDateStatus", "DataRetrievedAtUTC", "Source", "SourceURL",
+] + METRIC_COLUMNS
 
 
 def _present(value: Any) -> bool:
@@ -88,19 +91,26 @@ def _growth_from_statement(statement: pd.DataFrame, possible_rows: list[str]):
 
 
 def _financial_period_end(ticker_obj, info: dict) -> str:
-    for key in ("mostRecentQuarter", "lastFiscalYearEnd"):
+    """Return an observed financial-statement period end, never a forecast date.
+
+    `nextFiscalYearEnd` is intentionally excluded because it describes a future
+    fiscal boundary, not the period covered by currently available statements.
+    """
+    try:
+        fin = ticker_obj.financials
+        if isinstance(fin, pd.DataFrame) and len(fin.columns):
+            parsed = pd.to_datetime(fin.columns[0], errors="coerce")
+            if pd.notna(parsed):
+                return parsed.date().isoformat()
+    except Exception:
+        pass
+    for key in ("lastFiscalYearEnd", "mostRecentQuarter"):
         value = info.get(key)
         if value:
             try:
                 return datetime.fromtimestamp(int(value), tz=timezone.utc).date().isoformat()
-            except (TypeError, ValueError, OSError):
+            except (TypeError, ValueError, OSError, OverflowError):
                 pass
-    try:
-        fin = ticker_obj.financials
-        if isinstance(fin, pd.DataFrame) and len(fin.columns):
-            return pd.Timestamp(fin.columns[0]).date().isoformat()
-    except Exception:
-        pass
     return ""
 
 
@@ -109,7 +119,18 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
     record = {col: pd.NA for col in BASE_COLUMNS}
-    record.update({"TckrSymb": symbol, "AsOfDate": pd.NA, "DataRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "Source": "Yahoo Finance via yfinance (secondary; verify against filings)", "SourceURL": url})
+    record.update({
+        "TckrSymb": symbol,
+        # AsOfDate is the financial period end for backward compatibility; it is
+        # NOT the retrieval date or a publication date.
+        "AsOfDate": pd.NA,
+        "FinancialPeriodEnd": pd.NA,
+        "PublicationDate": pd.NA,
+        "PublicationDateStatus": "UNVERIFIED",
+        "DataRetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
+        "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
+        "SourceURL": url,
+    })
     try:
         if ticker_factory is None:
             import yfinance as yf  # type: ignore
@@ -206,11 +227,21 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         )
         valuation_multiple = _first_number(info, ["trailingPE", "forwardPE"])
         record["ValuationStatus"] = "VALUATION_MULTIPLE_AVAILABLE" if _present(valuation_multiple) else "VALUATION_DATA_MISSING"
-        record["FinancialPeriodEnd"] = _financial_period_end(ticker, info)
+        period_end = _financial_period_end(ticker, info)
+        record["FinancialPeriodEnd"] = period_end if period_end else pd.NA
+        record["AsOfDate"] = period_end if period_end else pd.NA
+        # Yahoo's generic yfinance info/statement endpoints do not reliably
+        # expose the exchange filing publication timestamp. Never infer it from
+        # retrieval time or financial period end.
+        record["PublicationDate"] = pd.NA
+        record["PublicationDateStatus"] = "UNVERIFIED"
         metric_count = sum(_present(record.get(col)) for col in METRIC_COLUMNS)
         diagnostic["ProviderStatus"] = "DATA_FOUND" if metric_count else "MISSING_DATA"
         diagnostic["ProviderReason"] = f"metrics_available={metric_count}/{len(METRIC_COLUMNS)}"
         diagnostic["FinancialPeriodEnd"] = record.get("FinancialPeriodEnd", "")
+        diagnostic["PublicationDate"] = record.get("PublicationDate", "")
+        diagnostic["PublicationDateStatus"] = record.get("PublicationDateStatus", "UNVERIFIED")
+        diagnostic["DataRetrievedAtUTC"] = record.get("DataRetrievedAtUTC", "")
         diagnostic["MetricsAvailable"] = metric_count
     except Exception as exc:
         diagnostic["ProviderStatus"] = "PROVIDER_ERROR"
@@ -266,7 +297,7 @@ def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | P
         for col in BASE_COLUMNS + ["FinancialPeriodEnd"]:
             if col not in merged:
                 merged[col] = pd.NA
-        for col in METRIC_COLUMNS + ["AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL"]:
+        for col in METRIC_COLUMNS + ["AsOfDate", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus", "DataRetrievedAtUTC", "Source", "SourceURL"]:
             if not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
         if not _present(merged.get("TckrSymb")):
@@ -281,7 +312,7 @@ def collect_missing_fundamentals(candidates: pd.DataFrame, metrics_path: str | P
             time.sleep(pause_seconds)
 
     combined = pd.DataFrame(list(records.values()))
-    for col in BASE_COLUMNS + ["FinancialPeriodEnd"]:
+    for col in BASE_COLUMNS:
         if col not in combined.columns:
             combined[col] = pd.NA
     # Preserve all existing records (including symbols outside today's universe).
