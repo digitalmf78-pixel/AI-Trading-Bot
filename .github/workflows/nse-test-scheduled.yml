@@ -55,7 +55,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_official_filings.py risk_controls.py; do
+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -73,12 +73,12 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_official_filings.py risk_controls.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
           echo "===== DELIVERY / LIQUIDITY / FUNDAMENTAL / PIPELINE TESTS ====="
-          python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_official_filings.py test_risk_controls.py test_selection_pipeline_order.py
+          python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_risk_controls.py test_selection_pipeline_order.py
 
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
@@ -131,7 +131,7 @@ jobs:
           echo "===== EOD WATCHLIST PREVIEW ====="
           if [ -f outputs/v8_eod_watchlist.csv ]; then head -6 outputs/v8_eod_watchlist.csv; else echo "EOD watchlist not found"; fi
           echo "===== FUNDAMENTAL COLLECTION REPORTS ====="
-          for f in outputs/v8_fundamental_provider_diagnostics.csv outputs/v8_fundamental_report.csv outputs/v8_delivery_a_fundamentals.csv outputs/v8_delivery_b_fundamentals.csv outputs/v8_delivery_ab_combined_fundamentals.csv outputs/v8_fundamental_complete_data.csv outputs/v8_fundamental_partial_data.csv outputs/v8_fundamental_missing_data.csv; do
+          for f in outputs/v8_fundamental_provider_diagnostics.csv outputs/v8_fundamental_report.csv outputs/v8_delivery_a_fundamentals.csv outputs/v8_delivery_b_fundamentals.csv outputs/v8_delivery_ab_combined_fundamentals.csv outputs/v8_fundamental_complete_data.csv outputs/v8_fundamental_partial_data.csv outputs/v8_fundamental_missing_data.csv outputs/v8_fundamental_shortlist_all.csv outputs/v8_fundamental_shortlist_pass.csv; do
             if [ -f "$f" ]; then echo "===== $f (rows excluding header) ====="; python -c "import pandas as pd,sys; p=sys.argv[1]; d=pd.read_csv(p); print('rows=',len(d)); print(d.head(3).to_string(index=False))" "$f"; else echo "MISSING REPORT: $f"; fi
           done
           echo "===== SECTOR / DATA REPORTS ====="
