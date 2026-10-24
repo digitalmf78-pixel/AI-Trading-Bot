@@ -13,6 +13,7 @@ It returned 229,239 general announcement records. The first matching records inc
   `https://www.nseindia.com/api/integrated-filing-results`
 - Requests `type=Integrated Filing- Financials`, `index=equities`, and the same bounded lookback window.
 - Supports common filing-field aliases for symbol, broadcast/filing date, and period-end (`toDate`, `to_date`, `period_ended`, etc.).
+- Handles pagination defensively: it does not stop just because a page is shorter than the requested size; it continues until an empty page, explicit total reached, repeated-page guard, or safety limit. It records pages fetched and the stop reason.
 - Captures endpoint, request parameters, response shape, sample keys/fields, rejection counts and errors in `outputs/v8_official_fetch_diagnostics.csv`.
 - Keeps strict verification: no publication date or period-end is inferred from the EOD cutoff or another unrelated date.
 - Does not substitute a generic NSE page as a filing-specific URL when no official attachment/XBRL URL is provided.
@@ -20,9 +21,10 @@ It returned 229,239 general announcement records. The first matching records inc
 
 ## Validation
 
-- Focused Fundamental/Data Provider/Filter/Shortlist tests: **33 passed**
+- Focused official filing regression tests: **13 passed**
+- Complete tests in the patch workspace: **34 passed**
 - Python compile: **PASS**
-- Live NSE endpoint verification: **PENDING**. Tests use mocked responses, so apply this patch and run NSE Data Test before treating official filings as verified.
+- Live NSE endpoint verification: **PENDING**. Tests use mocked responses, so this patch has not yet proven that the current live NSE endpoint accepts these parameters or returns the expected schema. Run the NSE Data Test after applying it before treating official filings as verified.
 
 ## Apply
 
@@ -30,6 +32,6 @@ Replace these two files in the repository with the files in this ZIP:
 1. `fundamental_official_filings.py`
 2. `test_fundamental_official_filings.py`
 
-Commit/push and run the NSE Data Test workflow. Then upload the resulting report ZIP. Inspect `outputs/v8_official_fetch_diagnostics.csv` for `Endpoint`, `PayloadKeys`, `SampleMatchedItemKeys`, `SampleMatchedItemFields`, `PeriodEndParsed`, and `AcceptedRows`.
+Commit/push and run the NSE Data Test workflow. Then upload the resulting report ZIP. Inspect `outputs/v8_official_fetch_diagnostics.csv` for `Endpoint`, `PayloadKeys`, `SampleMatchedItemKeys`, `SampleMatchedItemFields`, `PagesFetched`, `PaginationStopReason`, `PeriodEndParsed`, and `AcceptedRows`.
 
 Do not mark records VERIFIED if the dedicated endpoint's actual payload does not provide a trustworthy symbol, filing/publication date, and financial period end.

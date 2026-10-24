@@ -208,6 +208,8 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         "SampleMatchedItemKeys": "",
         "SampleMatchedItemFields": "",
         "APIRequestParams": "",
+        "PagesFetched": 0,
+        "PaginationStopReason": "",
         "Error": "",
     }
 
@@ -228,17 +230,23 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         "type": "Integrated Filing- Financials",
         "from_date": start_date.strftime("%d-%m-%Y"),
         "to_date": end_date.strftime("%d-%m-%Y"),
+        # NSE may cap the effective page size regardless of the requested size.
+        # Use a conservative page size and do not infer end-of-data from a short page.
         "page": 1,
-        "size": 1000,
+        "size": 20,
     }
     diagnostic["APIRequestParams"] = str(params)
     rows_payload = []
     wrapper_meta = {}
     first_keys = []
     page = 1
+    seen_page_signatures = set()
     try:
-        # Paginate only when the API indicates another full page may exist.
-        while page <= 20:
+        # Do not stop merely because a page is shorter than the requested size:
+        # NSE/proxies can silently cap page size. Continue until an empty page,
+        # explicit total reached, a repeated page, or the defensive page limit.
+        max_pages = 100
+        while page <= max_pages:
             page_params = dict(params, page=page)
             response = session.get(NSE_RESULTS_API, params=page_params, timeout=30)
             if page == 1:
@@ -254,10 +262,19 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
                 wrapper_meta = meta
                 first_keys = top_keys
                 diagnostic["PayloadKeys"] = ";".join(map(str, top_keys[:50]))
+            diagnostic["PagesFetched"] = page
             if not items:
+                diagnostic["PaginationStopReason"] = "EMPTY_PAGE"
                 if page == 1:
                     diagnostic["Error"] = "Dedicated integrated-filing endpoint returned no recognizable filing list"
                 break
+            # If the API ignores `page`, stop instead of looping and duplicating rows.
+            signature = repr(items[:3]) + f"|count={len(items)}|last={repr(items[-1])}"
+            if signature in seen_page_signatures:
+                diagnostic["PaginationStopReason"] = "REPEATED_PAGE_SIGNATURE"
+                diagnostic["Error"] = diagnostic["Error"] or "Pagination returned a repeated page; stopped to avoid duplicate/infinite fetch"
+                break
+            seen_page_signatures.add(signature)
             rows_payload.extend(items)
             total = _first_value(meta, ("totalRecords", "total_records", "total", "recordsFiltered", "totalCount"))
             try:
@@ -265,10 +282,12 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
             except (ValueError, TypeError):
                 total = None
             if total is not None and len(rows_payload) >= total:
-                break
-            if len(items) < int(params["size"]):
+                diagnostic["PaginationStopReason"] = "TOTAL_RECORDS_REACHED"
                 break
             page += 1
+        else:
+            diagnostic["PaginationStopReason"] = "MAX_PAGE_LIMIT_REACHED"
+            diagnostic["Error"] = "Pagination safety limit reached before end-of-data could be confirmed"
         if not rows_payload and diagnostic["Error"]:
             save_diagnostic()
             raise ValueError(diagnostic["Error"])

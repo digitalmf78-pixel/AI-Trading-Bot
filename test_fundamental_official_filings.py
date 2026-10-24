@@ -120,9 +120,13 @@ def test_homepage_403_does_not_block_official_api_attempt(tmp_path):
 
     session = Session()
     result = fetch_nse_financial_results("2026-10-23", session_factory=lambda: session, diagnostics_path=tmp_path/"fetch_diag.csv")
-    assert len(session.calls) == 2
+    # Fetcher now requests the next page to confirm the end of pagination.
+    assert len(session.calls) == 3
     assert session.calls[0][0] == NSE_HOME
     assert session.calls[1][0] == NSE_RESULTS_API
+    assert session.calls[1][1]["params"]["page"] == 1
+    assert session.calls[2][0] == NSE_RESULTS_API
+    assert session.calls[2][1]["params"]["page"] == 2
     assert len(result) == 1
     assert result.iloc[0]["TckrSymb"] == "ABC"
     assert result.iloc[0]["FinancialPeriodEnd"] == "2026-06-30"
@@ -238,3 +242,56 @@ def test_integrated_filing_does_not_infer_period_from_broadcast_date(tmp_path):
     diag = pd.read_csv(tmp_path/"diag.csv").iloc[0]
     assert int(diag["RejectPeriodMissing"]) == 1
     assert int(diag["AcceptedRows"]) == 0
+
+
+def test_pagination_continues_after_short_page_and_stops_on_empty_page(tmp_path):
+    from fundamental_official_filings import fetch_nse_financial_results, NSE_HOME, NSE_RESULTS_API
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    records = [
+        {
+            "symbol": f"SYM{i:02d}",
+            "broadCastDate": "23-Oct-2026 18:20:00",
+            "toDate": "30-Sep-2026",
+            "relatingTo": "Quarterly",
+            "subject": "Integrated Filing- Financials",
+            "xbrl": f"https://nsearchives.nseindia.com/xbrl/SYM{i:02d}.xml",
+        }
+        for i in range(12)
+    ]
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.pages = []
+        def get(self, url, **kwargs):
+            if url == NSE_HOME:
+                return Response([])
+            if url == NSE_RESULTS_API:
+                page = int(kwargs["params"]["page"])
+                self.pages.append(page)
+                # Simulate an upstream page-size cap of 5, smaller than requested size=20.
+                start = (page - 1) * 5
+                return Response({"data": records[start:start + 5]})
+            raise AssertionError(url)
+
+    session = Session()
+    diag_path = tmp_path / "pagination_diag.csv"
+    result = fetch_nse_financial_results(
+        "2026-10-23", session_factory=lambda: session, diagnostics_path=diag_path
+    )
+    assert len(result) == 12
+    assert session.pages == [1, 2, 3, 4]
+    diag = pd.read_csv(diag_path).iloc[0]
+    assert int(diag["PagesFetched"]) == 4
+    assert diag["PaginationStopReason"] == "EMPTY_PAGE"
+    assert int(diag["AcceptedRows"]) == 12
