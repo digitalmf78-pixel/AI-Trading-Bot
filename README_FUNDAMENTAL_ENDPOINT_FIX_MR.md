@@ -1,37 +1,54 @@
-# NSE V8 Fundamental Official Filing Endpoint Fix (2026-10-24)
+# NSE V8 — Fundamental Official Filing Final Fix (24-10-2026)
 
-## Root cause found from report `nse-v8-reports-40068447073.zip`
+## मूळ चूक — history आणि reference तपासून सापडलेली
 
-The live diagnostic CSV proves the current code queried the **general corporate-announcements endpoint**:
-`https://www.nseindia.com/api/corporate-announcements`
+Latest GitHub Actions log (`logs_108615499818.zip`) मध्ये endpoint ला HTTP 200 मिळाले, पण `payload_items=40`, `financial_term_matches=0`, `periods_parsed=0`, `accepted=0` होते. याचा अर्थ API पूर्णपणे बंद नव्हती; parser NSE च्या actual Integrated Filing schema शी जुळत नव्हता.
 
-It returned 229,239 general announcement records. The first matching records include subjects such as `Clarification - Financial Results`; their sample metadata has publication timestamps and symbols, but no populated attachment or financial period-end field. The current parser therefore reports 1,983 broad text matches and 0 period ends. This is not simply a date-format parsing problem: the feed is too broad for reliable financial-period metadata.
+NSE Integrated Filing API च्या public reference implementation `Baka7/nse-market-scripts/fetch_financial_results_range.py` मध्ये हे fields/parameters वापरलेले आहेत:
 
-## What this patch changes
+- Query parameters: `index=equities`, `from_date`, `to_date`, `period_ended=all`, `type=Integrated Filing- Financials`, `page=0`, `size=...`
+- Count probe response: `totalCount`
+- Actual row fields: `creation_Date` (filing timestamp), `symbol`, `qe_Date` (quarter end), `cmName`, `type_Sub`, `seq_Id`
 
-- Uses NSE's dedicated Integrated Filing - Financials endpoint as the primary source:
-  `https://www.nseindia.com/api/integrated-filing-results`
-- Requests `type=Integrated Filing- Financials`, `index=equities`, and the same bounded lookback window.
-- Supports common filing-field aliases for symbol, broadcast/filing date, and period-end (`toDate`, `to_date`, `period_ended`, etc.).
-- Handles pagination defensively: it does not stop just because a page is shorter than the requested size; it continues until an empty page, explicit total reached, repeated-page guard, or safety limit. It records pages fetched and the stop reason.
-- Captures endpoint, request parameters, response shape, sample keys/fields, rejection counts and errors in `outputs/v8_official_fetch_diagnostics.csv`.
-- Keeps strict verification: no publication date or period-end is inferred from the EOD cutoff or another unrelated date.
-- Does not substitute a generic NSE page as a filing-specific URL when no official attachment/XBRL URL is provided.
-- Changes only `fundamental_official_filings.py` and its focused regression tests. No RVOL, Delivery, Liquidity, technical, sector, news, event, or risk rules are changed.
+आपल्या आधीच्या code मध्ये `broadCastDate` आणि `toDate` सारखे aliases होते, पण `creation_Date` आणि `qe_Date` नव्हते; `period_ended=all` देखील नव्हते आणि pagination `page=1` पासून सुरू होत होती. त्यामुळे NSE ने records दिले तरी parser ला योग्य publication date/period-end ओळखता येत नव्हते.
 
-## Validation
+References:
+- NSE official Integrated Filing - Financials page: https://www.nseindia.com/companies-listing/corporate-integrated-filing
+- Working reference implementation: https://github.com/Baka7/nse-market-scripts/blob/main/fetch_financial_results_range.py
 
-- Focused official filing regression tests: **13 passed**
-- Complete tests in the patch workspace: **34 passed**
-- Python compile: **PASS**
-- Live NSE endpoint verification: **PENDING**. Tests use mocked responses, so this patch has not yet proven that the current live NSE endpoint accepts these parameters or returns the expected schema. Run the NSE Data Test after applying it before treating official filings as verified.
+## या final patch मध्ये काय बदलले
 
-## Apply
+1. `creation_Date` ला official filing/publication timestamp म्हणून parse केले.
+2. `qe_Date` ला official quarter/financial period end म्हणून parse केले.
+3. `cmName`, `type_Sub`, `seq_Id` आणि XBRL link fields diagnostics/record handling मध्ये समाविष्ट केले.
+4. NSE च्या reference प्रमाणे `period_ended=all` आणि zero-based `page=0` वापरले.
+5. आधी `size=1` वापरून `totalCount` probe; मग `totalCount + 50` records मागितले. API size cap लावल्यास deduplicated page fallback आहे.
+6. `symbol + qe_Date + creation_Date` नसल्यास row `VERIFIED` होत नाही. तारीख अंदाजाने भरली जात नाही.
+7. `outputs/v8_official_fetch_diagnostics.csv` मध्ये total count, response keys, sample record fields, pages, stop reason आणि accepted count नोंदवले जातात.
+8. फक्त `fundamental_official_filings.py` आणि त्याची focused tests बदलली आहेत. RVOL, Delivery, Liquidity, technical, sector, news, corporate events, risk किंवा shortlist rules बदललेले नाहीत.
 
-Replace these two files in the repository with the files in this ZIP:
+## Local validation
+
+- Focused Official Filing tests: **13 PASS**
+- Existing project regression suite (the same test set used by the latest workflow): **60 PASS**
+- Python compile check: **PASS**
+- NSE Live API verification: **अजून बाकी** — local tests mocked API responses वापरतात. Live acceptance फक्त patch GitHub वर लागू करून नवीन NSE Data Test run झाल्यावरच सिद्ध होईल.
+
+## लागू करण्याची पद्धत
+
+ZIP मधील दोन्ही files repository च्या root मध्ये पूर्णपणे replace करा:
+
 1. `fundamental_official_filings.py`
 2. `test_fundamental_official_filings.py`
 
-Commit/push and run the NSE Data Test workflow. Then upload the resulting report ZIP. Inspect `outputs/v8_official_fetch_diagnostics.csv` for `Endpoint`, `PayloadKeys`, `SampleMatchedItemKeys`, `SampleMatchedItemFields`, `PagesFetched`, `PaginationStopReason`, `PeriodEndParsed`, and `AcceptedRows`.
+Commit/push करून GitHub Actions मधील NSE Data Test run करा. नवीन report ZIP मधील `outputs/v8_official_fetch_diagnostics.csv` मध्ये हे तपासा:
 
-Do not mark records VERIFIED if the dedicated endpoint's actual payload does not provide a trustworthy symbol, filing/publication date, and financial period end.
+- `ReportedTotalCount`
+- `PayloadKeys`
+- `SampleMatchedItemKeys` आणि `SampleMatchedItemFields`
+- `PagesFetched` / `PaginationStopReason`
+- `PublicationDateParsed`
+- `PeriodEndParsed`
+- `AcceptedRows`
+
+`AcceptedRows > 0` असणे एकट्याने सर्व fundamental metrics verified असल्याचा पुरावा नाही. प्रत्येक candidate साठी exact symbol, period end, official filing timestamp आणि EOD cutoff match आवश्यक आहे. Live run ने योग्य rows न दिल्यास `UNVERIFIED` कायम ठेवायचे; तारीख किंवा financial period बनवून भरायचा नाही.
