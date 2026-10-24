@@ -93,37 +93,77 @@ def test_fetch_failure_uses_cache_but_respects_eod_cutoff(tmp_path):
     assert "FETCH_FAILED" in set(diag["Status"])
 
 
-def test_homepage_403_does_not_prevent_official_api_attempt(monkeypatch):
-    from fundamental_official_filings import fetch_nse_financial_results
+def test_homepage_403_does_not_block_official_api_attempt(tmp_path):
+    from fundamental_official_filings import fetch_nse_financial_results, NSE_HOME, NSE_API
 
     class Response:
         def __init__(self, status_code, payload=None):
             self.status_code = status_code
-            self._payload = payload or []
+            self._payload = payload
         def raise_for_status(self):
             if self.status_code >= 400:
                 raise RuntimeError(f"HTTP {self.status_code}")
         def json(self):
             return self._payload
 
-    class FakeSession:
+    class Session:
         def __init__(self):
             self.headers = {}
             self.calls = []
         def get(self, url, **kwargs):
             self.calls.append((url, kwargs))
-            if url == "https://www.nseindia.com/":
+            if url == NSE_HOME:
                 return Response(403)
-            return Response(200, [{
-                "symbol": "AAA",
-                "an_dt": "25-Jul-2026",
-                "desc": "Financial Results for the quarter ended June 30, 2026",
-                "attchmntFile": "https://www.nseindia.com/example.pdf",
-            }])
+            if url == NSE_API:
+                return Response(200, [{
+                    "symbol": "ABC",
+                    "an_dt": "25-Jul-2026",
+                    "desc": "Financial Results for quarter ended June 30, 2026",
+                    "attchmntFile": "https://www.nseindia.com/example.pdf",
+                }])
+            raise AssertionError(f"Unexpected URL: {url}")
 
-    session = FakeSession()
-    result = fetch_nse_financial_results("2026-10-22", session_factory=lambda: session)
+    session = Session()
+    result = fetch_nse_financial_results("2026-10-23", session_factory=lambda: session, diagnostics_path=tmp_path/"fetch_diag.csv")
     assert len(session.calls) == 2
-    assert result.iloc[0]["TckrSymb"] == "AAA"
+    assert session.calls[0][0] == NSE_HOME
+    assert session.calls[1][0] == NSE_API
+    assert len(result) == 1
+    assert result.iloc[0]["TckrSymb"] == "ABC"
     assert result.iloc[0]["FinancialPeriodEnd"] == "2026-06-30"
     assert result.iloc[0]["PublicationDate"] == "2026-07-25"
+
+
+
+def test_empty_or_unmatched_live_payload_writes_fetch_diagnostics(tmp_path):
+    from fundamental_official_filings import fetch_nse_financial_results, NSE_HOME, NSE_API
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+        def get(self, url, **kwargs):
+            if url == NSE_HOME:
+                return Response([])
+            if url == NSE_API:
+                return Response([{"symbol": "ABC", "an_dt": "20-10-2026", "desc": "Annual report uploaded"}])
+            raise AssertionError(url)
+
+    diag_path = tmp_path / "fetch_diag.csv"
+    result = fetch_nse_financial_results("2026-10-23", session_factory=Session, diagnostics_path=diag_path)
+    assert result.empty
+    diag = pd.read_csv(diag_path).iloc[0]
+    assert int(diag["APIStatusCode"]) == 200
+    assert int(diag["PayloadItemCount"]) == 1
+    assert int(diag["RejectNoFinancialTerm"]) == 1
+    assert int(diag["AcceptedRows"]) == 0
+    assert "Annual report uploaded" in diag["SampleDescriptions"]

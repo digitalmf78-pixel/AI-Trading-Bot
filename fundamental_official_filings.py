@@ -16,6 +16,7 @@ import pandas as pd
 OUTPUT_DIR = Path("outputs")
 FILINGS_CACHE = OUTPUT_DIR / "v8_official_financial_results_filings.csv"
 VERIFY_DIAGNOSTICS = OUTPUT_DIR / "v8_official_publication_date_verification.csv"
+FETCH_DIAGNOSTICS = OUTPUT_DIR / "v8_official_fetch_diagnostics.csv"
 NSE_HOME = "https://www.nseindia.com/"
 NSE_API = "https://www.nseindia.com/api/corporate-announcements"
 NSE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
@@ -128,8 +129,13 @@ def _announcement_period_end(item: dict, description: str):
     return _period_end_from_description(description)
 
 
-def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_factory=None):
-    """Fetch NSE corporate announcements through the requested EOD date."""
+def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_factory=None,
+                                diagnostics_path=FETCH_DIAGNOSTICS):
+    """Fetch NSE corporate announcements and explain why records are/aren't parsed.
+
+    The diagnostic sidecar is intentionally observational: it does not relax the
+    official symbol, period-end, publication-date, or EOD-cutoff verification.
+    """
     import requests
 
     cutoff = pd.to_datetime(asof_date, errors="coerce")
@@ -143,45 +149,105 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         "Accept": "application/json, text/plain, */*",
         "Referer": NSE_FILINGS_PAGE,
     })
-    # NSE's landing page is frequently blocked (HTTP 403) in hosted CI runners.
-    # Treat the homepage request as a best-effort cookie warm-up, not a hard
-    # prerequisite: still try the official announcements API. The API response
-    # itself must pass status/schema checks before any filing can be accepted.
+    diagnostic = {
+        "AsOfDate": end_date.isoformat(),
+        "LookbackStart": start_date.isoformat(),
+        "LookbackEnd": end_date.isoformat(),
+        "HomepageWarmupStatus": "NOT_ATTEMPTED",
+        "APIStatusCode": pd.NA,
+        "APIContentType": "",
+        "PayloadType": "",
+        "PayloadKeys": "",
+        "PayloadItemCount": 0,
+        "DictItems": 0,
+        "DescriptionItems": 0,
+        "FinancialTermMatches": 0,
+        "PublicationDateParsed": 0,
+        "WithinDateRange": 0,
+        "SymbolParsed": 0,
+        "PeriodEndParsed": 0,
+        "AcceptedRows": 0,
+        "RejectNoFinancialTerm": 0,
+        "RejectDateMissingOrOutOfRange": 0,
+        "RejectSymbolMissing": 0,
+        "RejectPeriodMissing": 0,
+        "SampleDescriptions": "",
+        "Error": "",
+    }
+
+    def save_diagnostic():
+        path = Path(diagnostics_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([diagnostic]).to_csv(path, index=False)
+
+    # Homepage warm-up is best-effort only. NSE may return HTTP 403 for the
+    # homepage while the announcements API is still reachable.
     try:
         home = session.get(NSE_HOME, timeout=20)
-        if getattr(home, "status_code", 200) >= 400:
-            print(f"[FUNDAMENTAL OFFICIAL DATE] homepage warm-up HTTP {home.status_code}; trying official API anyway")
-        else:
-            home.raise_for_status()
+        code = getattr(home, "status_code", 200)
+        diagnostic["HomepageWarmupStatus"] = f"HTTP_{code}"
     except Exception as exc:
-        print(f"[FUNDAMENTAL OFFICIAL DATE] homepage warm-up failed ({type(exc).__name__}: {exc}); trying official API anyway")
-    params = {"index": "equities", "from_date": start_date.strftime("%d-%m-%Y"), "to_date": end_date.strftime("%d-%m-%Y")}
-    response = session.get(NSE_API, params=params, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-    if isinstance(payload, dict):
-        for key in ("data", "rows", "announcements"):
-            if isinstance(payload.get(key), list):
-                payload = payload[key]
-                break
-    if not isinstance(payload, list):
-        raise ValueError("Unexpected NSE corporate-announcements response schema")
+        diagnostic["HomepageWarmupStatus"] = f"ERROR:{type(exc).__name__}"
 
+    params = {"index": "equities", "from_date": start_date.strftime("%d-%m-%Y"), "to_date": end_date.strftime("%d-%m-%Y")}
+    try:
+        response = session.get(NSE_API, params=params, timeout=30)
+        diagnostic["APIStatusCode"] = getattr(response, "status_code", pd.NA)
+        headers = getattr(response, "headers", {}) or {}
+        diagnostic["APIContentType"] = str(headers.get("Content-Type", headers.get("content-type", "")))[:150]
+        response.raise_for_status()
+        payload = response.json()
+        diagnostic["PayloadType"] = type(payload).__name__
+        if isinstance(payload, dict):
+            diagnostic["PayloadKeys"] = ";".join(map(str, list(payload.keys())[:30]))
+            for key in ("data", "rows", "announcements"):
+                if isinstance(payload.get(key), list):
+                    payload = payload[key]
+                    break
+        if not isinstance(payload, list):
+            diagnostic["Error"] = "Unexpected response schema; top-level payload is not a list"
+            save_diagnostic()
+            raise ValueError("Unexpected NSE corporate-announcements response schema")
+    except Exception as exc:
+        if not diagnostic["Error"]:
+            diagnostic["Error"] = f"{type(exc).__name__}: {exc}"[:500]
+        save_diagnostic()
+        raise
+
+    diagnostic["PayloadItemCount"] = len(payload)
     rows = []
+    sample_descriptions = []
+    terms = ("financial results", "financial result", "unaudited results", "audited results", "integrated filing - financial")
     for item in payload:
         if not isinstance(item, dict):
             continue
+        diagnostic["DictItems"] += 1
         desc = _announcement_description(item)
+        if desc:
+            diagnostic["DescriptionItems"] += 1
+            if len(sample_descriptions) < 5:
+                sample_descriptions.append(desc[:240])
         lower = desc.lower()
-        if not any(term in lower for term in ("financial results", "financial result", "unaudited results", "audited results", "integrated filing - financial")):
+        if not any(term in lower for term in terms):
+            diagnostic["RejectNoFinancialTerm"] += 1
             continue
+        diagnostic["FinancialTermMatches"] += 1
         pub_date = _announcement_date(item)
         if not pub_date or pub_date > end_date or pub_date < start_date:
+            diagnostic["RejectDateMissingOrOutOfRange"] += 1
             continue
+        diagnostic["PublicationDateParsed"] += 1
+        diagnostic["WithinDateRange"] += 1
         symbol = _announcement_symbol(item)
-        period_end = _announcement_period_end(item, desc)
-        if not symbol or not period_end:
+        if not symbol:
+            diagnostic["RejectSymbolMissing"] += 1
             continue
+        diagnostic["SymbolParsed"] += 1
+        period_end = _announcement_period_end(item, desc)
+        if not period_end:
+            diagnostic["RejectPeriodMissing"] += 1
+            continue
+        diagnostic["PeriodEndParsed"] += 1
         attachment = str(item.get("attchmntFile", item.get("attachment", item.get("url", ""))) or "").strip()
         if attachment.startswith("/"):
             attachment = "https://www.nseindia.com" + attachment
@@ -197,6 +263,18 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
             "OfficialSource": "NSE corporate announcements",
             "RetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
         })
+    diagnostic["AcceptedRows"] = len(rows)
+    diagnostic["SampleDescriptions"] = " || ".join(sample_descriptions)[:1200]
+    if not rows:
+        diagnostic["Error"] = "API response parsed, but no financial-result filings met current parser/date/symbol/period rules"
+    save_diagnostic()
+    print(
+        "[FUNDAMENTAL OFFICIAL FETCH] "
+        f"homepage={diagnostic['HomepageWarmupStatus']} api_status={diagnostic['APIStatusCode']} "
+        f"payload_items={diagnostic['PayloadItemCount']} financial_term_matches={diagnostic['FinancialTermMatches']} "
+        f"periods_parsed={diagnostic['PeriodEndParsed']} accepted={diagnostic['AcceptedRows']} "
+        f"diagnostics={diagnostics_path}"
+    )
     return pd.DataFrame(rows, columns=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus", "FilingDescription", "OfficialFilingURL", "OfficialSource", "RetrievedAtUTC"])
 
 
