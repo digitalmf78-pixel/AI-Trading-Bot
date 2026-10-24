@@ -20,7 +20,7 @@ FETCH_DIAGNOSTICS = OUTPUT_DIR / "v8_official_fetch_diagnostics.csv"
 NSE_HOME = "https://www.nseindia.com/"
 NSE_API = "https://www.nseindia.com/api/corporate-announcements"  # legacy fallback only
 NSE_RESULTS_API = "https://www.nseindia.com/api/integrated-filing-results"
-NSE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+NSE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-integrated-filing"
 
 
 def _date(value):
@@ -100,7 +100,7 @@ def _period_end_from_description(description: str):
 
 
 def _announcement_date(item: dict):
-    for key in ("broadCastDate", "broadcastDate", "broadcast_date", "filingDate", "filing_date", "an_dt", "announcementDate", "date", "sort_date", "timestamp"):
+    for key in ("creation_Date", "creationDate", "broadCastDate", "broadcastDate", "broadcast_date", "filingDate", "filing_date", "an_dt", "announcementDate", "date", "sort_date", "timestamp"):
         if item.get(key):
             d = _date(item[key])
             if d:
@@ -117,12 +117,12 @@ def _announcement_symbol(item: dict):
 
 
 def _announcement_description(item: dict):
-    return " ".join(str(item.get(k, "") or "") for k in ("subject", "relatingTo", "desc", "sm_name", "companyName", "details", "description", "financialYear")).strip()
+    return " ".join(str(item.get(k, "") or "") for k in ("subject", "relatingTo", "desc", "sm_name", "companyName", "cmName", "company_name", "details", "description", "financialYear", "type_Sub", "typeSub", "filing_type", "consolidated", "audited")).strip()
 
 
 def _announcement_period_end(item: dict, description: str):
     # Prefer explicit period-end fields from the structured response.
-    for key in ("period_ended", "periodEnded", "periodEnd", "period_end", "period_end_date", "financialPeriodEnd", "financial_period_end", "FinancialPeriodEnd", "toDate", "to_date", "re_to_dt"):
+    for key in ("qe_Date", "qeDate", "quarter_ended", "quarterEnded", "period_ended", "periodEnded", "periodEnd", "period_end", "period_end_date", "financialPeriodEnd", "financial_period_end", "FinancialPeriodEnd", "toDate", "to_date", "re_to_dt"):
         if item.get(key):
             d = _date(item[key])
             if d:
@@ -159,12 +159,12 @@ def _first_value(item, keys):
 
 def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_factory=None,
                                 diagnostics_path=FETCH_DIAGNOSTICS):
-    """Fetch NSE's dedicated Integrated Filing - Financials index.
+    """Fetch NSE Integrated Filing-Financials using its observed JSON schema.
 
-    The general corporate-announcements feed is intentionally not the primary
-    source: it includes clarification/meeting notices whose metadata has no
-    financial period end. This function only marks a result VERIFIED when an
-    exact symbol, official publication date and reported period end are present.
+    The implementation follows the publicly documented working pattern used by
+    the nse-market-scripts reference project: probe totalCount, query the
+    Integrated Filing endpoint with period_ended=all, and read creation_Date,
+    symbol and qe_Date.  It never invents missing dates.
     """
     import requests
 
@@ -177,40 +177,23 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-integrated-filing",
+        "Referer": NSE_FILINGS_PAGE,
         "X-Requested-With": "XMLHttpRequest",
     })
     diagnostic = {
-        "AsOfDate": end_date.isoformat(),
-        "LookbackStart": start_date.isoformat(),
-        "LookbackEnd": end_date.isoformat(),
-        "Endpoint": NSE_RESULTS_API,
-        "HomepageWarmupStatus": "NOT_ATTEMPTED",
-        "APIStatusCode": pd.NA,
-        "APIContentType": "",
-        "PayloadType": "",
-        "PayloadKeys": "",
-        "PayloadItemCount": 0,
-        "DictItems": 0,
-        "DescriptionItems": 0,
-        "FinancialTermMatches": 0,
-        "PublicationDateParsed": 0,
-        "WithinDateRange": 0,
-        "SymbolParsed": 0,
-        "PeriodEndParsed": 0,
-        "AcceptedRows": 0,
-        "RejectNoFinancialTerm": 0,
-        "RejectDateMissingOrOutOfRange": 0,
-        "RejectSymbolMissing": 0,
-        "RejectPeriodMissing": 0,
-        "SampleDescriptions": "",
-        "SampleFinancialResultMatches": "",
-        "SampleMatchedItemKeys": "",
-        "SampleMatchedItemFields": "",
-        "APIRequestParams": "",
-        "PagesFetched": 0,
-        "PaginationStopReason": "",
-        "Error": "",
+        "AsOfDate": end_date.isoformat(), "LookbackStart": start_date.isoformat(),
+        "LookbackEnd": end_date.isoformat(), "Endpoint": NSE_RESULTS_API,
+        "HomepageWarmupStatus": "NOT_ATTEMPTED", "APIStatusCode": pd.NA,
+        "APIContentType": "", "PayloadType": "", "PayloadKeys": "",
+        "PayloadItemCount": 0, "DictItems": 0, "DescriptionItems": 0,
+        "FinancialTermMatches": 0, "PublicationDateParsed": 0, "WithinDateRange": 0,
+        "SymbolParsed": 0, "PeriodEndParsed": 0, "AcceptedRows": 0,
+        "RejectNoFinancialTerm": 0, "RejectDateMissingOrOutOfRange": 0,
+        "RejectSymbolMissing": 0, "RejectPeriodMissing": 0,
+        "SampleDescriptions": "", "SampleFinancialResultMatches": "",
+        "SampleMatchedItemKeys": "", "SampleMatchedItemFields": "",
+        "APIRequestParams": "", "PagesFetched": 0, "PaginationStopReason": "",
+        "ReportedTotalCount": pd.NA, "Error": "",
     }
 
     def save_diagnostic():
@@ -218,79 +201,130 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame([diagnostic]).to_csv(path, index=False)
 
-    # Warm-up is best-effort; a homepage 403 does not block an API attempt.
-    try:
-        home = session.get(NSE_HOME, timeout=20)
-        diagnostic["HomepageWarmupStatus"] = f"HTTP_{getattr(home, 'status_code', 200)}"
-    except Exception as exc:
-        diagnostic["HomepageWarmupStatus"] = f"ERROR:{type(exc).__name__}"
+    def base_params(page=0, size=1):
+        # `period_ended=all` and zero-based page indexing are part of the
+        # observed NSE endpoint contract; omitting them caused unrelated/empty
+        # records in previous attempts.
+        return {
+            "index": "equities",
+            "from_date": start_date.strftime("%d-%m-%Y"),
+            "to_date": end_date.strftime("%d-%m-%Y"),
+            "period_ended": "all",
+            "type": "Integrated Filing- Financials",
+            "page": page,
+            "size": size,
+        }
 
-    params = {
-        "index": "equities",
-        "type": "Integrated Filing- Financials",
-        "from_date": start_date.strftime("%d-%m-%Y"),
-        "to_date": end_date.strftime("%d-%m-%Y"),
-        # NSE may cap the effective page size regardless of the requested size.
-        # Use a conservative page size and do not infer end-of-data from a short page.
-        "page": 1,
-        "size": 20,
-    }
-    diagnostic["APIRequestParams"] = str(params)
-    rows_payload = []
-    wrapper_meta = {}
-    first_keys = []
-    page = 1
-    seen_page_signatures = set()
     try:
-        # Do not stop merely because a page is shorter than the requested size:
-        # NSE/proxies can silently cap page size. Continue until an empty page,
-        # explicit total reached, a repeated page, or the defensive page limit.
-        max_pages = 100
-        while page <= max_pages:
-            page_params = dict(params, page=page)
-            response = session.get(NSE_RESULTS_API, params=page_params, timeout=30)
-            if page == 1:
-                diagnostic["APIStatusCode"] = getattr(response, "status_code", pd.NA)
-                headers = getattr(response, "headers", {}) or {}
-                diagnostic["APIContentType"] = str(headers.get("Content-Type", headers.get("content-type", "")))[:150]
+        # Warm-up is best effort; a homepage 403 is not itself a failed API call.
+        try:
+            home = session.get(NSE_HOME, timeout=20)
+            diagnostic["HomepageWarmupStatus"] = f"HTTP_{getattr(home, 'status_code', 200)}"
+        except Exception as exc:
+            diagnostic["HomepageWarmupStatus"] = f"ERROR:{type(exc).__name__}"
+
+        probe_params = base_params(page=0, size=1)
+        diagnostic["APIRequestParams"] = str(probe_params)
+        probe = session.get(NSE_RESULTS_API, params=probe_params, timeout=30)
+        diagnostic["APIStatusCode"] = getattr(probe, "status_code", pd.NA)
+        headers = getattr(probe, "headers", {}) or {}
+        diagnostic["APIContentType"] = str(headers.get("Content-Type", headers.get("content-type", "")))[:150]
+        probe.raise_for_status()
+        probe_payload = probe.json()
+        diagnostic["PayloadType"] = type(probe_payload).__name__
+        probe_items, probe_meta, probe_keys = _extract_result_items(probe_payload)
+        diagnostic["PayloadKeys"] = ";".join(map(str, probe_keys[:50]))
+        total_value = _first_value(probe_meta, ("totalCount", "total_count", "totalRecords", "total_records", "total", "recordsFiltered", "totalCount"))
+        try:
+            total_count = int(total_value) if total_value is not None else None
+        except (ValueError, TypeError):
+            total_count = None
+        diagnostic["ReportedTotalCount"] = total_count if total_count is not None else pd.NA
+
+        if total_count == 0:
+            diagnostic["PaginationStopReason"] = "TOTAL_COUNT_ZERO"
+            diagnostic["Error"] = "NSE Integrated Filing API reported totalCount=0 for the requested date window"
+            rows_payload = []
+        elif total_count is not None:
+            # Reference implementation uses totalCount+50 in one request to
+            # avoid live-feed drift between page requests. If NSE caps size,
+            # fall back to verified zero-based pages below.
+            requested_size = min(max(total_count + 50, 1), 50000)
+            fetch_params = base_params(page=0, size=requested_size)
+            response = session.get(NSE_RESULTS_API, params=fetch_params, timeout=60)
             response.raise_for_status()
             payload = response.json()
-            if page == 1:
-                diagnostic["PayloadType"] = type(payload).__name__
             items, meta, top_keys = _extract_result_items(payload)
-            if page == 1:
-                wrapper_meta = meta
-                first_keys = top_keys
-                diagnostic["PayloadKeys"] = ";".join(map(str, top_keys[:50]))
-            diagnostic["PagesFetched"] = page
-            if not items:
-                diagnostic["PaginationStopReason"] = "EMPTY_PAGE"
-                if page == 1:
-                    diagnostic["Error"] = "Dedicated integrated-filing endpoint returned no recognizable filing list"
-                break
-            # If the API ignores `page`, stop instead of looping and duplicating rows.
-            signature = repr(items[:3]) + f"|count={len(items)}|last={repr(items[-1])}"
-            if signature in seen_page_signatures:
-                diagnostic["PaginationStopReason"] = "REPEATED_PAGE_SIGNATURE"
-                diagnostic["Error"] = diagnostic["Error"] or "Pagination returned a repeated page; stopped to avoid duplicate/infinite fetch"
-                break
-            seen_page_signatures.add(signature)
-            rows_payload.extend(items)
-            total = _first_value(meta, ("totalRecords", "total_records", "total", "recordsFiltered", "totalCount"))
-            try:
-                total = int(total) if total is not None else None
-            except (ValueError, TypeError):
-                total = None
-            if total is not None and len(rows_payload) >= total:
-                diagnostic["PaginationStopReason"] = "TOTAL_RECORDS_REACHED"
-                break
-            page += 1
+            diagnostic["PayloadKeys"] = ";".join(map(str, top_keys[:50])) or diagnostic["PayloadKeys"]
+            diagnostic["PagesFetched"] = 1
+            rows_payload = list(items)
+            if len(rows_payload) >= total_count:
+                diagnostic["PaginationStopReason"] = "PROBE_TOTALCOUNT_FETCHED"
+            else:
+                # Fallback if the server imposes a page-size cap. Page index is
+                # zero-based. Deduplicate by NSE seq_Id where available.
+                diagnostic["PaginationStopReason"] = "FALLBACK_PAGINATION_AFTER_SIZE_CAP"
+                rows_payload = []
+                seen = set()
+                page_size = 1000
+                max_pages = min((total_count // page_size) + 5, 200)
+                for page in range(max_pages):
+                    page_params = base_params(page=page, size=page_size)
+                    page_response = session.get(NSE_RESULTS_API, params=page_params, timeout=60)
+                    page_response.raise_for_status()
+                    page_payload = page_response.json()
+                    page_items, page_meta, page_keys = _extract_result_items(page_payload)
+                    diagnostic["PagesFetched"] = page + 1
+                    if not page_items:
+                        diagnostic["PaginationStopReason"] = "EMPTY_PAGE_BEFORE_TOTALCOUNT"
+                        break
+                    added = 0
+                    for item in page_items:
+                        stable_id = _first_value(item, ("seq_Id", "seq_id", "seqId", "id"))
+                        signature = str(stable_id) if stable_id is not None else "|".join(str(item.get(k, "")) for k in ("symbol", "creation_Date", "qe_Date", "type_Sub", "consolidated", "audited"))
+                        if signature not in seen:
+                            seen.add(signature)
+                            rows_payload.append(item)
+                            added += 1
+                    if len(rows_payload) >= total_count:
+                        diagnostic["PaginationStopReason"] = "TOTALCOUNT_REACHED"
+                        break
+                    if added == 0:
+                        diagnostic["PaginationStopReason"] = "NO_NEW_RECORDS"
+                        break
+                else:
+                    diagnostic["PaginationStopReason"] = "MAX_PAGE_LIMIT_REACHED"
+                if len(rows_payload) < total_count:
+                    diagnostic["Error"] = f"NSE reported {total_count} records but only {len(rows_payload)} unique records were fetched"
         else:
-            diagnostic["PaginationStopReason"] = "MAX_PAGE_LIMIT_REACHED"
-            diagnostic["Error"] = "Pagination safety limit reached before end-of-data could be confirmed"
-        if not rows_payload and diagnostic["Error"]:
-            save_diagnostic()
-            raise ValueError(diagnostic["Error"])
+            # No totalCount in response: conservative page-by-page fallback.
+            rows_payload = []
+            seen = set()
+            for page in range(200):
+                page_params = base_params(page=page, size=1000)
+                response = session.get(NSE_RESULTS_API, params=page_params, timeout=60)
+                response.raise_for_status()
+                payload = response.json()
+                items, meta, keys = _extract_result_items(payload)
+                diagnostic["PagesFetched"] = page + 1
+                if page == 0:
+                    diagnostic["PayloadKeys"] = ";".join(map(str, keys[:50]))
+                if not items:
+                    diagnostic["PaginationStopReason"] = "EMPTY_PAGE"
+                    break
+                added = 0
+                for item in items:
+                    stable_id = _first_value(item, ("seq_Id", "seq_id", "seqId", "id"))
+                    signature = str(stable_id) if stable_id is not None else "|".join(str(item.get(k, "")) for k in ("symbol", "creation_Date", "qe_Date", "type_Sub", "consolidated", "audited"))
+                    if signature not in seen:
+                        seen.add(signature)
+                        rows_payload.append(item)
+                        added += 1
+                if added == 0:
+                    diagnostic["PaginationStopReason"] = "NO_NEW_RECORDS"
+                    break
+            else:
+                diagnostic["PaginationStopReason"] = "MAX_PAGE_LIMIT_REACHED"
     except Exception as exc:
         diagnostic["Error"] = f"{type(exc).__name__}: {exc}"[:500]
         save_diagnostic()
@@ -300,63 +334,48 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
     rows = []
     sample_descriptions, sample_matches, sample_matched_keys, sample_matched_fields = [], [], [], []
     for item in rows_payload:
+        if not isinstance(item, dict):
+            continue
         diagnostic["DictItems"] += 1
         desc = _announcement_description(item)
         if desc:
             diagnostic["DescriptionItems"] += 1
             if len(sample_descriptions) < 5:
                 sample_descriptions.append(desc[:240])
-        lower = desc.lower()
-        # Dedicated endpoint records are already financial-results filings.
-        # A subject/relatingTo marker is preferred, but don't require a word
-        # match if the endpoint provides structured period fields.
         period_end = _announcement_period_end(item, desc)
-        financial_match = any(term in lower for term in (
-            "financial result", "financials", "quarter", "half year", "nine months", "annual result"
-        )) or period_end is not None
+        symbol = _announcement_symbol(item)
+        # This is already the dedicated Integrated Filing-Financials endpoint
+        # with `type=Integrated Filing- Financials`; the authoritative row
+        # fields are symbol + qe_Date + creation_Date, not announcement text.
+        financial_match = bool(symbol and period_end is not None)
         if not financial_match:
             diagnostic["RejectNoFinancialTerm"] += 1
+            if period_end is None:
+                diagnostic["RejectPeriodMissing"] += 1
+            if not symbol:
+                diagnostic["RejectSymbolMissing"] += 1
             continue
         diagnostic["FinancialTermMatches"] += 1
         if len(sample_matches) < 8:
             sample_matches.append(desc[:260])
             if len(sample_matched_keys) < 5:
                 sample_matched_keys.append(",".join(map(str, list(item.keys())[:100])))
-                selected = {}
-                for key, value in item.items():
-                    if any(token in str(key).lower() for token in (
-                        "date", "period", "symbol", "desc", "subject", "name", "detail",
-                        "attach", "url", "result", "broadcast", "filing", "relating", "xbrl", "financial"
-                    )):
-                        selected[str(key)] = str(value)[:220]
+                selected = {str(k): str(v)[:220] for k, v in item.items() if any(token in str(k).lower() for token in (
+                    "date", "period", "symbol", "desc", "subject", "name", "detail", "attach", "url", "result", "broadcast", "filing", "relating", "xbrl", "financial", "qe_", "creation", "seq", "type_sub"
+                ))}
                 sample_matched_fields.append(str(selected)[:1800])
-        pub_value = _first_value(item, (
-            "broadCastDate", "broadcastDate", "broadcast_date", "filingDate", "filing_date",
-            "an_dt", "announcementDate", "date", "sort_date", "timestamp"
-        ))
-        pub_date = _date(pub_value)
+        pub_date = _announcement_date(item)
         if not pub_date or pub_date > end_date or pub_date < start_date:
             diagnostic["RejectDateMissingOrOutOfRange"] += 1
             continue
         diagnostic["PublicationDateParsed"] += 1
         diagnostic["WithinDateRange"] += 1
-        symbol = _announcement_symbol(item)
-        if not symbol:
-            diagnostic["RejectSymbolMissing"] += 1
-            continue
         diagnostic["SymbolParsed"] += 1
-        if period_end is None:
-            diagnostic["RejectPeriodMissing"] += 1
-            continue
         diagnostic["PeriodEndParsed"] += 1
-        attachment = _first_value(item, (
-            "xbrl", "xbrlUrl", "xbrl_url", "attchmntFile", "attachment", "attachmentUrl",
-            "attachmentURL", "url", "fileUrl", "file_url"
-        ))
+        attachment = _first_value(item, ("xbrl", "xbrl_Link", "xbrlLink", "xbrl_url", "xbrlUrl", "attchmntFile", "attachment", "attachmentUrl", "attachmentURL", "url", "fileUrl", "file_url", "details", "detailUrl"))
         attachment = str(attachment or "").strip()
         if attachment.startswith("/"):
             attachment = "https://www.nseindia.com" + attachment
-        # Don't substitute a generic filings page for a missing filing-specific URL.
         if not attachment.startswith("https://"):
             attachment = ""
         rows.append({
@@ -375,20 +394,20 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
     diagnostic["SampleMatchedItemKeys"] = " || ".join(sample_matched_keys)[:2400]
     diagnostic["SampleMatchedItemFields"] = " || ".join(sample_matched_fields)[:6000]
     if not rows and not diagnostic["Error"]:
-        diagnostic["Error"] = "Integrated filing API returned records, but none met official symbol/publication-date/period-end rules"
+        diagnostic["Error"] = "Integrated Filing API returned records, but none had valid NSE symbol, quarter-end and publication date fields"
     save_diagnostic()
     print(
         "[FUNDAMENTAL OFFICIAL FETCH] "
         f"endpoint=integrated-filing-results homepage={diagnostic['HomepageWarmupStatus']} "
-        f"api_status={diagnostic['APIStatusCode']} payload_items={diagnostic['PayloadItemCount']} "
-        f"financial_term_matches={diagnostic['FinancialTermMatches']} periods_parsed={diagnostic['PeriodEndParsed']} "
-        f"accepted={diagnostic['AcceptedRows']} diagnostics={diagnostics_path}"
+        f"api_status={diagnostic['APIStatusCode']} total_count={diagnostic['ReportedTotalCount']} "
+        f"payload_items={diagnostic['PayloadItemCount']} financial_term_matches={diagnostic['FinancialTermMatches']} "
+        f"periods_parsed={diagnostic['PeriodEndParsed']} accepted={diagnostic['AcceptedRows']} "
+        f"pagination={diagnostic['PaginationStopReason']} diagnostics={diagnostics_path}"
     )
     return pd.DataFrame(rows, columns=[
         "TckrSymb", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
         "FilingDescription", "OfficialFilingURL", "OfficialSource", "RetrievedAtUTC"
     ])
-
 
 def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: pd.DataFrame | None = None,
                                     fetcher: Callable | None = None, cache_path=FILINGS_CACHE,
