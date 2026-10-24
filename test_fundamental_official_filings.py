@@ -167,3 +167,6 @@ def test_empty_or_unmatched_live_payload_writes_fetch_diagnostics(tmp_path):
     assert int(diag["RejectNoFinancialTerm"]) == 1
     assert int(diag["AcceptedRows"]) == 0
     assert "Annual report uploaded" in diag["SampleDescriptions"]
+    assert "SampleFinancialResultMatches" in diag.index
+    assert "SampleMatchedItemKeys" in diag.index
+    assert "APIRequestParams" in diag.index

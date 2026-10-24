@@ -172,6 +172,10 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         "RejectSymbolMissing": 0,
         "RejectPeriodMissing": 0,
         "SampleDescriptions": "",
+        "SampleFinancialResultMatches": "",
+        "SampleMatchedItemKeys": "",
+        "SampleMatchedItemFields": "",
+        "APIRequestParams": "",
         "Error": "",
     }
 
@@ -190,6 +194,7 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         diagnostic["HomepageWarmupStatus"] = f"ERROR:{type(exc).__name__}"
 
     params = {"index": "equities", "from_date": start_date.strftime("%d-%m-%Y"), "to_date": end_date.strftime("%d-%m-%Y")}
+    diagnostic["APIRequestParams"] = str(params)
     try:
         response = session.get(NSE_API, params=params, timeout=30)
         diagnostic["APIStatusCode"] = getattr(response, "status_code", pd.NA)
@@ -217,6 +222,9 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
     diagnostic["PayloadItemCount"] = len(payload)
     rows = []
     sample_descriptions = []
+    sample_matches = []
+    sample_matched_keys = []
+    sample_matched_fields = []
     terms = ("financial results", "financial result", "unaudited results", "audited results", "integrated filing - financial")
     for item in payload:
         if not isinstance(item, dict):
@@ -232,6 +240,18 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
             diagnostic["RejectNoFinancialTerm"] += 1
             continue
         diagnostic["FinancialTermMatches"] += 1
+        if len(sample_matches) < 8:
+            sample_matches.append(desc[:260])
+            if len(sample_matched_keys) < 5:
+                sample_matched_keys.append(",".join(map(str, list(item.keys())[:80])))
+                selected = {}
+                for key, value in item.items():
+                    if any(token in str(key).lower() for token in (
+                        "date", "period", "symbol", "desc", "subject", "name", "detail",
+                        "attach", "url", "result", "broadcast", "an_dt", "sort"
+                    )):
+                        selected[str(key)] = str(value)[:220]
+                sample_matched_fields.append(str(selected)[:1800])
         pub_date = _announcement_date(item)
         if not pub_date or pub_date > end_date or pub_date < start_date:
             diagnostic["RejectDateMissingOrOutOfRange"] += 1
@@ -265,6 +285,9 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         })
     diagnostic["AcceptedRows"] = len(rows)
     diagnostic["SampleDescriptions"] = " || ".join(sample_descriptions)[:1200]
+    diagnostic["SampleFinancialResultMatches"] = " || ".join(sample_matches)[:2200]
+    diagnostic["SampleMatchedItemKeys"] = " || ".join(sample_matched_keys)[:2400]
+    diagnostic["SampleMatchedItemFields"] = " || ".join(sample_matched_fields)[:6000]
     if not rows:
         diagnostic["Error"] = "API response parsed, but no financial-result filings met current parser/date/symbol/period rules"
     save_diagnostic()
