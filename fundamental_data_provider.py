@@ -29,6 +29,7 @@ BASE_COLUMNS = [
     "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
+    "ProviderSector",
 ] + METRIC_COLUMNS
 
 
@@ -120,6 +121,105 @@ def _financial_period_end(ticker_obj, info: dict) -> str:
     return ""
 
 
+def _row_value(statement, labels, col):
+    """Value of the first matching row label at column position `col`."""
+    if not isinstance(statement, pd.DataFrame) or statement.empty or len(statement.columns) <= col:
+        return pd.NA
+    for label in labels:
+        if label in statement.index:
+            try:
+                value = float(statement.iloc[:, col].get(label, pd.NA))
+            except (TypeError, ValueError):
+                continue
+            if pd.notna(value):
+                return value
+    return pd.NA
+
+
+def _col_date(statement):
+    if not isinstance(statement, pd.DataFrame) or statement.empty:
+        return None
+    parsed = pd.to_datetime(statement.columns[0], errors="coerce")
+    return None if pd.isna(parsed) else parsed.date().isoformat()
+
+
+def _aligned_annual_metrics(ticker_obj) -> dict:
+    """Compute every metric from ONE fiscal year of statements.
+
+    Income statement, balance sheet and cash-flow statement must all have the
+    same latest period-end column; otherwise `ok` is False and the caller falls
+    back to the legacy path, which stays UNVERIFIED. Nothing is taken from
+    Yahoo's `info` snapshot here, so no TTM/annual mixing can occur.
+    Growth needs the previous year's column; loss-making previous years give no
+    percentage (NA) rather than a misleading sign-flipped number.
+    """
+    out = {"ok": False, "period_end": "", "values": {}, "reason": ""}
+    stmts = {}
+    for name, attr in (("income", "financials"), ("balance", "balance_sheet"), ("cash", "cashflow")):
+        try:
+            stmts[name] = getattr(ticker_obj, attr)
+        except Exception:
+            stmts[name] = None
+    dates = {k: _col_date(v) for k, v in stmts.items()}
+    if not all(dates.values()):
+        out["reason"] = "ANNUAL_STATEMENT_MISSING:" + ",".join(k for k, v in dates.items() if not v)
+        return out
+    if len(set(dates.values())) != 1:
+        out["reason"] = "STATEMENT_PERIODS_DIFFER:" + ",".join(f"{k}={v}" for k, v in dates.items())
+        return out
+    inc, bal, cash = stmts["income"], stmts["balance"], stmts["cash"]
+    rev0 = _row_value(inc, ["Total Revenue", "Operating Revenue"], 0)
+    rev1 = _row_value(inc, ["Total Revenue", "Operating Revenue"], 1)
+    ni_labels = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
+    ni0, ni1 = _row_value(inc, ni_labels, 0), _row_value(inc, ni_labels, 1)
+    ebit = _row_value(inc, ["EBIT", "Operating Income"], 0)
+    interest = _row_value(inc, ["Interest Expense", "Interest Expense Non Operating"], 0)
+    assets = _row_value(bal, ["Total Assets"], 0)
+    cur_liab = _row_value(bal, ["Current Liabilities", "Total Current Liabilities"], 0)
+    eq_labels = ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity"]
+    eq0, eq1 = _row_value(bal, eq_labels, 0), _row_value(bal, eq_labels, 1)
+    debt = _row_value(bal, ["Total Debt", "Long Term Debt And Capital Lease Obligation"], 0)
+    ocf = _row_value(cash, ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"], 0)
+    fcf = _row_value(cash, ["Free Cash Flow"], 0)
+    if not _present(fcf):
+        capex = _row_value(cash, ["Capital Expenditure", "Capital Expenditures"], 0)
+        if _present(ocf) and _present(capex):
+            fcf = float(ocf) + float(capex)  # capex is reported as a negative outflow
+
+    def growth(new, old):
+        if not (_present(new) and _present(old)) or float(old) <= 0:
+            return pd.NA
+        return (float(new) - float(old)) / float(old) * 100.0
+
+    avg_equity = pd.NA
+    if _present(eq0) and _present(eq1):
+        avg_equity = (float(eq0) + float(eq1)) / 2.0
+    elif _present(eq0):
+        avg_equity = float(eq0)
+    roe = pd.NA
+    if _present(ni0) and _present(avg_equity) and float(avg_equity) > 0:
+        roe = float(ni0) / float(avg_equity) * 100.0
+    roce = pd.NA
+    if _present(ebit) and _present(assets) and _present(cur_liab) and float(assets) - float(cur_liab) > 0:
+        roce = float(ebit) / (float(assets) - float(cur_liab)) * 100.0
+    de = pd.NA
+    if _present(debt) and _present(eq0) and float(eq0) > 0:
+        de = float(debt) / float(eq0)
+    coverage = pd.NA
+    if _present(ebit) and _present(interest):
+        # Zero reported interest = debt-free; use a documented cap instead of infinity.
+        coverage = 999.0 if float(interest) == 0 else float(ebit) / abs(float(interest))
+
+    out["values"] = {
+        "RevenueGrowthPct": growth(rev0, rev1), "ProfitGrowthPct": growth(ni0, ni1),
+        "ROEPercent": roe, "ROCEPercent": roce, "DebtToEquity": de,
+        "InterestCoverage": coverage, "OperatingCashFlowINR": ocf, "FreeCashFlowINR": fcf,
+    }
+    out["period_end"] = dates["income"]
+    out["ok"] = True
+    return out
+
+
 def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
@@ -207,6 +307,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         if _present(ebit) and _present(interest_expense) and float(interest_expense) != 0:
             interest_coverage = float(ebit) / abs(float(interest_expense))
 
+        aligned = _aligned_annual_metrics(ticker)
         values = {
             "RevenueGrowthPct": revenue_growth,
             "ProfitGrowthPct": profit_growth,
@@ -217,8 +318,17 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             "OperatingCashFlowINR": ocf,
             "FreeCashFlowINR": fcf,
         }
+        if aligned["ok"]:
+            # One fiscal year, one set of statements: replace (never mix with) snapshot values.
+            values = aligned["values"]
+            record["MetricPeriodAlignmentStatus"] = "VERIFIED"
+            diagnostic["AlignmentNote"] = f"ALIGNED_ANNUAL_STATEMENTS:{aligned['period_end']}"
+        else:
+            diagnostic["AlignmentNote"] = aligned["reason"] or "LEGACY_SNAPSHOT_PATH"
         for col, value in values.items():
             record[col] = value if _present(value) else pd.NA
+        sector = info.get("sector") if isinstance(info, dict) else None
+        record["ProviderSector"] = str(sector).strip() if sector else pd.NA
         record["EarningsQualityStatus"] = (
             "POSITIVE_OPERATING_CASH_FLOW" if _present(ocf) and float(ocf) > 0
             else "NEGATIVE_OPERATING_CASH_FLOW" if _present(ocf) and float(ocf) < 0
@@ -226,7 +336,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         )
         valuation_multiple = _first_number(info, ["trailingPE", "forwardPE"])
         record["ValuationStatus"] = "VALUATION_MULTIPLE_AVAILABLE" if _present(valuation_multiple) else "VALUATION_DATA_MISSING"
-        record["FinancialPeriodEnd"] = _financial_period_end(ticker, info)
+        record["FinancialPeriodEnd"] = aligned["period_end"] if aligned["ok"] else _financial_period_end(ticker, info)
         metric_count = sum(_present(record.get(col)) for col in METRIC_COLUMNS)
         diagnostic["ProviderStatus"] = "DATA_FOUND" if metric_count else "MISSING_DATA"
         diagnostic["ProviderReason"] = f"metrics_available={metric_count}/{len(METRIC_COLUMNS)}"
@@ -237,6 +347,18 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         diagnostic["ProviderReason"] = f"{type(exc).__name__}: {exc}"[:500]
         diagnostic["MetricsAvailable"] = 0
     return record, diagnostic
+
+
+def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
+    """Provider-sourced (never manual) records older than refresh_days are refetched."""
+    raw_source = record.get("Source", "")
+    source = str(raw_source) if _present(raw_source) else ""
+    if not source.startswith("Yahoo Finance"):
+        return False
+    retrieved = pd.to_datetime(record.get("DataRetrievedAtUTC"), errors="coerce", utc=True)
+    if pd.isna(retrieved):
+        return True
+    return (pd.Timestamp(today, tz="UTC") - retrieved).days >= refresh_days
 
 
 def collect_missing_fundamentals(
@@ -283,7 +405,15 @@ def collect_missing_fundamentals(
             current = {col: pd.NA for col in BASE_COLUMNS}
             current["TckrSymb"] = symbol
             records[symbol] = current
+        refresh_days = int(os.getenv("V8_FUNDAMENTAL_REFRESH_DAYS", "30") or 30)
+        today_for_refresh = cutoff if pd.notna(cutoff) else pd.Timestamp.today()
+        if enabled and _is_stale_provider_record(current, today_for_refresh.date(), refresh_days):
+            # Provider-owned record is old: clear it so new quarterly/annual results are picked up.
+            for col in METRIC_COLUMNS + ["FinancialPeriodEnd", "PublicationDate", "MetricPeriodAlignmentStatus"]:
+                current[col] = pd.NA
+            current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
+        provider_owned = not any(_present(current.get(col)) for col in METRIC_COLUMNS)
         if not enabled:
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
             continue
@@ -301,6 +431,12 @@ def collect_missing_fundamentals(
                 continue
             if not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
+        if provider_owned and any(_present(fetched.get(c)) for c in METRIC_COLUMNS):
+            # No manual metric values exist, so period/source fields describe the provider data
+            # as one unit and must replace stale UNVERIFIED defaults from earlier runs.
+            for col in ("MetricPeriodAlignmentStatus", "FinancialPeriodEnd", "Source", "SourceURL", "DataRetrievedAtUTC", "ProviderSector"):
+                if _present(fetched.get(col)):
+                    merged[col] = fetched.get(col)
         if not _present(merged.get("AsOfDate")) and cutoff_text:
             merged["AsOfDate"] = cutoff_text
         if not _present(merged.get("DataRetrievedAtUTC")):

@@ -7,6 +7,7 @@ from delivery_filter import apply_delivery_filter
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
+from fundamental_shortlist import build_fundamental_shortlist
 from datetime import datetime, timedelta, timezone
 from v8_layers_14_41 import (
     monitor_positions,
@@ -3384,6 +3385,11 @@ def main():
                 }]).to_csv("outputs/v8_fundamental_provider_diagnostics.csv", index=False)
                 print(f"[FUNDAMENTAL PROVIDER] Stage error; keep all candidates: {provider_exc}")
             _, fundamental_audit = apply_fundamental_filter(fundamental_universe, eod_date)
+            try:
+                # Metadata only: adds FundamentalShortlistStatus (PASS/FAIL/WAIT_FOR_DATA); never removes rows.
+                fundamental_audit = build_fundamental_shortlist(fundamental_audit, eod_date)
+            except Exception as shortlist_exc:
+                print(f"[FUNDAMENTAL SHORTLIST] Skipped; candidates unchanged: {shortlist_exc}")
             a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
             b_mask = fundamental_audit.get("DeliveryCategoryBStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
             fundamental_audit.loc[a_mask].to_csv("outputs/v8_delivery_a_fundamentals.csv", index=False)
