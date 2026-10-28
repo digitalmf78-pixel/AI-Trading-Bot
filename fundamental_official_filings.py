@@ -17,6 +17,7 @@ OUTPUT_DIR = Path("outputs")
 FILINGS_CACHE = OUTPUT_DIR / "v8_official_financial_results_filings.csv"
 VERIFY_DIAGNOSTICS = OUTPUT_DIR / "v8_official_publication_date_verification.csv"
 FETCH_DIAGNOSTICS = OUTPUT_DIR / "v8_official_fetch_diagnostics.csv"
+TARGETED_LOOKUP_DIAGNOSTICS = OUTPUT_DIR / "v8_official_targeted_lookup_diagnostics.csv"
 NSE_HOME = "https://www.nseindia.com/"
 NSE_API = "https://www.nseindia.com/api/corporate-announcements"  # legacy fallback only
 NSE_RESULTS_API = "https://www.nseindia.com/api/integrated-filing-results"
@@ -409,17 +410,21 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_fac
         "FilingDescription", "OfficialFilingURL", "OfficialSource", "RetrievedAtUTC"
     ])
 
-def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None):
-    """Query NSE by exact candidate symbol when bulk filing data has no exact match.
+def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
+                                diagnostics_path=OUTPUT_DIR / "v8_official_targeted_lookup_diagnostics.csv"):
+    """Query NSE by candidate symbol and emit per-symbol/per-segment diagnostics.
 
-    This is a diagnostic/recovery path, not a relaxed verifier. It queries the
-    expected period-end through the EOD cutoff, tries equities first and SME
-    only if equities has no exact symbol+period match, and returns only records
-    with parseable official symbol, period end and publication date.
+    Verification remains strict: the exact symbol, exact period-end and an
+    official publication date no later than the EOD cutoff must all match.
+    Empty results and exceptions are recorded instead of being silently lost.
     """
     import requests
     cutoff = pd.to_datetime(asof_date, errors="coerce")
+    diagnostic_rows = []
     if pd.isna(cutoff):
+        pd.DataFrame([{"Status": "INVALID_ASOF_DATE", "AsOfDate": str(asof_date)}]).to_csv(
+            diagnostics_path, index=False
+        )
         return pd.DataFrame()
     cutoff_date = cutoff.date()
     session = session_factory() if session_factory else requests.Session()
@@ -435,6 +440,13 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None):
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         period = pd.to_datetime(candidate.get("FinancialPeriodEnd"), errors="coerce")
         if not symbol or pd.isna(period) or period.date() > cutoff_date:
+            diagnostic_rows.append({
+                "Symbol": symbol, "ExpectedFinancialPeriodEnd": str(candidate.get("FinancialPeriodEnd", "")),
+                "Segment": "", "RequestStatus": "SKIPPED_INVALID_SYMBOL_OR_PERIOD",
+                "HTTPStatus": pd.NA, "PayloadItems": 0, "ReportedTotalCount": pd.NA,
+                "RowsForExactSymbol": 0, "RowsForExactPeriod": 0, "RowsAccepted": 0,
+                "ReturnedPeriods": "", "ReturnedPublicationDates": "", "Error": ""
+            })
             continue
         period_date = period.date()
         found_exact = False
@@ -449,25 +461,33 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None):
                 "page": 0,
                 "size": 1000,
             }
+            http_status = pd.NA
+            total_count = None
+            initial_items = []
+            collected = []
+            segment_rows = []
+            error = ""
+            request_status = "OK"
             try:
                 response = session.get(NSE_RESULTS_API, params=params, timeout=45)
+                http_status = getattr(response, "status_code", pd.NA)
                 response.raise_for_status()
                 payload = response.json()
-                items, meta, _keys = _extract_result_items(payload)
+                initial_items, meta, _keys = _extract_result_items(payload)
                 total_value = _first_value(meta, ("totalCount", "total_count", "totalRecords", "total_records", "total", "recordsFiltered"))
                 try:
                     total_count = int(total_value) if total_value is not None else None
                 except (TypeError, ValueError):
                     total_count = None
-                collected = list(items)
-                # Targeted symbol queries should be small, but handle server-side
-                # page-size caps without assuming that requested size was honored.
+                collected = list(initial_items)
+                # Do not assume the server honored the requested page size.
                 if total_count is not None and len(collected) < total_count:
                     collected = []
                     seen_ids = set()
                     for page in range(min(max(total_count + 1, 2), 250)):
                         page_params = dict(params, page=page)
                         page_response = session.get(NSE_RESULTS_API, params=page_params, timeout=45)
+                        http_status = getattr(page_response, "status_code", http_status)
                         page_response.raise_for_status()
                         page_items, _page_meta, _page_keys = _extract_result_items(page_response.json())
                         if not page_items:
@@ -477,7 +497,10 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None):
                             if not isinstance(item, dict):
                                 continue
                             stable_id = _first_value(item, ("seq_Id", "seq_id", "seqId", "id"))
-                            signature = str(stable_id) if stable_id is not None else "|".join(str(item.get(k, "")) for k in ("symbol", "creation_Date", "qe_Date", "type_Sub", "consolidated", "audited"))
+                            signature = str(stable_id) if stable_id is not None else "|".join(
+                                str(item.get(k, "")) for k in
+                                ("symbol", "creation_Date", "qe_Date", "type_Sub", "consolidated", "audited")
+                            )
                             if signature not in seen_ids:
                                 seen_ids.add(signature)
                                 collected.append(item)
@@ -486,49 +509,84 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None):
                             break
                         if added == 0:
                             break
-                segment_rows = []
-                for item in collected:
-                    if not isinstance(item, dict):
-                        continue
-                    row_symbol = _announcement_symbol(item)
-                    period_end = _announcement_period_end(item, _announcement_description(item))
-                    pub_date = _announcement_date(item)
-                    if not row_symbol or not period_end or not pub_date:
-                        continue
-                    if row_symbol.upper() != symbol or period_end > cutoff_date or pub_date > cutoff_date:
-                        continue
-                    if pub_date < period_date:
-                        # A filing for a period should not be broadcast before
-                        # that period ends; don't infer or repair such dates.
-                        continue
-                    attachment = _first_value(item, ("xbrl", "xbrl_Link", "xbrlLink", "xbrl_url", "xbrlUrl", "attchmntFile", "attachment", "attachmentUrl", "attachmentURL", "url", "fileUrl", "file_url", "details", "detailUrl"))
-                    attachment = str(attachment or "").strip()
-                    if attachment.startswith("/"):
-                        attachment = "https://www.nseindia.com" + attachment
-                    if not attachment.startswith("https://"):
-                        attachment = ""
-                    record = {
-                        "TckrSymb": row_symbol.upper(),
-                        "FinancialPeriodEnd": period_end.isoformat(),
-                        "PublicationDate": pub_date.isoformat(),
-                        "PublicationDateStatus": "VERIFIED",
-                        "FilingDescription": _announcement_description(item),
-                        "OfficialFilingURL": attachment,
-                        "OfficialSource": f"NSE Integrated Filing - Financials ({segment} targeted lookup)",
-                        "RetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
-                    }
-                    sig = (record["TckrSymb"], record["FinancialPeriodEnd"], record["PublicationDate"], record["OfficialFilingURL"])
-                    if sig not in seen_rows:
-                        seen_rows.add(sig)
-                        rows.append(record)
-                        segment_rows.append(record)
-                found_exact = any(r["TckrSymb"] == symbol and r["FinancialPeriodEnd"] == period_date.isoformat() for r in segment_rows)
-                if found_exact:
-                    break
-            except Exception:
-                # A targeted lookup failure must not turn an unverified record
-                # into a verified one or stop checks for the remaining symbols.
-                continue
+            except Exception as exc:
+                request_status = "REQUEST_OR_PARSE_ERROR"
+                error = f"{type(exc).__name__}: {exc}"[:500]
+                collected = []
+
+            exact_symbol_count = 0
+            exact_period_count = 0
+            returned_periods = set()
+            returned_publication_dates = set()
+            for item in collected:
+                if not isinstance(item, dict):
+                    continue
+                row_symbol = _announcement_symbol(item)
+                period_end = _announcement_period_end(item, _announcement_description(item))
+                pub_date = _announcement_date(item)
+                if row_symbol and row_symbol.upper() == symbol:
+                    exact_symbol_count += 1
+                    if period_end:
+                        returned_periods.add(period_end.isoformat())
+                    if pub_date:
+                        returned_publication_dates.add(pub_date.isoformat())
+                if not row_symbol or not period_end or not pub_date:
+                    continue
+                if row_symbol.upper() != symbol or period_end > cutoff_date or pub_date > cutoff_date:
+                    continue
+                if pub_date < period_date:
+                    continue
+                attachment = _first_value(item, (
+                    "xbrl", "xbrl_Link", "xbrlLink", "xbrl_url", "xbrlUrl",
+                    "attchmntFile", "attachment", "attachmentUrl", "attachmentURL",
+                    "url", "fileUrl", "file_url", "details", "detailUrl"
+                ))
+                attachment = str(attachment or "").strip()
+                if attachment.startswith("/"):
+                    attachment = "https://www.nseindia.com" + attachment
+                if not attachment.startswith("https://"):
+                    attachment = ""
+                record = {
+                    "TckrSymb": row_symbol.upper(),
+                    "FinancialPeriodEnd": period_end.isoformat(),
+                    "PublicationDate": pub_date.isoformat(),
+                    "PublicationDateStatus": "VERIFIED",
+                    "FilingDescription": _announcement_description(item),
+                    "OfficialFilingURL": attachment,
+                    "OfficialSource": f"NSE Integrated Filing - Financials ({segment} targeted lookup)",
+                    "RetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
+                }
+                if record["FinancialPeriodEnd"] == period_date.isoformat():
+                    exact_period_count += 1
+                sig = (record["TckrSymb"], record["FinancialPeriodEnd"], record["PublicationDate"], record["OfficialFilingURL"])
+                if sig not in seen_rows:
+                    seen_rows.add(sig)
+                    rows.append(record)
+                    segment_rows.append(record)
+            diagnostic_rows.append({
+                "Symbol": symbol,
+                "ExpectedFinancialPeriodEnd": period_date.isoformat(),
+                "Segment": segment,
+                "RequestStatus": request_status,
+                "HTTPStatus": http_status,
+                "PayloadItems": len(collected),
+                "ReportedTotalCount": total_count if total_count is not None else pd.NA,
+                "RowsForExactSymbol": exact_symbol_count,
+                "RowsForExactPeriod": exact_period_count,
+                "RowsAccepted": len(segment_rows),
+                "ReturnedPeriods": ";".join(sorted(returned_periods)),
+                "ReturnedPublicationDates": ";".join(sorted(returned_publication_dates)),
+                "Error": error,
+            })
+            found_exact = any(
+                r["TckrSymb"] == symbol and r["FinancialPeriodEnd"] == period_date.isoformat()
+                for r in segment_rows
+            )
+            if found_exact:
+                break
+    diagnostic_file = Path(diagnostics_path)
+    diagnostic_file.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(diagnostic_rows).to_csv(diagnostic_file, index=False)
     return pd.DataFrame(rows, columns=[
         "TckrSymb", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
         "FilingDescription", "OfficialFilingURL", "OfficialSource", "RetrievedAtUTC"
@@ -634,7 +692,7 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
                 unmatched.append({"TckrSymb": symbol, "FinancialPeriodEnd": period.normalize().date().isoformat()})
         if unmatched:
             try:
-                targeted = _fetch_targeted_nse_filings(cutoff.date().isoformat(), unmatched)
+                targeted = _fetch_targeted_nse_filings(cutoff.date().isoformat(), unmatched, diagnostics_path=TARGETED_LOOKUP_DIAGNOSTICS)
                 if targeted is not None and not targeted.empty:
                     filings = pd.concat([filings, targeted], ignore_index=True).drop_duplicates(
                         subset=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL"], keep="last"

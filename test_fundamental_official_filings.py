@@ -286,7 +286,7 @@ def test_apply_official_dates_uses_targeted_fallback_for_unmatched_pair(monkeypa
         "OfficialSource": "NSE Integrated Filing - Financials (equities targeted lookup)", "FilingDescription": "ABC results", "RetrievedAtUTC": "2026-10-23T00:00:00Z",
     }])
     monkeypatch.setattr(mod, "fetch_nse_financial_results", lambda asof: bulk)
-    monkeypatch.setattr(mod, "_fetch_targeted_nse_filings", lambda asof, candidates: targeted)
+    monkeypatch.setattr(mod, "_fetch_targeted_nse_filings", lambda asof, candidates, **kwargs: targeted)
     records = pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDateStatus": "UNVERIFIED"}])
     out = mod.apply_official_publication_dates(
         records, "2026-10-23", cache_path=tmp_path/"filings.csv", diagnostics_path=tmp_path/"verify.csv"
@@ -296,3 +296,47 @@ def test_apply_official_dates_uses_targeted_fallback_for_unmatched_pair(monkeypa
     assert "ABC.xml" in out.loc[0, "OfficialFilingURL"]
     diag = pd.read_csv(tmp_path/"verify.csv")
     assert "TARGETED_LOOKUP_COMPLETED" in set(diag["Status"])
+
+
+def test_targeted_lookup_writes_per_symbol_segment_diagnostics(tmp_path):
+    import fundamental_official_filings as mod
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.calls = []
+        def get(self, url, params, timeout):
+            self.calls.append((url, dict(params)))
+            if params["index"] == "equities":
+                return Response({"totalCount": 0, "data": []})
+            return Response({"totalCount": 1, "data": [{
+                "seq_Id": "sme-1",
+                "creation_Date": "20-May-2026 12:00:00",
+                "symbol": "ABC",
+                "cmName": "ABC Limited",
+                "qe_Date": "31-Mar-2026",
+                "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+                "type_Sub": "Financial Results",
+            }]})
+
+    diag_path = tmp_path / "targeted.csv"
+    out = mod._fetch_targeted_nse_filings(
+        "2026-10-23",
+        [{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"}],
+        session_factory=Session,
+        diagnostics_path=diag_path,
+    )
+    assert len(out) == 1
+    diag = pd.read_csv(diag_path)
+    assert list(diag["Segment"]) == ["equities", "sme"]
+    assert diag.iloc[0]["RequestStatus"] == "OK"
+    assert int(diag.iloc[1]["RowsForExactPeriod"]) == 1
