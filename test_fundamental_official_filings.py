@@ -236,3 +236,63 @@ def test_publication_date_alone_does_not_verify_without_quarter_end(tmp_path):
     assert int(diag["RejectPeriodMissing"]) == 1
     assert int(diag["AcceptedRows"]) == 0
 
+
+
+def test_targeted_lookup_tries_sme_if_equities_has_no_exact_period(monkeypatch):
+    import fundamental_official_filings as mod
+
+    exact = {
+        "seq_Id": "sme-2", "creation_Date": "20-May-2026 12:00:00",
+        "symbol": "ABC", "cmName": "ABC Limited", "qe_Date": "31-MAR-2026",
+        "type_Sub": "Original", "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+    }
+    newer = {
+        "seq_Id": "eq-1", "creation_Date": "20-Aug-2026 12:00:00",
+        "symbol": "ABC", "cmName": "ABC Limited", "qe_Date": "30-JUN-2026",
+        "type_Sub": "Original", "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC-Q1.xml",
+    }
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        def __init__(self, payload): self.payload = payload
+        def raise_for_status(self): return None
+        def json(self): return self.payload
+    class Session:
+        def __init__(self): self.headers = {}; self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs["params"].copy()))
+            params = kwargs["params"]
+            assert params["symbol"] == "ABC"
+            assert params["period_ended"] == "all"
+            if params["index"] == "equities": return Response({"totalCount": 1, "data": [newer]})
+            return Response({"totalCount": 1, "data": [exact]})
+    session = Session()
+    out = mod._fetch_targeted_nse_filings("2026-10-23", [{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"}], session_factory=lambda: session)
+    assert len(out) == 2
+    assert out[(out["FinancialPeriodEnd"] == "2026-03-31") & (out["TckrSymb"] == "ABC")].shape[0] == 1
+    assert [call[1]["index"] for call in session.calls] == ["equities", "sme"]
+
+
+def test_apply_official_dates_uses_targeted_fallback_for_unmatched_pair(monkeypatch, tmp_path):
+    import fundamental_official_filings as mod
+    bulk = pd.DataFrame([{
+        "TckrSymb": "OTHER", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-01",
+        "PublicationDateStatus": "VERIFIED", "OfficialFilingURL": "https://example.invalid/other.xml",
+        "OfficialSource": "NSE Integrated Filing - Financials", "FilingDescription": "Other", "RetrievedAtUTC": "2026-10-23T00:00:00Z",
+    }])
+    targeted = pd.DataFrame([{
+        "TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-20",
+        "PublicationDateStatus": "VERIFIED", "OfficialFilingURL": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+        "OfficialSource": "NSE Integrated Filing - Financials (equities targeted lookup)", "FilingDescription": "ABC results", "RetrievedAtUTC": "2026-10-23T00:00:00Z",
+    }])
+    monkeypatch.setattr(mod, "fetch_nse_financial_results", lambda asof: bulk)
+    monkeypatch.setattr(mod, "_fetch_targeted_nse_filings", lambda asof, candidates: targeted)
+    records = pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDateStatus": "UNVERIFIED"}])
+    out = mod.apply_official_publication_dates(
+        records, "2026-10-23", cache_path=tmp_path/"filings.csv", diagnostics_path=tmp_path/"verify.csv"
+    )
+    assert out.loc[0, "PublicationDateStatus"] == "VERIFIED"
+    assert out.loc[0, "PublicationDate"] == "2026-05-20"
+    assert "ABC.xml" in out.loc[0, "OfficialFilingURL"]
+    diag = pd.read_csv(tmp_path/"verify.csv")
+    assert "TARGETED_LOOKUP_COMPLETED" in set(diag["Status"])
