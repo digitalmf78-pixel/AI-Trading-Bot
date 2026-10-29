@@ -38,6 +38,8 @@ jobs:
             data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            outputs/v8_official_financial_results_filings.csv
           key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
