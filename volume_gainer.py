@@ -3420,16 +3420,24 @@ def main():
             current = current.sort_values(sort_cols, ascending=[False] * len(sort_cols), na_position="last", kind="stable").reset_index(drop=True)
         print(f"[FUNDAMENTAL COLLECTION] Category A rows={int(category_a_mask.sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; Fundamental PASS advancing={len(current)}; all collection rows retained in reports.")
     except Exception as exc:
-        print(f"[FUNDAMENTAL COLLECTION] Collection annotation failed; keep Delivery-A candidates and mark data unavailable: {exc}")
+        # Fail closed: a failed fundamental collection/assessment must never
+        # allow unassessed Delivery-A candidates into liquidity or later gates.
+        print(f"[FUNDAMENTAL COLLECTION] Collection/assessment failed; no candidates advance: {exc}")
         fundamental_audit = delivery_audit.copy() if isinstance(delivery_audit, pd.DataFrame) else pd.DataFrame()
         if not fundamental_audit.empty:
             fundamental_audit["FundamentalStatus"] = "MISSING_DATA"
-            fundamental_audit["FundamentalAssessmentStatus"] = "NOT_SHORTLISTED_YET"
-            fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_COLLECTION_ERROR:{exc}"
+            fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_COLLECTION_ERROR:{type(exc).__name__}:{exc}"
+            fundamental_audit["FundamentalAssessmentStatus"] = "WAIT_FOR_DATA"
+            fundamental_audit["FundamentalAssessmentReason"] = fundamental_audit["FundamentalReason"]
+            fundamental_audit["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+            fundamental_audit["FundamentalShortlistReason"] = fundamental_audit["FundamentalReason"]
+            os.makedirs("outputs", exist_ok=True)
             fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
-        current = fundamental_audit[
-            fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
-        ].copy() if not fundamental_audit.empty else pd.DataFrame()
+            fundamental_audit.to_csv("outputs/v8_fundamental_shortlist_all.csv", index=False)
+            fundamental_audit[fundamental_audit["FundamentalShortlistStatus"].eq("PASS")].to_csv(
+                "outputs/v8_fundamental_shortlist_pass.csv", index=False
+            )
+        current = pd.DataFrame(columns=list(fundamental_audit.columns) if not fundamental_audit.empty else [])
 
     # --------------------------------------------------------
     # STEP 6: EXISTING LIQUIDITY FILTER — THRESHOLD RELAXED TO ₹2 CRORE

@@ -1,0 +1,23 @@
+NSE V8 — GitHub Web UI Upload Files
+Date: 2026-10-29
+
+IMPORTANT
+- This ZIP contains only the 4 files changed by the fundamental hardening patch.
+- It is prepared against source archive/commit ce592bf2269c6d85bdb6f24d4fb8785d7c434179.
+- It has NOT been committed to your GitHub repository.
+- Before applying, confirm your repository's current branch/source matches that commit. If the live branch has newer changes, do not overwrite blindly.
+
+Files and destination paths in repository:
+1. .github/workflows/nse-test-scheduled.yml
+2. test_fundamental_cache_persistence_workflow.py
+3. test_fundamental_fail_closed.py
+4. volume_gainer.py
+
+GitHub website process (no local clone needed):
+1. Open https://github.com/digitalmf78-pixel/AI-Trading-Bot and select the branch matching the source commit.
+2. For each file, open the exact path. Use the pencil Edit button for existing files, replace all contents with the corresponding file from this ZIP, then Commit changes. For the workflow file, browse to .github/workflows/nse-test-scheduled.yml first.
+3. Repeat one file at a time. Keep the commit message e.g. 'Harden fundamental fail-closed and cache persistence'.
+4. After all four commits, open Actions and run the NSE scheduled/test workflow. Confirm the tests pass and check workflow permissions.
+5. If the current GitHub files differ from the source revision, stop and upload the current source ZIP here before applying.
+
+Caution: GitHub web editor is not suitable for uploading a .patch file directly. This ZIP is the full replacement content for the four paths, not a repo ZIP.

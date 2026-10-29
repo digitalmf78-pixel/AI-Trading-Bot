@@ -50,3 +50,13 @@ def test_fundamental_assessment_is_written_and_pass_gate_is_applied():
     assert 'eq("PASS")' in source
     assert "Fundamental PASS advancing={len(current)}" in source
     assert 'v8_fundamental_report.csv' in source
+
+
+def test_workflow_commits_fundamental_cache_and_history_to_repository():
+    workflow = (ROOT / ".github/workflows/nse-test-scheduled.yml").read_text(encoding="utf-8")
+    assert "permissions:\n  contents: write" in workflow
+    assert "Persist fundamental cache and dated history in repository" in workflow
+    assert 'git add -f data/inputs/fundamental_metrics.csv' in workflow
+    assert "find data/cache/fundamental_history -type f -name '*.csv' -print0 | xargs -0 -r git add -f --" in workflow
+    assert 'git push origin "HEAD:${GITHUB_REF_NAME}"' in workflow
+    assert "steps.nse_scan.outcome == 'success'" in workflow
