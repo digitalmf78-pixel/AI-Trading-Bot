@@ -18,7 +18,7 @@ on:
     - cron: "30 2 * * 1-5"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   nse-test:
@@ -102,6 +102,7 @@ jobs:
           python -m pytest -q test_upcoming_corporate_events.py
 
       - name: Run NSE Volume Gainer
+        id: nse_scan
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -146,6 +147,36 @@ jobs:
           fi
           echo "===== BHAVCOPY CACHE SAMPLE ====="
           if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print | head -20; else echo "Bhavcopy cache directory does not exist"; fi
+
+      - name: Persist fundamental cache and dated history in repository
+        if: steps.nse_scan.outcome == 'success'
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Keep the current metrics cache and dated snapshots in repository
+          # history as requested; these contain public-company fundamentals,
+          # not credentials or account-specific secrets.
+          if [ -f data/inputs/fundamental_metrics.csv ]; then
+            git add -f data/inputs/fundamental_metrics.csv
+          fi
+          if [ -d data/cache/fundamental_history ]; then
+            find data/cache/fundamental_history -type f -name '*.csv' -print0 | xargs -0 -r git add -f --
+          fi
+          if [ -f outputs/v8_official_financial_results_filings.csv ]; then
+            git add -f outputs/v8_official_financial_results_filings.csv
+          fi
+
+          if git diff --cached --quiet; then
+            echo "Fundamental cache unchanged; no repository commit needed."
+            exit 0
+          fi
+
+          git commit -m "chore: persist NSE V8 fundamental cache and history"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload NSE V8 reports and input templates
         if: always()
