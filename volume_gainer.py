@@ -3386,21 +3386,39 @@ def main():
                 print(f"[FUNDAMENTAL PROVIDER] Stage error; keep all candidates: {provider_exc}")
             _, fundamental_audit = apply_fundamental_filter(fundamental_universe, eod_date)
             try:
-                # Metadata only: adds FundamentalShortlistStatus (PASS/FAIL/WAIT_FOR_DATA); never removes rows.
+                # Collection keeps every Delivery A/B row. The strong-fundamental
+                # assessment is applied only after collection is complete.
                 fundamental_audit = build_fundamental_shortlist(fundamental_audit, eod_date)
+                fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)
+                fundamental_audit["FundamentalAssessmentReason"] = fundamental_audit["FundamentalShortlistReason"].astype(str)
             except Exception as shortlist_exc:
-                print(f"[FUNDAMENTAL SHORTLIST] Skipped; candidates unchanged: {shortlist_exc}")
+                print(f"[FUNDAMENTAL SHORTLIST] Assessment failed closed; no candidates advance: {shortlist_exc}")
+                fundamental_audit["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+                fundamental_audit["FundamentalShortlistReason"] = f"SHORTLIST_ASSESSMENT_ERROR:{type(shortlist_exc).__name__}"
+                fundamental_audit["FundamentalAssessmentStatus"] = "WAIT_FOR_DATA"
+                fundamental_audit["FundamentalAssessmentReason"] = fundamental_audit["FundamentalShortlistReason"]
+            # Refresh the main report with the final assessment fields while
+            # retaining all collected rows, including FAIL and WAIT_FOR_DATA.
+            os.makedirs("outputs", exist_ok=True)
+            fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
+            fundamental_audit[fundamental_audit.get("FundamentalStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("COMPLETE")].to_csv("outputs/v8_fundamental_complete_data.csv", index=False)
+            fundamental_audit[fundamental_audit.get("FundamentalStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PARTIAL_DATA")].to_csv("outputs/v8_fundamental_partial_data.csv", index=False)
+            fundamental_audit[fundamental_audit.get("FundamentalStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("MISSING_DATA")].to_csv("outputs/v8_fundamental_missing_data.csv", index=False)
             a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
             b_mask = fundamental_audit.get("DeliveryCategoryBStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
             fundamental_audit.loc[a_mask].to_csv("outputs/v8_delivery_a_fundamentals.csv", index=False)
             fundamental_audit.loc[b_mask].to_csv("outputs/v8_delivery_b_fundamentals.csv", index=False)
             fundamental_audit.to_csv("outputs/v8_delivery_ab_combined_fundamentals.csv", index=False)
-        # Continue the main pipeline with all Category-A candidates. Fundamental
-        # availability/score is metadata only here; it does not reject candidates.
-        current = fundamental_audit[
-            fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
-        ].copy() if not fundamental_audit.empty else fundamental_audit.copy()
-        print(f"[FUNDAMENTAL COLLECTION] Category A rows={int((fundamental_audit.get('DeliveryCategoryAStatus', pd.Series(dtype=str)).astype(str) == 'PASS_AVG_GE_60_PERCENT').sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; all rows retained regardless of fundamental data status.")
+        # all rows retained regardless of fundamental data status in the collection
+        # reports above. Only verified strong-fundamental PASS candidates enter
+        # the downstream liquidity/technical pipeline after collection is complete.
+        category_a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
+        fundamental_pass_mask = fundamental_audit.get("FundamentalShortlistStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS")
+        current = fundamental_audit[category_a_mask & fundamental_pass_mask].copy() if not fundamental_audit.empty else fundamental_audit.copy()
+        sort_cols = [c for c in ["FundamentalScore", "RVOL"] if c in current.columns]
+        if sort_cols and not current.empty:
+            current = current.sort_values(sort_cols, ascending=[False] * len(sort_cols), na_position="last", kind="stable").reset_index(drop=True)
+        print(f"[FUNDAMENTAL COLLECTION] Category A rows={int(category_a_mask.sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; Fundamental PASS advancing={len(current)}; all collection rows retained in reports.")
     except Exception as exc:
         print(f"[FUNDAMENTAL COLLECTION] Collection annotation failed; keep Delivery-A candidates and mark data unavailable: {exc}")
         fundamental_audit = delivery_audit.copy() if isinstance(delivery_audit, pd.DataFrame) else pd.DataFrame()

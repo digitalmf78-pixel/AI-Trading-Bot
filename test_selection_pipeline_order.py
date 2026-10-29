@@ -88,3 +88,17 @@ def test_fundamental_collection_covers_delivery_a_and_b_without_rejection():
     fundamental = (ROOT / "fundamental_filter.py").read_text(encoding="utf-8")
     assert "never remove a row" in fundamental
     assert '"NOT_SHORTLISTED_YET"' in fundamental
+
+
+def test_strong_fundamental_gate_is_after_collection_and_before_liquidity():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    collection = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
+    assessment = source.index('fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)')
+    gate = source.index('fundamental_pass_mask = fundamental_audit.get("FundamentalShortlistStatus"')
+    liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
+    assert collection < assessment < gate < liquidity
+    # The collection report remains full-universe; no top-N cap is applied to PASS candidates.
+    assert 'fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)' in source
+    assert 'current = fundamental_audit[category_a_mask & fundamental_pass_mask].copy()' in source
+    assert '.head(20)' not in source[gate:liquidity]
+    assert '.head(50)' not in source[gate:liquidity]

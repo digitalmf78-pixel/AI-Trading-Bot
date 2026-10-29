@@ -18,6 +18,7 @@ import pandas as pd
 INPUT_DIR = Path("data") / "inputs"
 OUTPUT_DIR = Path("outputs")
 METRICS_PATH = INPUT_DIR / "fundamental_metrics.csv"
+HISTORY_DIR = Path("data") / "cache" / "fundamental_history"
 DIAGNOSTICS_PATH = OUTPUT_DIR / "v8_fundamental_provider_diagnostics.csv"
 
 METRIC_COLUMNS = [
@@ -361,6 +362,28 @@ def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
     return (pd.Timestamp(today, tz="UTC") - retrieved).days >= refresh_days
 
 
+def save_fundamental_history_snapshot(metrics_path: str | Path = METRICS_PATH,
+                                       asof_date=None,
+                                       history_dir: str | Path = HISTORY_DIR) -> Path | None:
+    """Save a dated, full-universe snapshot after official-date verification.
+
+    Existing dated snapshots are updated in place for same-day reruns; snapshots
+    from earlier dates are never deleted. This is intended to live under the
+    GitHub Actions persistent cache path configured in the workflow.
+    """
+    source = Path(metrics_path)
+    if not source.exists() or source.stat().st_size == 0:
+        return None
+    cutoff = pd.to_datetime(asof_date if asof_date is not None else date.today(), errors="coerce")
+    if pd.isna(cutoff):
+        return None
+    target_dir = Path(history_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"fundamental_metrics_{cutoff.date().isoformat()}.csv"
+    target.write_bytes(source.read_bytes())
+    return target
+
+
 def collect_missing_fundamentals(
     candidates: pd.DataFrame,
     metrics_path: str | Path = METRICS_PATH,
@@ -472,6 +495,7 @@ def collect_missing_fundamentals(
         combined["PublicationDateStatus"] = combined.get("PublicationDateStatus", pd.Series("UNVERIFIED", index=combined.index)).fillna("UNVERIFIED")
         combined["OfficialFilingVerificationError"] = f"{type(exc).__name__}: {exc}"[:300]
     combined.to_csv(path, index=False)
+    snapshot_path = save_fundamental_history_snapshot(path, cutoff_text or date.today().isoformat())
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
-    print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; diagnostics={DIAGNOSTICS_PATH}")
+    print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; history snapshot={snapshot_path}; diagnostics={DIAGNOSTICS_PATH}")
     return combined
