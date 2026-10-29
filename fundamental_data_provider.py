@@ -221,6 +221,60 @@ def _aligned_annual_metrics(ticker_obj) -> dict:
     return out
 
 
+def _aligned_quarterly_metrics(ticker_obj) -> dict:
+    """Compute metrics from aligned quarterly statements when the provider exposes them.
+
+    Growth is year-over-year (latest quarter vs the same quarter one year earlier).
+    Point-in-time balance-sheet ratios use the latest quarter. Quarterly ROE/ROCE
+    are annualized (x4) so they remain comparable to annual threshold conventions.
+    Cash-flow values are the latest reported quarter, not a silently mixed annual total.
+    """
+    out = {"ok": False, "period_end": "", "values": {}, "reason": ""}
+    stmts = {}
+    for name, attr in (("income", "quarterly_financials"), ("balance", "quarterly_balance_sheet"), ("cash", "quarterly_cashflow")):
+        try:
+            stmts[name] = getattr(ticker_obj, attr)
+        except Exception:
+            stmts[name] = None
+    dates = {k: _col_date(v) for k, v in stmts.items()}
+    if not all(dates.values()):
+        out["reason"] = "QUARTERLY_STATEMENT_MISSING:" + ",".join(k for k, v in dates.items() if not v)
+        return out
+    if len(set(dates.values())) != 1:
+        out["reason"] = "QUARTERLY_STATEMENT_PERIODS_DIFFER:" + ",".join(f"{k}={v}" for k, v in dates.items())
+        return out
+    inc, bal, cash = stmts["income"], stmts["balance"], stmts["cash"]
+    rev_labels = ["Total Revenue", "Operating Revenue"]
+    ni_labels = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
+    rev0, rev4 = _row_value(inc, rev_labels, 0), _row_value(inc, rev_labels, 4)
+    ni0, ni4 = _row_value(inc, ni_labels, 0), _row_value(inc, ni_labels, 4)
+    ebit = _row_value(inc, ["EBIT", "Operating Income"], 0)
+    interest = _row_value(inc, ["Interest Expense", "Interest Expense Non Operating"], 0)
+    assets = _row_value(bal, ["Total Assets"], 0)
+    cur_liab = _row_value(bal, ["Current Liabilities", "Total Current Liabilities"], 0)
+    eq0 = _row_value(bal, ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity"], 0)
+    debt = _row_value(bal, ["Total Debt", "Long Term Debt And Capital Lease Obligation"], 0)
+    ocf = _row_value(cash, ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"], 0)
+    fcf = _row_value(cash, ["Free Cash Flow"], 0)
+    if not _present(fcf):
+        capex = _row_value(cash, ["Capital Expenditure", "Capital Expenditures"], 0)
+        if _present(ocf) and _present(capex):
+            fcf = float(ocf) + float(capex)
+    def yoy(new, old):
+        if not (_present(new) and _present(old)) or float(old) <= 0:
+            return pd.NA
+        return (float(new) - float(old)) / float(old) * 100.0
+    roe = (float(ni0) * 4 / float(eq0) * 100.0) if _present(ni0) and _present(eq0) and float(eq0) > 0 else pd.NA
+    capital = float(assets) - float(cur_liab) if _present(assets) and _present(cur_liab) else 0
+    roce = (float(ebit) * 4 / capital * 100.0) if _present(ebit) and capital > 0 else pd.NA
+    de = float(debt) / float(eq0) if _present(debt) and _present(eq0) and float(eq0) > 0 else pd.NA
+    coverage = (float(ebit) / abs(float(interest))) if _present(ebit) and _present(interest) and float(interest) != 0 else (999.0 if _present(interest) and float(interest) == 0 else pd.NA)
+    out["values"] = {"RevenueGrowthPct": yoy(rev0, rev4), "ProfitGrowthPct": yoy(ni0, ni4), "ROEPercent": roe, "ROCEPercent": roce, "DebtToEquity": de, "InterestCoverage": coverage, "OperatingCashFlowINR": ocf, "FreeCashFlowINR": fcf}
+    out["period_end"] = dates["income"]
+    out["ok"] = True
+    return out
+
+
 def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
@@ -308,7 +362,9 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         if _present(ebit) and _present(interest_expense) and float(interest_expense) != 0:
             interest_coverage = float(ebit) / abs(float(interest_expense))
 
-        aligned = _aligned_annual_metrics(ticker)
+        aligned_quarterly = _aligned_quarterly_metrics(ticker)
+        aligned_annual = _aligned_annual_metrics(ticker)
+        aligned = aligned_quarterly if aligned_quarterly["ok"] else aligned_annual
         values = {
             "RevenueGrowthPct": revenue_growth,
             "ProfitGrowthPct": profit_growth,
@@ -323,9 +379,9 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             # One fiscal year, one set of statements: replace (never mix with) snapshot values.
             values = aligned["values"]
             record["MetricPeriodAlignmentStatus"] = "VERIFIED"
-            diagnostic["AlignmentNote"] = f"ALIGNED_ANNUAL_STATEMENTS:{aligned['period_end']}"
+            diagnostic["AlignmentNote"] = (f"ALIGNED_QUARTERLY_STATEMENTS:{aligned['period_end']}" if aligned is aligned_quarterly else f"ALIGNED_ANNUAL_STATEMENTS:{aligned['period_end']}")
         else:
-            diagnostic["AlignmentNote"] = aligned["reason"] or "LEGACY_SNAPSHOT_PATH"
+            diagnostic["AlignmentNote"] = aligned_quarterly["reason"] or aligned_annual["reason"] or "LEGACY_SNAPSHOT_PATH"
         for col, value in values.items():
             record[col] = value if _present(value) else pd.NA
         sector = info.get("sector") if isinstance(info, dict) else None

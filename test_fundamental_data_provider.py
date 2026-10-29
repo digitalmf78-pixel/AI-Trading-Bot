@@ -93,3 +93,33 @@ def test_asof_date_and_retrieval_timestamp_are_separate(tmp_path, monkeypatch):
     assert str(row["AsOfDate"])[:10] == "2026-10-22"
     assert "T" in str(row["DataRetrievedAtUTC"])
     assert row["PublicationDateStatus"] == "UNVERIFIED"
+
+
+def test_quarterly_statements_are_preferred_and_growth_compares_same_quarter_yoy():
+    from fundamental_data_provider import _aligned_quarterly_metrics
+
+    class QuarterlyTicker:
+        quarterly_financials = pd.DataFrame(
+            [[150, 140, 130, 120, 100], [30, 28, 25, 22, 20], [40, 38, 35, 32, 30], [5, 5, 5, 5, 5]],
+            index=["Total Revenue", "Net Income", "Operating Income", "Interest Expense"],
+            columns=pd.to_datetime(["2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30"]),
+        )
+        quarterly_balance_sheet = pd.DataFrame(
+            [[1000], [200], [400], [300]],
+            index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"],
+            columns=pd.to_datetime(["2026-06-30"]),
+        )
+        quarterly_cashflow = pd.DataFrame(
+            [[50], [-10]], index=["Operating Cash Flow", "Capital Expenditure"],
+            columns=pd.to_datetime(["2026-06-30"]),
+        )
+
+    result = _aligned_quarterly_metrics(QuarterlyTicker())
+    assert result["ok"] is True
+    assert result["period_end"] == "2026-06-30"
+    assert round(float(result["values"]["RevenueGrowthPct"]), 2) == 50.0
+    assert round(float(result["values"]["ProfitGrowthPct"]), 2) == 50.0
+    assert round(float(result["values"]["ROEPercent"]), 2) == 30.0
+    assert round(float(result["values"]["ROCEPercent"]), 2) == 20.0
+    assert float(result["values"]["OperatingCashFlowINR"]) == 50.0
+    assert float(result["values"]["FreeCashFlowINR"]) == 40.0
