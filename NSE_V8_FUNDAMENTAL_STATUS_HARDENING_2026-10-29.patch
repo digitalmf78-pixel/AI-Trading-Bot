@@ -1,0 +1,54 @@
+--- a/fundamental_shortlist.py
++++ b/fundamental_shortlist.py
+@@ -71,6 +71,13 @@
+ 
+ 
+ def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
++    # Duplicate metric records make the selected row ambiguous. Do not let a
++    # valid-looking last row silently PASS while the collection audit flags a
++    # duplicate for the same symbol.
++    collection_reason = str(row.get("FundamentalReason", "") or "")
++    if "DUPLICATE_FUNDAMENTAL_RECORDS" in collection_reason:
++        return "WAIT_FOR_DATA", "DUPLICATE_FUNDAMENTAL_RECORDS; resolve cache/input rows before assessment"
++
+     sector = str(row.get("ProviderSector", "") or "").strip().lower()
+     if sector in SPECIAL_RULE_SECTORS:
+         return "WAIT_FOR_DATA", "SECTOR_NEEDS_SPECIAL_RULES(NIM/GNPA/CAR); manual review"
+@@ -142,6 +149,10 @@
+         evaluated = result.apply(lambda r: _evaluate_row(r, asof, t), axis=1)
+         result["FundamentalShortlistStatus"] = [e[0] for e in evaluated]
+         result["FundamentalShortlistReason"] = [e[1] for e in evaluated]
++    # Keep the two public assessment fields in sync at the source of truth,
++    # including callers outside volume_gainer.py and error/report workflows.
++    result["FundamentalAssessmentStatus"] = result["FundamentalShortlistStatus"].astype(str)
++    result["FundamentalAssessmentReason"] = result["FundamentalShortlistReason"].astype(str)
+     if write:
+         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+         result.to_csv(OUTPUT_DIR / "v8_fundamental_shortlist_all.csv", index=False)
+
+--- a/test_fundamental_shortlist_and_alignment.py
++++ b/test_fundamental_shortlist_and_alignment.py
+@@ -106,3 +106,23 @@
+     df = pd.DataFrame([_verified_row(), _verified_row(TckrSymb="BBB", DebtToEquity=3)])
+     out = build_fundamental_shortlist(df, "2026-10-22", write=False)
+     assert len(out) == 2
++
++
++def test_duplicate_fundamental_records_cannot_pass_and_assessment_status_stays_synced():
++    row = _verified_row(FundamentalReason="DUPLICATE_FUNDAMENTAL_RECORDS")
++    out = build_fundamental_shortlist(pd.DataFrame([row]), "2026-10-22", write=False)
++    assert out.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
++    assert "DUPLICATE_FUNDAMENTAL_RECORDS" in out.iloc[0]["FundamentalShortlistReason"]
++    assert out.iloc[0]["FundamentalAssessmentStatus"] == out.iloc[0]["FundamentalShortlistStatus"]
++    assert out.iloc[0]["FundamentalAssessmentReason"] == out.iloc[0]["FundamentalShortlistReason"]
++
++
++def test_assessment_status_syncs_for_pass_fail_and_wait():
++    rows = [
++        _verified_row(TckrSymb="PASS"),
++        _verified_row(TckrSymb="FAIL", ROEPercent=1),
++        _verified_row(TckrSymb="WAIT", PublicationDateStatus="UNVERIFIED"),
++    ]
++    out = build_fundamental_shortlist(pd.DataFrame(rows), "2026-10-22", write=False)
++    assert out["FundamentalAssessmentStatus"].tolist() == out["FundamentalShortlistStatus"].tolist()
++    assert out["FundamentalAssessmentReason"].tolist() == out["FundamentalShortlistReason"].tolist()

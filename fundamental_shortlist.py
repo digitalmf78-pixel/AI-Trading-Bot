@@ -71,6 +71,13 @@ def _num(value):
 
 
 def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
+    # Duplicate metric records make the selected row ambiguous. Do not let a
+    # valid-looking last row silently PASS while the collection audit flags a
+    # duplicate for the same symbol.
+    collection_reason = str(row.get("FundamentalReason", "") or "")
+    if "DUPLICATE_FUNDAMENTAL_RECORDS" in collection_reason:
+        return "WAIT_FOR_DATA", "DUPLICATE_FUNDAMENTAL_RECORDS; resolve cache/input rows before assessment"
+
     sector = str(row.get("ProviderSector", "") or "").strip().lower()
     if sector in SPECIAL_RULE_SECTORS:
         return "WAIT_FOR_DATA", "SECTOR_NEEDS_SPECIAL_RULES(NIM/GNPA/CAR); manual review"
@@ -142,6 +149,10 @@ def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict
         evaluated = result.apply(lambda r: _evaluate_row(r, asof, t), axis=1)
         result["FundamentalShortlistStatus"] = [e[0] for e in evaluated]
         result["FundamentalShortlistReason"] = [e[1] for e in evaluated]
+    # Keep the two public assessment fields in sync at the source of truth,
+    # including callers outside volume_gainer.py and error/report workflows.
+    result["FundamentalAssessmentStatus"] = result["FundamentalShortlistStatus"].astype(str)
+    result["FundamentalAssessmentReason"] = result["FundamentalShortlistReason"].astype(str)
     if write:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         result.to_csv(OUTPUT_DIR / "v8_fundamental_shortlist_all.csv", index=False)

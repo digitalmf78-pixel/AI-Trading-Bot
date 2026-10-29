@@ -106,3 +106,23 @@ def test_financial_sector_needs_special_rules_and_rows_are_kept():
     df = pd.DataFrame([_verified_row(), _verified_row(TckrSymb="BBB", DebtToEquity=3)])
     out = build_fundamental_shortlist(df, "2026-10-22", write=False)
     assert len(out) == 2
+
+
+def test_duplicate_fundamental_records_cannot_pass_and_assessment_status_stays_synced():
+    row = _verified_row(FundamentalReason="DUPLICATE_FUNDAMENTAL_RECORDS")
+    out = build_fundamental_shortlist(pd.DataFrame([row]), "2026-10-22", write=False)
+    assert out.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "DUPLICATE_FUNDAMENTAL_RECORDS" in out.iloc[0]["FundamentalShortlistReason"]
+    assert out.iloc[0]["FundamentalAssessmentStatus"] == out.iloc[0]["FundamentalShortlistStatus"]
+    assert out.iloc[0]["FundamentalAssessmentReason"] == out.iloc[0]["FundamentalShortlistReason"]
+
+
+def test_assessment_status_syncs_for_pass_fail_and_wait():
+    rows = [
+        _verified_row(TckrSymb="PASS"),
+        _verified_row(TckrSymb="FAIL", ROEPercent=1),
+        _verified_row(TckrSymb="WAIT", PublicationDateStatus="UNVERIFIED"),
+    ]
+    out = build_fundamental_shortlist(pd.DataFrame(rows), "2026-10-22", write=False)
+    assert out["FundamentalAssessmentStatus"].tolist() == out["FundamentalShortlistStatus"].tolist()
+    assert out["FundamentalAssessmentReason"].tolist() == out["FundamentalShortlistReason"].tolist()
