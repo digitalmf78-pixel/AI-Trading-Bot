@@ -1,25 +1,2 @@
-NSE V8 ROOT-CAUSE CACHE REVALIDATION PATCH — TEST RESULTS
-Date: 2026-10-20
-
-Source evidence:
-- Latest log logs_106817728483.zip shows cached 2026-10-19 all-indices CSV has 146 rows.
-- Exact configured sector-name coverage was 17/23; six configured sectors were missing.
-- The old _download_daily_index_file() returned any non-empty cached CSV immediately, so it never refreshed the incomplete cache.
-- Report data/inputs/sector_history.csv has 17 rows for 2026-10-19, while those six sectors last had rows on 2026-10-16.
-
-Patch changes:
-- Revalidates cached official archive CSV when exact configured sector coverage is incomplete.
-- Tries both official NSE archive hosts.
-- Replaces the cache when the fetched official CSV is at least as complete as the cached copy.
-- Preserves and returns existing cache if both refresh attempts fail.
-- Never synthesizes closes or substitutes a different index.
-
-Validation:
-- Python compile check for workflow's core files: PASS
-- unittest discover: 49 tests PASS
-- test_v8_regression.py: 27/27 PASS
-- pytest test_news_catalyst_parser.py: 4/4 PASS
-- test_nse_official_index_api.py includes 3 new cache revalidation tests.
-
-Important limitation:
-These are local/mock tests. They prove the incomplete-cache refresh behavior, not that GitHub Actions will receive a complete live CSV. After applying, run NSE Data Test and check for CACHE_INCOMPLETE followed by CACHE_REFRESHED and exact_date_sectors=23/23. If the live official archive is still incomplete or blocked, do not claim the issue is solved; WAIT_FOR_DATA must remain.
+.....................................................                    [100%]
+53 passed in 0.43s

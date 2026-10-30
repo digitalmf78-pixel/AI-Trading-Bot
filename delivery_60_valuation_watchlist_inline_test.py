@@ -12,6 +12,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from delivery_filter import get_delivery_sessions
+from valuation_parsing import parse_positive_number, extract_stock_pe, classify_relative_pe
 
 OUTPUT = Path("delivery_60_valuation_watchlist.csv")
 VALUATION_CACHE = Path("data/cache/valuation/screener_relative_valuation.json")
@@ -43,19 +44,7 @@ def is_fund_or_etf(row):
     return False
 
 def parse_number(value):
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "").replace("%", "")
-    if text in {"", "-", "—", "NA", "N/A", "nan", "None"}:
-        return None
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
-    if not match:
-        return None
-    try:
-        number = float(match.group(0))
-        return number if number > 0 else None
-    except ValueError:
-        return None
+    return parse_positive_number(value)
 
 def load_valuation_cache():
     try:
@@ -105,9 +94,8 @@ def relative_valuation(symbol):
             # are absent; connection/HTTP failures are not.
             cacheable = True
             soup = BeautifulSoup(response.text, "lxml")
-            page_text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
-            own_match = re.search(r"Stock\\s+P\\s*/\\s*E\\s+([\\d,]+(?:\\.\\d+)?)", page_text, flags=re.I)
-            own_pe = parse_number(own_match.group(1)) if own_match else None
+            page_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+            own_pe = extract_stock_pe(page_text)
             if own_pe is None:
                 result, reason = "DATA_INSUFFICIENT", "current positive P/E unavailable"
             else:
@@ -117,7 +105,7 @@ def relative_valuation(symbol):
                 except Exception:
                     tables = []
                 for table in tables:
-                    table.columns = [re.sub(r"\\s+", " ", str(c)).strip().upper() for c in table.columns]
+                    table.columns = [re.sub(r"\s+", " ", str(c)).strip().upper() for c in table.columns]
                     pe_col = next((c for c in table.columns if "STOCK P/E" in c or c == "P/E" or c.endswith(" P/E")), None)
                     if pe_col is None or len(table) < 3:
                         continue
@@ -128,16 +116,11 @@ def relative_valuation(symbol):
                 if len(peer_pes) < 3:
                     result, reason = "DATA_INSUFFICIENT", f"insufficient peer P/E observations ({len(peer_pes)})"
                 else:
-                    peer_median = statistics.median(peer_pes)
-                    ratio = own_pe / peer_median if peer_median > 0 else None
-                    if ratio is None:
-                        result, reason = "DATA_INSUFFICIENT", "peer median invalid"
-                    elif ratio <= 0.80:
-                        result, reason = "RELATIVELY_UNDERVALUED", f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
-                    elif ratio <= 1.20:
-                        result, reason = "FAIRLY_VALUED", f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
+                    result, peer_median, ratio = classify_relative_pe(own_pe, peer_pes)
+                    if peer_median is None or ratio is None:
+                        reason = "peer median invalid"
                     else:
-                        result, reason = "RELATIVELY_OVERVALUED", f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
+                        reason = f"own P/E={own_pe:.2f}, peer median={peer_median:.2f}, ratio={ratio:.2f}"
     except Exception as exc:
         result, reason = "DATA_INSUFFICIENT", f"{type(exc).__name__}: {exc}"
         cacheable = False
