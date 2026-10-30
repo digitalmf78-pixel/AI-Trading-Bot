@@ -30,7 +30,7 @@ BASE_COLUMNS = [
     "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
-    "ProviderSector",
+    "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
 ] + METRIC_COLUMNS
 
 
@@ -297,7 +297,7 @@ def _aligned_quarterly_metrics(ticker_obj) -> dict:
 def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
-    diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
+    diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "QuarterlyAlignmentStatus": "NOT_EVALUATED", "QuarterlyAlignmentReason": "", "MetricCalculationBasis": "UNVERIFIED", "IncomePeriodsUsed": "", "CashFlowPeriodsUsed": "", "BalanceSheetPeriod": ""}
     record = {col: pd.NA for col in BASE_COLUMNS}
     record.update({
         "TckrSymb": symbol, "AsOfDate": "", "DataRetrievedAtUTC": datetime.now(timezone.utc).isoformat(),
@@ -384,6 +384,13 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         aligned_quarterly = _aligned_quarterly_metrics(ticker)
         aligned_annual = _aligned_annual_metrics(ticker)
         aligned = aligned_quarterly if aligned_quarterly["ok"] else aligned_annual
+        diagnostic["QuarterlyAlignmentStatus"] = "VERIFIED" if aligned_quarterly["ok"] else "NOT_ALIGNED"
+        diagnostic["QuarterlyAlignmentReason"] = aligned_quarterly.get("reason", "")
+        diagnostic["IncomePeriodsUsed"] = ";".join(str(x) for x in list(getattr(ticker, "quarterly_financials", pd.DataFrame()).columns)[:5]) if isinstance(getattr(ticker, "quarterly_financials", None), pd.DataFrame) else ""
+        diagnostic["CashFlowPeriodsUsed"] = ";".join(str(x) for x in list(getattr(ticker, "quarterly_cashflow", pd.DataFrame()).columns)[:4]) if isinstance(getattr(ticker, "quarterly_cashflow", None), pd.DataFrame) else ""
+        diagnostic["BalanceSheetPeriod"] = str(list(getattr(ticker, "quarterly_balance_sheet", pd.DataFrame()).columns)[0]) if isinstance(getattr(ticker, "quarterly_balance_sheet", None), pd.DataFrame) and not getattr(ticker, "quarterly_balance_sheet").empty else ""
+        calculation_basis = "QUARTERLY_YOY_TTM" if aligned_quarterly["ok"] else ("ANNUAL_FALLBACK" if aligned_annual["ok"] else "UNALIGNED_PROVIDER_SNAPSHOT")
+        diagnostic["MetricCalculationBasis"] = calculation_basis
         values = {
             "RevenueGrowthPct": revenue_growth,
             "ProfitGrowthPct": profit_growth,
@@ -413,6 +420,8 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         valuation_multiple = _first_number(info, ["trailingPE", "forwardPE"])
         record["ValuationStatus"] = "VALUATION_MULTIPLE_AVAILABLE" if _present(valuation_multiple) else "VALUATION_DATA_MISSING"
         record["FinancialPeriodEnd"] = aligned["period_end"] if aligned["ok"] else _financial_period_end(ticker, info)
+        record["MetricCalculationBasis"] = calculation_basis
+        record["QuarterlyAlignmentReason"] = aligned_quarterly.get("reason", "")
         metric_count = sum(_present(record.get(col)) for col in METRIC_COLUMNS)
         diagnostic["ProviderStatus"] = "DATA_FOUND" if metric_count else "MISSING_DATA"
         diagnostic["ProviderReason"] = f"metrics_available={metric_count}/{len(METRIC_COLUMNS)}"
@@ -490,6 +499,15 @@ def collect_missing_fundamentals(
     for col in BASE_COLUMNS:
         if col not in existing.columns:
             existing[col] = pd.NA
+    # One-way, non-destructive migration: legacy rows predate calculation-basis
+    # tracking. Never infer quarterly/annual basis from period dates or alignment
+    # flags; mark the basis unknown while preserving every metric and source field.
+    existing["MetricCalculationBasis"] = existing["MetricCalculationBasis"].astype("object")
+    existing["QuarterlyAlignmentReason"] = existing["QuarterlyAlignmentReason"].astype("object")
+    basis_missing = existing["MetricCalculationBasis"].isna() | existing["MetricCalculationBasis"].astype(str).str.strip().isin({"", "nan", "None", "<NA>"})
+    existing.loc[basis_missing, "MetricCalculationBasis"] = "LEGACY_CACHE_BASIS_UNKNOWN"
+    reason_missing = existing["QuarterlyAlignmentReason"].isna() | existing["QuarterlyAlignmentReason"].astype(str).str.strip().isin({"", "nan", "None", "<NA>"})
+    existing.loc[basis_missing & reason_missing, "QuarterlyAlignmentReason"] = "Legacy cache predates calculation-basis tracking; basis cannot be inferred safely."
     existing["TckrSymb"] = existing["TckrSymb"].astype(str).str.strip().str.upper()
 
     symbols = []
@@ -507,16 +525,16 @@ def collect_missing_fundamentals(
         today_for_refresh = cutoff if pd.notna(cutoff) else pd.Timestamp.today()
         if enabled and _is_stale_provider_record(current, today_for_refresh.date(), refresh_days):
             # Provider-owned record is old: clear it so new quarterly/annual results are picked up.
-            for col in METRIC_COLUMNS + ["FinancialPeriodEnd", "PublicationDate", "MetricPeriodAlignmentStatus"]:
+            for col in METRIC_COLUMNS + ["FinancialPeriodEnd", "PublicationDate", "MetricPeriodAlignmentStatus", "MetricCalculationBasis", "QuarterlyAlignmentReason"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
         provider_owned = not any(_present(current.get(col)) for col in METRIC_COLUMNS)
         if not enabled:
-            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
+            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS), "MetricCalculationBasis": current.get("MetricCalculationBasis", "LEGACY_CACHE_BASIS_UNKNOWN"), "QuarterlyAlignmentStatus": "NOT_RECHECKED_CACHE"})
             continue
         if not missing:
-            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "all metrics already populated in input CSV", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS)})
+            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "all metrics already populated in input CSV", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), "MetricCalculationBasis": current.get("MetricCalculationBasis", "LEGACY_CACHE_BASIS_UNKNOWN"), "QuarterlyAlignmentStatus": "NOT_RECHECKED_CACHE"})
             continue
         fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory)
         # Never overwrite a manually supplied value with provider data.
@@ -532,7 +550,7 @@ def collect_missing_fundamentals(
         if provider_owned and any(_present(fetched.get(c)) for c in METRIC_COLUMNS):
             # No manual metric values exist, so period/source fields describe the provider data
             # as one unit and must replace stale UNVERIFIED defaults from earlier runs.
-            for col in ("MetricPeriodAlignmentStatus", "FinancialPeriodEnd", "Source", "SourceURL", "DataRetrievedAtUTC", "ProviderSector"):
+            for col in ("MetricPeriodAlignmentStatus", "MetricCalculationBasis", "QuarterlyAlignmentReason", "FinancialPeriodEnd", "Source", "SourceURL", "DataRetrievedAtUTC", "ProviderSector"):
                 if _present(fetched.get(col)):
                     merged[col] = fetched.get(col)
         if not _present(merged.get("AsOfDate")) and cutoff_text:

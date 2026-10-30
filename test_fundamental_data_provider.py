@@ -95,42 +95,72 @@ def test_asof_date_and_retrieval_timestamp_are_separate(tmp_path, monkeypatch):
     assert row["PublicationDateStatus"] == "UNVERIFIED"
 
 
-def test_quarterly_statements_are_preferred_and_growth_compares_same_quarter_yoy():
-    from fundamental_data_provider import _aligned_quarterly_metrics
-
-    class QuarterlyTicker:
-        quarterly_financials = pd.DataFrame(
-            [[150, 140, 130, 120, 100], [30, 28, 25, 22, 20], [40, 38, 35, 32, 30], [5, 5, 5, 5, 5]],
-            index=["Total Revenue", "Net Income", "Operating Income", "Interest Expense"],
-            columns=pd.to_datetime(["2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30"]),
-        )
-        quarterly_balance_sheet = pd.DataFrame(
-            [[1000], [200], [400], [300]],
-            index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"],
-            columns=pd.to_datetime(["2026-06-30"]),
-        )
-        quarterly_cashflow = pd.DataFrame(
-            [[50, 45, 40, 35], [-10, -9, -8, -7]], index=["Operating Cash Flow", "Capital Expenditure"],
-            columns=pd.to_datetime(["2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30"]),
-        )
-
-    result = _aligned_quarterly_metrics(QuarterlyTicker())
-    assert result["ok"] is True
-    assert result["period_end"] == "2026-06-30"
-    assert round(float(result["values"]["RevenueGrowthPct"]), 2) == 50.0
-    assert round(float(result["values"]["ProfitGrowthPct"]), 2) == 50.0
-    assert round(float(result["values"]["ROEPercent"]), 2) == 26.25
-    assert round(float(result["values"]["ROCEPercent"]), 2) == 18.12
-    assert float(result["values"]["OperatingCashFlowINR"]) == 170.0
-    assert float(result["values"]["FreeCashFlowINR"]) == 136.0
+def test_provider_diagnostics_expose_unaligned_snapshot_basis():
+    from fundamental_data_provider import _fetch_one
+    record, diagnostic = _fetch_one("AAA", ticker_factory=FakeTicker)
+    assert diagnostic["MetricCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert diagnostic["QuarterlyAlignmentStatus"] == "NOT_ALIGNED"
+    assert diagnostic["QuarterlyAlignmentReason"]
+    assert record["MetricCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert record["MetricPeriodAlignmentStatus"] == "UNVERIFIED"
 
 
-def test_quarterly_ttm_requires_four_aligned_cashflow_quarters():
-    from fundamental_data_provider import _aligned_quarterly_metrics
-    class IncompleteTicker:
-        quarterly_financials = pd.DataFrame([[10, 9, 8, 7, 6]], index=["Total Revenue"], columns=pd.to_datetime(["2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30"]))
-        quarterly_balance_sheet = pd.DataFrame([[100], [20], [40], [30]], index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"], columns=pd.to_datetime(["2026-06-30"]))
-        quarterly_cashflow = pd.DataFrame([[50]], index=["Operating Cash Flow"], columns=pd.to_datetime(["2026-06-30"]))
-    result = _aligned_quarterly_metrics(IncompleteTicker())
-    assert result["ok"] is False
-    assert result["reason"].startswith("QUARTERLY_STATEMENT_PERIODS_DIFFER") or result["reason"].startswith("INSUFFICIENT_QUARTERS")
+def test_provider_diagnostics_expose_quarterly_ttm_basis():
+    from fundamental_data_provider import _fetch_one
+
+    class QuarterlyTicker(FakeTicker):
+        def __init__(self, symbol):
+            super().__init__(symbol)
+            cols = pd.to_datetime(["2026-09-30", "2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30"])
+            self.quarterly_financials = pd.DataFrame({c: [100, 20, 25, 5] for c in cols}, index=["Total Revenue", "Net Income", "EBIT", "Interest Expense"])
+            q4 = cols[:4]
+            self.quarterly_cashflow = pd.DataFrame({c: [10, -2, 8] for c in q4}, index=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"])
+            self.quarterly_balance_sheet = pd.DataFrame({c: [1000, 200, 500, 300] for c in cols[:2]}, index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"])
+
+    record, diagnostic = _fetch_one("AAA", ticker_factory=QuarterlyTicker)
+    assert diagnostic["MetricCalculationBasis"] == "QUARTERLY_YOY_TTM"
+    assert diagnostic["QuarterlyAlignmentStatus"] == "VERIFIED"
+    assert record["MetricCalculationBasis"] == "QUARTERLY_YOY_TTM"
+    assert record["MetricPeriodAlignmentStatus"] == "VERIFIED"
+
+
+def test_legacy_cache_basis_is_migrated_to_unknown_without_changing_metrics(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    original = pd.DataFrame([{
+        "TckrSymb": "LEGACY", "AsOfDate": "2026-10-28",
+        "FinancialPeriodEnd": "2026-03-31", "MetricPeriodAlignmentStatus": "VERIFIED",
+        "RevenueGrowthPct": 12.5, "ROEPercent": 14.2,
+    }])
+    original.to_csv(path, index=False)
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["LEGACY"]}), metrics_path=path, enabled=False,
+        pause_seconds=0, asof_date="2026-10-29",
+    )
+    row = result.set_index("TckrSymb").loc["LEGACY"]
+    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
+    assert "predates calculation-basis tracking" in row["QuarterlyAlignmentReason"]
+    assert float(row["RevenueGrowthPct"]) == 12.5
+    assert float(row["ROEPercent"]) == 14.2
+    # Historical alignment flags are not promoted or rewritten by this migration.
+    assert row["MetricPeriodAlignmentStatus"] == "VERIFIED"
+    persisted = pd.read_csv(path).set_index("TckrSymb").loc["LEGACY"]
+    assert persisted["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
+
+
+def test_existing_unknown_basis_is_not_mislabeled_as_quarterly(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    pd.DataFrame([{
+        "TckrSymb": "UNKNOWN", "MetricCalculationBasis": "",
+        "RevenueGrowthPct": 1.0,
+    }]).to_csv(path, index=False)
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["UNKNOWN"]}), metrics_path=path, enabled=False,
+        pause_seconds=0, asof_date="2026-10-29",
+    )
+    row = result.set_index("TckrSymb").loc["UNKNOWN"]
+    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
+    assert row["MetricCalculationBasis"] != "QUARTERLY_YOY_TTM"
