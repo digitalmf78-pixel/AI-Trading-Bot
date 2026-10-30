@@ -110,8 +110,8 @@ def test_quarterly_statements_are_preferred_and_growth_compares_same_quarter_yoy
             columns=pd.to_datetime(["2026-06-30"]),
         )
         quarterly_cashflow = pd.DataFrame(
-            [[50], [-10]], index=["Operating Cash Flow", "Capital Expenditure"],
-            columns=pd.to_datetime(["2026-06-30"]),
+            [[50, 45, 40, 35], [-10, -9, -8, -7]], index=["Operating Cash Flow", "Capital Expenditure"],
+            columns=pd.to_datetime(["2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30"]),
         )
 
     result = _aligned_quarterly_metrics(QuarterlyTicker())
@@ -119,7 +119,18 @@ def test_quarterly_statements_are_preferred_and_growth_compares_same_quarter_yoy
     assert result["period_end"] == "2026-06-30"
     assert round(float(result["values"]["RevenueGrowthPct"]), 2) == 50.0
     assert round(float(result["values"]["ProfitGrowthPct"]), 2) == 50.0
-    assert round(float(result["values"]["ROEPercent"]), 2) == 30.0
-    assert round(float(result["values"]["ROCEPercent"]), 2) == 20.0
-    assert float(result["values"]["OperatingCashFlowINR"]) == 50.0
-    assert float(result["values"]["FreeCashFlowINR"]) == 40.0
+    assert round(float(result["values"]["ROEPercent"]), 2) == 26.25
+    assert round(float(result["values"]["ROCEPercent"]), 2) == 18.12
+    assert float(result["values"]["OperatingCashFlowINR"]) == 170.0
+    assert float(result["values"]["FreeCashFlowINR"]) == 136.0
+
+
+def test_quarterly_ttm_requires_four_aligned_cashflow_quarters():
+    from fundamental_data_provider import _aligned_quarterly_metrics
+    class IncompleteTicker:
+        quarterly_financials = pd.DataFrame([[10, 9, 8, 7, 6]], index=["Total Revenue"], columns=pd.to_datetime(["2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30"]))
+        quarterly_balance_sheet = pd.DataFrame([[100], [20], [40], [30]], index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"], columns=pd.to_datetime(["2026-06-30"]))
+        quarterly_cashflow = pd.DataFrame([[50]], index=["Operating Cash Flow"], columns=pd.to_datetime(["2026-06-30"]))
+    result = _aligned_quarterly_metrics(IncompleteTicker())
+    assert result["ok"] is False
+    assert result["reason"].startswith("QUARTERLY_STATEMENT_PERIODS_DIFFER") or result["reason"].startswith("INSUFFICIENT_QUARTERS")

@@ -222,12 +222,13 @@ def _aligned_annual_metrics(ticker_obj) -> dict:
 
 
 def _aligned_quarterly_metrics(ticker_obj) -> dict:
-    """Compute metrics from aligned quarterly statements when the provider exposes them.
+    """Build quarter-aligned YoY and TTM metrics; never annualize one quarter x4.
 
-    Growth is year-over-year (latest quarter vs the same quarter one year earlier).
-    Point-in-time balance-sheet ratios use the latest quarter. Quarterly ROE/ROCE
-    are annualized (x4) so they remain comparable to annual threshold conventions.
-    Cash-flow values are the latest reported quarter, not a silently mixed annual total.
+    Income and cash-flow statements must expose the same four latest quarter ends;
+    income needs a fifth column for same-quarter-prior-year growth. Balance sheet
+    is point-in-time and must match the latest quarter. ROE/ROCE and interest
+    coverage use four-quarter TTM flows; balance-sheet denominators are latest
+    reported values (average equity only when the prior quarter is available).
     """
     out = {"ok": False, "period_end": "", "values": {}, "reason": ""}
     stmts = {}
@@ -236,42 +237,60 @@ def _aligned_quarterly_metrics(ticker_obj) -> dict:
             stmts[name] = getattr(ticker_obj, attr)
         except Exception:
             stmts[name] = None
-    dates = {k: _col_date(v) for k, v in stmts.items()}
-    if not all(dates.values()):
-        out["reason"] = "QUARTERLY_STATEMENT_MISSING:" + ",".join(k for k, v in dates.items() if not v)
-        return out
-    if len(set(dates.values())) != 1:
-        out["reason"] = "QUARTERLY_STATEMENT_PERIODS_DIFFER:" + ",".join(f"{k}={v}" for k, v in dates.items())
-        return out
     inc, bal, cash = stmts["income"], stmts["balance"], stmts["cash"]
-    rev_labels = ["Total Revenue", "Operating Revenue"]
+    if not all(isinstance(x, pd.DataFrame) and not x.empty for x in (inc, bal, cash)):
+        out["reason"] = "QUARTERLY_STATEMENT_MISSING"
+        return out
+    def col_dates(frame):
+        return [pd.to_datetime(c, errors="coerce").date().isoformat() if not pd.isna(pd.to_datetime(c, errors="coerce")) else "" for c in frame.columns]
+    idates, cdates, bdates = col_dates(inc), col_dates(cash), col_dates(bal)
+    if len(idates) < 5 or len(cdates) < 4:
+        out["reason"] = f"INSUFFICIENT_QUARTERS:income={len(idates)},cash={len(cdates)}"
+        return out
+    if idates[:4] != cdates[:4] or not bdates or idates[0] != bdates[0]:
+        out["reason"] = "QUARTERLY_STATEMENT_PERIODS_DIFFER"
+        return out
     ni_labels = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
+    rev_labels = ["Total Revenue", "Operating Revenue"]
+    ebit_labels = ["EBIT", "Operating Income"]
+    interest_labels = ["Interest Expense", "Interest Expense Non Operating"]
+    ocf_labels = ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"]
+    capex_labels = ["Capital Expenditure", "Capital Expenditures"]
+    def sum4(frame, labels):
+        vals = [_row_value(frame, labels, i) for i in range(4)]
+        if not all(_present(v) for v in vals):
+            return pd.NA
+        return sum(float(v) for v in vals)
+    def yoy(now, prior):
+        if not (_present(now) and _present(prior)) or float(prior) <= 0:
+            return pd.NA
+        return (float(now) - float(prior)) / float(prior) * 100.0
     rev0, rev4 = _row_value(inc, rev_labels, 0), _row_value(inc, rev_labels, 4)
     ni0, ni4 = _row_value(inc, ni_labels, 0), _row_value(inc, ni_labels, 4)
-    ebit = _row_value(inc, ["EBIT", "Operating Income"], 0)
-    interest = _row_value(inc, ["Interest Expense", "Interest Expense Non Operating"], 0)
+    ttm_ni = sum4(inc, ni_labels)
+    ttm_ebit = sum4(inc, ebit_labels)
+    ttm_interest = sum4(inc, interest_labels)
+    ttm_ocf = sum4(cash, ocf_labels)
+    ttm_fcf = sum4(cash, ["Free Cash Flow"])
+    if not _present(ttm_fcf):
+        ttm_capex = sum4(cash, capex_labels)
+        if _present(ttm_ocf) and _present(ttm_capex):
+            ttm_fcf = float(ttm_ocf) + float(ttm_capex)
     assets = _row_value(bal, ["Total Assets"], 0)
     cur_liab = _row_value(bal, ["Current Liabilities", "Total Current Liabilities"], 0)
     eq0 = _row_value(bal, ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity"], 0)
+    eq1 = _row_value(bal, ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity"], 1)
     debt = _row_value(bal, ["Total Debt", "Long Term Debt And Capital Lease Obligation"], 0)
-    ocf = _row_value(cash, ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"], 0)
-    fcf = _row_value(cash, ["Free Cash Flow"], 0)
-    if not _present(fcf):
-        capex = _row_value(cash, ["Capital Expenditure", "Capital Expenditures"], 0)
-        if _present(ocf) and _present(capex):
-            fcf = float(ocf) + float(capex)
-    def yoy(new, old):
-        if not (_present(new) and _present(old)) or float(old) <= 0:
-            return pd.NA
-        return (float(new) - float(old)) / float(old) * 100.0
-    roe = (float(ni0) * 4 / float(eq0) * 100.0) if _present(ni0) and _present(eq0) and float(eq0) > 0 else pd.NA
+    avg_eq = (float(eq0) + float(eq1)) / 2 if _present(eq0) and _present(eq1) else eq0
+    roe = (float(ttm_ni) / float(avg_eq) * 100) if _present(ttm_ni) and _present(avg_eq) and float(avg_eq) > 0 else pd.NA
     capital = float(assets) - float(cur_liab) if _present(assets) and _present(cur_liab) else 0
-    roce = (float(ebit) * 4 / capital * 100.0) if _present(ebit) and capital > 0 else pd.NA
+    roce = (float(ttm_ebit) / capital * 100) if _present(ttm_ebit) and capital > 0 else pd.NA
     de = float(debt) / float(eq0) if _present(debt) and _present(eq0) and float(eq0) > 0 else pd.NA
-    coverage = (float(ebit) / abs(float(interest))) if _present(ebit) and _present(interest) and float(interest) != 0 else (999.0 if _present(interest) and float(interest) == 0 else pd.NA)
-    out["values"] = {"RevenueGrowthPct": yoy(rev0, rev4), "ProfitGrowthPct": yoy(ni0, ni4), "ROEPercent": roe, "ROCEPercent": roce, "DebtToEquity": de, "InterestCoverage": coverage, "OperatingCashFlowINR": ocf, "FreeCashFlowINR": fcf}
-    out["period_end"] = dates["income"]
+    coverage = (float(ttm_ebit) / abs(float(ttm_interest))) if _present(ttm_ebit) and _present(ttm_interest) and float(ttm_interest) != 0 else (999.0 if _present(ttm_interest) and float(ttm_interest) == 0 else pd.NA)
+    out["values"] = {"RevenueGrowthPct": yoy(rev0, rev4), "ProfitGrowthPct": yoy(ni0, ni4), "ROEPercent": roe, "ROCEPercent": roce, "DebtToEquity": de, "InterestCoverage": coverage, "OperatingCashFlowINR": ttm_ocf, "FreeCashFlowINR": ttm_fcf}
+    out["period_end"] = idates[0]
     out["ok"] = True
+    out["basis"] = "QUARTERLY_YOY_TTM"
     return out
 
 
@@ -379,7 +398,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             # One fiscal year, one set of statements: replace (never mix with) snapshot values.
             values = aligned["values"]
             record["MetricPeriodAlignmentStatus"] = "VERIFIED"
-            diagnostic["AlignmentNote"] = (f"ALIGNED_QUARTERLY_STATEMENTS:{aligned['period_end']}" if aligned is aligned_quarterly else f"ALIGNED_ANNUAL_STATEMENTS:{aligned['period_end']}")
+            diagnostic["AlignmentNote"] = (f"ALIGNED_QUARTERLY_TTM_STATEMENTS:{aligned['period_end']}" if aligned is aligned_quarterly else f"ALIGNED_ANNUAL_STATEMENTS:{aligned['period_end']}")
         else:
             diagnostic["AlignmentNote"] = aligned_quarterly["reason"] or aligned_annual["reason"] or "LEGACY_SNAPSHOT_PATH"
         for col, value in values.items():
