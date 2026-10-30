@@ -95,129 +95,58 @@ def test_asof_date_and_retrieval_timestamp_are_separate(tmp_path, monkeypatch):
     assert row["PublicationDateStatus"] == "UNVERIFIED"
 
 
-def test_provider_diagnostics_expose_unaligned_snapshot_basis():
-    from fundamental_data_provider import _fetch_one
-    record, diagnostic = _fetch_one("AAA", ticker_factory=FakeTicker)
-    assert diagnostic["MetricCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
-    assert diagnostic["QuarterlyAlignmentStatus"] == "NOT_ALIGNED"
-    assert diagnostic["QuarterlyAlignmentReason"]
-    assert record["MetricCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
-    assert record["MetricPeriodAlignmentStatus"] == "UNVERIFIED"
-
-
-def test_provider_diagnostics_expose_quarterly_ttm_basis():
-    from fundamental_data_provider import _fetch_one
-
-    class QuarterlyTicker(FakeTicker):
-        def __init__(self, symbol):
-            super().__init__(symbol)
-            cols = pd.to_datetime(["2026-09-30", "2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30"])
-            self.quarterly_financials = pd.DataFrame({c: [100, 20, 25, 5] for c in cols}, index=["Total Revenue", "Net Income", "EBIT", "Interest Expense"])
-            q4 = cols[:4]
-            self.quarterly_cashflow = pd.DataFrame({c: [10, -2, 8] for c in q4}, index=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"])
-            self.quarterly_balance_sheet = pd.DataFrame({c: [1000, 200, 500, 300] for c in cols[:2]}, index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"])
-
-    record, diagnostic = _fetch_one("AAA", ticker_factory=QuarterlyTicker)
-    assert diagnostic["MetricCalculationBasis"] == "QUARTERLY_YOY_TTM"
-    assert diagnostic["QuarterlyAlignmentStatus"] == "VERIFIED"
-    assert record["MetricCalculationBasis"] == "QUARTERLY_YOY_TTM"
-    assert record["MetricPeriodAlignmentStatus"] == "VERIFIED"
-
-
-def test_legacy_cache_basis_is_migrated_to_unknown_without_changing_metrics(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    path = Path("data/inputs/fundamental_metrics.csv")
-    path.parent.mkdir(parents=True)
-    original = pd.DataFrame([{
-        "TckrSymb": "LEGACY", "AsOfDate": "2026-10-28",
-        "FinancialPeriodEnd": "2026-03-31", "MetricPeriodAlignmentStatus": "VERIFIED",
-        "RevenueGrowthPct": 12.5, "ROEPercent": 14.2,
-    }])
-    original.to_csv(path, index=False)
-    result = collect_missing_fundamentals(
-        pd.DataFrame({"TckrSymb": ["LEGACY"]}), metrics_path=path, enabled=False,
-        pause_seconds=0, asof_date="2026-10-29",
-    )
-    row = result.set_index("TckrSymb").loc["LEGACY"]
-    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
-    assert "predates calculation-basis tracking" in row["QuarterlyAlignmentReason"]
-    assert float(row["RevenueGrowthPct"]) == 12.5
-    assert float(row["ROEPercent"]) == 14.2
-    # Historical alignment flags are not promoted or rewritten by this migration.
-    assert row["MetricPeriodAlignmentStatus"] == "VERIFIED"
-    persisted = pd.read_csv(path).set_index("TckrSymb").loc["LEGACY"]
-    assert persisted["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
-
-
-def test_existing_unknown_basis_is_not_mislabeled_as_quarterly(tmp_path, monkeypatch):
+def test_legacy_mixed_row_keeps_unknown_basis_and_records_only_new_provider_metrics(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     path = Path("data/inputs/fundamental_metrics.csv")
     path.parent.mkdir(parents=True)
     pd.DataFrame([{
-        "TckrSymb": "UNKNOWN", "MetricCalculationBasis": "",
-        "RevenueGrowthPct": 1.0,
+        "TckrSymb": "AAA", "Source": "Legacy cache", "RevenueGrowthPct": 77,
+        "SourceURL": "https://example.com/legacy",
     }]).to_csv(path, index=False)
     result = collect_missing_fundamentals(
-        pd.DataFrame({"TckrSymb": ["UNKNOWN"]}), metrics_path=path, enabled=False,
-        pause_seconds=0, asof_date="2026-10-29",
+        pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+        ticker_factory=FakeTicker, pause_seconds=0, asof_date="2026-10-30",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
     )
-    row = result.set_index("TckrSymb").loc["UNKNOWN"]
+    row = result.set_index("TckrSymb").loc["AAA"]
     assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
-    assert row["MetricCalculationBasis"] != "QUARTERLY_YOY_TTM"
+    assert row["ProviderFetchCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert "RevenueGrowthPct" not in str(row["ProviderFetchedMetrics"])
+    assert "ROEPercent" in str(row["ProviderFetchedMetrics"])
+    assert row["Source"] == "Legacy cache"
+    assert row["SourceURL"] == "https://example.com/legacy"
 
 
-def _annual_ticker_factory(symbol):
-    class AnnualTicker(FakeTicker):
-        def __init__(self, ticker_symbol):
-            super().__init__(ticker_symbol)
-            dates = pd.to_datetime(["2026-03-31", "2025-03-31"])
-            self.financials = pd.DataFrame({
-                dates[0]: [1200, 120, 300, 30],
-                dates[1]: [1000, 100, 250, 25],
-            }, index=["Total Revenue", "Net Income", "EBIT", "Interest Expense"])
-            self.balance_sheet = pd.DataFrame({
-                dates[0]: [5000, 1000, 2000, 800],
-                dates[1]: [4500, 900, 1800, 700],
-            }, index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"])
-            self.cashflow = pd.DataFrame({dates[0]: [500, -100, 400]}, index=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"])
-            self.quarterly_financials = pd.DataFrame()
-            self.quarterly_balance_sheet = pd.DataFrame()
-            self.quarterly_cashflow = pd.DataFrame()
-    return AnnualTicker(symbol)
+def test_fully_provider_owned_row_gets_row_level_basis_and_provenance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+        ticker_factory=FakeTicker, pause_seconds=0, asof_date="2026-10-30",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    assert row["MetricCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert row["ProviderFetchCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert "RevenueGrowthPct" in str(row["ProviderFetchedMetrics"])
+    assert str(row["ProviderFetchedAtUTC"]).strip()
 
 
-def test_partial_legacy_row_persists_fetch_basis_separately_without_relabeling_mixed_metrics(tmp_path, monkeypatch):
+def test_legacy_basis_migration_does_not_infer_from_period_status(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     path = Path("data/inputs/fundamental_metrics.csv")
     path.parent.mkdir(parents=True)
     pd.DataFrame([{
-        "TckrSymb": "MIXED", "AsOfDate": "2026-10-28", "DataRetrievedAtUTC": "2026-10-28T10:00:00+00:00", "Source": "Yahoo Finance via yfinance",
-        "RevenueGrowthPct": 77.0,
+        "TckrSymb": "OLD", "RevenueGrowthPct": 12,
+        "MetricPeriodAlignmentStatus": "VERIFIED", "FinancialPeriodEnd": "2025-03-31",
+        "Source": "Manual source",
     }]).to_csv(path, index=False)
     result = collect_missing_fundamentals(
-        pd.DataFrame({"TckrSymb": ["MIXED"]}), metrics_path=path, enabled=True,
-        ticker_factory=_annual_ticker_factory, pause_seconds=0, asof_date="2026-10-29",
-        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        pd.DataFrame({"TckrSymb": []}), metrics_path=path, enabled=False,
+        asof_date="2026-10-30", filings_fetcher=lambda _cutoff: pd.DataFrame(),
     )
-    row = result.set_index("TckrSymb").loc["MIXED"]
-    assert float(row["RevenueGrowthPct"]) == 77.0  # legacy value is not overwritten
-    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"  # mixed row stays unknown
-    assert row["ProviderFetchCalculationBasis"] == "ANNUAL_FALLBACK"
-    assert "ROEPercent" in row["ProviderFetchedMetrics"]
-    persisted = pd.read_csv(path).set_index("TckrSymb").loc["MIXED"]
-    assert persisted["ProviderFetchCalculationBasis"] == "ANNUAL_FALLBACK"
-    assert persisted["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
-
-
-def test_new_provider_owned_row_persists_aggregate_and_fetch_basis(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    path = Path("data/inputs/fundamental_metrics.csv")
-    result = collect_missing_fundamentals(
-        pd.DataFrame({"TckrSymb": ["NEWCO"]}), metrics_path=path, enabled=True,
-        ticker_factory=_annual_ticker_factory, pause_seconds=0, asof_date="2026-10-29",
-        filings_fetcher=lambda _cutoff: pd.DataFrame(),
-    )
-    row = result.set_index("TckrSymb").loc["NEWCO"]
-    assert row["MetricCalculationBasis"] == "ANNUAL_FALLBACK"
-    assert row["ProviderFetchCalculationBasis"] == "ANNUAL_FALLBACK"
+    row = result.set_index("TckrSymb").loc["OLD"]
+    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
     assert row["MetricPeriodAlignmentStatus"] == "VERIFIED"
+    assert row["FinancialPeriodEnd"] == "2025-03-31"
+    assert row["Source"] == "Manual source"

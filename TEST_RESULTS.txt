@@ -1,14 +1,16 @@
-NSE V8 Cache Basis Persistence Fix — Local Validation
-Date: 2026-10-30
+P1 CACHE BASIS FIX — LOCAL VALIDATION
+Baseline: workflow checkout commit 61f301584503142da1514c123e889f5c028bf444
 
+Focused:
 pytest -q test_fundamental_data_provider.py
-10 passed
+7 passed
 
-pytest -q test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_cache_persistence_workflow.py test_fundamental_official_filings.py
-33 passed
+Related regression suites:
+pytest -q test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_cache_persistence_workflow.py test_fundamental_official_filings.py test_fundamental_filter.py test_fundamental_fail_closed.py test_selection_pipeline_order.py test_liquidity_filter.py test_delivery_filter_fallback.py test_delivery_rule.py
+70 passed
 
+Compile:
 python -m py_compile fundamental_data_provider.py
 PASS
 
-Live provider validation: NOT RUN
-GitHub deployment: NOT PERFORMED
+Scope note: P1 only. No Quarterly TTM implementation. No GitHub push/deployment. No live provider request.
