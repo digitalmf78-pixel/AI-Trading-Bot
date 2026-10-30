@@ -1,2 +1,14 @@
-.....................................................                    [100%]
-53 passed in 0.43s
+NSE V8 Cache Basis Persistence Fix — Local Validation
+Date: 2026-10-30
+
+pytest -q test_fundamental_data_provider.py
+10 passed
+
+pytest -q test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_cache_persistence_workflow.py test_fundamental_official_filings.py
+33 passed
+
+python -m py_compile fundamental_data_provider.py
+PASS
+
+Live provider validation: NOT RUN
+GitHub deployment: NOT PERFORMED

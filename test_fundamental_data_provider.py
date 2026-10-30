@@ -164,3 +164,60 @@ def test_existing_unknown_basis_is_not_mislabeled_as_quarterly(tmp_path, monkeyp
     row = result.set_index("TckrSymb").loc["UNKNOWN"]
     assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
     assert row["MetricCalculationBasis"] != "QUARTERLY_YOY_TTM"
+
+
+def _annual_ticker_factory(symbol):
+    class AnnualTicker(FakeTicker):
+        def __init__(self, ticker_symbol):
+            super().__init__(ticker_symbol)
+            dates = pd.to_datetime(["2026-03-31", "2025-03-31"])
+            self.financials = pd.DataFrame({
+                dates[0]: [1200, 120, 300, 30],
+                dates[1]: [1000, 100, 250, 25],
+            }, index=["Total Revenue", "Net Income", "EBIT", "Interest Expense"])
+            self.balance_sheet = pd.DataFrame({
+                dates[0]: [5000, 1000, 2000, 800],
+                dates[1]: [4500, 900, 1800, 700],
+            }, index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"])
+            self.cashflow = pd.DataFrame({dates[0]: [500, -100, 400]}, index=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"])
+            self.quarterly_financials = pd.DataFrame()
+            self.quarterly_balance_sheet = pd.DataFrame()
+            self.quarterly_cashflow = pd.DataFrame()
+    return AnnualTicker(symbol)
+
+
+def test_partial_legacy_row_persists_fetch_basis_separately_without_relabeling_mixed_metrics(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    pd.DataFrame([{
+        "TckrSymb": "MIXED", "AsOfDate": "2026-10-28", "DataRetrievedAtUTC": "2026-10-28T10:00:00+00:00", "Source": "Yahoo Finance via yfinance",
+        "RevenueGrowthPct": 77.0,
+    }]).to_csv(path, index=False)
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["MIXED"]}), metrics_path=path, enabled=True,
+        ticker_factory=_annual_ticker_factory, pause_seconds=0, asof_date="2026-10-29",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["MIXED"]
+    assert float(row["RevenueGrowthPct"]) == 77.0  # legacy value is not overwritten
+    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"  # mixed row stays unknown
+    assert row["ProviderFetchCalculationBasis"] == "ANNUAL_FALLBACK"
+    assert "ROEPercent" in row["ProviderFetchedMetrics"]
+    persisted = pd.read_csv(path).set_index("TckrSymb").loc["MIXED"]
+    assert persisted["ProviderFetchCalculationBasis"] == "ANNUAL_FALLBACK"
+    assert persisted["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
+
+
+def test_new_provider_owned_row_persists_aggregate_and_fetch_basis(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["NEWCO"]}), metrics_path=path, enabled=True,
+        ticker_factory=_annual_ticker_factory, pause_seconds=0, asof_date="2026-10-29",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["NEWCO"]
+    assert row["MetricCalculationBasis"] == "ANNUAL_FALLBACK"
+    assert row["ProviderFetchCalculationBasis"] == "ANNUAL_FALLBACK"
+    assert row["MetricPeriodAlignmentStatus"] == "VERIFIED"

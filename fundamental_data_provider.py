@@ -31,6 +31,9 @@ BASE_COLUMNS = [
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
     "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
+    "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
+    "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
+    "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
 ] + METRIC_COLUMNS
 
 
@@ -525,7 +528,7 @@ def collect_missing_fundamentals(
         today_for_refresh = cutoff if pd.notna(cutoff) else pd.Timestamp.today()
         if enabled and _is_stale_provider_record(current, today_for_refresh.date(), refresh_days):
             # Provider-owned record is old: clear it so new quarterly/annual results are picked up.
-            for col in METRIC_COLUMNS + ["FinancialPeriodEnd", "PublicationDate", "MetricPeriodAlignmentStatus", "MetricCalculationBasis", "QuarterlyAlignmentReason"]:
+            for col in METRIC_COLUMNS + ["FinancialPeriodEnd", "PublicationDate", "MetricPeriodAlignmentStatus", "MetricCalculationBasis", "QuarterlyAlignmentReason", "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason", "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed", "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
@@ -547,9 +550,22 @@ def collect_missing_fundamentals(
                 continue
             if not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
+        fetched_metric_names = [c for c in METRIC_COLUMNS if _present(fetched.get(c))]
+        if fetched_metric_names:
+            # Persist provenance for only the values fetched in this run. A legacy
+            # row may contain older metrics that are intentionally preserved; in
+            # that mixed case the row-level basis MUST remain UNKNOWN, while this
+            # separate fetch provenance records the basis of newly filled fields.
+            merged["ProviderFetchCalculationBasis"] = diagnostic.get("MetricCalculationBasis", "UNVERIFIED")
+            merged["ProviderFetchQuarterlyAlignmentReason"] = diagnostic.get("QuarterlyAlignmentReason", "")
+            merged["ProviderFetchIncomePeriodsUsed"] = diagnostic.get("IncomePeriodsUsed", "")
+            merged["ProviderFetchCashFlowPeriodsUsed"] = diagnostic.get("CashFlowPeriodsUsed", "")
+            merged["ProviderFetchBalanceSheetPeriod"] = diagnostic.get("BalanceSheetPeriod", "")
+            merged["ProviderFetchedMetrics"] = ";".join(fetched_metric_names)
+            merged["ProviderFetchedAtUTC"] = diagnostic.get("AttemptedAtUTC", datetime.now(timezone.utc).isoformat())
         if provider_owned and any(_present(fetched.get(c)) for c in METRIC_COLUMNS):
-            # No manual metric values exist, so period/source fields describe the provider data
-            # as one unit and must replace stale UNVERIFIED defaults from earlier runs.
+            # A wholly provider-owned new/refreshed row has one coherent basis.
+            # Preserve the aggregate basis only in this all-provider case.
             for col in ("MetricPeriodAlignmentStatus", "MetricCalculationBasis", "QuarterlyAlignmentReason", "FinancialPeriodEnd", "Source", "SourceURL", "DataRetrievedAtUTC", "ProviderSector"):
                 if _present(fetched.get(col)):
                     merged[col] = fetched.get(col)
