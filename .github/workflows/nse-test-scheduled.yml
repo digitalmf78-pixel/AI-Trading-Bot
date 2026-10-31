@@ -160,22 +160,53 @@ jobs:
           # Keep the current metrics cache and dated snapshots in repository
           # history as requested; these contain public-company fundamentals,
           # not credentials or account-specific secrets.
+          echo "===== FUNDAMENTAL HISTORY INVENTORY BEFORE STAGING ====="
+          if [ ! -d data/cache/fundamental_history ]; then
+            echo "ERROR: data/cache/fundamental_history directory is missing."
+            exit 1
+          fi
+          mapfile -d '' HISTORY_FILES < <(find data/cache/fundamental_history -maxdepth 1 -type f -name '*.csv' -print0 | sort -z)
+          echo "HISTORY_CSV_COUNT=${#HISTORY_FILES[@]}"
+          if [ "${#HISTORY_FILES[@]}" -eq 0 ]; then
+            echo "ERROR: no dated fundamental history CSV files were produced."
+            exit 1
+          fi
+          for f in "${HISTORY_FILES[@]}"; do
+            echo "HISTORY_FILE=$f"
+            sha256sum "$f"
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "HISTORY_TRACKING_STATUS=TRACKED:$f"
+            else
+              echo "HISTORY_TRACKING_STATUS=NOT_YET_TRACKED:$f"
+            fi
+          done
+
           if [ -f data/inputs/fundamental_metrics.csv ]; then
             git add -f data/inputs/fundamental_metrics.csv
           fi
-          if [ -d data/cache/fundamental_history ]; then
-            find data/cache/fundamental_history -type f -name '*.csv' -print0 | xargs -0 -r git add -f --
-          fi
+          for f in "${HISTORY_FILES[@]}"; do
+            git add -f -- "$f"
+          done
           if [ -f outputs/v8_official_financial_results_filings.csv ]; then
             git add -f outputs/v8_official_financial_results_filings.csv
           fi
 
+          echo "===== STAGED FUNDAMENTAL FILES ====="
+          git diff --cached --name-status
+          echo "===== STAGED CHANGE SUMMARY ====="
+          git diff --cached --stat
+
           if git diff --cached --quiet; then
-            echo "Fundamental cache unchanged; no repository commit needed."
+            echo "Fundamental cache and history are already committed and unchanged."
+            for f in "${HISTORY_FILES[@]}"; do
+              git ls-files --error-unmatch "$f" >/dev/null 2>&1 || { echo "ERROR: history file is not tracked: $f"; exit 1; }
+            done
             exit 0
           fi
 
           git commit -m "chore: persist NSE V8 fundamental cache and history"
+          echo "===== COMMITTED FUNDAMENTAL FILES ====="
+          git show --format= --name-status HEAD
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload NSE V8 reports and input templates
@@ -189,4 +220,5 @@ jobs:
             data/inputs/*.csv
             data/inputs/*.json
             data/reports/
+            data/cache/fundamental_history/
           if-no-files-found: warn
