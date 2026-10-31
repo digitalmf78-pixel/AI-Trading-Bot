@@ -448,8 +448,10 @@ def collect_missing_fundamentals(
         today_for_refresh = cutoff if pd.notna(cutoff) else pd.Timestamp.today()
         if enabled and _is_stale_provider_record(current, today_for_refresh.date(), refresh_days):
             # Provider-owned record is old: clear it so new quarterly/annual results are picked up.
-            for col in METRIC_COLUMNS + ["FinancialPeriodEnd", "PublicationDate", "MetricPeriodAlignmentStatus",
-                                         "MetricCalculationBasis", "QuarterlyAlignmentReason",
+            for col in METRIC_COLUMNS + ["AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
+                                         "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
+                                         "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
+                                         "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
                                          "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
                                          "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
                                          "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC"]:

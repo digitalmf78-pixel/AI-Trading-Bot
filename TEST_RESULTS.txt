@@ -1,16 +1,17 @@
-P1 CACHE BASIS FIX — LOCAL VALIDATION
-Baseline: workflow checkout commit 61f301584503142da1514c123e889f5c028bf444
+NSE V8 P1 Final Verification Fix — Local Test Results
+Date: 2026-10-31
 
-Focused:
-pytest -q test_fundamental_data_provider.py
-7 passed
+Suite 1:
+pytest -q test_fundamental_data_provider.py test_fundamental_cache_persistence_workflow.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
+Result: 37 passed
 
-Related regression suites:
-pytest -q test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_cache_persistence_workflow.py test_fundamental_official_filings.py test_fundamental_filter.py test_fundamental_fail_closed.py test_selection_pipeline_order.py test_liquidity_filter.py test_delivery_filter_fallback.py test_delivery_rule.py
-70 passed
+Suite 2:
+pytest -q test_fundamental_filter.py test_fundamental_fail_closed.py test_selection_pipeline_order.py test_liquidity_filter.py test_delivery_filter_fallback.py test_delivery_rule.py
+Result: 34 passed
 
-Compile:
-python -m py_compile fundamental_data_provider.py
+Python compileall:
 PASS
 
-Scope note: P1 only. No Quarterly TTM implementation. No GitHub push/deployment. No live provider request.
+Total: 71 passed; 0 failed.
+
+Note: tests ran locally in a copied baseline repository with P1 patch source. Not a GitHub Actions deployment result.

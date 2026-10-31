@@ -150,3 +150,40 @@ def test_legacy_basis_migration_does_not_infer_from_period_status(tmp_path, monk
     assert row["MetricPeriodAlignmentStatus"] == "VERIFIED"
     assert row["FinancialPeriodEnd"] == "2025-03-31"
     assert row["Source"] == "Manual source"
+
+
+def test_stale_provider_refresh_clears_old_metrics_basis_and_provenance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "AsOfDate": "2026-09-01",
+        "DataRetrievedAtUTC": "2026-09-01T08:00:00+00:00",
+        "Source": "Yahoo Finance (yfinance)", "SourceURL": "https://finance.yahoo.com/quote/AAA.NS",
+        "RevenueGrowthPct": 3.0, "ROEPercent": 4.0,
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+        "QuarterlyAlignmentReason": "OLD_REASON",
+        "ProviderFetchCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+        "ProviderFetchedMetrics": "RevenueGrowthPct;ROEPercent",
+        "ProviderFetchedAtUTC": "2026-09-01T08:00:00+00:00",
+        "PublicationDate": "2025-03-31", "PublicationDateStatus": "VERIFIED",
+        "OfficialFilingURL": "https://example.com/old-filing",
+    }]).to_csv(path, index=False)
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+        ticker_factory=FakeTicker, pause_seconds=0, asof_date="2026-10-30",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    assert float(row["RevenueGrowthPct"]) == 12.0
+    assert float(row["ROEPercent"]) == 16.0
+    assert row["MetricCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert row["ProviderFetchCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert "RevenueGrowthPct" in str(row["ProviderFetchedMetrics"])
+    assert str(row["DataRetrievedAtUTC"]) != "2026-09-01T08:00:00+00:00"
+    assert str(row["ProviderFetchedAtUTC"]) != "2026-09-01T08:00:00+00:00"
+    assert str(row["Source"]).startswith("Yahoo Finance")
+    assert pd.isna(row["OfficialFilingURL"]) or str(row["OfficialFilingURL"]).strip() == ""
+    assert pd.isna(row["PublicationDate"]) or str(row["PublicationDate"]).strip() == ""
+    assert row["PublicationDateStatus"] == "UNVERIFIED"
+    assert (tmp_path / "data/cache/fundamental_history/fundamental_metrics_2026-10-30.csv").exists()
