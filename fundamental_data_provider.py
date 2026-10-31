@@ -33,7 +33,7 @@ TTM_DIAGNOSTIC_COLUMNS = [
     "BalanceSheetQuarterPeriodsAvailable", "CashFlowRowLabels",
     "CashFlowAlignmentMatchedPeriods", "CashFlowAlignmentMissingPeriods",
     "IncomeQuarterPeriodCount", "CashFlowQuarterPeriodCount",
-    "BalanceSheetQuarterPeriodCount", "TTMDiagnosticsCapturedAtUTC",
+    "BalanceSheetQuarterPeriodCount", "CashFlowPeriodBasis", "TTMDiagnosticsCapturedAtUTC",
 ]
 TTM_AUDIT_COLUMNS = [
     "RevenueTTMINR", "PreviousRevenueTTMINR", "NetProfitTTMINR",
@@ -306,7 +306,7 @@ def _aligned_quarterly_ttm_metrics(ticker_obj) -> dict:
                            "BalanceSheetQuarterPeriodsAvailable": "", "CashFlowRowLabels": "",
                            "CashFlowAlignmentMatchedPeriods": "", "CashFlowAlignmentMissingPeriods": "",
                            "IncomeQuarterPeriodCount": 0, "CashFlowQuarterPeriodCount": 0,
-                           "BalanceSheetQuarterPeriodCount": 0}}
+                           "BalanceSheetQuarterPeriodCount": 0, "CashFlowPeriodBasis": "UNKNOWN"}}
     statements = {}
     for key, attr in (("income", "quarterly_financials"),
                       ("balance", "quarterly_balance_sheet"),
@@ -345,6 +345,21 @@ def _aligned_quarterly_ttm_metrics(ticker_obj) -> dict:
     if missing_cash_dates:
         out["reason"] = "QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED"
         return out
+
+    # A matching period-end date does NOT prove that a cash-flow value is a
+    # standalone quarter: some providers expose cumulative YTD values.  Do not
+    # add them unless the provider explicitly declares the period basis.
+    # yfinance's DataFrame currently carries no reliable per-column XBRL
+    # duration/context metadata, so unknown basis must fail closed.
+    cash_basis = str(
+        getattr(ticker_obj, "quarterly_cashflow_period_basis", "")
+        or getattr(cash, "attrs", {}).get("period_basis", "")
+    ).strip().upper().replace("-", "_").replace(" ", "_") if isinstance(cash, pd.DataFrame) else ""
+    if cash_basis not in {"STANDALONE_QUARTERLY", "QUARTERLY_STANDALONE"}:
+        out["reason"] = "CASHFLOW_PERIOD_BASIS_UNVERIFIED"
+        out["diagnostics"]["CashFlowPeriodBasis"] = cash_basis or "UNKNOWN"
+        return out
+    out["diagnostics"]["CashFlowPeriodBasis"] = cash_basis
     if latest_four[0] not in bal_cols:
         out["reason"] = "QUARTERLY_BALANCE_SHEET_LATEST_PERIOD_NOT_ALIGNED"
         return out

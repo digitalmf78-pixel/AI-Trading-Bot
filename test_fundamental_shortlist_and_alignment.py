@@ -143,6 +143,7 @@ class QuarterlyAlignedTicker:
             dates[4]: [8, 4, 4, 1], dates[5]: [7, 3, 3, 1],
             dates[6]: [6, 2, 2, 1], dates[7]: [5, 1, 1, 1],
         }, index=["Total Revenue", "Net Income", "EBIT", "Interest Expense"])
+        self.quarterly_cashflow_period_basis = "STANDALONE_QUARTERLY"
         self.quarterly_cashflow = pd.DataFrame({
             dates[0]: [40, -5, 35], dates[1]: [30, -4, 26],
             dates[2]: [20, -3, 17], dates[3]: [10, -2, 8],
@@ -274,3 +275,13 @@ def test_existing_p2_cache_without_raw_period_diagnostics_is_backfilled_once(tmp
     drow = diag.set_index("TckrSymb").loc["AAA"]
     assert drow["ProviderStatus"] == "EXISTING_RECORD_COMPLETE"
     assert drow["CashFlowAlignmentMissingPeriods"] == "2026-09-30"
+
+
+def test_quarterly_ttm_fails_closed_when_cashflow_period_basis_unknown():
+    from fundamental_data_provider import _aligned_quarterly_ttm_metrics
+    ticker = QuarterlyAlignedTicker("AAA")
+    del ticker.quarterly_cashflow_period_basis
+    out = _aligned_quarterly_ttm_metrics(ticker)
+    assert out["ok"] is False
+    assert out["reason"] == "CASHFLOW_PERIOD_BASIS_UNVERIFIED"
+    assert out["diagnostics"]["CashFlowPeriodBasis"] == "UNKNOWN"
