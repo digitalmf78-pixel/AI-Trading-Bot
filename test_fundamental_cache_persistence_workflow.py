@@ -57,6 +57,12 @@ def test_workflow_commits_fundamental_cache_and_history_to_repository():
     assert "permissions:\n  contents: write" in workflow
     assert "Persist fundamental cache and dated history in repository" in workflow
     assert 'git add -f data/inputs/fundamental_metrics.csv' in workflow
-    assert "find data/cache/fundamental_history -type f -name '*.csv' -print0 | xargs -0 -r git add -f --" in workflow
+    # Accept the safer inventory-and-stage implementation used by the workflow.
+    assert "mapfile -d '' HISTORY_FILES" in workflow
+    assert "find data/cache/fundamental_history -maxdepth 1 -type f -name '*.csv' -print0 | sort -z" in workflow
+    assert 'git add -f -- "$f"' in workflow
+    assert "HISTORY_CSV_COUNT=${#HISTORY_FILES[@]}" in workflow
+    assert "HISTORY_TRACKING_STATUS=TRACKED:$f" in workflow
+    assert "git diff --cached --name-status" in workflow
     assert 'git push origin "HEAD:${GITHUB_REF_NAME}"' in workflow
     assert "steps.nse_scan.outcome == 'success'" in workflow

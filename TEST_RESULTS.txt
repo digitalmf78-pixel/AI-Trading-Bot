@@ -1,17 +1,9 @@
-NSE V8 P1 Final Verification Fix — Local Test Results
-Date: 2026-10-31
+Targeted regression test:
+pytest -q test_fundamental_cache_persistence_workflow.py
 
-Suite 1:
-pytest -q test_fundamental_data_provider.py test_fundamental_cache_persistence_workflow.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
-Result: 37 passed
+RESULT: 6 passed in 0.04s
 
-Suite 2:
-pytest -q test_fundamental_filter.py test_fundamental_fail_closed.py test_selection_pipeline_order.py test_liquidity_filter.py test_delivery_filter_fallback.py test_delivery_rule.py
-Result: 34 passed
-
-Python compileall:
-PASS
-
-Total: 71 passed; 0 failed.
-
-Note: tests ran locally in a copied baseline repository with P1 patch source. Not a GitHub Actions deployment result.
+GitHub run 41173859764:
+1 failed, 75 passed in 0.85s
+Failure: stale assertion expected old xargs staging command.
+The scanner and persistence step were not reached because the test step uses set -e.
