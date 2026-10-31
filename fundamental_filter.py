@@ -27,9 +27,14 @@ SOURCE_COLUMNS = [
     "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
-    "ProviderSector",
+    "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
 ]
-INPUT_COLUMNS = SOURCE_COLUMNS + METRIC_COLUMNS
+TTM_AUDIT_COLUMNS = [
+    "RevenueTTMINR", "PreviousRevenueTTMINR", "NetProfitTTMINR",
+    "PreviousNetProfitTTMINR", "EBITTTMINR", "InterestExpenseTTMINR",
+    "TTMQuarterPeriods", "TTMQuarterlyAlignmentStatus", "TTMCalculationReason",
+]
+INPUT_COLUMNS = SOURCE_COLUMNS + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
     "FundamentalSource", "FundamentalSourceURL",
@@ -187,7 +192,7 @@ def apply_fundamental_filter(
         enriched_rows.append(row)
 
     audit = pd.DataFrame(enriched_rows)
-    for col in STATUS_COLUMNS + METRIC_COLUMNS + SOURCE_COLUMNS:
+    for col in STATUS_COLUMNS + METRIC_COLUMNS + SOURCE_COLUMNS + TTM_AUDIT_COLUMNS:
         if col not in audit.columns:
             audit[col] = pd.NA
 

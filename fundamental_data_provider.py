@@ -26,6 +26,13 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
+# Audit outputs are intentionally separate from METRIC_COLUMNS so the existing
+# completeness/shortlist thresholds and refresh behavior do not change.
+TTM_AUDIT_COLUMNS = [
+    "RevenueTTMINR", "PreviousRevenueTTMINR", "NetProfitTTMINR",
+    "PreviousNetProfitTTMINR", "EBITTTMINR", "InterestExpenseTTMINR",
+    "TTMQuarterPeriods", "TTMQuarterlyAlignmentStatus", "TTMCalculationReason",
+]
 BASE_COLUMNS = [
     "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
@@ -34,7 +41,7 @@ BASE_COLUMNS = [
     "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
     "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
-] + METRIC_COLUMNS
+] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 
 
 def _present(value: Any) -> bool:
@@ -224,6 +231,187 @@ def _aligned_annual_metrics(ticker_obj) -> dict:
     return out
 
 
+
+def _statement_columns_by_date(statement: pd.DataFrame) -> dict[str, Any]:
+    """Return statement columns keyed by ISO period end, newest first."""
+    if not isinstance(statement, pd.DataFrame) or statement.empty:
+        return {}
+    found = {}
+    for col in statement.columns:
+        parsed = pd.to_datetime(col, errors="coerce")
+        if pd.isna(parsed):
+            continue
+        found[parsed.date().isoformat()] = col
+    return dict(sorted(found.items(), key=lambda item: item[0], reverse=True))
+
+
+def _quarter_sequence(dates: list[str], count: int) -> bool:
+    """Require distinct consecutive calendar quarters, newest-first."""
+    if len(dates) < count or len(set(dates[:count])) != count:
+        return False
+    periods = [pd.Period(pd.Timestamp(d), freq="Q-DEC") for d in dates[:count]]
+    return all((periods[i] - periods[i + 1]).n == 1 for i in range(count - 1))
+
+
+def _sum_quarter_row(statement: pd.DataFrame, labels: list[str], columns: list[Any]):
+    values = []
+    for col in columns:
+        value = pd.NA
+        for label in labels:
+            if label in statement.index:
+                try:
+                    candidate = float(statement.loc[label, col])
+                except (TypeError, ValueError):
+                    continue
+                if pd.notna(candidate):
+                    value = candidate
+                    break
+        if not _present(value):
+            return pd.NA
+        values.append(float(value))
+    return sum(values)
+
+
+def _quarter_value(statement: pd.DataFrame, labels: list[str], col):
+    for label in labels:
+        if label in statement.index:
+            try:
+                value = float(statement.loc[label, col])
+            except (TypeError, ValueError):
+                continue
+            if pd.notna(value):
+                return value
+    return pd.NA
+
+
+def _aligned_quarterly_ttm_metrics(ticker_obj) -> dict:
+    """Calculate TTM from four consecutive quarterly statements, never snapshots.
+
+    Revenue/profit growth additionally requires the preceding four quarters.
+    Income and cash-flow quarter ends must match exactly; the latest balance
+    sheet must match the latest income quarter. ROE/ROCE use average values at
+    the latest quarter and the quarter four periods earlier; if that historical
+    balance sheet is unavailable, those ratios remain unavailable.
+    """
+    out = {"ok": False, "period_end": "", "values": {}, "audit": {}, "reason": ""}
+    statements = {}
+    for key, attr in (("income", "quarterly_financials"),
+                      ("balance", "quarterly_balance_sheet"),
+                      ("cash", "quarterly_cashflow")):
+        try:
+            statements[key] = getattr(ticker_obj, attr)
+        except Exception:
+            statements[key] = None
+    inc, bal, cash = statements["income"], statements["balance"], statements["cash"]
+    inc_cols = _statement_columns_by_date(inc)
+    bal_cols = _statement_columns_by_date(bal)
+    cash_cols = _statement_columns_by_date(cash)
+    inc_dates = list(inc_cols)
+    if not _quarter_sequence(inc_dates, 4):
+        out["reason"] = "QUARTERLY_INCOME_NEEDS_4_CONSECUTIVE_QUARTERS"
+        return out
+    latest_four = inc_dates[:4]
+    cash_dates = set(cash_cols)
+    if not all(d in cash_dates for d in latest_four):
+        out["reason"] = "QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED"
+        return out
+    if latest_four[0] not in bal_cols:
+        out["reason"] = "QUARTERLY_BALANCE_SHEET_LATEST_PERIOD_NOT_ALIGNED"
+        return out
+
+    revenue_labels = ["Total Revenue", "Operating Revenue"]
+    profit_labels = ["Net Income", "Net Income Common Stockholders",
+                     "Net Income From Continuing Operation Net Minority Interest"]
+    ebit_labels = ["EBIT", "Operating Income"]
+    interest_labels = ["Interest Expense", "Interest Expense Non Operating"]
+    ocf_labels = ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"]
+    capex_labels = ["Capital Expenditure", "Capital Expenditures"]
+    fcf_labels = ["Free Cash Flow"]
+
+    revenue_ttm = _sum_quarter_row(inc, revenue_labels, [inc_cols[d] for d in latest_four])
+    profit_ttm = _sum_quarter_row(inc, profit_labels, [inc_cols[d] for d in latest_four])
+    ebit_ttm = _sum_quarter_row(inc, ebit_labels, [inc_cols[d] for d in latest_four])
+    interest_ttm = _sum_quarter_row(inc, interest_labels, [inc_cols[d] for d in latest_four])
+    ocf_ttm = _sum_quarter_row(cash, ocf_labels, [cash_cols[d] for d in latest_four])
+    fcf_ttm = _sum_quarter_row(cash, fcf_labels, [cash_cols[d] for d in latest_four])
+    if not _present(fcf_ttm):
+        capex_ttm = _sum_quarter_row(cash, capex_labels, [cash_cols[d] for d in latest_four])
+        if _present(ocf_ttm) and _present(capex_ttm):
+            fcf_ttm = float(ocf_ttm) + float(capex_ttm)
+
+    if not all(_present(v) for v in (revenue_ttm, profit_ttm, ocf_ttm)):
+        out["reason"] = "QUARTERLY_TTM_REQUIRED_ROW_MISSING"
+        return out
+
+    revenue_growth = profit_growth = pd.NA
+    previous_revenue_ttm = previous_profit_ttm = pd.NA
+    growth_reason = "GROWTH_NEEDS_8_CONSECUTIVE_INCOME_QUARTERS"
+    if _quarter_sequence(inc_dates, 8):
+        previous_dates = inc_dates[4:8]
+        previous_revenue_ttm = _sum_quarter_row(inc, revenue_labels, [inc_cols[d] for d in previous_dates])
+        previous_profit_ttm = _sum_quarter_row(inc, profit_labels, [inc_cols[d] for d in previous_dates])
+        if _present(previous_revenue_ttm) and float(previous_revenue_ttm) > 0:
+            revenue_growth = (float(revenue_ttm) - float(previous_revenue_ttm)) / float(previous_revenue_ttm) * 100.0
+        if _present(previous_profit_ttm) and float(previous_profit_ttm) > 0:
+            profit_growth = (float(profit_ttm) - float(previous_profit_ttm)) / float(previous_profit_ttm) * 100.0
+        growth_reason = ""
+
+    latest_bs_col = bal_cols[latest_four[0]]
+    equity_labels = ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity"]
+    assets_labels = ["Total Assets"]
+    current_liab_labels = ["Current Liabilities", "Total Current Liabilities"]
+    debt_labels = ["Total Debt", "Long Term Debt And Capital Lease Obligation"]
+    equity_now = _quarter_value(bal, equity_labels, latest_bs_col)
+    assets_now = _quarter_value(bal, assets_labels, latest_bs_col)
+    current_liab_now = _quarter_value(bal, current_liab_labels, latest_bs_col)
+    debt_now = _quarter_value(bal, debt_labels, latest_bs_col)
+    roe = roce = pd.NA
+    historical_balance_date = inc_dates[4] if len(inc_dates) >= 5 else ""
+    if historical_balance_date and historical_balance_date in bal_cols:
+        old_col = bal_cols[historical_balance_date]
+        equity_old = _quarter_value(bal, equity_labels, old_col)
+        assets_old = _quarter_value(bal, assets_labels, old_col)
+        current_liab_old = _quarter_value(bal, current_liab_labels, old_col)
+        if _present(equity_now) and _present(equity_old):
+            avg_equity = (float(equity_now) + float(equity_old)) / 2.0
+            if avg_equity > 0:
+                roe = float(profit_ttm) / avg_equity * 100.0
+        if all(_present(v) for v in (assets_now, current_liab_now, assets_old, current_liab_old, ebit_ttm)):
+            ce_now = float(assets_now) - float(current_liab_now)
+            ce_old = float(assets_old) - float(current_liab_old)
+            avg_ce = (ce_now + ce_old) / 2.0
+            if avg_ce > 0:
+                roce = float(ebit_ttm) / avg_ce * 100.0
+
+    debt_to_equity = pd.NA
+    if _present(debt_now) and _present(equity_now) and float(equity_now) > 0:
+        debt_to_equity = float(debt_now) / float(equity_now)
+    interest_coverage = pd.NA
+    if _present(ebit_ttm) and _present(interest_ttm):
+        interest_coverage = 999.0 if float(interest_ttm) == 0 else float(ebit_ttm) / abs(float(interest_ttm))
+
+    out["values"] = {
+        "RevenueGrowthPct": revenue_growth, "ProfitGrowthPct": profit_growth,
+        "ROEPercent": roe, "ROCEPercent": roce, "DebtToEquity": debt_to_equity,
+        "InterestCoverage": interest_coverage, "OperatingCashFlowINR": ocf_ttm,
+        "FreeCashFlowINR": fcf_ttm,
+    }
+    out["period_end"] = latest_four[0]
+    out["audit"] = {
+        "RevenueTTMINR": revenue_ttm,
+        "PreviousRevenueTTMINR": previous_revenue_ttm,
+        "NetProfitTTMINR": profit_ttm,
+        "PreviousNetProfitTTMINR": previous_profit_ttm,
+        "EBITTTMINR": ebit_ttm,
+        "InterestExpenseTTMINR": interest_ttm,
+        "TTMQuarterPeriods": ";".join(latest_four),
+        "TTMQuarterlyAlignmentStatus": "VERIFIED",
+        "TTMCalculationReason": growth_reason or "FOUR_QUARTER_TTM_ALIGNED",
+    }
+    out["ok"] = True
+    return out
+
+
 def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
@@ -315,6 +503,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         if _present(ebit) and _present(interest_expense) and float(interest_expense) != 0:
             interest_coverage = float(ebit) / abs(float(interest_expense))
 
+        quarterly = _aligned_quarterly_ttm_metrics(ticker)
         aligned = _aligned_annual_metrics(ticker)
         values = {
             "RevenueGrowthPct": revenue_growth,
@@ -326,31 +515,46 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             "OperatingCashFlowINR": ocf,
             "FreeCashFlowINR": fcf,
         }
-        if aligned["ok"]:
-            # One fiscal year, one set of statements: replace (never mix with) snapshot values.
+        if quarterly["ok"]:
+            # Quarterly TTM is preferred. Never mix annual/snapshot metrics into it.
+            values = quarterly["values"]
+            record.update(quarterly["audit"])
+            record["MetricPeriodAlignmentStatus"] = "VERIFIED"
+            record["MetricCalculationBasis"] = "QUARTERLY_TTM_ALIGNED_STATEMENTS"
+            record["QuarterlyAlignmentReason"] = quarterly["audit"].get("TTMCalculationReason", "FOUR_QUARTER_TTM_ALIGNED")
+            diagnostic["AlignmentNote"] = f"ALIGNED_QUARTERLY_TTM:{quarterly['period_end']}"
+            record["ProviderFetchIncomePeriodsUsed"] = quarterly["audit"].get("TTMQuarterPeriods", "")
+            record["ProviderFetchCashFlowPeriodsUsed"] = quarterly["audit"].get("TTMQuarterPeriods", "")
+            record["ProviderFetchBalanceSheetPeriod"] = quarterly["period_end"]
+        elif aligned["ok"]:
+            # Annual alignment remains a fallback only when quarterly statements
+            # cannot produce a complete aligned four-quarter TTM.
             values = aligned["values"]
             record["MetricPeriodAlignmentStatus"] = "VERIFIED"
             record["MetricCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
-            record["QuarterlyAlignmentReason"] = "QUARTERLY_TTM_NOT_ENABLED_IN_P1_PHASE"
-            diagnostic["AlignmentNote"] = f"ALIGNED_ANNUAL_STATEMENTS:{aligned['period_end']}"
+            record["QuarterlyAlignmentReason"] = quarterly["reason"] or "QUARTERLY_TTM_UNAVAILABLE_ANNUAL_FALLBACK"
+            diagnostic["AlignmentNote"] = f"ALIGNED_ANNUAL_FALLBACK:{aligned['period_end']}"
         else:
             record["MetricCalculationBasis"] = "UNALIGNED_PROVIDER_SNAPSHOT"
-            record["QuarterlyAlignmentReason"] = "QUARTERLY_TTM_NOT_ENABLED_IN_P1_PHASE"
-            diagnostic["AlignmentNote"] = aligned["reason"] or "LEGACY_SNAPSHOT_PATH"
+            record["QuarterlyAlignmentReason"] = quarterly["reason"] or aligned["reason"] or "LEGACY_SNAPSHOT_PATH"
+            diagnostic["AlignmentNote"] = record["QuarterlyAlignmentReason"]
         record["ProviderFetchCalculationBasis"] = record["MetricCalculationBasis"]
         record["ProviderFetchQuarterlyAlignmentReason"] = record["QuarterlyAlignmentReason"]
         for col, value in values.items():
             record[col] = value if _present(value) else pd.NA
         sector = info.get("sector") if isinstance(info, dict) else None
         record["ProviderSector"] = str(sector).strip() if sector else pd.NA
+        stored_ocf = values.get("OperatingCashFlowINR", pd.NA)
         record["EarningsQualityStatus"] = (
-            "POSITIVE_OPERATING_CASH_FLOW" if _present(ocf) and float(ocf) > 0
-            else "NEGATIVE_OPERATING_CASH_FLOW" if _present(ocf) and float(ocf) < 0
+            "POSITIVE_OPERATING_CASH_FLOW" if _present(stored_ocf) and float(stored_ocf) > 0
+            else "NEGATIVE_OPERATING_CASH_FLOW" if _present(stored_ocf) and float(stored_ocf) < 0
             else pd.NA
         )
         valuation_multiple = _first_number(info, ["trailingPE", "forwardPE"])
         record["ValuationStatus"] = "VALUATION_MULTIPLE_AVAILABLE" if _present(valuation_multiple) else "VALUATION_DATA_MISSING"
-        record["FinancialPeriodEnd"] = aligned["period_end"] if aligned["ok"] else _financial_period_end(ticker, info)
+        record["FinancialPeriodEnd"] = (quarterly["period_end"] if quarterly["ok"]
+                                         else aligned["period_end"] if aligned["ok"]
+                                         else _financial_period_end(ticker, info))
         metric_count = sum(_present(record.get(col)) for col in METRIC_COLUMNS)
         diagnostic["ProviderStatus"] = "DATA_FOUND" if metric_count else "MISSING_DATA"
         diagnostic["ProviderReason"] = f"metrics_available={metric_count}/{len(METRIC_COLUMNS)}"
@@ -448,7 +652,7 @@ def collect_missing_fundamentals(
         today_for_refresh = cutoff if pd.notna(cutoff) else pd.Timestamp.today()
         if enabled and _is_stale_provider_record(current, today_for_refresh.date(), refresh_days):
             # Provider-owned record is old: clear it so new quarterly/annual results are picked up.
-            for col in METRIC_COLUMNS + ["AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
+            for col in METRIC_COLUMNS + TTM_AUDIT_COLUMNS + ["AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
                                          "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
                                          "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
                                          "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",

@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from fundamental_data_provider import _aligned_annual_metrics, collect_missing_fundamentals
 from fundamental_shortlist import build_fundamental_shortlist, DEFAULT_THRESHOLDS
@@ -126,3 +127,84 @@ def test_assessment_status_syncs_for_pass_fail_and_wait():
     out = build_fundamental_shortlist(pd.DataFrame(rows), "2026-10-22", write=False)
     assert out["FundamentalAssessmentStatus"].tolist() == out["FundamentalShortlistStatus"].tolist()
     assert out["FundamentalAssessmentReason"].tolist() == out["FundamentalShortlistReason"].tolist()
+
+
+class QuarterlyAlignedTicker:
+    """Eight consecutive quarterly income periods; aligned latest cash/BS."""
+    def __init__(self, symbol):
+        self.info = {"sector": "Industrials", "revenueGrowth": 999, "earningsGrowth": 999}
+        dates = pd.to_datetime([
+            "2026-09-30", "2026-06-30", "2026-03-31", "2025-12-31",
+            "2025-09-30", "2025-06-30", "2025-03-31", "2024-12-31",
+        ])
+        self.quarterly_financials = pd.DataFrame({
+            dates[0]: [40, 20, 20, 4], dates[1]: [30, 15, 15, 3],
+            dates[2]: [20, 10, 10, 2], dates[3]: [10, 5, 5, 1],
+            dates[4]: [8, 4, 4, 1], dates[5]: [7, 3, 3, 1],
+            dates[6]: [6, 2, 2, 1], dates[7]: [5, 1, 1, 1],
+        }, index=["Total Revenue", "Net Income", "EBIT", "Interest Expense"])
+        self.quarterly_cashflow = pd.DataFrame({
+            dates[0]: [40, -5, 35], dates[1]: [30, -4, 26],
+            dates[2]: [20, -3, 17], dates[3]: [10, -2, 8],
+        }, index=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"])
+        self.quarterly_balance_sheet = pd.DataFrame({
+            dates[0]: [5000, 1000, 1200, 600],
+            dates[4]: [4500, 900, 1000, 500],
+        }, index=["Total Assets", "Current Liabilities", "Stockholders Equity", "Total Debt"])
+        # Annual statements deliberately misaligned: quarterly TTM must take priority.
+        self.financials = pd.DataFrame()
+        self.balance_sheet = pd.DataFrame()
+        self.cashflow = pd.DataFrame()
+
+
+def test_quarterly_ttm_calculates_8_quarter_growth_and_aligned_ratios():
+    from fundamental_data_provider import _aligned_quarterly_ttm_metrics
+    out = _aligned_quarterly_ttm_metrics(QuarterlyAlignedTicker("AAA"))
+    assert out["ok"] is True
+    assert out["period_end"] == "2026-09-30"
+    values = out["values"]
+    assert values["RevenueGrowthPct"] == pytest.approx((100 - 26) / 26 * 100)
+    assert values["ProfitGrowthPct"] == pytest.approx(400.0)
+    assert values["OperatingCashFlowINR"] == pytest.approx(100.0)
+    assert values["FreeCashFlowINR"] == pytest.approx(86.0)
+    assert values["ROEPercent"] == pytest.approx(50 / 1100 * 100)
+    assert values["ROCEPercent"] == pytest.approx(50 / 3800 * 100)
+    assert values["DebtToEquity"] == pytest.approx(0.5)
+    assert values["InterestCoverage"] == pytest.approx(5.0)
+    assert out["audit"]["TTMQuarterlyAlignmentStatus"] == "VERIFIED"
+
+
+def test_quarterly_ttm_requires_eight_quarters_for_growth_but_keeps_ttm_values():
+    from fundamental_data_provider import _aligned_quarterly_ttm_metrics
+    ticker = QuarterlyAlignedTicker("AAA")
+    ticker.quarterly_financials = ticker.quarterly_financials.iloc[:, :4]
+    out = _aligned_quarterly_ttm_metrics(ticker)
+    assert out["ok"] is True
+    assert pd.isna(out["values"]["RevenueGrowthPct"])
+    assert pd.isna(out["values"]["ProfitGrowthPct"])
+    assert out["values"]["OperatingCashFlowINR"] == pytest.approx(100.0)
+    assert "GROWTH_NEEDS_8" in out["audit"]["TTMCalculationReason"]
+
+
+def test_quarterly_ttm_rejects_misaligned_cashflow_periods():
+    from fundamental_data_provider import _aligned_quarterly_ttm_metrics
+    ticker = QuarterlyAlignedTicker("AAA")
+    ticker.quarterly_cashflow = ticker.quarterly_cashflow.iloc[:, 1:]
+    out = _aligned_quarterly_ttm_metrics(ticker)
+    assert out["ok"] is False
+    assert out["reason"] == "QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED"
+
+
+def test_provider_fetch_prefers_quarterly_ttm_and_persists_basis_and_audit(tmp_path, monkeypatch):
+    from fundamental_data_provider import _fetch_one
+    monkeypatch.chdir(tmp_path)
+    record, diagnostic = _fetch_one("AAA", ticker_factory=QuarterlyAlignedTicker)
+    assert record["MetricCalculationBasis"] == "QUARTERLY_TTM_ALIGNED_STATEMENTS"
+    assert record["ProviderFetchCalculationBasis"] == "QUARTERLY_TTM_ALIGNED_STATEMENTS"
+    assert record["MetricPeriodAlignmentStatus"] == "VERIFIED"
+    assert record["FinancialPeriodEnd"] == "2026-09-30"
+    assert record["RevenueGrowthPct"] == pytest.approx((100 - 26) / 26 * 100)
+    assert record["OperatingCashFlowINR"] == pytest.approx(100.0)
+    assert record["RevenueTTMINR"] == pytest.approx(100.0)
+    assert "2026-09-30" in record["ProviderFetchIncomePeriodsUsed"]
+    assert diagnostic["AlignmentNote"].startswith("ALIGNED_QUARTERLY_TTM:")
