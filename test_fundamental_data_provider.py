@@ -187,3 +187,114 @@ def test_stale_provider_refresh_clears_old_metrics_basis_and_provenance(tmp_path
     assert pd.isna(row["PublicationDate"]) or str(row["PublicationDate"]).strip() == ""
     assert row["PublicationDateStatus"] == "UNVERIFIED"
     assert (tmp_path / "data/cache/fundamental_history/fundamental_metrics_2026-10-30.csv").exists()
+
+
+def test_p2_backfills_fresh_complete_provider_cache_without_30_day_refresh(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    old_metrics = {col: 10.0 for col in provider.METRIC_COLUMNS}
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "AsOfDate": "2026-10-30",
+        "DataRetrievedAtUTC": "2026-10-30T08:00:00+00:00",
+        "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
+        "SourceURL": "https://finance.yahoo.com/quote/AAA.NS/financials/",
+        **old_metrics,
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+    }]).to_csv(path, index=False)
+
+    fetched = {col: pd.NA for col in provider.BASE_COLUMNS}
+    fetched.update({
+        "TckrSymb": "AAA", "AsOfDate": "2026-10-31",
+        "DataRetrievedAtUTC": "2026-10-31T08:00:00+00:00",
+        "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
+        "SourceURL": "https://finance.yahoo.com/quote/AAA.NS/financials/",
+        "FinancialPeriodEnd": "2026-09-30", "MetricPeriodAlignmentStatus": "VERIFIED",
+        "MetricCalculationBasis": "QUARTERLY_TTM_ALIGNED_STATEMENTS",
+        "QuarterlyAlignmentReason": "FOUR_QUARTER_TTM_ALIGNED",
+        "ProviderFetchCalculationBasis": "QUARTERLY_TTM_ALIGNED_STATEMENTS",
+        "ProviderFetchQuarterlyAlignmentReason": "FOUR_QUARTER_TTM_ALIGNED",
+        "ProviderFetchIncomePeriodsUsed": "2026-09-30;2026-06-30;2026-03-31;2025-12-31",
+        "ProviderFetchCashFlowPeriodsUsed": "2026-09-30;2026-06-30;2026-03-31;2025-12-31",
+        "ProviderFetchBalanceSheetPeriod": "2026-09-30",
+        "ProviderFetchedMetrics": ";".join(provider.METRIC_COLUMNS),
+        "ProviderFetchedAtUTC": "2026-10-31T08:00:00+00:00",
+        "TTMCalculationAttemptedAtUTC": "2026-10-31T08:00:00+00:00",
+        "RevenueTTMINR": 4000.0, "PreviousRevenueTTMINR": 3500.0,
+        "NetProfitTTMINR": 400.0, "PreviousNetProfitTTMINR": 350.0,
+        "EBITTTMINR": 600.0, "InterestExpenseTTMINR": 60.0,
+        "TTMQuarterPeriods": "2026-09-30;2026-06-30;2026-03-31;2025-12-31",
+        "TTMQuarterlyAlignmentStatus": "VERIFIED",
+        "TTMCalculationReason": "FOUR_QUARTER_TTM_ALIGNED",
+        "RevenueGrowthPct": 14.2857, "ProfitGrowthPct": 14.2857,
+        "ROEPercent": 15.0, "ROCEPercent": 18.0, "DebtToEquity": 0.4,
+        "InterestCoverage": 10.0, "OperatingCashFlowINR": 500.0,
+        "FreeCashFlowINR": 350.0, "EarningsQualityStatus": "POSITIVE_OPERATING_CASH_FLOW",
+        "ValuationStatus": "VALUATION_MULTIPLE_AVAILABLE",
+    })
+    calls = []
+    def fake_fetch(symbol, ticker_factory=None):
+        calls.append(symbol)
+        return fetched, {"TckrSymb": symbol, "ProviderStatus": "DATA_FOUND", "ProviderReason": "quarterly TTM test", "ProviderSource": "Yahoo Finance", "ProviderSourceURL": fetched["SourceURL"], "AttemptedAtUTC": fetched["DataRetrievedAtUTC"]}
+    monkeypatch.setattr(provider, "_fetch_one", fake_fetch)
+
+    result = provider.collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+        pause_seconds=0, asof_date="2026-10-31", filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    assert calls == ["AAA"]  # complete + fresh P1 row still gets one-time P2 enrichment
+    assert float(row["RevenueTTMINR"]) == 4000.0
+    assert float(row["PreviousRevenueTTMINR"]) == 3500.0
+    assert row["TTMQuarterlyAlignmentStatus"] == "VERIFIED"
+    assert row["MetricCalculationBasis"] == "QUARTERLY_TTM_ALIGNED_STATEMENTS"
+    assert round(float(row["RevenueGrowthPct"]), 2) == 14.29
+    assert str(row["TTMCalculationAttemptedAtUTC"]).startswith("2026-10-31")
+
+
+def test_p2_ttm_enrichment_does_not_overwrite_manual_metrics(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    manual_metrics = {col: 7.0 for col in provider.METRIC_COLUMNS}
+    pd.DataFrame([{
+        "TckrSymb": "MANUAL", "AsOfDate": "2026-10-30",
+        "DataRetrievedAtUTC": "2026-10-30T08:00:00+00:00",
+        "Source": "Manual verified filing", "SourceURL": "https://example.com/filing",
+        **manual_metrics,
+    }]).to_csv(path, index=False)
+
+    fetched = {col: pd.NA for col in provider.BASE_COLUMNS}
+    fetched.update({
+        "TckrSymb": "MANUAL", "DataRetrievedAtUTC": "2026-10-31T08:00:00+00:00",
+        "Source": "Yahoo Finance via yfinance", "SourceURL": "https://finance.yahoo.com/quote/MANUAL.NS/financials/",
+        "MetricCalculationBasis": "QUARTERLY_TTM_ALIGNED_STATEMENTS",
+        "QuarterlyAlignmentReason": "FOUR_QUARTER_TTM_ALIGNED",
+        "TTMCalculationAttemptedAtUTC": "2026-10-31T08:00:00+00:00",
+        "RevenueTTMINR": 4000.0, "PreviousRevenueTTMINR": 3500.0,
+        "NetProfitTTMINR": 400.0, "PreviousNetProfitTTMINR": 350.0,
+        "TTMQuarterPeriods": "2026-09-30;2026-06-30;2026-03-31;2025-12-31",
+        "TTMQuarterlyAlignmentStatus": "VERIFIED", "TTMCalculationReason": "FOUR_QUARTER_TTM_ALIGNED",
+        "RevenueGrowthPct": 14.2857, "ProfitGrowthPct": 14.2857,
+        "ROEPercent": 15.0, "ROCEPercent": 18.0, "DebtToEquity": 0.4,
+        "InterestCoverage": 10.0, "OperatingCashFlowINR": 500.0,
+        "FreeCashFlowINR": 350.0, "EarningsQualityStatus": "POSITIVE_OPERATING_CASH_FLOW",
+        "ValuationStatus": "VALUATION_MULTIPLE_AVAILABLE",
+    })
+    monkeypatch.setattr(provider, "_fetch_one", lambda symbol, ticker_factory=None: (fetched, {"TckrSymb": symbol, "ProviderStatus": "DATA_FOUND", "ProviderReason": "quarterly TTM test", "ProviderSource": "Yahoo Finance", "ProviderSourceURL": fetched["SourceURL"], "AttemptedAtUTC": fetched["DataRetrievedAtUTC"]}))
+
+    result = provider.collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["MANUAL"]}), metrics_path=path, enabled=True,
+        pause_seconds=0, asof_date="2026-10-31", filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["MANUAL"]
+    assert float(row["RevenueGrowthPct"]) == 7.0
+    assert float(row["ROEPercent"]) == 7.0
+    assert row["Source"] == "Manual verified filing"
+    assert float(row["RevenueTTMINR"]) == 4000.0
+    assert row["TTMQuarterlyAlignmentStatus"] == "VERIFIED"
+    assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"

@@ -1,0 +1,20 @@
+NSE V8 P2 TTM Cache Activation Fix — Local Test Results
+Date: 2026-10-31
+
+Python compile: PASS
+Combined targeted/regression suites: 106 passed
+
+Suites:
+- test_fundamental_data_provider.py
+- test_fundamental_shortlist_and_alignment.py
+- test_fundamental_cache_persistence_workflow.py
+- test_fundamental_official_filings.py
+- test_fundamental_filter.py
+- test_fundamental_fail_closed.py
+- test_selection_pipeline_order.py
+- test_liquidity_filter.py
+- test_delivery_filter_fallback.py
+- test_delivery_rule.py
+- test_v8_regression.py
+
+This is local validation only; no live Yahoo Finance or GitHub Actions execution was performed.

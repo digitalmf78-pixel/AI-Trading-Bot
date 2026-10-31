@@ -32,6 +32,7 @@ TTM_AUDIT_COLUMNS = [
     "RevenueTTMINR", "PreviousRevenueTTMINR", "NetProfitTTMINR",
     "PreviousNetProfitTTMINR", "EBITTTMINR", "InterestExpenseTTMINR",
     "TTMQuarterPeriods", "TTMQuarterlyAlignmentStatus", "TTMCalculationReason",
+    "TTMCalculationAttemptedAtUTC",
 ]
 BASE_COLUMNS = [
     "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
@@ -528,18 +529,24 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             record["ProviderFetchBalanceSheetPeriod"] = quarterly["period_end"]
         elif aligned["ok"]:
             # Annual alignment remains a fallback only when quarterly statements
-            # cannot produce a complete aligned four-quarter TTM.
+            # cannot produce a complete aligned four-quarter TTM. Keep the
+            # quarterly audit explicit so the cache never looks unprocessed.
             values = aligned["values"]
             record["MetricPeriodAlignmentStatus"] = "VERIFIED"
             record["MetricCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
             record["QuarterlyAlignmentReason"] = quarterly["reason"] or "QUARTERLY_TTM_UNAVAILABLE_ANNUAL_FALLBACK"
+            record["TTMQuarterlyAlignmentStatus"] = "UNAVAILABLE_ANNUAL_FALLBACK"
+            record["TTMCalculationReason"] = record["QuarterlyAlignmentReason"]
             diagnostic["AlignmentNote"] = f"ALIGNED_ANNUAL_FALLBACK:{aligned['period_end']}"
         else:
             record["MetricCalculationBasis"] = "UNALIGNED_PROVIDER_SNAPSHOT"
             record["QuarterlyAlignmentReason"] = quarterly["reason"] or aligned["reason"] or "LEGACY_SNAPSHOT_PATH"
+            record["TTMQuarterlyAlignmentStatus"] = "WAIT_FOR_DATA"
+            record["TTMCalculationReason"] = record["QuarterlyAlignmentReason"]
             diagnostic["AlignmentNote"] = record["QuarterlyAlignmentReason"]
         record["ProviderFetchCalculationBasis"] = record["MetricCalculationBasis"]
         record["ProviderFetchQuarterlyAlignmentReason"] = record["QuarterlyAlignmentReason"]
+        record["TTMCalculationAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
         for col, value in values.items():
             record[col] = value if _present(value) else pd.NA
         sector = info.get("sector") if isinstance(info, dict) else None
@@ -663,39 +670,62 @@ def collect_missing_fundamentals(
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
         provider_owned = not any(_present(current.get(col)) for col in METRIC_COLUMNS)
+        source_value = current.get("Source", "")
+        source_text = str(source_value) if _present(source_value) else ""
+        provider_sourced = source_text.startswith("Yahoo Finance")
+        # P2 backfill: P1 cache rows can be fresh and complete under the 30-day
+        # refresh policy, yet have no quarterly TTM audit. Fetch once to enrich
+        # those rows without forcing a full refresh or overwriting manual data.
+        ttm_pending = not _present(current.get("TTMCalculationAttemptedAtUTC"))
         if not enabled:
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
             continue
-        if not missing:
-            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "all metrics already populated in input CSV", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS)})
+        if not missing and not ttm_pending:
+            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete and quarterly TTM already attempted", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS)})
             continue
         fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory)
-        # Never overwrite a manually supplied value with provider data.
+        # Never overwrite manually supplied metric values. Existing provider rows
+        # are refreshed to quarterly-derived metrics only when quarterly TTM is
+        # fully aligned; missing fields can still be filled as before.
         merged = dict(current)
         for col in BASE_COLUMNS:
             if col not in merged:
                 merged[col] = pd.NA
         newly_stored_metric_names = []
+        quarterly_verified = str(fetched.get("TTMQuarterlyAlignmentStatus", "")) == "VERIFIED"
         for col in BASE_COLUMNS:
-            if col in {"TckrSymb"}:
+            if col == "TckrSymb":
                 continue
-            if not _present(merged.get(col)) and _present(fetched.get(col)):
+            is_ttm_audit = col in TTM_AUDIT_COLUMNS
+            # TTM audit is a separate provider calculation record. Populate it
+            # even when the older P1 metrics cache is otherwise complete.
+            if is_ttm_audit and _present(fetched.get(col)):
+                if not _present(merged.get(col)) or col == "TTMCalculationAttemptedAtUTC":
+                    merged[col] = fetched.get(col)
+                continue
+            # Existing provider-owned metrics can be upgraded from annual to
+            # quarterly only after a fully aligned TTM calculation. Manual or
+            # mixed legacy values remain authoritative.
+            if provider_sourced and quarterly_verified and col in METRIC_COLUMNS and _present(fetched.get(col)):
+                merged[col] = fetched.get(col)
+                newly_stored_metric_names.append(col)
+            elif not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
                 if col in METRIC_COLUMNS:
                     newly_stored_metric_names.append(col)
         if newly_stored_metric_names:
             merged["ProviderFetchCalculationBasis"] = fetched.get("MetricCalculationBasis", "UNVERIFIED")
             merged["ProviderFetchQuarterlyAlignmentReason"] = fetched.get("QuarterlyAlignmentReason", "NOT_EVALUATED_P1_CACHE_PROVENANCE_ONLY")
-            merged["ProviderFetchedMetrics"] = ";".join(newly_stored_metric_names)
+            merged["ProviderFetchedMetrics"] = ";".join(sorted(set(newly_stored_metric_names)))
             merged["ProviderFetchedAtUTC"] = fetched.get("DataRetrievedAtUTC", datetime.now(timezone.utc).isoformat())
-            # Fully provider-owned rows can describe the provider metric set at row level.
-            # Mixed legacy/manual rows retain UNKNOWN row-level basis; fetch provenance is separate.
-            if provider_owned:
+            # Fully provider-owned rows and existing Yahoo-owned rows can carry
+            # the new calculation basis. Manual/mixed legacy rows stay untouched.
+            if provider_owned or (provider_sourced and quarterly_verified):
                 merged["MetricCalculationBasis"] = fetched.get("MetricCalculationBasis", "UNVERIFIED")
                 merged["QuarterlyAlignmentReason"] = fetched.get("QuarterlyAlignmentReason", "NOT_EVALUATED_P1_CACHE_PROVENANCE_ONLY")
-        if provider_owned and any(_present(fetched.get(c)) for c in METRIC_COLUMNS):
-            # No manual metric values exist, so period/source fields describe the provider data
-            # as one unit and must replace stale UNVERIFIED defaults from earlier runs.
+        if (provider_owned and any(_present(fetched.get(c)) for c in METRIC_COLUMNS)) or (provider_sourced and quarterly_verified):
+            # For provider-owned data, the aligned quarterly statements now
+            # describe the metric set as a whole. Manual/mixed rows are excluded.
             for col in ("MetricPeriodAlignmentStatus", "FinancialPeriodEnd", "Source", "SourceURL", "DataRetrievedAtUTC", "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason"):
                 if _present(fetched.get(col)):
                     merged[col] = fetched.get(col)
