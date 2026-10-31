@@ -58,7 +58,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py; do
+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_xbrl_fetch.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -76,12 +76,15 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_xbrl_fetch.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
           echo "===== DELIVERY / LIQUIDITY / FUNDAMENTAL / PIPELINE TESTS ====="
           python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_risk_controls.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py
+
+          echo "===== P2 CASH FLOW BASIS + NSE XBRL FETCH TESTS ====="
+          python -m pytest -q test_nse_xbrl_fetch.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
 
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
@@ -100,6 +103,22 @@ jobs:
           python -m pytest -q test_news_catalyst_parser.py
           echo "===== UPCOMING CORPORATE EVENTS TESTS ====="
           python -m pytest -q test_upcoming_corporate_events.py
+
+      - name: Diagnose official NSE DNS reachability (non-blocking)
+        if: always()
+        continue-on-error: true
+        run: |
+          python - <<'PYDNS'
+          import socket
+          hosts = ("nsearchives.nseindia.com", "www.nseindia.com")
+          for host in hosts:
+              try:
+                  rows = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+                  ips = sorted({row[4][0] for row in rows})
+                  print(f"NSE_DNS_STATUS=PASS HOST={host} IPS={','.join(ips)}")
+              except OSError as exc:
+                  print(f"NSE_DNS_STATUS=FAIL HOST={host} ERROR={type(exc).__name__}:{exc}")
+          PYDNS
 
       - name: Run NSE Volume Gainer
         id: nse_scan
