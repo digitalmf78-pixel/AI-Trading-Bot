@@ -217,3 +217,60 @@ def test_provider_fetch_prefers_quarterly_ttm_and_persists_basis_and_audit(tmp_p
     assert diagnostic["IncomeQuarterPeriodCount"] == 8
     assert diagnostic["CashFlowQuarterPeriodCount"] == 4
     assert "2026-09-30" in diagnostic["CashFlowQuarterPeriodsAvailable"]
+
+
+def test_existing_p2_cache_without_raw_period_diagnostics_is_backfilled_once(tmp_path, monkeypatch):
+    """Old P2 attempts must fetch raw period evidence once, then reuse cache."""
+    from fundamental_data_provider import BASE_COLUMNS, METRIC_COLUMNS, TTM_AUDIT_COLUMNS
+
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "data/inputs/fundamental_metrics.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seed = {c: pd.NA for c in BASE_COLUMNS}
+    seed.update({
+        "TckrSymb": "AAA",
+        "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
+        "SourceURL": "https://finance.yahoo.com/quote/AAA.NS/financials/",
+        "DataRetrievedAtUTC": "2026-10-30T10:00:00+00:00",
+        "PublicationDateStatus": "VERIFIED",
+        "MetricPeriodAlignmentStatus": "VERIFIED",
+        "TTMCalculationAttemptedAtUTC": "2026-10-30T10:00:00+00:00",
+        "TTMQuarterlyAlignmentStatus": "UNAVAILABLE_ANNUAL_FALLBACK",
+        "TTMCalculationReason": "QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED",
+    })
+    for col in METRIC_COLUMNS:
+        seed[col] = 1.0
+    seed["RevenueGrowthPct"] = 17.25
+    pd.DataFrame([seed]).to_csv(path, index=False)
+
+    class MisalignedQuarterlyTicker(QuarterlyAlignedTicker):
+        def __init__(self, symbol):
+            super().__init__(symbol)
+            # The latest income quarter is intentionally absent from cash flow.
+            self.quarterly_cashflow = self.quarterly_cashflow.iloc[:, 1:]
+
+    kw = dict(enabled=True, pause_seconds=0, asof_date="2026-10-31",
+              filings_fetcher=lambda _c: pd.DataFrame())
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}), ticker_factory=MisalignedQuarterlyTicker,
+        metrics_path=path, **kw
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    assert row["RevenueGrowthPct"] == pytest.approx(17.25)  # old provider metric not overwritten on fallback
+    assert row["TTMDiagnosticsCapturedAtUTC"]
+    assert "2026-09-30" in row["IncomeQuarterPeriodsAvailable"]
+    assert row["CashFlowAlignmentMissingPeriods"] == "2026-09-30"
+    assert row["CashFlowQuarterPeriodCount"] == 3
+
+    # Next run must not re-fetch; it should surface the cached diagnostic evidence.
+    def must_not_fetch(_symbol):
+        raise AssertionError("cached period diagnostics should prevent a second provider fetch")
+
+    collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}), ticker_factory=must_not_fetch,
+        metrics_path=path, **kw
+    )
+    diag = pd.read_csv(tmp_path / "outputs/v8_fundamental_provider_diagnostics.csv")
+    drow = diag.set_index("TckrSymb").loc["AAA"]
+    assert drow["ProviderStatus"] == "EXISTING_RECORD_COMPLETE"
+    assert drow["CashFlowAlignmentMissingPeriods"] == "2026-09-30"

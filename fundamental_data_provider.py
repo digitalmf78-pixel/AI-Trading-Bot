@@ -28,12 +28,19 @@ METRIC_COLUMNS = [
 ]
 # Audit outputs are intentionally separate from METRIC_COLUMNS so the existing
 # completeness/shortlist thresholds and refresh behavior do not change.
+TTM_DIAGNOSTIC_COLUMNS = [
+    "IncomeQuarterPeriodsAvailable", "CashFlowQuarterPeriodsAvailable",
+    "BalanceSheetQuarterPeriodsAvailable", "CashFlowRowLabels",
+    "CashFlowAlignmentMatchedPeriods", "CashFlowAlignmentMissingPeriods",
+    "IncomeQuarterPeriodCount", "CashFlowQuarterPeriodCount",
+    "BalanceSheetQuarterPeriodCount", "TTMDiagnosticsCapturedAtUTC",
+]
 TTM_AUDIT_COLUMNS = [
     "RevenueTTMINR", "PreviousRevenueTTMINR", "NetProfitTTMINR",
     "PreviousNetProfitTTMINR", "EBITTTMINR", "InterestExpenseTTMINR",
     "TTMQuarterPeriods", "TTMQuarterlyAlignmentStatus", "TTMCalculationReason",
     "TTMCalculationAttemptedAtUTC",
-]
+] + TTM_DIAGNOSTIC_COLUMNS
 BASE_COLUMNS = [
     "TckrSymb", "AsOfDate", "DataRetrievedAtUTC", "Source", "SourceURL",
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
@@ -530,6 +537,10 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
         # Diagnostic-only evidence: retain raw provider period ends and row labels
         # so the next audit can distinguish missing, shifted, and YTD-like cashflow.
         diagnostic.update(quarterly.get("diagnostics", {}))
+        # Persist raw quarter-period evidence in the fundamental cache so an
+        # EXISTING_RECORD_COMPLETE row can be audited without re-fetching forever.
+        record.update(quarterly.get("diagnostics", {}))
+        record["TTMDiagnosticsCapturedAtUTC"] = datetime.now(timezone.utc).isoformat()
         aligned = _aligned_annual_metrics(ticker)
         values = {
             "RevenueGrowthPct": revenue_growth,
@@ -666,6 +677,7 @@ def collect_missing_fundamentals(
             existing[col] = pd.NA
     existing["TckrSymb"] = existing["TckrSymb"].astype(str).str.strip().str.upper()
     # Historical rows have no trustworthy calculation-basis metadata. Do not infer it.
+    existing["MetricCalculationBasis"] = existing["MetricCalculationBasis"].astype("object")
     basis_blank = existing["MetricCalculationBasis"].isna() | existing["MetricCalculationBasis"].astype(str).str.strip().isin(["", "nan", "None"])
     existing.loc[basis_blank, "MetricCalculationBasis"] = "LEGACY_CACHE_BASIS_UNKNOWN"
 
@@ -702,11 +714,16 @@ def collect_missing_fundamentals(
         # refresh policy, yet have no quarterly TTM audit. Fetch once to enrich
         # those rows without forcing a full refresh or overwriting manual data.
         ttm_pending = not _present(current.get("TTMCalculationAttemptedAtUTC"))
+        # One-time backfill for older P2 rows: a previous TTM attempt may exist,
+        # but its raw quarter-date evidence was only written to the run report.
+        # Re-fetch provider-owned rows only until this durable marker is present.
+        diagnostics_pending = provider_sourced and not _present(current.get("TTMDiagnosticsCapturedAtUTC"))
         if not enabled:
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
             continue
-        if not missing and not ttm_pending:
-            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete and quarterly TTM already attempted", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS)})
+        if not missing and not ttm_pending and not diagnostics_pending:
+            cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
+            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
         fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory)
         # Never overwrite manually supplied metric values. Existing provider rows

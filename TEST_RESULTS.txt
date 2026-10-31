@@ -1,9 +1,13 @@
-Targeted regression test:
-pytest -q test_fundamental_cache_persistence_workflow.py
+NSE V8 P2 ONE-TIME RE-DIAGNOSTIC CACHE FIX
+==========================================
+Focused regression command:
+pytest -q test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_cache_persistence_workflow.py test_fundamental_official_filings.py test_fundamental_filter.py test_fundamental_fail_closed.py test_selection_pipeline_order.py test_liquidity_filter.py test_delivery_filter_fallback.py test_delivery_rule.py
 
-RESULT: 6 passed in 0.04s
+Result: 78 passed
+Python compile: PASS
 
-GitHub run 41173859764:
-1 failed, 75 passed in 0.85s
-Failure: stale assertion expected old xargs staging command.
-The scanner and persistence step were not reached because the test step uses set -e.
+New targeted test:
+- Existing provider-owned row with TTM attempt timestamp but missing raw period diagnostics is fetched once.
+- Missing Income/Cash Flow period dates are persisted into fundamental_metrics.csv.
+- Existing provider metrics remain unchanged when quarterly TTM is not verified.
+- Next run reuses persisted diagnostics and does not fetch again.
