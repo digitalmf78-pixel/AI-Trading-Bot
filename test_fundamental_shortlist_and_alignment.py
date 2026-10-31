@@ -193,6 +193,12 @@ def test_quarterly_ttm_rejects_misaligned_cashflow_periods():
     out = _aligned_quarterly_ttm_metrics(ticker)
     assert out["ok"] is False
     assert out["reason"] == "QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED"
+    diag = out["diagnostics"]
+    assert diag["IncomeQuarterPeriodCount"] == 8
+    assert diag["CashFlowQuarterPeriodCount"] == 3
+    assert diag["CashFlowAlignmentMatchedPeriods"]
+    assert diag["CashFlowAlignmentMissingPeriods"] == "2026-09-30"
+    assert "Operating Cash Flow" in diag["CashFlowRowLabels"]
 
 
 def test_provider_fetch_prefers_quarterly_ttm_and_persists_basis_and_audit(tmp_path, monkeypatch):
@@ -208,3 +214,6 @@ def test_provider_fetch_prefers_quarterly_ttm_and_persists_basis_and_audit(tmp_p
     assert record["RevenueTTMINR"] == pytest.approx(100.0)
     assert "2026-09-30" in record["ProviderFetchIncomePeriodsUsed"]
     assert diagnostic["AlignmentNote"].startswith("ALIGNED_QUARTERLY_TTM:")
+    assert diagnostic["IncomeQuarterPeriodCount"] == 8
+    assert diagnostic["CashFlowQuarterPeriodCount"] == 4
+    assert "2026-09-30" in diagnostic["CashFlowQuarterPeriodsAvailable"]

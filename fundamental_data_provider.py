@@ -294,7 +294,12 @@ def _aligned_quarterly_ttm_metrics(ticker_obj) -> dict:
     the latest quarter and the quarter four periods earlier; if that historical
     balance sheet is unavailable, those ratios remain unavailable.
     """
-    out = {"ok": False, "period_end": "", "values": {}, "audit": {}, "reason": ""}
+    out = {"ok": False, "period_end": "", "values": {}, "audit": {}, "reason": "",
+           "diagnostics": {"IncomeQuarterPeriodsAvailable": "", "CashFlowQuarterPeriodsAvailable": "",
+                           "BalanceSheetQuarterPeriodsAvailable": "", "CashFlowRowLabels": "",
+                           "CashFlowAlignmentMatchedPeriods": "", "CashFlowAlignmentMissingPeriods": "",
+                           "IncomeQuarterPeriodCount": 0, "CashFlowQuarterPeriodCount": 0,
+                           "BalanceSheetQuarterPeriodCount": 0}}
     statements = {}
     for key, attr in (("income", "quarterly_financials"),
                       ("balance", "quarterly_balance_sheet"),
@@ -308,12 +313,29 @@ def _aligned_quarterly_ttm_metrics(ticker_obj) -> dict:
     bal_cols = _statement_columns_by_date(bal)
     cash_cols = _statement_columns_by_date(cash)
     inc_dates = list(inc_cols)
+    cash_dates_list = list(cash_cols)
+    bal_dates_list = list(bal_cols)
+    out["diagnostics"].update({
+        "IncomeQuarterPeriodsAvailable": ";".join(inc_dates),
+        "CashFlowQuarterPeriodsAvailable": ";".join(cash_dates_list),
+        "BalanceSheetQuarterPeriodsAvailable": ";".join(bal_dates_list),
+        "CashFlowRowLabels": ";".join(str(x) for x in cash.index) if isinstance(cash, pd.DataFrame) else "",
+        "IncomeQuarterPeriodCount": len(inc_dates),
+        "CashFlowQuarterPeriodCount": len(cash_dates_list),
+        "BalanceSheetQuarterPeriodCount": len(bal_dates_list),
+    })
     if not _quarter_sequence(inc_dates, 4):
         out["reason"] = "QUARTERLY_INCOME_NEEDS_4_CONSECUTIVE_QUARTERS"
         return out
     latest_four = inc_dates[:4]
     cash_dates = set(cash_cols)
-    if not all(d in cash_dates for d in latest_four):
+    matched_cash_dates = [d for d in latest_four if d in cash_dates]
+    missing_cash_dates = [d for d in latest_four if d not in cash_dates]
+    out["diagnostics"].update({
+        "CashFlowAlignmentMatchedPeriods": ";".join(matched_cash_dates),
+        "CashFlowAlignmentMissingPeriods": ";".join(missing_cash_dates),
+    })
+    if missing_cash_dates:
         out["reason"] = "QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED"
         return out
     if latest_four[0] not in bal_cols:
@@ -505,6 +527,9 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             interest_coverage = float(ebit) / abs(float(interest_expense))
 
         quarterly = _aligned_quarterly_ttm_metrics(ticker)
+        # Diagnostic-only evidence: retain raw provider period ends and row labels
+        # so the next audit can distinguish missing, shifted, and YTD-like cashflow.
+        diagnostic.update(quarterly.get("diagnostics", {}))
         aligned = _aligned_annual_metrics(ticker)
         values = {
             "RevenueGrowthPct": revenue_growth,
