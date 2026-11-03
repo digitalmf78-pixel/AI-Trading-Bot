@@ -251,4 +251,5 @@ jobs:
             data/inputs/*.json
             data/reports/
             data/cache/fundamental_history/
+            data/cache/xbrl_samples/
           if-no-files-found: warn
