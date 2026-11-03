@@ -49,23 +49,40 @@ def _context_map(root) -> dict[str, dict]:
                 dates[_local(child.tag)] = (child.text or "").strip()
         entity = next((c for c in node if _local(c.tag).lower() == "entity"), None)
         identifier = ""
+        identifier_scheme = ""
         if entity is not None:
             for child in entity:
                 if _local(child.tag).lower() == "identifier":
                     identifier = (child.text or "").strip()
+                    identifier_scheme = child.attrib.get("scheme", "")
                     break
+        dimensions = []
+        for desc in node.iter():
+            local = _local(desc.tag).lower()
+            if local == "explicitmember":
+                dimensions.append({
+                    "kind": "explicit",
+                    "dimension": desc.attrib.get("dimension", ""),
+                    "member": (desc.text or "").strip(),
+                })
+            elif local == "typedmember":
+                typed_value = "".join((part.text or "") for part in desc.iter() if part is not desc).strip()
+                dimensions.append({
+                    "kind": "typed",
+                    "dimension": desc.attrib.get("dimension", ""),
+                    "value": typed_value[:300],
+                })
         contexts[context_id] = {
             "entity_identifier": identifier,
+            "entity_identifier_scheme": identifier_scheme,
             "period": dates,
-            "has_dimensions": any(
-                "explicitMember" in _local(desc.tag) or "typedMember" in _local(desc.tag)
-                for desc in node.iter()
-            ),
+            "has_dimensions": bool(dimensions),
+            "dimensions": dimensions,
         }
     return contexts
 
 
-def inspect_xbrl_xml(xml_path: str | Path, *, max_cashflow_facts: int = 30) -> dict:
+def inspect_xbrl_xml(xml_path: str | Path, *, max_cashflow_facts: int = 200) -> dict:
     root = ET.parse(xml_path).getroot()
     contexts = _context_map(root)
     units = {}
@@ -85,11 +102,15 @@ def inspect_xbrl_xml(xml_path: str | Path, *, max_cashflow_facts: int = 30) -> d
         value = (node.text or "").strip()
         if not value:
             continue
+        namespace = node.tag[1:].split("}", 1)[0] if node.tag.startswith("{") else ""
         row = {
             "tag": name,
+            "namespace": namespace,
             "context_ref": node.attrib.get("contextRef", ""),
             "unit_ref": node.attrib.get("unitRef", ""),
             "decimals": node.attrib.get("decimals", ""),
+            "scale": node.attrib.get("scale", ""),
+            "sign": node.attrib.get("sign", ""),
             "value": value[:160],
             "context": contexts.get(node.attrib.get("contextRef", ""), {}),
         }
@@ -107,6 +128,7 @@ def inspect_xbrl_xml(xml_path: str | Path, *, max_cashflow_facts: int = 30) -> d
         "contexts": contexts,
         "units": units,
         "cashflow_facts": cashflow_facts[:max_cashflow_facts],
+        "cashflow_facts_truncated": len(cashflow_facts) > max_cashflow_facts,
     }
 
 

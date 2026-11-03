@@ -7,7 +7,7 @@ import nse_xbrl_sample_diagnostic as diag
 XML = b"""<?xml version='1.0'?>
 <xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
  xmlns:in-gaap="http://example.com/gaap">
- <xbrli:context id="Q1"><xbrli:entity><xbrli:identifier scheme="x">INE001</xbrli:identifier></xbrli:entity>
+ <xbrli:context id="Q1"><xbrli:entity><xbrli:identifier scheme="x">INE001</xbrli:identifier><xbrli:segment><xbrldi:explicitMember xmlns:xbrldi="http://xbrl.org/2006/xbrldi" dimension="in-gaap:StatementTypeAxis">in-gaap:StandaloneMember</xbrldi:explicitMember></xbrli:segment></xbrli:entity>
   <xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period></xbrli:context>
  <xbrli:unit id="INR"><xbrli:measure>iso4217:INR</xbrli:measure></xbrli:unit>
  <in-gaap:NetCashFlowsFromUsedInOperatingActivities contextRef="Q1" unitRef="INR" decimals="0">1234</in-gaap:NetCashFlowsFromUsedInOperatingActivities>
@@ -26,6 +26,8 @@ def test_inspect_xbrl_xml_extracts_context_units_and_cashflow(tmp_path):
     fact = result["cashflow_facts"][0]
     assert fact["value"] == "1234"
     assert fact["context"]["period"]["endDate"] == "2026-06-30"
+    assert fact["context"]["entity_identifier"] == "INE001"
+    assert fact["context"]["dimensions"][0]["member"] == "in-gaap:StandaloneMember"
 
 
 def test_select_samples_only_allows_official_xml_and_deduplicates(tmp_path):
