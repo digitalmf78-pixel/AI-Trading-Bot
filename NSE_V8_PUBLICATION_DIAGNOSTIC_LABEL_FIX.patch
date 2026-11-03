@@ -1,0 +1,79 @@
+--- a/fundamental_official_filings.py
++++ b/fundamental_official_filings.py
+@@ -733,8 +733,29 @@
+             continue
+         filing = index.get((symbol, period))
+         if filing is None:
+-            diagnostics.append({"TckrSymb": symbol, "FinancialPeriodEnd": period.date().isoformat(), "Status": "UNVERIFIED", "Reason": "No exact official symbol + period-end match"})
+-            # Preserve a previously verified and point-in-time-valid date only if it remains valid.
++            # A current lookup miss does not invalidate a previously verified
++            # filing date when both dates remain point-in-time valid. Keep the
++            # final cache status, but make the diagnostic describe that state
++            # accurately instead of counting it as a newly UNVERIFIED record.
++            previous_status = str(row.get("PublicationDateStatus", "")).strip().upper()
++            previous_publication = pd.to_datetime(row.get("PublicationDate", pd.NA), errors="coerce")
++            previous_verified_is_valid = (
++                previous_status == "VERIFIED"
++                and pd.notna(previous_publication)
++                and previous_publication.normalize() <= cutoff
++                and period <= cutoff
++            )
++            if previous_verified_is_valid:
++                diagnostics.append({
++                    "TckrSymb": symbol,
++                    "FinancialPeriodEnd": period.date().isoformat(),
++                    "PublicationDate": previous_publication.date().isoformat(),
++                    "Status": "PRESERVED_PREVIOUSLY_VERIFIED",
++                    "OfficialFilingURL": row.get("OfficialFilingURL", ""),
++                    "Reason": "Current lookup returned no exact pair; retained the existing verified publication date because it remains within the EOD cutoff",
++                })
++            else:
++                diagnostics.append({"TckrSymb": symbol, "FinancialPeriodEnd": period.date().isoformat(), "Status": "UNVERIFIED", "Reason": "No exact official symbol + period-end match"})
+             continue
+         pub = filing["PublicationDateParsed"]
+         output.at[idx, "PublicationDate"] = pub.date().isoformat()
+--- a/test_fundamental_official_filings.py
++++ b/test_fundamental_official_filings.py
+@@ -378,3 +378,42 @@
+     assert int(equity["RowsReturnedInWindow"]) == 1
+     assert int(equity["RowsRejectedPeriodMismatch"]) == 1
+     assert int(equity["RowsAccepted"]) == 0
++import pandas as pd
++
++from fundamental_official_filings import apply_official_publication_dates
++
++
++def test_valid_previous_verification_is_reported_as_preserved_not_unverified(tmp_path):
++    records = pd.DataFrame([{
++        "TckrSymb": "ABCOTS",
++        "FinancialPeriodEnd": "2026-03-31",
++        "PublicationDate": "2026-05-27",
++        "PublicationDateStatus": "VERIFIED",
++        "OfficialFilingURL": "https://nsearchives.nseindia.com/corporate/xbrl/ABCOTS.xml",
++        "OfficialFilingSource": "NSE Integrated Filing - Financials",
++    }])
++    # A non-empty official filings table that has no exact ABCOTS period pair
++    # models the bulk/targeted lookup miss seen in the report diagnostics.
++    filings = pd.DataFrame([{
++        "TckrSymb": "OTHER",
++        "FinancialPeriodEnd": "2026-03-31",
++        "PublicationDate": "2026-05-20",
++        "PublicationDateStatus": "VERIFIED",
++        "OfficialFilingURL": "https://nsearchives.nseindia.com/corporate/xbrl/OTHER.xml",
++        "OfficialSource": "NSE Integrated Filing - Financials",
++    }])
++    diagnostic_path = tmp_path / "verification.csv"
++    out = apply_official_publication_dates(
++        records,
++        "2026-11-02",
++        filings=filings,
++        cache_path=tmp_path / "filings_cache.csv",
++        diagnostics_path=diagnostic_path,
++    )
++
++    assert out.loc[0, "PublicationDateStatus"] == "VERIFIED"
++    assert out.loc[0, "PublicationDate"] == "2026-05-27"
++    diag = pd.read_csv(diagnostic_path)
++    row = diag.loc[diag["TckrSymb"].eq("ABCOTS")].iloc[0]
++    assert row["Status"] == "PRESERVED_PREVIOUSLY_VERIFIED"
++    assert row["PublicationDate"] == "2026-05-27"
