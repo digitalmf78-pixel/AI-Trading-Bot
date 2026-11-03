@@ -340,3 +340,41 @@ def test_targeted_lookup_writes_per_symbol_segment_diagnostics(tmp_path):
     assert list(diag["Segment"]) == ["equities", "sme"]
     assert diag.iloc[0]["RequestStatus"] == "OK"
     assert int(diag.iloc[1]["RowsForExactPeriod"]) == 1
+
+
+def test_targeted_lookup_diagnostics_do_not_count_other_period_as_accepted(tmp_path):
+    import fundamental_official_filings as mod
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self.payload = payload
+        def raise_for_status(self): return None
+        def json(self): return self.payload
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def get(self, url, params, timeout):
+            if params["index"] == "equities":
+                return Response({"totalCount": 1, "data": [{
+                    "seq_Id": "wrong-period", "creation_Date": "11-Sep-2026 12:00:00",
+                    "symbol": "ABC", "cmName": "ABC Limited", "qe_Date": "30-Jun-2026",
+                    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+                    "type_Sub": "Financial Results",
+                }]})
+            return Response({"totalCount": 0, "data": []})
+
+    diag_path = tmp_path / "targeted_wrong_period.csv"
+    out = mod._fetch_targeted_nse_filings(
+        "2026-10-23", [{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"}],
+        session_factory=Session, diagnostics_path=diag_path,
+    )
+    # The different-period row can be retained in the general cache, but it
+    # must not be represented as an accepted match for the requested pair.
+    assert len(out) == 1
+    diag = pd.read_csv(diag_path)
+    equity = diag.loc[diag["Segment"].eq("equities")].iloc[0]
+    assert int(equity["RowsForExactSymbol"]) == 1
+    assert int(equity["RowsForExactPeriod"]) == 0
+    assert int(equity["RowsReturnedInWindow"]) == 1
+    assert int(equity["RowsRejectedPeriodMismatch"]) == 1
+    assert int(equity["RowsAccepted"]) == 0

@@ -1,0 +1,8 @@
+Focused fundamental regression tests:
+python -m pytest -q test_fundamental_official_filings.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_fail_closed.py test_fundamental_cache_persistence_workflow.py
+
+Result: 45 passed in 1.04s
+
+Full repository pytest -q was attempted but exceeded the execution time limit. No full-suite pass is claimed.
+
+No stock was newly VERIFIED or PASSed. Exact symbol + exact financial period + publication cutoff rules remain unchanged.

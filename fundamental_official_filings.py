@@ -573,7 +573,12 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
                 "ReportedTotalCount": total_count if total_count is not None else pd.NA,
                 "RowsForExactSymbol": exact_symbol_count,
                 "RowsForExactPeriod": exact_period_count,
-                "RowsAccepted": len(segment_rows),
+                # Rows from other periods may be useful to enrich the shared
+                # filings cache, but they are NOT accepted for this candidate.
+                # Keep the candidate-level acceptance count strictly exact-pair.
+                "RowsReturnedInWindow": len(segment_rows),
+                "RowsRejectedPeriodMismatch": max(0, len(segment_rows) - exact_period_count),
+                "RowsAccepted": exact_period_count,
                 "ReturnedPeriods": ";".join(sorted(returned_periods)),
                 "ReturnedPublicationDates": ";".join(sorted(returned_publication_dates)),
                 "Error": error,
