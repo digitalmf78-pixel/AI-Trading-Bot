@@ -58,7 +58,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py; do
+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -76,12 +76,12 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
           echo "===== DELIVERY / LIQUIDITY / FUNDAMENTAL / PIPELINE TESTS ====="
-          python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py
+          python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py test_fundamental_metric_verification.py
 
           echo "===== P2 CASH FLOW BASIS + NSE XBRL FETCH TESTS ====="
           python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_nse_xbrl_statement_reconciliation.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
@@ -171,6 +171,23 @@ jobs:
             cat outputs/xbrl_statement_reconciliation/xbrl_statement_reconciliation_checks.csv
           fi
 
+      - name: Audit every cached fundamental metric against hashed official NSE XBRL evidence
+        if: steps.nse_scan.outcome == 'success'
+        run: |
+          set -e
+          python -u fundamental_metric_verification.py
+          echo "===== FUNDAMENTAL METRIC VERIFICATION SUMMARY ====="
+          if [ -f outputs/v8_fundamental_metric_verification_summary.csv ]; then
+            cat outputs/v8_fundamental_metric_verification_summary.csv
+          fi
+          if [ -f outputs/v8_fundamental_filing_metadata_summary.csv ]; then
+            cat outputs/v8_fundamental_filing_metadata_summary.csv
+          fi
+          echo "===== FUNDAMENTAL METRIC VERIFICATION SAMPLE ====="
+          if [ -f outputs/v8_fundamental_metric_verification.csv ]; then
+            head -12 outputs/v8_fundamental_metric_verification.csv
+          fi
+
       - name: Run RSI 30/40/50 retest comparison from existing cache
         if: always()
         run: |
@@ -240,6 +257,9 @@ jobs:
 
           if [ -f data/inputs/fundamental_metrics.csv ]; then
             git add -f data/inputs/fundamental_metrics.csv
+          fi
+          if [ -f data/inputs/fundamental_metric_verification_evidence.csv ]; then
+            git add -f data/inputs/fundamental_metric_verification_evidence.csv
           fi
           for f in "${HISTORY_FILES[@]}"; do
             git add -f -- "$f"
