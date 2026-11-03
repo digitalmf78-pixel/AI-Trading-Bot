@@ -76,7 +76,7 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
@@ -84,7 +84,7 @@ jobs:
           python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_risk_controls.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py
 
           echo "===== P2 CASH FLOW BASIS + NSE XBRL FETCH TESTS ====="
-          python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
+          python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_nse_xbrl_statement_reconciliation.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
 
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
@@ -154,6 +154,21 @@ jobs:
           echo "===== XBRL FINANCIAL FACT AUDIT SUMMARY ====="
           if [ -f outputs/xbrl_financial_fact_audit/xbrl_financial_fact_audit_summary.csv ]; then
             cat outputs/xbrl_financial_fact_audit/xbrl_financial_fact_audit_summary.csv
+          fi
+
+      - name: Reconcile official NSE XBRL statement arithmetic (audit only)
+        if: steps.xbrl_diagnostic.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -e
+          python -u nse_xbrl_statement_reconciliation.py
+          echo "===== XBRL STATEMENT RECONCILIATION SUMMARY ====="
+          if [ -f outputs/xbrl_statement_reconciliation/xbrl_statement_reconciliation_summary.csv ]; then
+            cat outputs/xbrl_statement_reconciliation/xbrl_statement_reconciliation_summary.csv
+          fi
+          echo "===== XBRL STATEMENT RECONCILIATION CHECKS ====="
+          if [ -f outputs/xbrl_statement_reconciliation/xbrl_statement_reconciliation_checks.csv ]; then
+            cat outputs/xbrl_statement_reconciliation/xbrl_statement_reconciliation_checks.csv
           fi
 
       - name: Run RSI 30/40/50 retest comparison from existing cache
