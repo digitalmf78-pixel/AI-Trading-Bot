@@ -71,7 +71,7 @@ def test_provider_marks_alignment_verified_and_replaces_stale_unverified(tmp_pat
 
 def _verified_row(**over):
     row = {"TckrSymb": "AAA", "PublicationDateStatus": "VERIFIED", "MetricPeriodAlignmentStatus": "VERIFIED",
-           "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-20", "ProviderSector": "Industrials",
+           "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-20", "ProviderSector": "Industrials",
            "RevenueGrowthPct": 20, "ProfitGrowthPct": 50, "ROEPercent": 14, "ROCEPercent": 15,
            "DebtToEquity": 0.5, "InterestCoverage": 6, "OperatingCashFlowINR": 200, "FreeCashFlowINR": -5}
     row.update(over)
@@ -95,6 +95,9 @@ def test_fail_when_threshold_missed():
 
 def test_unverified_or_missing_data_is_wait_not_pass():
     assert status(MetricPeriodAlignmentStatus="UNVERIFIED")[0] == "WAIT_FOR_DATA"
+    assert status(MetricCalculationBasis="LEGACY_CACHE_BASIS_UNKNOWN")[0] == "WAIT_FOR_DATA"
+    assert status(MetricCalculationBasis=None)[0] == "WAIT_FOR_DATA"
+    assert status(MetricCalculationBasis="UNALIGNED_PROVIDER_SNAPSHOT")[0] == "WAIT_FOR_DATA"
     assert status(PublicationDateStatus="UNVERIFIED")[0] == "WAIT_FOR_DATA"
     assert status(ROCEPercent=None)[0] == "WAIT_FOR_DATA"
     assert status(PublicationDate="2026-11-01")[0] == "WAIT_FOR_DATA"

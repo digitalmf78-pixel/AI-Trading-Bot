@@ -44,11 +44,13 @@ def test_fundamental_history_snapshot_is_dated_and_preserves_csv(tmp_path):
     assert saved.loc[0, "PublicationDateStatus"] == "VERIFIED"
 
 
-def test_fundamental_assessment_is_written_and_pass_gate_is_applied():
+def test_fundamental_assessment_is_written_but_not_used_as_a_selection_gate():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     assert 'fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)' in source
-    assert 'eq("PASS")' in source
-    assert "Fundamental PASS advancing={len(current)}" in source
+    assert 'eq("PASS")' in source  # PASS-only report is still emitted for diagnostics.
+    assert 'current = fundamental_audit.loc[category_a_mask].copy()' in source
+    assert "fundamentals are not a rejection gate" in source
+    assert "fundamental_pass_mask" not in source
     assert 'v8_fundamental_report.csv' in source
 
 

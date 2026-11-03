@@ -3392,7 +3392,7 @@ def main():
                 fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)
                 fundamental_audit["FundamentalAssessmentReason"] = fundamental_audit["FundamentalShortlistReason"].astype(str)
             except Exception as shortlist_exc:
-                print(f"[FUNDAMENTAL SHORTLIST] Assessment failed closed; no candidates advance: {shortlist_exc}")
+                print(f"[FUNDAMENTAL SHORTLIST] Assessment unavailable; Delivery-A candidates continue with WAIT_FOR_DATA: {shortlist_exc}")
                 fundamental_audit["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
                 fundamental_audit["FundamentalShortlistReason"] = f"SHORTLIST_ASSESSMENT_ERROR:{type(shortlist_exc).__name__}"
                 fundamental_audit["FundamentalAssessmentStatus"] = "WAIT_FOR_DATA"
@@ -3409,20 +3409,21 @@ def main():
             fundamental_audit.loc[a_mask].to_csv("outputs/v8_delivery_a_fundamentals.csv", index=False)
             fundamental_audit.loc[b_mask].to_csv("outputs/v8_delivery_b_fundamentals.csv", index=False)
             fundamental_audit.to_csv("outputs/v8_delivery_ab_combined_fundamentals.csv", index=False)
-        # all rows retained regardless of fundamental data status in the collection
-        # reports above. Only verified strong-fundamental PASS candidates enter
-        # the downstream liquidity/technical pipeline after collection is complete.
+        # Fundamental analysis is enrichment/ranking only at this stage. Keep
+        # every Category-A candidate (Category B is a subset of A) regardless
+        # of PASS/FAIL/WAIT_FOR_DATA so missing fundamentals never become an
+        # accidental stock-selection gate. Statuses and scores remain attached.
         category_a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
-        fundamental_pass_mask = fundamental_audit.get("FundamentalShortlistStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS")
-        current = fundamental_audit[category_a_mask & fundamental_pass_mask].copy() if not fundamental_audit.empty else fundamental_audit.copy()
+        current = fundamental_audit.loc[category_a_mask].copy() if not fundamental_audit.empty else fundamental_audit.copy()
         sort_cols = [c for c in ["FundamentalScore", "RVOL"] if c in current.columns]
         if sort_cols and not current.empty:
             current = current.sort_values(sort_cols, ascending=[False] * len(sort_cols), na_position="last", kind="stable").reset_index(drop=True)
-        print(f"[FUNDAMENTAL COLLECTION] Category A rows={int(category_a_mask.sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; Fundamental PASS advancing={len(current)}; all collection rows retained in reports.")
+        assessment_counts = fundamental_audit.get("FundamentalShortlistStatus", pd.Series(dtype=str)).astype(str).value_counts().to_dict()
+        print(f"[FUNDAMENTAL COLLECTION] Category A rows={int(category_a_mask.sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; all Category-A rows advancing={len(current)}; assessment statuses={assessment_counts}; fundamentals are not a rejection gate.")
     except Exception as exc:
-        # Fail closed: a failed fundamental collection/assessment must never
-        # allow unassessed Delivery-A candidates into liquidity or later gates.
-        print(f"[FUNDAMENTAL COLLECTION] Collection/assessment failed; no candidates advance: {exc}")
+        # Fundamental data is enrichment at this stage. Preserve Delivery-A
+        # candidates and mark all fundamental fields unavailable on failure.
+        print(f"[FUNDAMENTAL COLLECTION] Collection/assessment failed; Delivery-A candidates continue with WAIT_FOR_DATA: {exc}")
         fundamental_audit = delivery_audit.copy() if isinstance(delivery_audit, pd.DataFrame) else pd.DataFrame()
         if not fundamental_audit.empty:
             fundamental_audit["FundamentalStatus"] = "MISSING_DATA"
@@ -3437,7 +3438,10 @@ def main():
             fundamental_audit[fundamental_audit["FundamentalShortlistStatus"].eq("PASS")].to_csv(
                 "outputs/v8_fundamental_shortlist_pass.csv", index=False
             )
-        current = pd.DataFrame(columns=list(fundamental_audit.columns) if not fundamental_audit.empty else [])
+        # A provider/assessment failure is not a reason to discard Delivery-A
+        # candidates. Carry them forward with explicit WAIT_FOR_DATA metadata.
+        fallback_a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
+        current = fundamental_audit.loc[fallback_a_mask].copy() if not fundamental_audit.empty else pd.DataFrame(columns=list(fundamental_audit.columns))
 
     # --------------------------------------------------------
     # STEP 6: EXISTING LIQUIDITY FILTER — THRESHOLD RELAXED TO ₹2 CRORE

@@ -6,8 +6,8 @@ change just because other candidates were weaker or stronger that day.
 Statuses:
   PASS            every required metric is present, verified point-in-time and meets its threshold
   FAIL            data is verified and complete but at least one threshold is not met
-  WAIT_FOR_DATA   metrics missing, publication date / metric-period alignment unverified,
-                  or sector needs different rules (banks, NBFCs, insurers)
+  WAIT_FOR_DATA   metrics missing, publication date / metric-period alignment / calculation
+                  basis unverified, or sector needs different rules (banks, NBFCs, insurers)
 
 Missing or unverified data is never PASS and never guessed. This stage does not
 remove rows from the main pipeline; it only adds a status and writes a report.
@@ -40,6 +40,11 @@ DEFAULT_THRESHOLDS = {
 
 # Debt/equity, ROCE and interest coverage are not meaningful for lenders/insurers.
 SPECIAL_RULE_SECTORS = {"financial services", "financial", "banks", "insurance"}
+
+ALLOWED_METRIC_CALCULATION_BASES = {
+    "QUARTERLY_TTM_ALIGNED_STATEMENTS",
+    "ANNUAL_ALIGNED_STATEMENTS",
+}
 
 REQUIRED_METRICS = {
     "RevenueGrowthPct": "min_revenue_growth_pct",
@@ -87,6 +92,9 @@ def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
         waits.append("PUBLICATION_DATE_UNVERIFIED")
     if str(row.get("MetricPeriodAlignmentStatus", "")).strip().upper() != "VERIFIED":
         waits.append("METRIC_PERIOD_ALIGNMENT_UNVERIFIED")
+    calculation_basis = str(row.get("MetricCalculationBasis", "")).strip().upper()
+    if calculation_basis not in ALLOWED_METRIC_CALCULATION_BASES:
+        waits.append("METRIC_CALCULATION_BASIS_UNKNOWN_OR_UNSUPPORTED")
     period_end = pd.to_datetime(row.get("FinancialPeriodEnd"), errors="coerce")
     publication = pd.to_datetime(row.get("PublicationDate"), errors="coerce")
     if pd.isna(period_end):
