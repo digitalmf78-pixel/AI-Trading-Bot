@@ -1,0 +1,27 @@
+NSE V8 FUNDAMENTAL METRIC VERIFICATION PATCH — 2026-11-03
+
+Base archive reference: 5a8dbd926c7f42f83012d4fcf2e5e249eb4d230c
+The uploaded source ZIP did not contain .git metadata; verify live GitHub main before applying.
+
+Apply/merge the included files at the same repository-relative paths.
+Do not overwrite fundamental_metrics.csv or historical snapshots.
+The evidence ledger is a header-only template; no metric is promoted automatically.
+The audit outputs are snapshot results from the uploaded repository ZIP.
+
+Local validation:
+- py_compile fundamental_metric_verification.py test_fundamental_metric_verification.py: PASS
+- YAML parse of .github/workflows/nse-test-scheduled.yml: PASS
+- Targeted regression batch: 97 passed
+- Full pytest suite: NOT RUN as a complete suite in this patch task.
+
+Audit snapshot:
+- 364 fundamental cache symbols
+- 2,734 populated numeric metric rows
+- 0 OFFICIAL_XBRL_VERIFIED
+- 2,056 DERIVED_RECONCILIATION_REQUIRED (296 symbols)
+- 526 FILING_METADATA_NOT_CONFIRMED (68 symbols)
+- 152 PROVIDER_ONLY (152 symbols)
+- Filing metadata: 296 symbols exact match; 67 URL missing; 1 ABCOTS exact match missing
+
+No fundamental metric values or history snapshots were modified.
+No GitHub push, merge, or deployment was performed.
