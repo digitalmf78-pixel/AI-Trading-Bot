@@ -27,6 +27,7 @@ def _write_xml(path: Path):
   <in-gaap:RevenueFromOperations contextRef="Q4" unitRef="INR" decimals="-3">2900000</in-gaap:RevenueFromOperations>
   <in-gaap:ProfitLossForPeriod contextRef="Q4" unitRef="INR" decimals="-3">837500000</in-gaap:ProfitLossForPeriod>
   <in-gaap:CashFlowsFromUsedInOperatingActivities contextRef="FY" unitRef="INR" decimals="-3">5048000</in-gaap:CashFlowsFromUsedInOperatingActivities>
+  <in-gaap:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">-11200000</in-gaap:EffectOfExchangeRateChangesOnCashAndCashEquivalents>
 </xbrl>
 """, encoding="utf-8")
 
@@ -51,6 +52,9 @@ def test_extracts_symbol_basis_quarter_and_annual_cashflow_as_candidates(tmp_pat
     assert cash["PeriodClass"] == "ANNUAL_12M_CANDIDATE"
     assert cash["ReportingBasis"] == "STANDALONE"
     assert cash["FactVerificationStatus"] == "CANDIDATE_ONLY_NOT_VERIFIED"
+    fx = by_tag[("EffectOfExchangeRateChangesOnCashAndCashEquivalents", "FY")]
+    assert fx["FactCategory"] == "FX_EFFECT_CASH_CHANGE_CANDIDATE"
+    assert fx["FactVerificationStatus"] == "CANDIDATE_ONLY_NOT_VERIFIED"
 
 
 def test_period_classification_is_fail_closed():

@@ -1,0 +1,16 @@
+# Insert this step after the existing "Reconcile official NSE XBRL statement arithmetic (audit only)" step.
+# The current workflow log confirms the script and test are compiled/tested, but does not show this audit being executed.
+      - name: Audit Q4 CFO using matched annual and 9M official NSE XBRL filings (candidate only)
+        if: steps.nse_scan.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -e
+          python -u nse_xbrl_ytd_cashflow_reconciliation.py --limit 5
+          echo "===== Q4 CFO ANNUAL / 9M RECONCILIATION SUMMARY ====="
+          if [ -f outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation_summary.csv ]; then
+            cat outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation_summary.csv
+          fi
+          echo "===== Q4 CFO RECONCILIATION DETAILS ====="
+          if [ -f outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation.csv ]; then
+            cat outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation.csv
+          fi

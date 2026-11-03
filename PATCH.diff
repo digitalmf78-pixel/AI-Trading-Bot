@@ -1,51 +1,234 @@
---- a/.github/workflows/nse-test-scheduled.yml
-+++ b/.github/workflows/nse-test-scheduled.yml
-@@ -58,7 +58,7 @@
-       - name: Check repository files
-         run: |
-           echo "===== REQUIRED PYTHON FILES ====="
--          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py; do
-+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
-             if [ -f "$f" ]; then
-               echo "FOUND: $f"
-             else
-@@ -76,7 +76,7 @@
-         run: |
-           set -e
-           echo "===== PYTHON COMPILE CHECK ====="
--          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
-+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py risk_controls.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
+--- a/nse_xbrl_statement_reconciliation.py
++++ b/nse_xbrl_statement_reconciliation.py
+@@ -29,6 +29,7 @@
+     "CashFlowsFromUsedInOperations", "CashFlowsFromUsedInOperatingActivities",
+     "CashFlowsFromUsedInInvestingActivities", "CashFlowsFromUsedInFinancingActivities",
+     "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges",
++    "EffectOfExchangeRateChangesOnCashAndCashEquivalents",
+     "IncreaseDecreaseInCashAndCashEquivalents", "CashAndCashEquivalentsCashFlowStatement",
+ }
  
-           echo "===== MAIN BOARD ONLY TESTS ====="
-           python -m pytest -q test_main_board_filter.py
-@@ -84,7 +84,7 @@
-           python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py test_fundamental_metric_verification.py
+@@ -246,18 +247,33 @@
+                            "ContextRef": context_ref, "PeriodClass": period_class,
+                            "ReportingBasis": basis})
  
-           echo "===== P2 CASH FLOW BASIS + NSE XBRL FETCH TESTS ====="
--          python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_nse_xbrl_statement_reconciliation.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
-+          python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
+-        # IAS 7 statement cross-foot: net CFO + CFI + CFF = net change in cash.
++        # IAS 7 cross-foot: CFO + CFI + CFF equals the net cash movement
++        # BEFORE exchange-rate effects. Only after adding the FX effect should
++        # it reconcile to the reported net movement AFTER FX.
+         cfo, cfo_f = numeric("CashFlowsFromUsedInOperatingActivities")
+         cfi, cfi_f = numeric("CashFlowsFromUsedInInvestingActivities")
+         cff, cff_f = numeric("CashFlowsFromUsedInFinancingActivities")
+-        cash_change, cash_change_f = numeric("IncreaseDecreaseInCashAndCashEquivalents")
+-        if all(x is not None for x in (cfo, cfi, cff, cash_change)):
+-            checks.append({**_check("CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CASH_CHANGE",
+-                                    cfo + cfi + cff, cash_change,
+-                                    [cfo_f, cfi_f, cff_f, cash_change_f],
+-                                    "CashFlowsFromUsedInOperatingActivities is the operating total used in the cash-flow cross-foot."),
+-                           "ContextRef": context_ref, "PeriodClass": period_class,
+-                           "ReportingBasis": basis})
++        cash_change_pre_fx, cash_change_pre_fx_f = numeric(
++            "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges"
++        )
++        fx_effect, fx_effect_f = numeric("EffectOfExchangeRateChangesOnCashAndCashEquivalents")
++        cash_change_after_fx, cash_change_after_fx_f = numeric("IncreaseDecreaseInCashAndCashEquivalents")
++        if all(x is not None for x in (cfo, cfi, cff, cash_change_pre_fx)):
++            checks.append({**_check(
++                "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX",
++                cfo + cfi + cff, cash_change_pre_fx,
++                [cfo_f, cfi_f, cff_f, cash_change_pre_fx_f],
++                "Operating + investing + financing cash flows reconcile to net cash movement before FX effects."),
++                "ContextRef": context_ref, "PeriodClass": period_class,
++                "ReportingBasis": basis})
++        if all(x is not None for x in (cash_change_pre_fx, fx_effect, cash_change_after_fx)):
++            checks.append({**_check(
++                "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX",
++                cash_change_pre_fx + fx_effect, cash_change_after_fx,
++                [cash_change_pre_fx_f, fx_effect_f, cash_change_after_fx_f],
++                "Pre-FX net cash movement plus exchange-rate effect reconciles to reported net movement after FX."),
++                "ContextRef": context_ref, "PeriodClass": period_class,
++                "ReportingBasis": basis})
  
-           echo "===== V8 REGRESSION TESTS ====="
-           python -u test_v8_regression.py
-@@ -188,6 +188,21 @@
-             head -12 outputs/v8_fundamental_metric_verification.csv
-           fi
+     # Preserve cross-context conflicts rather than choosing a preferred tag/context.
+     anomalies = []
+@@ -302,10 +318,15 @@
+         "QuarterlyOperatingCashFlowAvailability": (
+             "PRESENT_AS_CANDIDATE" if q4_cashflow_contexts else "NO_Q4_CFO_FACT_IN_SAMPLE"),
+         "CFOArithmeticEvidence": (
+-            "ANNUAL_CFO_TAG_RECONCILES_TO_NET_CASH_CHANGE" if any(
+-                c["Check"] == "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CASH_CHANGE" and
++            "CFO_CFI_CFF_RECONCILES_TO_PRE_FX_NET_CHANGE" if any(
++                c["Check"] == "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX" and
+                 c["Status"] == "PASS_WITHIN_XBRL_ROUNDING" for c in checks
+-            ) else "NO_SUCCESSFUL_CFO_CROSSFOOT"),
++            ) else "NO_SUCCESSFUL_PRE_FX_CFO_CROSSFOOT"),
++        "FXBridgeEvidence": (
++            "PRE_FX_PLUS_FX_EFFECT_RECONCILES_TO_POST_FX" if any(
++                c["Check"] == "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX" and
++                c["Status"] == "PASS_WITHIN_XBRL_ROUNDING" for c in checks
++            ) else "FX_BRIDGE_NOT_CONFIRMED"),
+         "SafetyNote": "All values remain candidate-only. Arithmetic reconciliation is supporting evidence, not taxonomy or filing verification.",
+     }
  
-+      - name: Audit Q4 CFO using matched annual and 9M official NSE XBRL filings (candidate only)
-+        if: steps.nse_scan.outcome == 'success'
-+        continue-on-error: true
-+        run: |
-+          set -e
-+          python -u nse_xbrl_ytd_cashflow_reconciliation.py --limit 5
-+          echo "===== Q4 CFO ANNUAL / 9M RECONCILIATION SUMMARY ====="
-+          if [ -f outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation_summary.csv ]; then
-+            cat outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation_summary.csv
-+          fi
-+          echo "===== Q4 CFO RECONCILIATION DETAILS ====="
-+          if [ -f outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation.csv ]; then
-+            cat outputs/xbrl_ytd_cashflow_reconciliation/xbrl_ytd_cashflow_reconciliation.csv
-+          fi
+@@ -370,6 +391,9 @@
+                         "Q4OperatingCashFlowAvailability": result.get("QuarterlyOperatingCashFlowAvailability", ""),
+                         "AnnualOperatingCashFlowContexts": ";".join(result.get("AnnualOperatingCashFlowContexts", [])),
+                         "CFOArithmeticEvidence": result.get("CFOArithmeticEvidence", ""),
++                        "FXBridgeEvidence": result.get("FXBridgeEvidence", ""),
++                        "PreFXCrossfootPass": sum(c.get("Check") == "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX" and c.get("Status") == "PASS_WITHIN_XBRL_ROUNDING" for c in check_rows),
++                        "FXBridgePass": sum(c.get("Check") == "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX" and c.get("Status") == "PASS_WITHIN_XBRL_ROUNDING" for c in check_rows),
+                         "ReconciliationChecksPass": sum(c.get("Status") == "PASS_WITHIN_XBRL_ROUNDING" for c in check_rows),
+                         "ReconciliationChecksMismatch": sum(c.get("Status") == "MISMATCH" for c in check_rows),
+                         "AnomalyCount": len(result.get("Anomalies", []))})
+--- a/nse_xbrl_financial_fact_audit.py
++++ b/nse_xbrl_financial_fact_audit.py
+@@ -33,6 +33,7 @@
+     "CashFlowsFromUsedInFinancingActivities": "FINANCING_CASH_FLOW_CANDIDATE",
+     "IncreaseDecreaseInCashAndCashEquivalents": "NET_CHANGE_CASH_CANDIDATE",
+     "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges": "NET_CHANGE_CASH_PRE_FX_CANDIDATE",
++    "EffectOfExchangeRateChangesOnCashAndCashEquivalents": "FX_EFFECT_CASH_CHANGE_CANDIDATE",
+ }
+ IDENTITY_TAGS = {"Symbol", "ScripCode", "NatureOfReportStandaloneConsolidated"}
+ 
+--- a/test_nse_xbrl_statement_reconciliation.py
++++ b/test_nse_xbrl_statement_reconciliation.py
+@@ -30,6 +30,8 @@
+  <g:CashFlowsFromUsedInOperatingActivities contextRef="FY" unitRef="INR" decimals="-3">700</g:CashFlowsFromUsedInOperatingActivities>
+  <g:CashFlowsFromUsedInInvestingActivities contextRef="FY" unitRef="INR" decimals="-3">-200</g:CashFlowsFromUsedInInvestingActivities>
+  <g:CashFlowsFromUsedInFinancingActivities contextRef="FY" unitRef="INR" decimals="-3">-100</g:CashFlowsFromUsedInFinancingActivities>
++ <g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges contextRef="FY" unitRef="INR" decimals="-3">400</g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges>
++ <g:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">0</g:EffectOfExchangeRateChangesOnCashAndCashEquivalents>
+  <g:IncreaseDecreaseInCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">400</g:IncreaseDecreaseInCashAndCashEquivalents>
+ </xbrl>''', encoding="utf-8")
+ 
+@@ -44,10 +46,12 @@
+     assert checks["CONTINUING_PROFIT_EQUALS_PBT_LESS_TAX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
+     assert checks["TOTAL_PROFIT_EQUALS_CONTINUING_PLUS_DISCONTINUED_PLUS_ASSOCIATES"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
+     assert checks["TAX_EXPENSE_EQUALS_CURRENT_PLUS_DEFERRED"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
+-    assert checks["CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CASH_CHANGE"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
++    assert checks["CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
++    assert checks["NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
+     assert result["QuarterlyOperatingCashFlowAvailability"] == "NO_Q4_CFO_FACT_IN_SAMPLE"
+     assert result["AnnualOperatingCashFlowContexts"] == ["FY"]
+-    assert result["CFOArithmeticEvidence"] == "ANNUAL_CFO_TAG_RECONCILES_TO_NET_CASH_CHANGE"
++    assert result["CFOArithmeticEvidence"] == "CFO_CFI_CFF_RECONCILES_TO_PRE_FX_NET_CHANGE"
++    assert result["FXBridgeEvidence"] == "PRE_FX_PLUS_FX_EFFECT_RECONCILES_TO_POST_FX"
+     assert result["Anomalies"][0]["Code"] == "DIMENSIONED_NET_PROFIT_AFTER_TAX_CONFLICT"
+     assert result["Anomalies"][0]["Status"] == "REQUIRES_DIMENSIONAL_AND_STATEMENT_RECONCILIATION"
+     assert all(f["VerificationStatus"] == "CANDIDATE_ONLY_NOT_VERIFIED" for f in result["Facts"])
+@@ -59,3 +63,72 @@
+     result = inspect_statement(path, symbol="OTHER")
+     assert result["IdentityStatus"] == "IDENTITY_NOT_CONFIRMED"
+     assert result["QuarterlyOperatingCashFlowAvailability"] == "NO_Q4_CFO_FACT_IN_SAMPLE"
 +
-       - name: Run RSI 30/40/50 retest comparison from existing cache
-         if: always()
-         run: |
++
++def test_cashflow_crossfoot_accounts_for_nonzero_fx_effect(tmp_path):
++    path = tmp_path / "fx_sample.xml"
++    _xml(path)
++    content = path.read_text(encoding="utf-8")
++    content = content.replace(
++        '<g:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">0</g:EffectOfExchangeRateChangesOnCashAndCashEquivalents>',
++        '<g:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">-20</g:EffectOfExchangeRateChangesOnCashAndCashEquivalents>'
++    ).replace(
++        '<g:IncreaseDecreaseInCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">400</g:IncreaseDecreaseInCashAndCashEquivalents>',
++        '<g:IncreaseDecreaseInCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">380</g:IncreaseDecreaseInCashAndCashEquivalents>'
++    )
++    path.write_text(content, encoding="utf-8")
++    result = inspect_statement(path, symbol="TEST")
++    checks = {row["Check"]: row for row in result["ReconciliationChecks"]}
++    assert checks["CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
++    assert checks["NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
++    assert checks["CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX"]["LeftValue"] == "400"
++    assert checks["NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX"]["RightValue"] == "380"
++
++
++def test_setco_style_fx_bridge_explains_pre_fx_vs_post_fx_difference(tmp_path):
++    path = tmp_path / "setco_fx_bridge.xml"
++    _xml(path)
++    content = path.read_text(encoding="utf-8")
++    content = content.replace(
++        '<g:CashFlowsFromUsedInOperatingActivities contextRef="FY" unitRef="INR" decimals="-3">700</g:CashFlowsFromUsedInOperatingActivities>',
++        '<g:CashFlowsFromUsedInOperatingActivities contextRef="FY" unitRef="INR" decimals="-3">212200000</g:CashFlowsFromUsedInOperatingActivities>'
++    ).replace(
++        '<g:CashFlowsFromUsedInInvestingActivities contextRef="FY" unitRef="INR" decimals="-3">-200</g:CashFlowsFromUsedInInvestingActivities>',
++        '<g:CashFlowsFromUsedInInvestingActivities contextRef="FY" unitRef="INR" decimals="-3">0</g:CashFlowsFromUsedInInvestingActivities>'
++    ).replace(
++        '<g:CashFlowsFromUsedInFinancingActivities contextRef="FY" unitRef="INR" decimals="-3">-100</g:CashFlowsFromUsedInFinancingActivities>',
++        '<g:CashFlowsFromUsedInFinancingActivities contextRef="FY" unitRef="INR" decimals="-3">0</g:CashFlowsFromUsedInFinancingActivities>'
++    ).replace(
++        '<g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges contextRef="FY" unitRef="INR" decimals="-3">400</g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges>',
++        '<g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges contextRef="FY" unitRef="INR" decimals="-3">212200000</g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges>'
++    ).replace(
++        '<g:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">0</g:EffectOfExchangeRateChangesOnCashAndCashEquivalents>',
++        '<g:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">-11200000</g:EffectOfExchangeRateChangesOnCashAndCashEquivalents>'
++    ).replace(
++        '<g:IncreaseDecreaseInCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">400</g:IncreaseDecreaseInCashAndCashEquivalents>',
++        '<g:IncreaseDecreaseInCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">201000000</g:IncreaseDecreaseInCashAndCashEquivalents>'
++    )
++    path.write_text(content, encoding="utf-8")
++    result = inspect_statement(path, symbol="TEST")
++    checks = {row["Check"]: row for row in result["ReconciliationChecks"]}
++    assert checks["CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
++    assert checks["NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX"]["Status"] == "PASS_WITHIN_XBRL_ROUNDING"
++    assert checks["CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX"]["LeftValue"] == "212200000"
++    assert checks["NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX"]["Difference"] == "0"
++
++
++def test_missing_pre_fx_fact_does_not_fallback_to_post_fx_crossfoot(tmp_path):
++    path = tmp_path / "missing_pre_fx.xml"
++    _xml(path)
++    content = path.read_text(encoding="utf-8")
++    content = content.replace(
++        '<g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges contextRef="FY" unitRef="INR" decimals="-3">400</g:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges>',
++        ''
++    )
++    path.write_text(content, encoding="utf-8")
++    result = inspect_statement(path, symbol="TEST")
++    checks = {row["Check"]: row for row in result["ReconciliationChecks"]}
++    assert "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX" not in checks
++    assert "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX" not in checks
++    assert result["CFOArithmeticEvidence"] == "NO_SUCCESSFUL_PRE_FX_CFO_CROSSFOOT"
++    assert result["FXBridgeEvidence"] == "FX_BRIDGE_NOT_CONFIRMED"
+--- a/test_nse_xbrl_financial_fact_audit.py
++++ b/test_nse_xbrl_financial_fact_audit.py
+@@ -27,6 +27,7 @@
+   <in-gaap:RevenueFromOperations contextRef="Q4" unitRef="INR" decimals="-3">2900000</in-gaap:RevenueFromOperations>
+   <in-gaap:ProfitLossForPeriod contextRef="Q4" unitRef="INR" decimals="-3">837500000</in-gaap:ProfitLossForPeriod>
+   <in-gaap:CashFlowsFromUsedInOperatingActivities contextRef="FY" unitRef="INR" decimals="-3">5048000</in-gaap:CashFlowsFromUsedInOperatingActivities>
++  <in-gaap:EffectOfExchangeRateChangesOnCashAndCashEquivalents contextRef="FY" unitRef="INR" decimals="-3">-11200000</in-gaap:EffectOfExchangeRateChangesOnCashAndCashEquivalents>
+ </xbrl>
+ """, encoding="utf-8")
+ 
+@@ -51,6 +52,9 @@
+     assert cash["PeriodClass"] == "ANNUAL_12M_CANDIDATE"
+     assert cash["ReportingBasis"] == "STANDALONE"
+     assert cash["FactVerificationStatus"] == "CANDIDATE_ONLY_NOT_VERIFIED"
++    fx = by_tag[("EffectOfExchangeRateChangesOnCashAndCashEquivalents", "FY")]
++    assert fx["FactCategory"] == "FX_EFFECT_CASH_CHANGE_CANDIDATE"
++    assert fx["FactVerificationStatus"] == "CANDIDATE_ONLY_NOT_VERIFIED"
+ 
+ 
+ def test_period_classification_is_fail_closed():
+--- a/test_nse_xbrl_ytd_cashflow_reconciliation.py
++++ b/test_nse_xbrl_ytd_cashflow_reconciliation.py
+@@ -124,3 +124,20 @@
+         _filing("DONEAR", "2025-12-31", "2026-02-09", "Original Standalone Un-Audited", "https://nsearchives.nseindia.com/9m-donear-standalone.xml"),
+     ])
+     assert select_annual_ytd_pairs(metrics, filings, "2026-11-02", limit=5) == []
++
++
++def test_missing_official_9m_cfo_fact_stays_wait_and_never_derives():
++    pair = {
++        "Symbol": "SETCO", "AnnualReportingBasisExpected": "CONSOLIDATED",
++        "NineMonthReportingBasisExpected": "CONSOLIDATED",
++        "AnnualPeriodEnd": "2026-03-31", "NineMonthPeriodEnd": "2025-12-31",
++        "FiscalStartDate": "2025-04-01", "ProviderCalculationBasis": "LEGACY_CACHE_BASIS_UNKNOWN",
++        "ProviderCashFlowPeriodBasis": "UNKNOWN",
++    }
++    annual = _statement("SETCO", _fact(2122000000, start="2025-04-01", end="2026-03-31", basis="CONSOLIDATED"))
++    nine_month = {"IdentityStatus": "MATCH", "Facts": [], "XMLSymbols": ["SETCO"]}
++    result = reconcile_pair(pair, annual, nine_month)
++    assert result["Status"] == "WAIT_FOR_DATA"
++    assert "EXPECTED_EXACTLY_ONE_CFO_FACT_FOUND_0" in result["Reason"]
++    assert pd.isna(result["DerivedQ4CFOINR"])
++    assert result["VerificationStatus"] == "NOT_VERIFIED"

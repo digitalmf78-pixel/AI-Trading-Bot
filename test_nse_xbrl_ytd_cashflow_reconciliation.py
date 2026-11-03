@@ -124,3 +124,20 @@ def test_no_pair_when_same_reporting_basis_nine_month_filing_is_absent():
         _filing("DONEAR", "2025-12-31", "2026-02-09", "Original Standalone Un-Audited", "https://nsearchives.nseindia.com/9m-donear-standalone.xml"),
     ])
     assert select_annual_ytd_pairs(metrics, filings, "2026-11-02", limit=5) == []
+
+
+def test_missing_official_9m_cfo_fact_stays_wait_and_never_derives():
+    pair = {
+        "Symbol": "SETCO", "AnnualReportingBasisExpected": "CONSOLIDATED",
+        "NineMonthReportingBasisExpected": "CONSOLIDATED",
+        "AnnualPeriodEnd": "2026-03-31", "NineMonthPeriodEnd": "2025-12-31",
+        "FiscalStartDate": "2025-04-01", "ProviderCalculationBasis": "LEGACY_CACHE_BASIS_UNKNOWN",
+        "ProviderCashFlowPeriodBasis": "UNKNOWN",
+    }
+    annual = _statement("SETCO", _fact(2122000000, start="2025-04-01", end="2026-03-31", basis="CONSOLIDATED"))
+    nine_month = {"IdentityStatus": "MATCH", "Facts": [], "XMLSymbols": ["SETCO"]}
+    result = reconcile_pair(pair, annual, nine_month)
+    assert result["Status"] == "WAIT_FOR_DATA"
+    assert "EXPECTED_EXACTLY_ONE_CFO_FACT_FOUND_0" in result["Reason"]
+    assert pd.isna(result["DerivedQ4CFOINR"])
+    assert result["VerificationStatus"] == "NOT_VERIFIED"
