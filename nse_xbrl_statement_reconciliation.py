@@ -29,6 +29,7 @@ AUDIT_TAGS = {
     "CashFlowsFromUsedInOperations", "CashFlowsFromUsedInOperatingActivities",
     "CashFlowsFromUsedInInvestingActivities", "CashFlowsFromUsedInFinancingActivities",
     "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges",
+    "EffectOfExchangeRateChangesOnCashAndCashEquivalents",
     "IncreaseDecreaseInCashAndCashEquivalents", "CashAndCashEquivalentsCashFlowStatement",
 }
 
@@ -246,18 +247,33 @@ def inspect_statement(xml_path: str | Path, *, symbol: str = "",
                            "ContextRef": context_ref, "PeriodClass": period_class,
                            "ReportingBasis": basis})
 
-        # IAS 7 statement cross-foot: net CFO + CFI + CFF = net change in cash.
+        # IAS 7 cross-foot: CFO + CFI + CFF equals the net cash movement
+        # BEFORE exchange-rate effects. Only after adding the FX effect should
+        # it reconcile to the reported net movement AFTER FX.
         cfo, cfo_f = numeric("CashFlowsFromUsedInOperatingActivities")
         cfi, cfi_f = numeric("CashFlowsFromUsedInInvestingActivities")
         cff, cff_f = numeric("CashFlowsFromUsedInFinancingActivities")
-        cash_change, cash_change_f = numeric("IncreaseDecreaseInCashAndCashEquivalents")
-        if all(x is not None for x in (cfo, cfi, cff, cash_change)):
-            checks.append({**_check("CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CASH_CHANGE",
-                                    cfo + cfi + cff, cash_change,
-                                    [cfo_f, cfi_f, cff_f, cash_change_f],
-                                    "CashFlowsFromUsedInOperatingActivities is the operating total used in the cash-flow cross-foot."),
-                           "ContextRef": context_ref, "PeriodClass": period_class,
-                           "ReportingBasis": basis})
+        cash_change_pre_fx, cash_change_pre_fx_f = numeric(
+            "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges"
+        )
+        fx_effect, fx_effect_f = numeric("EffectOfExchangeRateChangesOnCashAndCashEquivalents")
+        cash_change_after_fx, cash_change_after_fx_f = numeric("IncreaseDecreaseInCashAndCashEquivalents")
+        if all(x is not None for x in (cfo, cfi, cff, cash_change_pre_fx)):
+            checks.append({**_check(
+                "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX",
+                cfo + cfi + cff, cash_change_pre_fx,
+                [cfo_f, cfi_f, cff_f, cash_change_pre_fx_f],
+                "Operating + investing + financing cash flows reconcile to net cash movement before FX effects."),
+                "ContextRef": context_ref, "PeriodClass": period_class,
+                "ReportingBasis": basis})
+        if all(x is not None for x in (cash_change_pre_fx, fx_effect, cash_change_after_fx)):
+            checks.append({**_check(
+                "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX",
+                cash_change_pre_fx + fx_effect, cash_change_after_fx,
+                [cash_change_pre_fx_f, fx_effect_f, cash_change_after_fx_f],
+                "Pre-FX net cash movement plus exchange-rate effect reconciles to reported net movement after FX."),
+                "ContextRef": context_ref, "PeriodClass": period_class,
+                "ReportingBasis": basis})
 
     # Preserve cross-context conflicts rather than choosing a preferred tag/context.
     anomalies = []
@@ -302,10 +318,15 @@ def inspect_statement(xml_path: str | Path, *, symbol: str = "",
         "QuarterlyOperatingCashFlowAvailability": (
             "PRESENT_AS_CANDIDATE" if q4_cashflow_contexts else "NO_Q4_CFO_FACT_IN_SAMPLE"),
         "CFOArithmeticEvidence": (
-            "ANNUAL_CFO_TAG_RECONCILES_TO_NET_CASH_CHANGE" if any(
-                c["Check"] == "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CASH_CHANGE" and
+            "CFO_CFI_CFF_RECONCILES_TO_PRE_FX_NET_CHANGE" if any(
+                c["Check"] == "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX" and
                 c["Status"] == "PASS_WITHIN_XBRL_ROUNDING" for c in checks
-            ) else "NO_SUCCESSFUL_CFO_CROSSFOOT"),
+            ) else "NO_SUCCESSFUL_PRE_FX_CFO_CROSSFOOT"),
+        "FXBridgeEvidence": (
+            "PRE_FX_PLUS_FX_EFFECT_RECONCILES_TO_POST_FX" if any(
+                c["Check"] == "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX" and
+                c["Status"] == "PASS_WITHIN_XBRL_ROUNDING" for c in checks
+            ) else "FX_BRIDGE_NOT_CONFIRMED"),
         "SafetyNote": "All values remain candidate-only. Arithmetic reconciliation is supporting evidence, not taxonomy or filing verification.",
     }
 
@@ -370,6 +391,9 @@ def run_reconciliation(diagnostic_json: str | Path, output_dir: str | Path) -> d
                         "Q4OperatingCashFlowAvailability": result.get("QuarterlyOperatingCashFlowAvailability", ""),
                         "AnnualOperatingCashFlowContexts": ";".join(result.get("AnnualOperatingCashFlowContexts", [])),
                         "CFOArithmeticEvidence": result.get("CFOArithmeticEvidence", ""),
+                        "FXBridgeEvidence": result.get("FXBridgeEvidence", ""),
+                        "PreFXCrossfootPass": sum(c.get("Check") == "CFO_PLUS_CFI_PLUS_CFF_EQUALS_NET_CHANGE_PRE_FX" and c.get("Status") == "PASS_WITHIN_XBRL_ROUNDING" for c in check_rows),
+                        "FXBridgePass": sum(c.get("Check") == "NET_CHANGE_PRE_FX_PLUS_FX_EFFECT_EQUALS_NET_CHANGE_AFTER_FX" and c.get("Status") == "PASS_WITHIN_XBRL_ROUNDING" for c in check_rows),
                         "ReconciliationChecksPass": sum(c.get("Status") == "PASS_WITHIN_XBRL_ROUNDING" for c in check_rows),
                         "ReconciliationChecksMismatch": sum(c.get("Status") == "MISMATCH" for c in check_rows),
                         "AnomalyCount": len(result.get("Anomalies", []))})

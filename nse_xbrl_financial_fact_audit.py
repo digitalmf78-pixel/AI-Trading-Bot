@@ -33,6 +33,7 @@ FACT_CATEGORIES = {
     "CashFlowsFromUsedInFinancingActivities": "FINANCING_CASH_FLOW_CANDIDATE",
     "IncreaseDecreaseInCashAndCashEquivalents": "NET_CHANGE_CASH_CANDIDATE",
     "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges": "NET_CHANGE_CASH_PRE_FX_CANDIDATE",
+    "EffectOfExchangeRateChangesOnCashAndCashEquivalents": "FX_EFFECT_CASH_CHANGE_CANDIDATE",
 }
 IDENTITY_TAGS = {"Symbol", "ScripCode", "NatureOfReportStandaloneConsolidated"}
 

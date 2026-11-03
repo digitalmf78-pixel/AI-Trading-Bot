@@ -1,0 +1,2 @@
+Symbol,ContextRef,ReportingBasis,OldCheckLeft_CFO_CFI_CFF_INR,OldCheckRight_PostFXNetChange_INR,Difference_INR,PreFXFactValueInWorkflowLog,FXEffectFactValueInWorkflowLog,AuditStatus,Interpretation
+SETCO,FourD,CONSOLIDATED,212200000,201000000,11200000,NOT_PRINTED_IN_LOG,NOT_PRINTED_IN_LOG,FX_BRIDGE_UNCONFIRMED,Old code compares pre-FX cash-flow sum to post-FX net change; next run must inspect raw pre-FX and FX-effect facts
