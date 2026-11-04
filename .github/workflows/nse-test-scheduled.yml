@@ -1,11 +1,6 @@
 name: NSE Data Test
 
 on:
-  push:
-    branches:
-      - codex/nse-v8-audit-hard-gate-fii-dii
-    paths:
-      - .github/workflows/nse-test-scheduled.yml
   workflow_dispatch:
     inputs:
       scan_mode:
