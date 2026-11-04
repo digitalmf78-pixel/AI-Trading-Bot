@@ -1012,8 +1012,8 @@ def calculate_5d_volume(
 def prepare_primary_shortlist(result, eod_date):
     """Keep candidates with complete volume history; delivery is the requested gate.
 
-    Delivery Category A (five-session average >=60%) has already been applied after
-    RVOL >1.5. Category B (each of five daily values >=60%) is reported separately.
+    Delivery Category B (each of five daily values >=60%) is applied after
+    RVOL >1.5. Category A (five-session average >=60%) remains in audit reports.
     A 3-of-5 low-volume rule is NOT used as a filter. Five-session volume-pattern
     and prior-20-session baseline data are still validated for reliable analysis.
     Incomplete history remains WAIT_FOR_DATA.
@@ -1067,7 +1067,7 @@ def prepare_primary_shortlist(result, eod_date):
     print(
         f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. "
-        "Dual Delivery Categories are applied after RVOL > 1.5; Category A average >=60% is the downstream gate. "
+        "Dual Delivery Categories are applied after RVOL > 1.5; Category B each day >=60% is the downstream gate. "
         f"Audit: {audit_path}"
     )
     return primary
@@ -2788,7 +2788,7 @@ def calculate_relative_strength_nifty(
 def select_top20_analysis_candidates(result, eod_date):
     """Annotate every RVOL > 1.5 technical candidate after core EOD screens.
 
-    Delivery Category A has passed: the average Delivery % across five valid sessions is >= 60.00%; Category B separately marks every day >=60.00%. A candidate
+    Delivery Category B has passed: every daily Delivery % across five valid sessions is >= 60.00%; Category A retains the five-day average status for reporting. A candidate
     must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
     trend/candle and setup-specific volume rules. Negative relative strength is
     retained as a scoring/ranking warning, not a standalone hard rejection.
@@ -3343,8 +3343,8 @@ def main():
             current = delivery_qualified.copy()
             if not current.empty:
                 current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
-            print(f"[DELIVERY] Category A (5-day average >=60%) qualified={len(current)}")
-            print("[DELIVERY] Category B (each of 5 days >=60%) is written as an independent report.")
+            print(f"[DELIVERY] Category B (each of 5 days >=60%) qualified={len(current)}")
+            print("[DELIVERY] Category A (5-day average >=60%) remains available in audit reports.")
         except Exception as exc:
             print(f"[DELIVERY] WAIT_FOR_DATA: delivery categories could not be verified: {exc}")
             current = current.iloc[0:0].copy()
@@ -3421,6 +3421,9 @@ def main():
         fundamental_pass_mask = fundamental_audit.get(
             "FundamentalShortlistStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
         ).astype(str).eq("PASS")
+        fundamental_pass_mask &= fundamental_audit.get(
+            "DeliveryCategoryBStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
+        ).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
         current = fundamental_audit.loc[fundamental_pass_mask].copy() if not fundamental_audit.empty else fundamental_audit.copy()
         sort_cols = [c for c in ["FundamentalScore", "RVOL"] if c in current.columns]
         if sort_cols and not current.empty:
@@ -3452,10 +3455,13 @@ def main():
         fallback_pass_mask = fundamental_audit.get(
             "FundamentalShortlistStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
         ).astype(str).eq("PASS")
+        fallback_pass_mask &= fundamental_audit.get(
+            "DeliveryCategoryBStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
+        ).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
         current = fundamental_audit.loc[fallback_pass_mask].copy() if not fundamental_audit.empty else pd.DataFrame(columns=list(fundamental_audit.columns))
 
     # --------------------------------------------------------
-    # STEP 6: EXISTING LIQUIDITY FILTER — THRESHOLD RELAXED TO ₹2 CRORE
+    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹5 CRORE
     # --------------------------------------------------------
     print("\nSTEP 6: Applying matrix liquidity gate (20D average traded value >= ₹5 crore)...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
@@ -3776,3 +3782,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
