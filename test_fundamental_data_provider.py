@@ -70,6 +70,96 @@ def test_manual_values_are_not_overwritten(tmp_path, monkeypatch):
     assert float(aaa["ROEPercent"]) == 16
 
 
+def test_unreadable_fundamental_cache_is_preserved_and_collection_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    original = b"not,a,valid,cache\n\x00broken"
+    path.write_bytes(original)
+
+    try:
+        collect_missing_fundamentals(
+            pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+            ticker_factory=FakeTicker, pause_seconds=0, asof_date="2026-10-22",
+            filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        )
+    except RuntimeError as exc:
+        assert "refusing to replace existing cache" in str(exc)
+    else:
+        raise AssertionError("unreadable cache must stop collection before rewriting it")
+
+    assert path.read_bytes() == original
+
+
+def test_empty_existing_fundamental_cache_is_not_treated_as_a_new_template(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"")
+
+    try:
+        collect_missing_fundamentals(
+            pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+            ticker_factory=FakeTicker, pause_seconds=0, asof_date="2026-10-22",
+            filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        )
+    except RuntimeError as exc:
+        assert "Fundamental cache is empty" in str(exc)
+    else:
+        raise AssertionError("empty existing cache must stop collection before rewriting it")
+
+    assert path.read_bytes() == b""
+
+
+def test_duplicate_fundamental_cache_symbols_are_not_silently_collapsed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    pd.DataFrame([
+        {"TckrSymb": "AAA", "RevenueGrowthPct": 10},
+        {"TckrSymb": "aaa", "RevenueGrowthPct": 20},
+        {"TckrSymb": "OLD", "RevenueGrowthPct": 30},
+    ]).to_csv(path, index=False)
+    original = path.read_bytes()
+
+    try:
+        collect_missing_fundamentals(
+            pd.DataFrame({"TckrSymb": ["BBB"]}), metrics_path=path, enabled=True,
+            ticker_factory=FakeTicker, pause_seconds=0, asof_date="2026-10-22",
+            filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        )
+    except RuntimeError as exc:
+        assert "duplicate symbol rows" in str(exc)
+        assert "AAA" in str(exc)
+    else:
+        raise AssertionError("duplicate cache symbols must be resolved before collection")
+    assert path.read_bytes() == original
+
+
+def test_cache_write_failure_keeps_previous_complete_file(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    path = tmp_path / "fundamental_metrics.csv"
+    original = b"TckrSymb,RevenueGrowthPct\nAAA,12\n"
+    path.write_bytes(original)
+    original_to_csv = pd.DataFrame.to_csv
+
+    def fail_temp_write(frame, file, *args, **kwargs):
+        if str(file).endswith(".tmp"):
+            raise OSError("simulated interrupted write")
+        return original_to_csv(frame, file, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", fail_temp_write)
+    try:
+        provider._atomic_write_csv(pd.DataFrame({"TckrSymb": ["BBB"]}), path)
+    except OSError as exc:
+        assert "simulated interrupted write" in str(exc)
+    else:
+        raise AssertionError("the simulated write failure must propagate")
+    assert path.read_bytes() == original
+    assert list(tmp_path.glob(".fundamental_metrics.csv.*.tmp")) == []
+
+
 def test_disabled_provider_does_not_drop_candidates_or_call_provider(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame({"TckrSymb": ["AAA", "BBB"]})
@@ -298,3 +388,4 @@ def test_p2_ttm_enrichment_does_not_overwrite_manual_metrics(tmp_path, monkeypat
     assert float(row["RevenueTTMINR"]) == 4000.0
     assert row["TTMQuarterlyAlignmentStatus"] == "VERIFIED"
     assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
+

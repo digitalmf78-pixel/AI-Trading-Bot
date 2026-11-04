@@ -1,0 +1,63 @@
+name: NSE V8 Pull Request Checks
+
+on:
+  pull_request:
+    paths:
+      - '**.py'
+      - '.github/workflows/**'
+      - 'data/inputs/fundamental_thresholds.json'
+
+permissions:
+  contents: read
+
+jobs:
+  nse-v8-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip requests pandas pytest yfinance
+
+      - name: Compile scanner and audit modules
+        run: >-
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py
+          sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py
+          fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py
+          fundamental_metric_verification.py fii_dii_activity.py risk_controls.py nse_xbrl_fetch.py
+          sanitize_public_artifacts.py
+          nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py
+          nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py
+          nse_bhavcopy_test.py nifty500_api_test.py
+
+      - name: Run unit and data-audit tests
+        run: >-
+          python -m pytest -q
+          test_main_board_filter.py test_delivery_rule.py test_delivery_filter_fallback.py
+          test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py
+          test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
+          test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py
+          test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py
+          test_fundamental_metric_verification.py test_fii_dii_activity.py test_nse_xbrl_fetch.py
+          test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py
+          test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py
+          test_sanitize_public_artifacts.py
+          test_news_catalyst_parser.py test_upcoming_corporate_events.py
+
+      - name: Run V8 regression script
+        run: python -u test_v8_regression.py
+
+      - name: Run sector, news, and official-index tests
+        run: >-
+          python -m unittest -v test_sector_news_final_fix
+          test_sector_mapping_cache_reconciliation test_niftyindices_history_bootstrap
+          test_news_official_feed_diagnostics test_news_catalyst_matching
+          test_news_issuer_matching test_nse_official_index_api
+

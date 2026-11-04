@@ -44,13 +44,14 @@ def test_fundamental_history_snapshot_is_dated_and_preserves_csv(tmp_path):
     assert saved.loc[0, "PublicationDateStatus"] == "VERIFIED"
 
 
-def test_fundamental_assessment_is_written_but_not_used_as_a_selection_gate():
+def test_fundamental_assessment_uses_metric_verification_before_selection():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     assert 'fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)' in source
     assert 'eq("PASS")' in source  # PASS-only report is still emitted for diagnostics.
-    assert 'current = fundamental_audit.loc[category_a_mask].copy()' in source
-    assert "fundamentals are not a rejection gate" in source
-    assert "fundamental_pass_mask" not in source
+    assert "run_fundamental_metric_audit()" in source
+    assert 'current = fundamental_audit.loc[fundamental_pass_mask].copy()' in source
+    assert "all A/B records remain in their audit reports" in source
+    assert "fundamental_pass_mask" in source
     assert 'v8_fundamental_report.csv' in source
 
 
@@ -67,4 +68,14 @@ def test_workflow_commits_fundamental_cache_and_history_to_repository():
     assert "HISTORY_TRACKING_STATUS=TRACKED:$f" in workflow
     assert "git diff --cached --name-status" in workflow
     assert 'git push origin "HEAD:${GITHUB_REF_NAME}"' in workflow
+    assert 'git fetch origin "${GITHUB_REF_NAME}"' in workflow
+    assert 'git rebase "origin/${GITHUB_REF_NAME}"' in workflow
+    assert "concurrency:" in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "steps.nse_scan.outcome == 'success'" in workflow
+
+
+def test_manual_scan_does_not_send_telegram_notifications():
+    workflow = (ROOT / ".github/workflows/nse-test-scheduled.yml").read_text(encoding="utf-8")
+    assert 'SEND_TELEGRAM: "${{ github.event_name == \'schedule\' }}"' in workflow
+

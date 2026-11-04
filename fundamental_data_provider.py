@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import tempfile
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -738,6 +739,27 @@ def save_fundamental_history_snapshot(metrics_path: str | Path = METRICS_PATH,
     return target
 
 
+def _atomic_write_csv(frame: pd.DataFrame, path: str | Path) -> None:
+    """Replace a CSV only after a complete same-directory write succeeds."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="", suffix=".tmp",
+            prefix=f".{target.name}.", dir=target.parent, delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+        frame.to_csv(temp_path, index=False)
+        os.replace(temp_path, target)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def collect_missing_fundamentals(
     candidates: pd.DataFrame,
     metrics_path: str | Path = METRICS_PATH,
@@ -759,17 +781,43 @@ def collect_missing_fundamentals(
     cutoff = pd.to_datetime(asof_date if asof_date is not None else date.today(), errors="coerce")
     cutoff_text = "" if pd.isna(cutoff) else cutoff.date().isoformat()
     path = Path(metrics_path)
-    if path.exists() and path.stat().st_size:
+    if path.exists():
+        if path.stat().st_size == 0:
+            raise RuntimeError(
+                f"Fundamental cache is empty: {path}; refusing to replace existing cache"
+            )
         try:
             existing = pd.read_csv(path)
-        except Exception:
-            existing = pd.DataFrame(columns=BASE_COLUMNS)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Fundamental cache cannot be read: {path}; refusing to replace existing cache"
+            ) from exc
+        if "TckrSymb" not in existing.columns:
+            raise RuntimeError(
+                f"Fundamental cache has no TckrSymb key: {path}; refusing to replace existing cache"
+            )
     else:
         existing = pd.DataFrame(columns=BASE_COLUMNS)
     for col in BASE_COLUMNS:
         if col not in existing.columns:
             existing[col] = pd.NA
     existing["TckrSymb"] = existing["TckrSymb"].astype(str).str.strip().str.upper()
+    invalid_symbols = existing["TckrSymb"].isin({"", "NAN", "NONE"})
+    if invalid_symbols.any():
+        raise RuntimeError(
+            f"Fundamental cache contains {int(invalid_symbols.sum())} row(s) without a symbol; "
+            "refusing to rewrite ambiguous cache"
+        )
+    duplicate_symbols = sorted(
+        existing.loc[existing["TckrSymb"].duplicated(keep=False), "TckrSymb"].unique()
+    )
+    if duplicate_symbols:
+        preview = ",".join(duplicate_symbols[:10])
+        suffix = "..." if len(duplicate_symbols) > 10 else ""
+        raise RuntimeError(
+            f"Fundamental cache contains duplicate symbol rows ({preview}{suffix}); "
+            "refusing to choose one record and overwrite the cache"
+        )
     # Historical rows have no trustworthy calculation-basis metadata. Do not infer it.
     existing["MetricCalculationBasis"] = existing["MetricCalculationBasis"].astype("object")
     basis_blank = existing["MetricCalculationBasis"].isna() | existing["MetricCalculationBasis"].astype(str).str.strip().isin(["", "nan", "None"])
@@ -926,9 +974,10 @@ def collect_missing_fundamentals(
     except Exception as exc:
         combined["PublicationDateStatus"] = combined.get("PublicationDateStatus", pd.Series("UNVERIFIED", index=combined.index)).fillna("UNVERIFIED")
         combined["OfficialFilingVerificationError"] = f"{type(exc).__name__}: {exc}"[:300]
-    combined.to_csv(path, index=False)
+    _atomic_write_csv(combined, path)
     snapshot_path = save_fundamental_history_snapshot(path, cutoff_text or date.today().isoformat())
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
     print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; history snapshot={snapshot_path}; diagnostics={DIAGNOSTICS_PATH}")
     return combined
+
 

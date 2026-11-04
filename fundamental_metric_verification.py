@@ -7,7 +7,9 @@ OFFICIAL_XBRL_VERIFIED only when a separately recorded evidence row points to a
 local XML file whose SHA-256, XBRL context, entity, period, unit, namespace,
 contextRef and numeric fact all match the cached value.
 
-The first implementation intentionally supports DIRECT_FACT_MATCH only.
+Only DIRECT_FACT_MATCH is supported; it is still gated by an explicitly
+approved metric-to-fact mapping. No NSE operating-cash-flow tag is approved
+while the competing concepts in the five-filing diagnostic remain unresolved.
 Derived ratios/growth metrics require a future component-level reconciliation
 engine and remain pending rather than being guessed.
 """
@@ -34,8 +36,10 @@ FILING_SUMMARY_PATH = OUTPUT_DIR / 'v8_fundamental_filing_metadata_summary.csv'
 
 # Metrics used by the shortlist plus persisted TTM totals.  Status/text fields
 # are deliberately excluded.
-DIRECT_FACT_ALLOWED_METRICS = {'OperatingCashFlowINR'}  # annual statement fact only; all ratios/growth/FCF/TTM are derived
-DIRECT_FACT_TAGS = {'OperatingCashFlowINR': {'CashFlowsFromUsedInOperatingActivities'}}
+# No direct-fact mapping is approved yet. The five-filing diagnostic found
+# competing cash-flow tags with different values; do not choose one by default.
+# Add a metric/tag pair here only after the accounting mapping is reconciled.
+DIRECT_FACT_TAGS: dict[str, set[str]] = {}
 NUMERIC_METRICS = [
     'RevenueGrowthPct', 'ProfitGrowthPct', 'ROEPercent', 'ROCEPercent',
     'DebtToEquity', 'InterestCoverage', 'OperatingCashFlowINR',
@@ -192,8 +196,13 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
     pub = _clean(metric.get('PublicationDate'))[:10]
     basis = _clean(metric.get('MetricCalculationBasis')).upper()
     url = _clean(metric.get('OfficialFilingURL'))
-    if metric_name not in DIRECT_FACT_ALLOWED_METRICS or basis != 'ANNUAL_ALIGNED_STATEMENTS':
-        return 'DERIVED_RECONCILIATION_REQUIRED', 'Only annual OperatingCashFlowINR is eligible for direct-fact verification; this metric/basis requires component-level reconciliation', {}
+    if metric_name not in DIRECT_FACT_TAGS:
+        if metric_name == 'OperatingCashFlowINR':
+            return ('OFFICIAL_FACT_MAPPING_UNRESOLVED',
+                    'Competing NSE operating-cash-flow tags have not been reconciled; no direct-fact mapping is approved', {})
+        return 'DERIVED_RECONCILIATION_REQUIRED', 'No approved direct-fact mapping exists; derived metrics require component-level reconciliation', {}
+    if basis != 'ANNUAL_ALIGNED_STATEMENTS':
+        return 'DERIVED_RECONCILIATION_REQUIRED', 'Direct-fact verification requires an approved annual calculation basis; this metric/basis requires reconciliation', {}
     if evidence.empty:
         return 'PROVIDER_ONLY', 'No metric-level XBRL evidence row exists', {}
     needed = set(EVIDENCE_COLUMNS)
@@ -307,7 +316,7 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
 
 def build_metric_verification(metrics: pd.DataFrame, filings: pd.DataFrame | None = None,
                               evidence: pd.DataFrame | None = None,
-                              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame]:
+                              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     filings = filings if filings is not None else pd.DataFrame()
     evidence = evidence if evidence is not None else pd.DataFrame(columns=EVIDENCE_COLUMNS)
     root = Path(repo_root).resolve()
@@ -365,7 +374,7 @@ def run_audit(metrics_path: str | Path = METRICS_PATH,
               filings_path: str | Path = FILINGS_PATH,
               evidence_path: str | Path = EVIDENCE_PATH,
               output_dir: str | Path = OUTPUT_DIR,
-              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame]:
+              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     metrics_path, filings_path, evidence_path = Path(metrics_path), Path(filings_path), Path(evidence_path)
     if not metrics_path.exists():
         raise FileNotFoundError(f'Fundamental cache not found: {metrics_path}')
@@ -407,4 +416,5 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 

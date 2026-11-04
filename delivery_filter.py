@@ -1,7 +1,8 @@
-"""NSE EOD five-session dual-category delivery filter.
+"""NSE EOD five-session delivery filter and category audit.
 
 Category A passes when the five-session average Delivery % is >= 60.00%.
-Category B passes when each of those five sessions is >= 60.00%.
+The downstream gate passes only when each of those five sessions is >= 60.00%.
+The average-based category remains available for comparison and collection reports.
 Use the latest five distinct valid reports dated on or before the EOD as-of date.
 If the current day's report has not been published, skip that unavailable date,
 log it, and use prior valid reports; never relabel old data as current-day data.
@@ -135,12 +136,12 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
                           series_col: str = "SctySrs", minimum_average: float = MINIMUM_AVERAGE,
                           sessions: list[tuple[date, pd.DataFrame]] | None = None,
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Annotate two independent Delivery categories and return Category-A pass rows.
+    """Annotate both Delivery categories and return strict daily-gate pass rows.
 
     Category A: average DELIV_PER across the latest five distinct valid sessions >= 60%.
     Category B: each of those five sessions individually >= 60%.
     Both require five valid session records. Missing data is WAIT_FOR_DATA.
-    Category B is reported separately; it is naturally a subset of Category A.
+    Category B is the downstream gate required by the implementation matrix.
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()
@@ -214,8 +215,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         else:
             category_a = "PASS_AVG_GE_60_PERCENT" if avg >= threshold else "FILTERED_OUT_AVG_LT_60_PERCENT"
             category_b = "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values) else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
-            # Main pipeline continues on Category A; Category B remains an independent report.
-            overall = "PASS_GE_60_PERCENT" if category_a == "PASS_AVG_GE_60_PERCENT" else "FILTERED_OUT_LT_60_PERCENT"
+            overall = "PASS_GE_60_PERCENT" if category_b == "PASS_EACH_DAY_GE_60_PERCENT" else "FILTERED_OUT_LT_60_PERCENT"
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
             "DeliverySessions": count,
@@ -255,6 +255,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     print(f"[DELIVERY] Dual-category audit saved: {audit_path}")
 
     metric_cols = [col for col in audit.columns if col not in candidates.columns]
-    qualified_symbols = category_a[[symbol_col] + metric_cols].copy()
+    qualified_symbols = category_b[[symbol_col] + metric_cols].copy()
     output = candidates.merge(qualified_symbols, on=symbol_col, how="inner")
     return output, audit
+

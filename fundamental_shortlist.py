@@ -9,15 +9,20 @@ Statuses:
   WAIT_FOR_DATA   metrics missing, publication date / metric-period alignment / calculation
                   basis unverified, or sector needs different rules (banks, NBFCs, insurers)
 
-Missing or unverified data is never PASS and never guessed. This stage does not
-remove rows from the main pipeline; it only adds a status and writes a report.
+Missing or unverified data is never PASS and never guessed. This function
+preserves every input row while adding a status and writing reports. The
+production pipeline advances only explicit PASS rows through its fundamental
+hard gate; WAIT and FAIL rows remain visible in the collection reports.
 
 Thresholds are starting points. Override any of them in
-data/inputs/fundamental_thresholds.json (keys with null/absent keep the default).
+data/inputs/fundamental_thresholds.json for legacy/isolated assessments. The
+production gate requires every configured threshold explicitly; missing or null
+settings remain WAIT_FOR_DATA as required by the EOD matrix.
 """
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -71,11 +76,51 @@ def load_thresholds(path: str | Path = THRESHOLDS_PATH) -> dict:
     return thresholds
 
 
+def _validate_explicit_thresholds(configured: object) -> tuple[dict | None, str]:
+    """Accept only a complete, non-null threshold configuration for production."""
+    if not isinstance(configured, dict):
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:ROOT_MUST_BE_OBJECT"
+
+    missing = [key for key in DEFAULT_THRESHOLDS if key not in configured or configured[key] is None]
+    if missing:
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:" + ",".join(missing)
+
+    values = dict(configured)
+    bool_keys = {"require_positive_operating_cash_flow", "require_positive_free_cash_flow"}
+    invalid = []
+    for key, value in values.items():
+        if key in bool_keys:
+            if type(value) is not bool:
+                invalid.append(key)
+        elif key in DEFAULT_THRESHOLDS:
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))):
+                invalid.append(key)
+    if invalid:
+        return None, "FUNDAMENTAL_THRESHOLDS_INVALID:" + ",".join(invalid)
+    if values["max_data_age_days"] <= 0:
+        return None, "FUNDAMENTAL_THRESHOLDS_INVALID:max_data_age_days"
+    return {key: values[key] for key in DEFAULT_THRESHOLDS}, ""
+
+
+def _load_explicit_thresholds(path: str | Path = THRESHOLDS_PATH) -> tuple[dict | None, str]:
+    """Load only a complete, non-null threshold configuration for production."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:FILE_MISSING_OR_EMPTY"
+    try:
+        configured = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:INVALID_JSON"
+    return _validate_explicit_thresholds(configured)
+
+
 def _num(value):
     return pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
 
 
-def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
+def _evaluate_row(row: pd.Series, asof, t: dict,
+                  metric_verification_by_symbol: dict[str, dict[str, str]] | None = None) -> tuple[str, str]:
     # Duplicate metric records make the selected row ambiguous. Do not let a
     # valid-looking last row silently PASS while the collection audit flags a
     # duplicate for the same symbol.
@@ -116,6 +161,21 @@ def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
     if waits:
         return "WAIT_FOR_DATA", ";".join(waits)
 
+    # When the production pipeline supplies the independent XBRL audit, do not
+    # treat filing metadata or a provider calculation basis as proof that the
+    # numeric values match official filings. Every metric used by the hard
+    # fundamental gate must have an exact official metric-level verification.
+    if metric_verification_by_symbol is not None:
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        verified_metrics = metric_verification_by_symbol.get(symbol, {})
+        unverified = []
+        for metric in REQUIRED_METRICS:
+            status = verified_metrics.get(metric, "NO_AUDIT_ROW")
+            if status != "OFFICIAL_XBRL_VERIFIED":
+                unverified.append(f"{metric}={status}")
+        if unverified:
+            return "WAIT_FOR_DATA", "OFFICIAL_METRICS_NOT_VERIFIED:" + ",".join(unverified)
+
     fails = []
     checks = [
         ("RevenueGrowthPct", ">=", t["min_revenue_growth_pct"]),
@@ -145,16 +205,59 @@ def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
 
 
 def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict | None = None,
-                                write: bool = True) -> pd.DataFrame:
-    """Return `audit` with FundamentalShortlistStatus/Reason; never drops rows."""
-    t = thresholds if thresholds is not None else load_thresholds()
+                                write: bool = True,
+                                metric_verification: pd.DataFrame | None = None,
+                                require_explicit_thresholds: bool = False,
+                                thresholds_path: str | Path = THRESHOLDS_PATH) -> pd.DataFrame:
+    """Return `audit` with FundamentalShortlistStatus/Reason; never drops rows.
+
+    Production callers pass the independent metric-level XBRL audit. Omitting
+    it remains supported for isolated legacy callers, but is not the production
+    selection path.
+    """
+    threshold_error = ""
+    if thresholds is not None:
+        if require_explicit_thresholds:
+            t, threshold_error = _validate_explicit_thresholds(thresholds)
+        else:
+            t = thresholds
+    elif require_explicit_thresholds:
+        t, threshold_error = _load_explicit_thresholds(thresholds_path)
+    else:
+        t = load_thresholds(thresholds_path)
     asof = pd.to_datetime(asof_date, errors="coerce")
     result = audit.copy()
     if result.empty:
         result["FundamentalShortlistStatus"] = pd.Series(dtype=str)
         result["FundamentalShortlistReason"] = pd.Series(dtype=str)
     else:
-        evaluated = result.apply(lambda r: _evaluate_row(r, asof, t), axis=1)
+        if threshold_error:
+            result["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+            result["FundamentalShortlistReason"] = threshold_error
+            result["FundamentalAssessmentStatus"] = "WAIT_FOR_DATA"
+            result["FundamentalAssessmentReason"] = threshold_error
+            if write:
+                OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                result.to_csv(OUTPUT_DIR / "v8_fundamental_shortlist_all.csv", index=False)
+                result[result["FundamentalShortlistStatus"] == "PASS"].to_csv(
+                    OUTPUT_DIR / "v8_fundamental_shortlist_pass.csv", index=False)
+            return result
+        verification_by_symbol = None
+        if metric_verification is not None:
+            verification_by_symbol = {}
+            required_columns = {"TckrSymb", "MetricName", "MetricValueVerificationStatus"}
+            if required_columns.issubset(metric_verification.columns):
+                for _, metric_row in metric_verification.iterrows():
+                    symbol = str(metric_row.get("TckrSymb", "")).strip().upper()
+                    metric = str(metric_row.get("MetricName", "")).strip()
+                    status = str(metric_row.get("MetricValueVerificationStatus", "")).strip().upper()
+                    if symbol and metric:
+                        symbol_metrics = verification_by_symbol.setdefault(symbol, {})
+                        if metric in symbol_metrics:
+                            symbol_metrics[metric] = "DUPLICATE_VERIFICATION_ROWS"
+                        else:
+                            symbol_metrics[metric] = status or "NO_VERIFICATION_STATUS"
+        evaluated = result.apply(lambda r: _evaluate_row(r, asof, t, verification_by_symbol), axis=1)
         result["FundamentalShortlistStatus"] = [e[0] for e in evaluated]
         result["FundamentalShortlistReason"] = [e[1] for e in evaluated]
     # Keep the two public assessment fields in sync at the source of truth,
@@ -167,3 +270,4 @@ def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict
         result[result["FundamentalShortlistStatus"] == "PASS"].to_csv(
             OUTPUT_DIR / "v8_fundamental_shortlist_pass.csv", index=False)
     return result
+

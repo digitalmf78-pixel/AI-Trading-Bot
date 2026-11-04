@@ -258,18 +258,18 @@ def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
 
 
 def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
-    """Honor the main scanner's Category-A average Delivery gate.
+    """Honor the matrix's strict five-session daily Delivery gate.
 
-    Category B (every day >=60%) remains separately visible and is not required
-    for Category-A candidates to proceed. If the dual-category status is absent,
+    Category A average status remains separately visible for reporting. If the
+    daily category status is absent,
     preserve the legacy fail-closed daily-status behavior.
     """
     filtered = candidates.copy()
     before = len(filtered)
-    if "DeliveryCategoryAStatus" in filtered.columns:
-        statuses = filtered["DeliveryCategoryAStatus"].astype(str).str.upper().str.strip()
-        filtered = filtered[statuses.eq("PASS_AVG_GE_60_PERCENT")].copy()
-        print(f"[NEWS-DIAG] Delivery Category A gate: before={before}, after={len(filtered)}, rule=5-session average>=60%")
+    if "DeliveryCategoryBStatus" in filtered.columns:
+        statuses = filtered["DeliveryCategoryBStatus"].astype(str).str.upper().str.strip()
+        filtered = filtered[statuses.eq("PASS_EACH_DAY_GE_60_PERCENT")].copy()
+        print(f"[NEWS-DIAG] Delivery Category B gate: before={before}, after={len(filtered)}, rule=each of 5 sessions>=60%")
     else:
         daily_cols = [c for c in filtered.columns if str(c).startswith("Delivery_")]
         if len(daily_cols) >= 5:
@@ -1118,110 +1118,82 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
 
 
 def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str]) -> list[str]:
-    """Build a point-wise Marathi/English report for every screened candidate.
-
-    EMA44 proximity is reported but is never used to reject a shortlisted symbol.
-    """
+    """Build a short Marathi/English Telegram summary of the final candidates."""
     scan_mode = str(os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
+    heading = "🌅 NSE V8 • PRE-MARKET" if scan_mode == "PREMARKET" else "📊 NSE V8 • EOD"
     if result.empty:
-        heading = "🌅 NSE SWING TRADING V8.0 — PRE-MARKET NEWS CHECK" if scan_mode == "PREMARKET" else "NSE SWING TRADING V8.0 — EOD REPORT"
         return [
-            heading,
-            f"Latest EOD data date / शेवटचा EOD डेटा: {eod_date}",
-            "Premarket mode checks the previous five calendar days through 09:15 IST; this is a news refresh, not an automatic order." if scan_mode == "PREMARKET" else "",
-            "आजच्या Pipeline मध्ये पुढील विश्लेषणासाठी पात्र Stock उपलब्ध नाही.",
-            "No eligible candidate reached the detailed-analysis stage.",
-            "हा निकाल EMA44 proximity मुळे नाही; आधीच्या selection gates चा परिणाम आहे.",
+            f"{heading} | {eod_date}",
+            "Screened: 0 | Final WATCH: 0",
+            "आज final Watchlist मध्ये stock नाही.",
+            "Analysis only • No automatic order."
         ]
 
-    candidates = result.copy()
-    if "RVOL" in candidates.columns:
-        candidates["RVOL"] = pd.to_numeric(candidates["RVOL"], errors="coerce")
-        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last")
-    market_close = _eod_market_close(eod_date)
+    screened = result.copy()
+    status_col = screened.get("EODWatchlistStatus", pd.Series("WAIT_FOR_DATA", index=screened.index)).astype(str).str.upper()
+    candidates = screened.loc[status_col.eq("WATCH")].copy()
+    if "V8Score" in candidates.columns:
+        candidates["V8Score"] = pd.to_numeric(candidates["V8Score"], errors="coerce")
+        candidates = candidates.sort_values("V8Score", ascending=False, na_position="last").head(4)
+
+    status_counts = status_col.value_counts().to_dict()
+    wait_count = sum(count for status, count in status_counts.items() if status.startswith("WAIT"))
+    skip_count = sum(count for status, count in status_counts.items() if status in {"SKIP", "FAIL"} or status.startswith(("REJECT", "FILTERED_OUT")))
+    count_line = f"Screened: {len(screened)} | Final WATCH: {len(candidates)}"
+    if wait_count or skip_count:
+        count_line += f" | WAIT: {wait_count} | SKIP/FAIL: {skip_count}"
+    if candidates.empty:
+        return [
+            f"{heading} | {eod_date}",
+            count_line,
+            "सर्व V8 gates नंतर final WATCH stock नाही.",
+            "Analysis only • No automatic order."
+        ]
 
     def val(row, key, digits=2, suffix=""):
         value = pd.to_numeric(pd.Series([row.get(key)]), errors="coerce").iloc[0]
         return f"{value:+.{digits}f}{suffix}" if pd.notna(value) and suffix == "%" else f"{value:.{digits}f}{suffix}" if pd.notna(value) else "NA / उपलब्ध नाही"
 
     if scan_mode == "PREMARKET":
-        _, _, window_start_ist, window_end_ist, _ = _news_window_bounds(eod_date, scan_mode=scan_mode)
-        heading = "🌅 NSE SWING TRADING V8.0 — PRE-MARKET NEWS CHECK"
-        window_note = f"News window / बातम्यांचा कालावधी: {window_start_ist.strftime('%d-%b %H:%M')} to {window_end_ist.strftime('%d-%b %H:%M')} IST (5 calendar days; ends 09:15 IST)."
-        safety_note = "PRE-MARKET NEWS REVIEW ONLY — latest technical data is prior EOD; no automatic order or guaranteed entry."
+        mode_note = "News refresh only • Technical data is from prior EOD."
     else:
-        heading = "📊 NSE SWING TRADING V8.0 — EOD REPORT"
-        window_note = "News window: previous 5 calendar dates through 22:00 IST on the EOD date."
-        safety_note = "Analysis only — no automatic order; अंतिम Status सर्व V8 gates नंतरच."
+        mode_note = "Analysis only • No automatic order."
 
-    lines = [
-        heading,
-        f"Latest EOD data date / शेवटचा EOD डेटा: {eod_date}",
-        window_note,
-        f"Detailed candidates / तपासलेले Stocks: {len(candidates)}",
-        "Rule: EMA20 कायम; EMA50 च्या जागी EMA44.",
-        "महत्त्वाचे: NOT_NEAR_EMA44 हा फक्त माहितीचा Status आहे; यामुळे Shortlisted Stock Reject होत नाही.",
-        "NOT_NEAR_EMA44 is informational only and does not reject a shortlisted stock.",
-        safety_note,
-        "",
-    ]
+    lines = [f"{heading} • {eod_date}", count_line, mode_note, ""]
     for number, (_, row) in enumerate(candidates.iterrows(), start=1):
         symbol = str(row.get("TckrSymb", "UNKNOWN")).strip().upper()
-        lines.append(f"━━━━━━━━━━━━━━━━━━━━")
-        lines.append(f"{number}. 📌 {symbol}")
-        lines.append(f"1) Price / भाव: Close ₹{val(row, 'ClsPric')} | 1D Change {val(row, 'PriceChangePct', 2, '%')} | 5D Change {val(row, 'PriceChange5D', 2, '%')}")
-        lines.append(f"2) Volume: Today {val(row, 'TtlTradgVol', 0)} | 20D Avg {val(row, 'AvgVolume20D', 0)} | RVOL {val(row, 'RVOL')}x")
+        status = row.get("EODWatchlistStatus", "WAIT_FOR_DATA")
+        lines.append(f"{number}. {symbol} — {status} | V8 {val(row, 'V8Score', 0)}/100")
+        lines.append(f"Close ₹{val(row, 'ClsPric')} | 1D {val(row, 'PriceChangePct', 2, '%')} | RVOL {val(row, 'RVOL')}x")
+        min_delivery = val(row, "DeliveryMin5D", 2, "%")
+        avg_delivery = val(row, "AvgDelivery5D", 2, "%")
+        delivery_status = row.get("DeliveryFilterStatus", row.get("DeliveryStatus", "WAIT_FOR_DATA"))
+        lines.append(f"5D Delivery: avg {avg_delivery}, min {min_delivery} | {delivery_status}")
+        lines.append(f"Setup: {row.get('SetupType', 'NA')} | Trend: {row.get('TrendClassification', 'WAIT_FOR_DATA')}")
+        lines.append(f"Support ₹{val(row, 'SRSupport')} | Resistance ₹{val(row, 'SRResistance')}")
 
-        delivery_cols = [c for c in candidates.columns if str(c).startswith("Delivery_")]
-        delivery_cols = sorted(delivery_cols, key=lambda c: str(c).replace("Delivery_", ""), reverse=True)[:5]
-        if delivery_cols:
-            day_values = []
-            for column in delivery_cols:
-                day = str(column).replace("Delivery_", "")
-                day_value = pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
-                day_values.append(f"{day}: {day_value:.2f}%" if pd.notna(day_value) else f"{day}: NA")
-            lines.append("3) 5-Day Delivery / पाच दिवसांचा Delivery %: " + " | ".join(day_values))
-        else:
-            lines.append("3) 5-Day Delivery / पाच दिवसांचा Delivery %: Daily values unavailable / रोजचा डेटा उपलब्ध नाही")
-        avg_delivery = pd.to_numeric(pd.Series([row.get("AvgDelivery5D")]), errors="coerce").iloc[0]
-        avg_delivery_text = f"{avg_delivery:.2f}%" if pd.notna(avg_delivery) else "NA / उपलब्ध नाही"
-        lines.append(f"   Average Delivery: {avg_delivery_text} | Filter: {row.get('DeliveryFilterStatus', row.get('DeliveryStatus', 'WAIT_FOR_DATA'))}")
-
-        lines.append(f"4) EMA: EMA20 ₹{val(row, 'EMA20')} | EMA44 ₹{val(row, 'EMA44')} | Distance {val(row, 'EMA44DistancePct', 2, '%')} | EMA44 Trend {row.get('EMA44Trend', 'WAIT_FOR_DATA')}")
-        lines.append(f"   Position: {row.get('EMA44Position', 'WAIT_FOR_DATA')} | Proximity: {row.get('EMA44ProximityStatus', 'WAIT_FOR_DATA')} | EMA44 Signal: {row.get('EMA44SignalStatus', 'WAIT_FOR_DATA')}")
-        lines.append("   EMA44 note: NOT_NEAR_EMA44 = informational only; shortlisted candidate remains in analysis.")
-
-        lines.append(f"5) Technical: RSI14 {val(row, 'RSI14', 1)} | ADX14 {val(row, 'ADX14', 1)} | Trend {row.get('TrendClassification', 'WAIT_FOR_DATA')}")
-        lines.append(f"   Price/Volume: {row.get('PriceVolumeRelationship', 'WAIT_FOR_DATA')} | CLV {val(row, 'CLV')} | Breakout {row.get('BreakoutStatus', 'WAIT_FOR_DATA')} | Pullback {row.get('PullbackStatus', 'WAIT_FOR_DATA')}")
-        lines.append(f"6) Support/Resistance: Support ₹{val(row, 'SRSupport')} | Resistance ₹{val(row, 'SRResistance')} | Breakout Level ₹{val(row, 'BreakoutLevel')}")
-        lines.append(f"7) Sector/Market: Sector {row.get('Sector', 'Unknown')} | Sector status {row.get('SectorStrengthStatus', 'WAIT_FOR_DATA')} | Market regime {row.get('MarketRegime', 'WAIT_FOR_DATA')}")
+        entry_low = val(row, "EntryZoneLow")
+        entry_high = val(row, "EntryZoneHigh")
+        entry = f"₹{entry_low}–₹{entry_high}" if entry_low != "NA / उपलब्ध नाही" and entry_high != "NA / उपलब्ध नाही" else f"₹{val(row, 'EntryPricePlan')}"
+        target = row.get("Target1PricePlan", row.get("TargetPricePlan"))
+        if pd.isna(pd.to_numeric(pd.Series([target]), errors="coerce").iloc[0]):
+            target = row.get("TargetPricePlan")
+        lines.append(f"Entry {entry} | Stop ₹{val(row, 'StopLossPlan')} | Target ₹{val({'target': target}, 'target')} | R:R {val(row, 'RiskReward')} | Chase {row.get('ChaseStatus', 'WAIT_FOR_DATA')}")
 
         matched = news[news["TckrSymb"].astype(str).str.upper() == symbol] if news is not None and not news.empty and "TckrSymb" in news.columns else pd.DataFrame()
         official = matched[matched["SourceType"].astype(str).str.lower().isin({"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"})] if not matched.empty and "SourceType" in matched.columns else pd.DataFrame()
         secondary = matched[~matched.index.isin(official.index)] if not matched.empty else pd.DataFrame()
         chosen = official.iloc[0] if not official.empty else secondary.iloc[0] if not secondary.empty else None
         if chosen is None:
-            lines.append(f"8) News/Catalyst: {row.get('NewsEvidenceStatus', 'NO_DATA')} — verified matching filing/news not available / पडताळलेली बातमी उपलब्ध नाही.")
+            lines.append(f"News: {row.get('NewsEvidenceStatus', 'NO_DATA')} — matching source unavailable.")
         else:
             headline = str(chosen.get("Headline", ""))
             source_type = str(chosen.get("SourceType", "")).lower()
-            verification = "Official/primary source" if source_type in {"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"} else "Secondary source — official confirmation not established"
-            lines.append(f"8) News/Catalyst: {headline}")
-            lines.append(f"   Source: {chosen.get('Source', 'Unknown')} | {verification} | Impact label: {chosen.get('Impact', 'neutral')}")
-            published = pd.to_datetime(chosen.get("PublishedAt", ""), errors="coerce", utc=True)
-            if pd.notna(published) and published.tz_convert("Asia/Kolkata") > market_close:
-                lines.append("   Timing note: published after EOD close; not confirmed as the cause of today's move.")
-            lines.append(f"   Source URL: {chosen.get('URL', '')}")
-
-        lines.append(f"9) Confirmation: 3+1 {row.get('MandatoryConfirmationStatus', 'WAIT_FOR_DATA')} | Evidence categories {row.get('IndependentConfirmationCategories', 'NA')} | Primary source verified {row.get('NewsPrimarySourceVerified', 'WAIT_FOR_DATA')}")
-        lines.append(f"10) Risk/Reward: V8 Score {val(row, 'V8Score', 0)}/100 | Entry ₹{val(row, 'EntryPricePlan')} | Stop ₹{val(row, 'StopLossPlan')} | Target 1 ₹{(val(row, 'Target1PricePlan') if pd.notna(pd.to_numeric(pd.Series([row.get('Target1PricePlan')]), errors='coerce').iloc[0]) else val(row, 'TargetPricePlan'))} | Target 2 ₹{val(row, 'Target2PricePlan')} | Risk ₹{val(row, 'RiskAmount')} | Reward ₹{val(row, 'RewardAmount')} | R:R {val(row, 'RiskReward')} ({row.get('RiskRewardStatus', 'WAIT_FOR_DATA')}) | Chase {row.get('ChaseStatus', 'WAIT_FOR_DATA')}")
-        lines.append(f"FINAL V8 STATUS: {row.get('EODWatchlistStatus', 'WAIT_FOR_DATA')} | Layer status: {row.get('EODLayerStatus', 'WAIT_FOR_DATA')}")
-        lines.append(f"Reason: {row.get('CandidateScreenReasons', row.get('EODLayerReason', 'Check detailed CSV for layer-specific reasons'))}")
+            source_label = "official" if source_type in {"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"} else "secondary / not officially confirmed"
+            lines.append(f"News ({source_label}): {headline[:120]}")
         lines.append("")
 
-    lines.append("Data rule: missing/invalid values stay NA or WAIT_FOR_DATA; no values are guessed.")
-    lines.append("Source status — NSE: " + str(feed_status.get("NSE", "not checked")) + " | Secondary news: " + str(feed_status.get("secondary", "not checked")))
-    lines.append("Disclaimer: research shortlist only, not a guaranteed signal or automatic order.")
+    lines.append("Missing values stay NA/WAIT. Analysis only • No automatic order.")
     return lines
 
 def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None) -> None:

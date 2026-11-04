@@ -32,11 +32,20 @@ def test_dual_delivery_categories_are_written_separately():
     assert "v8_delivery_category_b_each_day60.csv" in source
 
 
-def test_fundamental_is_collection_only_until_later_shortlist():
-    source = (ROOT / "v8_layers_14_41.py").read_text(encoding="utf-8")
-    assert 'row.get("FundamentalStatus") == "PASS"' not in source
-    assert "strong-fundamental shortlist is deliberately deferred" in source
-    assert 'head(4)' in source
+def test_fundamental_hard_gate_follows_full_collection_and_metric_verification():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    collection = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
+    audit = source.index("run_fundamental_metric_audit()", collection)
+    assessment = source.index("metric_verification=metric_verification", audit)
+    liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER", assessment)
+    block = source[assessment:liquidity]
+    assert collection < audit < assessment < liquidity
+    assert '"FundamentalShortlistStatus", pd.Series("WAIT_FOR_DATA"' in block
+    assert '.astype(str).eq("PASS")' in block
+    assert "all A/B records remain in their audit reports" in block
+    layer = (ROOT / "v8_layers_14_41.py").read_text(encoding="utf-8")
+    assert 'row.get("FundamentalStatus") == "PASS"' not in layer
+    assert 'head(4)' in layer
 
 
 def test_reports_and_input_template_are_wired():
@@ -78,30 +87,31 @@ def test_rvol_selector_keeps_all_qualifying_stocks_without_top_cap(tmp_path, mon
     assert selected["RVOLRank"].tolist() == list(range(1, 76))
 
 
-def test_fundamental_collection_covers_delivery_a_and_b_without_rejection():
+def test_fundamental_collection_covers_delivery_a_and_b_before_selection_gate():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     assert "DeliveryCategoryAStatus" in source and "DeliveryCategoryBStatus" in source
     assert "v8_delivery_a_fundamentals.csv" in source
     assert "v8_delivery_b_fundamentals.csv" in source
     assert "v8_delivery_ab_combined_fundamentals.csv" in source
-    assert "every Category-A candidate" in source
-    assert "fundamentals are not a rejection gate" in source
+    assert "every unique symbol in Delivery A/B" in source
+    assert "all A/B records remain in their audit reports" in source
     fundamental = (ROOT / "fundamental_filter.py").read_text(encoding="utf-8")
     assert "never remove a row" in fundamental
     assert '"NOT_SHORTLISTED_YET"' in fundamental
 
 
-def test_fundamental_status_is_metadata_not_a_selection_gate():
+def test_fundamental_gate_waits_for_verified_metrics_and_pass_status():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     collection = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
     assessment = source.index('fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)')
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
-    block = source[source.index("# Fundamental analysis is enrichment/ranking only"):liquidity]
+    block = source[source.index("# Preserve all A/B fundamentals in the collection reports."):liquidity]
     assert collection < assessment < liquidity
-    assert 'current = fundamental_audit.loc[category_a_mask].copy()' in block
-    assert "fundamental_pass_mask" not in block
-    assert "fundamentals are not a rejection gate" in block
-    assert 'fallback_a_mask' in source
-    assert 'current = fundamental_audit.loc[fallback_a_mask].copy()' in source
+    assert 'current = fundamental_audit.loc[fundamental_pass_mask].copy()' in block
+    assert "run_fundamental_metric_audit()" in source
+    assert "require_explicit_thresholds=True" in source
+    assert 'fallback_pass_mask' in source
+    assert 'current = fundamental_audit.loc[fallback_pass_mask].copy()' in source
     # Collection reports preserve every A/B candidate and statuses.
     assert 'fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)' in source
+

@@ -8,6 +8,7 @@ from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VA
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
 from fundamental_shortlist import build_fundamental_shortlist
+from fii_dii_activity import attach_market_context, write_market_activity
 from datetime import datetime, timedelta, timezone
 from v8_layers_14_41 import (
     monitor_positions,
@@ -1011,8 +1012,8 @@ def calculate_5d_volume(
 def prepare_primary_shortlist(result, eod_date):
     """Keep candidates with complete volume history; delivery is the requested gate.
 
-    Delivery Category A (five-session average >=60%) has already been applied after
-    RVOL >1.5. Category B (each of five daily values >=60%) is reported separately.
+    Delivery Category B (each of five daily values >=60%) is applied after
+    RVOL >1.5. Category A (five-session average >=60%) remains in audit reports.
     A 3-of-5 low-volume rule is NOT used as a filter. Five-session volume-pattern
     and prior-20-session baseline data are still validated for reliable analysis.
     Incomplete history remains WAIT_FOR_DATA.
@@ -1066,7 +1067,7 @@ def prepare_primary_shortlist(result, eod_date):
     print(
         f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. "
-        "Dual Delivery Categories are applied after RVOL > 1.5; Category A average >=60% is the downstream gate. "
+        "Dual Delivery Categories are applied after RVOL > 1.5; Category B each day >=60% is the downstream gate. "
         f"Audit: {audit_path}"
     )
     return primary
@@ -2787,7 +2788,7 @@ def calculate_relative_strength_nifty(
 def select_top20_analysis_candidates(result, eod_date):
     """Annotate every RVOL > 1.5 technical candidate after core EOD screens.
 
-    Delivery Category A has passed: the average Delivery % across five valid sessions is >= 60.00%; Category B separately marks every day >=60.00%. A candidate
+    Delivery Category B has passed: every daily Delivery % across five valid sessions is >= 60.00%; Category A retains the five-day average status for reporting. A candidate
     must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
     trend/candle and setup-specific volume rules. Negative relative strength is
     retained as a scoring/ranking warning, not a standalone hard rejection.
@@ -3342,8 +3343,8 @@ def main():
             current = delivery_qualified.copy()
             if not current.empty:
                 current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
-            print(f"[DELIVERY] Category A (5-day average >=60%) qualified={len(current)}")
-            print("[DELIVERY] Category B (each of 5 days >=60%) is written as an independent report.")
+            print(f"[DELIVERY] Category B (each of 5 days >=60%) qualified={len(current)}")
+            print("[DELIVERY] Category A (5-day average >=60%) remains available in audit reports.")
         except Exception as exc:
             print(f"[DELIVERY] WAIT_FOR_DATA: delivery categories could not be verified: {exc}")
             current = current.iloc[0:0].copy()
@@ -3355,7 +3356,7 @@ def main():
     # --------------------------------------------------------
     # STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS
     # --------------------------------------------------------
-    print("\nSTEP 5: Collecting available fundamental data for every Delivery A/B stock; no fundamental rejection at this stage...")
+    print("\nSTEP 5: Collecting fundamentals for every Delivery A/B stock, then verifying required metric values before selection...")
     create_fundamental_templates()
     try:
         if delivery_audit is None or delivery_audit.empty:
@@ -3374,7 +3375,7 @@ def main():
                 fundamental_audit.to_csv(os.path.join("outputs", report_name), index=False)
         else:
             # Fetch available fundamentals for every unique symbol in Delivery A/B.
-            # Provider failures and missing metrics are recorded, never used to reject.
+            # The full A/B set is collected before applying the downstream gate.
             try:
                 collect_missing_fundamentals(fundamental_universe, asof_date=eod_date)
             except Exception as provider_exc:
@@ -3386,13 +3387,19 @@ def main():
                 print(f"[FUNDAMENTAL PROVIDER] Stage error; keep all candidates: {provider_exc}")
             _, fundamental_audit = apply_fundamental_filter(fundamental_universe, eod_date)
             try:
-                # Collection keeps every Delivery A/B row. The strong-fundamental
-                # assessment is applied only after collection is complete.
-                fundamental_audit = build_fundamental_shortlist(fundamental_audit, eod_date)
+                # Run the read-only XBRL audit before the fundamental hard gate.
+                # Filing metadata or a provider calculation basis alone does
+                # not prove that a cached value matches an official filing.
+                from fundamental_metric_verification import run_audit as run_fundamental_metric_audit
+                metric_verification, _, _ = run_fundamental_metric_audit()
+                fundamental_audit = build_fundamental_shortlist(
+                    fundamental_audit, eod_date, metric_verification=metric_verification,
+                    require_explicit_thresholds=True,
+                )
                 fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)
                 fundamental_audit["FundamentalAssessmentReason"] = fundamental_audit["FundamentalShortlistReason"].astype(str)
             except Exception as shortlist_exc:
-                print(f"[FUNDAMENTAL SHORTLIST] Assessment unavailable; Delivery-A candidates continue with WAIT_FOR_DATA: {shortlist_exc}")
+                print(f"[FUNDAMENTAL SHORTLIST] Assessment unavailable; candidates stop at the hard gate with WAIT_FOR_DATA: {shortlist_exc}")
                 fundamental_audit["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
                 fundamental_audit["FundamentalShortlistReason"] = f"SHORTLIST_ASSESSMENT_ERROR:{type(shortlist_exc).__name__}"
                 fundamental_audit["FundamentalAssessmentStatus"] = "WAIT_FOR_DATA"
@@ -3409,21 +3416,26 @@ def main():
             fundamental_audit.loc[a_mask].to_csv("outputs/v8_delivery_a_fundamentals.csv", index=False)
             fundamental_audit.loc[b_mask].to_csv("outputs/v8_delivery_b_fundamentals.csv", index=False)
             fundamental_audit.to_csv("outputs/v8_delivery_ab_combined_fundamentals.csv", index=False)
-        # Fundamental analysis is enrichment/ranking only at this stage. Keep
-        # every Category-A candidate (Category B is a subset of A) regardless
-        # of PASS/FAIL/WAIT_FOR_DATA so missing fundamentals never become an
-        # accidental stock-selection gate. Statuses and scores remain attached.
-        category_a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
-        current = fundamental_audit.loc[category_a_mask].copy() if not fundamental_audit.empty else fundamental_audit.copy()
+        # Preserve all A/B fundamentals in the collection reports. Only rows
+        # that pass thresholds and exact official metric verification advance.
+        fundamental_pass_mask = fundamental_audit.get(
+            "FundamentalShortlistStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
+        ).astype(str).eq("PASS")
+        fundamental_pass_mask &= fundamental_audit.get(
+            "DeliveryCategoryBStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
+        ).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
+        current = fundamental_audit.loc[fundamental_pass_mask].copy() if not fundamental_audit.empty else fundamental_audit.copy()
         sort_cols = [c for c in ["FundamentalScore", "RVOL"] if c in current.columns]
         if sort_cols and not current.empty:
             current = current.sort_values(sort_cols, ascending=[False] * len(sort_cols), na_position="last", kind="stable").reset_index(drop=True)
         assessment_counts = fundamental_audit.get("FundamentalShortlistStatus", pd.Series(dtype=str)).astype(str).value_counts().to_dict()
-        print(f"[FUNDAMENTAL COLLECTION] Category A rows={int(category_a_mask.sum())}; Category B rows={int((fundamental_audit.get('DeliveryCategoryBStatus', pd.Series(dtype=str)).astype(str) == 'PASS_EACH_DAY_GE_60_PERCENT').sum())}; all Category-A rows advancing={len(current)}; assessment statuses={assessment_counts}; fundamentals are not a rejection gate.")
+        category_a_count = int(fundamental_audit.get("DeliveryCategoryAStatus", pd.Series(dtype=str)).astype(str).eq("PASS_AVG_GE_60_PERCENT").sum())
+        category_b_count = int(fundamental_audit.get("DeliveryCategoryBStatus", pd.Series(dtype=str)).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT").sum())
+        print(f"[FUNDAMENTAL COLLECTION] Category A rows={category_a_count}; Category B rows={category_b_count}; fundamental PASS advancing={len(current)}; assessment statuses={assessment_counts}; all A/B records remain in their audit reports.")
     except Exception as exc:
-        # Fundamental data is enrichment at this stage. Preserve Delivery-A
-        # candidates and mark all fundamental fields unavailable on failure.
-        print(f"[FUNDAMENTAL COLLECTION] Collection/assessment failed; Delivery-A candidates continue with WAIT_FOR_DATA: {exc}")
+        # Collection, assessment, or verification failure must not pass the
+        # matrix's fundamental hard gate. Keep all candidate rows in the report.
+        print(f"[FUNDAMENTAL COLLECTION] Collection/assessment/verification failed; downstream selection stops at WAIT_FOR_DATA: {exc}")
         fundamental_audit = delivery_audit.copy() if isinstance(delivery_audit, pd.DataFrame) else pd.DataFrame()
         if not fundamental_audit.empty:
             fundamental_audit["FundamentalStatus"] = "MISSING_DATA"
@@ -3438,15 +3450,20 @@ def main():
             fundamental_audit[fundamental_audit["FundamentalShortlistStatus"].eq("PASS")].to_csv(
                 "outputs/v8_fundamental_shortlist_pass.csv", index=False
             )
-        # A provider/assessment failure is not a reason to discard Delivery-A
-        # candidates. Carry them forward with explicit WAIT_FOR_DATA metadata.
-        fallback_a_mask = fundamental_audit.get("DeliveryCategoryAStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PASS_AVG_GE_60_PERCENT")
-        current = fundamental_audit.loc[fallback_a_mask].copy() if not fundamental_audit.empty else pd.DataFrame(columns=list(fundamental_audit.columns))
+        # Only explicit PASS rows can proceed; provider/verification failures
+        # therefore remain visible but cannot feed later calculations.
+        fallback_pass_mask = fundamental_audit.get(
+            "FundamentalShortlistStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
+        ).astype(str).eq("PASS")
+        fallback_pass_mask &= fundamental_audit.get(
+            "DeliveryCategoryBStatus", pd.Series("WAIT_FOR_DATA", index=fundamental_audit.index)
+        ).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
+        current = fundamental_audit.loc[fallback_pass_mask].copy() if not fundamental_audit.empty else pd.DataFrame(columns=list(fundamental_audit.columns))
 
     # --------------------------------------------------------
-    # STEP 6: EXISTING LIQUIDITY FILTER — THRESHOLD RELAXED TO ₹2 CRORE
+    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹5 CRORE
     # --------------------------------------------------------
-    print("\nSTEP 6: Applying existing liquidity gate (20D average traded value >= ₹2 crore)...")
+    print("\nSTEP 6: Applying matrix liquidity gate (20D average traded value >= ₹5 crore)...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
     if current.empty:
         for col in liquidity_audit_columns:
@@ -3595,6 +3612,12 @@ def main():
         )
     except Exception as exc:
         print(f"[SECTOR] Refresh failed; sector layer must not pass: {exc}")
+
+    # NSE FII/FPI and DII flows are market-wide context, not per-stock activity.
+    # Keep the report even when the feed is unavailable; never use it to create
+    # a stock-level confirmation or to alter the candidate score.
+    market_flow = write_market_activity(eod_date)
+    result = attach_market_context(result, market_flow)
 
     result = run_eod_layers(
         result,
@@ -3759,3 +3782,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

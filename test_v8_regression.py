@@ -130,7 +130,7 @@ def test_delivery_average_category_passes_while_daily_category_fails():
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 1
+        assert qualified.empty  # Average alone is not enough for the matrix gate.
         assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         assert audit.iloc[0]["AvgDelivery5D"] >= 60.0
@@ -160,7 +160,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
                     for day, value in zip(dates, [60.0, 60.0, 59.99, 80.0, 90.0])]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 1  # Average category passes despite one day below 60.
+        assert qualified.empty  # One daily value below 60 fails the matrix gate.
         assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
@@ -170,14 +170,14 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
 
 
-def test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate():
+def test_news_gate_requires_category_b_each_day_status():
     candidates = pd.DataFrame([{
         "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
         "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
         "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
         "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
-    assert len(news_catalyst._filter_catalyst_candidates(candidates)) == 1
+    assert news_catalyst._filter_catalyst_candidates(candidates).empty
 
 
 def test_rvol_threshold_precedes_dual_delivery_in_scanner_source():
@@ -239,7 +239,7 @@ def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates()
     assert pd.notna(analyzed.iloc[0]["PriceChange5D"])
 
 
-def test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection():
+def test_telegram_digest_is_compact_and_keeps_core_gate_context():
     row = {
         "TckrSymb": "ABC", "ClsPric": 110.0, "PriceChangePct": 2.5,
         "PriceChange5D": 7.5, "TtlTradgVol": 2500, "AvgVolume20D": 1000,
@@ -257,13 +257,35 @@ def test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejecti
         "IndependentConfirmationCategories": "PRICE_VOLUME", "NewsPrimarySourceVerified": False,
         "V8Score": 50, "EntryPricePlan": 110.0, "StopLossPlan": 100.0,
         "TargetPricePlan": 125.0, "RiskReward": 1.5, "ChaseStatus": "CLEAR",
-        "EODWatchlistStatus": "WAIT_FOR_DATA", "EODLayerStatus": "WAIT_FOR_DATA",
+        "EODWatchlistStatus": "WATCH", "EODLayerStatus": "PASS",
         "CandidateScreenReasons": "SECTOR_WAIT_FOR_DATA",
     }
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {"NSE": "available", "secondary": "available"})
     text = "\n".join(lines)
-    for expected in ("ABC", "5D Change", "Average Delivery", "EMA44", "NOT_NEAR_EMA44", "does not reject", "WAIT_FOR_DATA"):
+    for expected in ("ABC", "WATCH", "1D +2.50%", "5D Delivery", "72.50%", "Support", "Resistance", "Entry", "Target", "Analysis only"):
         assert expected in text, expected
+    assert "EMA44" not in text  # Detailed EMA diagnostics remain in the CSV reports.
+    assert len(lines) < 16
+
+
+def test_telegram_digest_only_lists_final_watch_stocks():
+    rows = pd.DataFrame([
+        {"TckrSymb": "SKIPME", "EODWatchlistStatus": "SKIP", "CandidateScreenReasons": "TECHNICAL_FAIL"},
+        {"TckrSymb": "WATCHME", "EODWatchlistStatus": "WATCH", "V8Score": 70},
+    ])
+    text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}))
+    assert "Screened: 2 | Final WATCH: 1 | SKIP/FAIL: 1" in text
+    assert "WATCHME" in text
+    assert "SKIPME" not in text
+
+
+def test_telegram_digest_empty_result_is_a_short_no_candidate_message():
+    lines = news_catalyst.build_marathi_digest(pd.DataFrame(), "2026-10-13", pd.DataFrame(), {"NSE": "available"})
+    text = "\n".join(lines)
+    assert "Screened: 0 | Final WATCH: 0" in text
+    assert "आज final Watchlist मध्ये stock नाही." in text
+    assert "No automatic order" in text
+    assert len(lines) == 4
 
 def test_next_day_pipeline_only_receives_final_watch_candidates():
     with tempfile.TemporaryDirectory() as tmp:
@@ -603,11 +625,12 @@ if __name__ == "__main__":
         test_delivery_average_category_passes_while_daily_category_fails,
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
-        test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate,
+        test_news_gate_requires_category_b_each_day_status,
         test_rvol_threshold_precedes_dual_delivery_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
-        test_telegram_digest_includes_delivery_ema44_and_near_status_without_rejection,
+        test_telegram_digest_is_compact_and_keeps_core_gate_context,
+        test_telegram_digest_empty_result_is_a_short_no_candidate_message,
         test_next_day_pipeline_only_receives_final_watch_candidates,
         test_risk_reward_requires_structural_resistance_and_never_synthesizes_2r,
         test_structural_resistance_rr_passes_only_when_at_least_2r,
@@ -623,3 +646,4 @@ if __name__ == "__main__":
         test()
         print(f"PASS: {test.__name__}")
     print(f"PASS: all {len(tests)} V8 regression tests")
+
