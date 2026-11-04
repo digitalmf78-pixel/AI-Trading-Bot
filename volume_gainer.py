@@ -3393,7 +3393,8 @@ def main():
                 from fundamental_metric_verification import run_audit as run_fundamental_metric_audit
                 metric_verification, _, _ = run_fundamental_metric_audit()
                 fundamental_audit = build_fundamental_shortlist(
-                    fundamental_audit, eod_date, metric_verification=metric_verification
+                    fundamental_audit, eod_date, metric_verification=metric_verification,
+                    require_explicit_thresholds=True,
                 )
                 fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)
                 fundamental_audit["FundamentalAssessmentReason"] = fundamental_audit["FundamentalShortlistReason"].astype(str)
