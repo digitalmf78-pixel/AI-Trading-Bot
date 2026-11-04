@@ -15,7 +15,7 @@ import re
 from urllib.parse import urlparse
 
 import pandas as pd
-from risk_controls import apply_portfolio_risk_controls, create_risk_config_template
+from risk_controls import apply_portfolio_risk_controls, create_risk_config_template, load_risk_config
 
 
 INPUT_DIR = Path("data") / "inputs"
@@ -840,15 +840,73 @@ def run_eod_layers(
         else "REQUIRED_DATA_MISSING" if value == "WAIT_FOR_DATA"
         else "ONE_OR_MORE_SELECTION_GATES_FAILED"
     )
-    # Maximum four final shortlist stocks. Extra otherwise-qualified rows are
-    # retained in the full audit but are not promoted to the shortlist.
+    # Respect the configured open-position limit and account for the combined
+    # exposure of the candidates selected in this run.
     watch_rows = output[output["EODWatchlistStatus"] == "WATCH"].copy()
+    risk_config = load_risk_config()
+    # Backward-compatible defaults preserve the historical four-stock cap;
+    # account-specific configs should always set both values explicitly.
+    max_positions = risk_config.get("max_open_positions", 4)
+    current_positions = risk_config.get("current_open_positions", 0)
+    max_total_exposure = _num(risk_config.get("max_total_exposure_pct"))
+    current_total_exposure = _num(risk_config.get("current_total_exposure_pct"))
+    sector_limits = risk_config.get("sector_exposure_pct_by_sector")
+    current_sector_exposure = dict(sector_limits) if isinstance(sector_limits, dict) else {}
+    if (
+        risk_config.get("portfolio_exposure_verified") is True
+        and current_total_exposure == 0
+        and not current_sector_exposure
+    ):
+        empty_portfolio = True
+    else:
+        empty_portfolio = False
+    available_slots = 0
+    try:
+        if (
+            isinstance(max_positions, int) and not isinstance(max_positions, bool)
+            and isinstance(current_positions, int) and not isinstance(current_positions, bool)
+            and max_positions > 0 and 0 <= current_positions <= max_positions
+        ):
+            available_slots = max_positions - current_positions
+    except TypeError:
+        available_slots = 0
+    selected_symbols = set()
+    allocated_total = float(current_total_exposure) if pd.notna(current_total_exposure) else math.inf
     if not watch_rows.empty:
-        watch_rows = watch_rows.sort_values("V8Score", ascending=False)
-        extra_idx = watch_rows.index[4:]
-        if len(extra_idx):
-            output.loc[extra_idx, "EODWatchlistStatus"] = "SKIP"
-            output.loc[extra_idx, "EODWatchlistReason"] = "MAX_FINAL_SHORTLIST_CAP_4"
+        watch_rows = watch_rows.sort_values("V8Score", ascending=False, na_position="last")
+        selected_count = 0
+        for idx, row in watch_rows.iterrows():
+            symbol = str(row.get("TckrSymb", "")).strip().upper()
+            sector_name = str(row.get("Sector", "")).strip()
+            exposure = _num(row.get("ProposedExposurePct"))
+            sector_current = current_sector_exposure.get(sector_name)
+            if sector_current is None and empty_portfolio:
+                sector_current = 0
+            if selected_count >= available_slots:
+                output.loc[idx, ["EODWatchlistStatus", "EODWatchlistReason"]] = [
+                    "SKIP", "MAX_OPEN_POSITIONS_REACHED",
+                ]
+            elif symbol in selected_symbols:
+                output.loc[idx, ["EODWatchlistStatus", "EODWatchlistReason"]] = [
+                    "SKIP", "DUPLICATE_SYMBOL",
+                ]
+            elif pd.isna(exposure) or pd.isna(max_total_exposure) or pd.isna(sector_current):
+                output.loc[idx, ["EODWatchlistStatus", "EODWatchlistReason"]] = [
+                    "WAIT_FOR_DATA", "PORTFOLIO_EXPOSURE_DATA_MISSING",
+                ]
+            elif allocated_total + exposure > float(max_total_exposure):
+                output.loc[idx, ["EODWatchlistStatus", "EODWatchlistReason"]] = [
+                    "SKIP", "PORTFOLIO_TOTAL_EXPOSURE_LIMIT_REACHED",
+                ]
+            elif float(sector_current) + exposure > float(risk_config["max_sector_exposure_pct"]):
+                output.loc[idx, ["EODWatchlistStatus", "EODWatchlistReason"]] = [
+                    "SKIP", "PORTFOLIO_SECTOR_EXPOSURE_LIMIT_REACHED",
+                ]
+            else:
+                selected_count += 1
+                selected_symbols.add(symbol)
+                allocated_total += float(exposure)
+                current_sector_exposure[sector_name] = float(sector_current) + float(exposure)
     output["EODLayerStatus"] = output["EODWatchlistStatus"].map(
         lambda value: "PASS" if value == "WATCH" else value
     )
@@ -858,7 +916,7 @@ def run_eod_layers(
         OUTPUT_DIR / "v8_eod_watchlist.csv", index=False
     )
     shortlist = output[output["EODWatchlistStatus"] == "WATCH"].copy()
-    shortlist = shortlist.sort_values("V8Score", ascending=False).head(4)
+    shortlist = shortlist.sort_values("V8Score", ascending=False).head(available_slots)
     shortlist.to_csv(OUTPUT_DIR / "v8_final_shortlist.csv", index=False)
     return output
 

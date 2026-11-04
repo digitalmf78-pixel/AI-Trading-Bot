@@ -28,18 +28,29 @@ SOURCE_COLUMNS = [
     "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
     "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
+    "ValuationAsOfDate", "ValuationRequestedEODDate", "ValuationQuoteTimestampUTC",
+    "ValuationDateBasis", "ValuationRetrievedAtUTC", "ValuationSource",
+    "ValuationSourceURL", "ValuationDataStatus", "ValuationPointInTimeStatus",
+    "ValuationCurrency", "ValuationNonMeaningfulFields",
+]
+VALUATION_COLUMNS = [
+    "ValuationPriceINR", "TrailingPE", "ForwardPE", "PriceToBook",
+    "EnterpriseToEBITDA", "PriceToSales", "PriceToFreeCashFlow", "PEG",
+    "MarketCapitalizationINR", "EnterpriseValueINR", "DividendYieldPct",
 ]
 TTM_AUDIT_COLUMNS = [
     "RevenueTTMINR", "PreviousRevenueTTMINR", "NetProfitTTMINR",
     "PreviousNetProfitTTMINR", "EBITTTMINR", "InterestExpenseTTMINR",
     "TTMQuarterPeriods", "TTMQuarterlyAlignmentStatus", "TTMCalculationReason",
 ]
-INPUT_COLUMNS = SOURCE_COLUMNS + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
+INPUT_COLUMNS = SOURCE_COLUMNS + TTM_AUDIT_COLUMNS + METRIC_COLUMNS + VALUATION_COLUMNS
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
     "FundamentalSource", "FundamentalSourceURL",
     "FundamentalMetricsCompletenessPct", "FundamentalScoreCoveragePct",
-    "FundamentalAssessmentStatus",
+    "FundamentalAssessmentStatus", "ValuationCoveragePct",
+    "ValuationFieldsAvailable", "ValuationFieldsMissing",
+    "ValuationAssessmentStatus",
 ]
 SCORE_METRICS = {
     "RevenueGrowthPct": True,
@@ -189,6 +200,33 @@ def apply_fundamental_filter(
         row["FundamentalSourceURL"] = row.get("SourceURL", pd.NA)
         row["FundamentalPublicationDateStatus"] = row.get("PublicationDateStatus", "UNVERIFIED")
         row["FundamentalFinancialPeriodEnd"] = row.get("FinancialPeriodEnd", pd.NA)
+        valuation_ratios = [
+            "TrailingPE", "ForwardPE", "PriceToBook", "EnterpriseToEBITDA",
+            "PriceToSales", "PriceToFreeCashFlow", "PEG",
+        ]
+        valuation_available = [col for col in VALUATION_COLUMNS if _nonempty(row.get(col, pd.NA))]
+        valuation_ratios_available = [col for col in valuation_ratios if _nonempty(row.get(col, pd.NA))]
+        row["ValuationCoveragePct"] = round(len(valuation_available) / len(VALUATION_COLUMNS) * 100, 2)
+        row["ValuationFieldsAvailable"] = ";".join(valuation_available)
+        row["ValuationFieldsMissing"] = ";".join(col for col in VALUATION_COLUMNS if col not in valuation_available)
+        valuation_date = pd.to_datetime(row.get("ValuationAsOfDate"), errors="coerce")
+        valuation_request_date = pd.to_datetime(row.get("ValuationRequestedEODDate"), errors="coerce")
+        valuation_current = (
+            pd.notna(valuation_date)
+            and pd.notna(valuation_request_date)
+            and pd.notna(asof)
+            and valuation_date.normalize() == asof.normalize()
+            and valuation_request_date.normalize() == asof.normalize()
+            and str(row.get("ValuationDateBasis", "")).upper() == "REGULAR_MARKET_TIME"
+        )
+        if valuation_current and valuation_ratios_available:
+            row["ValuationAssessmentStatus"] = (
+                "PROVIDER_SNAPSHOT_HAS_NONMEANINGFUL_RATIOS"
+                if _nonempty(row.get("ValuationNonMeaningfulFields"))
+                else "PROVIDER_SNAPSHOT_AVAILABLE_NOT_CLASSIFIED"
+            )
+        else:
+            row["ValuationAssessmentStatus"] = "WAIT_FOR_DATA"
         enriched_rows.append(row)
 
     audit = pd.DataFrame(enriched_rows)

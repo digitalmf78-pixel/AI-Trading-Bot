@@ -12,6 +12,7 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -26,6 +27,18 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
+VALUATION_NUMERIC_COLUMNS = [
+    "ValuationPriceINR", "TrailingPE", "ForwardPE", "PriceToBook",
+    "EnterpriseToEBITDA", "PriceToSales", "PriceToFreeCashFlow", "PEG",
+    "MarketCapitalizationINR", "EnterpriseValueINR", "DividendYieldPct",
+]
+VALUATION_METADATA_COLUMNS = [
+    "ValuationAsOfDate", "ValuationRequestedEODDate", "ValuationQuoteTimestampUTC",
+    "ValuationDateBasis", "ValuationRetrievedAtUTC", "ValuationSource",
+    "ValuationSourceURL", "ValuationDataStatus", "ValuationPointInTimeStatus",
+    "ValuationCurrency", "ValuationNonMeaningfulFields",
+]
+VALUATION_COLUMNS = VALUATION_NUMERIC_COLUMNS + VALUATION_METADATA_COLUMNS
 # Audit outputs are intentionally separate from METRIC_COLUMNS so the existing
 # completeness/shortlist thresholds and refresh behavior do not change.
 TTM_DIAGNOSTIC_COLUMNS = [
@@ -50,6 +63,7 @@ BASE_COLUMNS = [
     "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
+BASE_COLUMNS += VALUATION_COLUMNS
 
 
 def _present(value: Any) -> bool:
@@ -457,7 +471,70 @@ def _aligned_quarterly_ttm_metrics(ticker_obj) -> dict:
     return out
 
 
-def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
+def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date=None) -> None:
+    """Save provider valuation numbers with explicit source and snapshot date."""
+    date_value = pd.to_datetime(asof_date if asof_date is not None else date.today(), errors="coerce")
+    symbol = str(symbol).strip().upper()
+    url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
+    numeric_values = {
+        "ValuationPriceINR": _first_number(info, ["currentPrice", "regularMarketPrice"]),
+        "TrailingPE": _first_number(info, ["trailingPE"]),
+        "ForwardPE": _first_number(info, ["forwardPE"]),
+        "PriceToBook": _first_number(info, ["priceToBook"]),
+        "EnterpriseToEBITDA": _first_number(info, ["enterpriseToEbitda"]),
+        "PriceToSales": _first_number(info, ["priceToSalesTrailing12Months"]),
+        "PriceToFreeCashFlow": _first_number(info, ["priceToFreeCashflow"]),
+        "PEG": _first_number(info, ["pegRatio"]),
+        "MarketCapitalizationINR": _first_number(info, ["marketCap"]),
+        "EnterpriseValueINR": _first_number(info, ["enterpriseValue"]),
+        "DividendYieldPct": _first_number(info, ["dividendYield"], 100.0),
+    }
+    for key, value in numeric_values.items():
+        if _present(value):
+            try:
+                if not pd.notna(float(value)) or float(value) in {float("inf"), float("-inf")}:
+                    numeric_values[key] = pd.NA
+            except (TypeError, ValueError):
+                numeric_values[key] = pd.NA
+    ratio_fields = [key for key in VALUATION_NUMERIC_COLUMNS if key not in {
+        "ValuationPriceINR", "MarketCapitalizationINR", "EnterpriseValueINR", "DividendYieldPct",
+    }]
+    retrieved_datetime = datetime.now(timezone.utc)
+    retrieved_at = retrieved_datetime.isoformat()
+    quote_datetime = None
+    try:
+        quote_epoch = float(info.get("regularMarketTime"))
+        if quote_epoch > 10**12:
+            quote_epoch /= 1000.0
+        quote_datetime = datetime.fromtimestamp(quote_epoch, tz=timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    non_meaningful = [
+        key for key in ratio_fields
+        if _present(numeric_values[key]) and float(numeric_values[key]) <= 0
+    ]
+    record.update(numeric_values)
+    record.update({
+        "ValuationAsOfDate": quote_datetime.astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat() if quote_datetime else "",
+        "ValuationRequestedEODDate": date_value.date().isoformat() if pd.notna(date_value) else "",
+        "ValuationQuoteTimestampUTC": quote_datetime.isoformat() if quote_datetime else "",
+        "ValuationDateBasis": "REGULAR_MARKET_TIME" if quote_datetime else "NOT_RETURNED_BY_PROVIDER",
+        "ValuationRetrievedAtUTC": retrieved_at,
+        "ValuationSource": "Yahoo Finance via yfinance; secondary provider snapshot",
+        "ValuationSourceURL": url,
+        "ValuationDataStatus": "AVAILABLE" if any(_present(numeric_values[key]) for key in ratio_fields) else "MISSING",
+        "ValuationPointInTimeStatus": "CURRENT_PROVIDER_SNAPSHOT_NOT_HISTORICAL",
+        "ValuationCurrency": str(info.get("currency", "") or ""),
+        "ValuationNonMeaningfulFields": ";".join(non_meaningful),
+    })
+    record["ValuationStatus"] = (
+        "VALUATION_MULTIPLE_AVAILABLE"
+        if any(_present(numeric_values[key]) for key in ratio_fields)
+        else "VALUATION_DATA_MISSING"
+    )
+
+
+def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -477,6 +554,7 @@ def _fetch_one(symbol: str, ticker_factory=None) -> tuple[dict, dict]:
             ticker_factory = yf.Ticker
         ticker = ticker_factory(f"{symbol}.NS")
         info = ticker.info or {}
+        _capture_valuation_snapshot(record, info, symbol, asof_date=asof_date)
         revenue_growth = _first_number(info, ["revenueGrowth"], 100.0)
         profit_growth = _first_number(info, ["earningsGrowth", "earningsQuarterlyGrowth"], 100.0)
         roe = _first_number(info, ["returnOnEquity"], 100.0)
@@ -733,14 +811,20 @@ def collect_missing_fundamentals(
         # but its raw quarter-date evidence was only written to the run report.
         # Re-fetch provider-owned rows only until this durable marker is present.
         diagnostics_pending = provider_sourced and not _present(current.get("TTMDiagnosticsCapturedAtUTC"))
+        valuation_date = pd.to_datetime(current.get("ValuationRequestedEODDate"), errors="coerce")
+        valuation_pending = (
+            pd.isna(valuation_date)
+            or not cutoff_text
+            or valuation_date.date().isoformat() != cutoff_text
+        )
         if not enabled:
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
             continue
-        if not missing and not ttm_pending and not diagnostics_pending:
+        if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending:
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
-        fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory)
+        fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory, asof_date=cutoff_text)
         # Never overwrite manually supplied metric values. Existing provider rows
         # are refreshed to quarterly-derived metrics only when quarterly TTM is
         # fully aligned; missing fields can still be filled as before.
@@ -752,6 +836,11 @@ def collect_missing_fundamentals(
         quarterly_verified = str(fetched.get("TTMQuarterlyAlignmentStatus", "")) == "VERIFIED"
         for col in BASE_COLUMNS:
             if col == "TckrSymb":
+                continue
+            if col in VALUATION_COLUMNS and _present(fetched.get("ValuationAsOfDate")):
+                # Valuation fields form one dated snapshot. Replace the whole
+                # snapshot together so stale ratios cannot inherit today's date.
+                merged[col] = fetched.get(col, pd.NA)
                 continue
             is_ttm_audit = col in TTM_AUDIT_COLUMNS
             # TTM audit is a separate provider calculation record. Populate it

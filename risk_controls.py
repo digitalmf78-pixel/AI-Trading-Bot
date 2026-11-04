@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import math
+import os
 from pathlib import Path
 import pandas as pd
 
@@ -12,14 +13,36 @@ REQUIRED_KEYS = [
     "max_sector_exposure_pct", "max_total_exposure_pct", "max_stop_distance_pct",
     "current_total_exposure_pct", "sector_exposure_pct_by_sector", "portfolio_exposure_verified",
 ]
+POSITION_LIMIT_KEYS = ["max_open_positions", "current_open_positions"]
 
 
 def create_risk_config_template(path: str | Path = CONFIG_PATH) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        template = {key: None for key in REQUIRED_KEYS}
+        template = {key: None for key in REQUIRED_KEYS + POSITION_LIMIT_KEYS}
         path.write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
+
+
+def load_risk_config(config_path: str | Path = CONFIG_PATH) -> dict:
+    """Load local settings, then overlay a private Actions JSON secret if present."""
+    path = Path(config_path)
+    try:
+        config = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        config = {}
+    if not isinstance(config, dict):
+        config = {}
+    secret = os.environ.get("RISK_CONFIG_JSON", "").strip()
+    if secret:
+        try:
+            secret_config = json.loads(secret)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(secret_config, dict):
+            return {}
+        config.update(secret_config)
+    return config
 
 
 def _num(value):
@@ -28,10 +51,7 @@ def _num(value):
 
 def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path = CONFIG_PATH) -> pd.DataFrame:
     config_path = Path(config_path)
-    try:
-        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-    except Exception:
-        config = {}
+    config = load_risk_config(config_path)
     missing = [key for key in REQUIRED_KEYS if config.get(key) is None]
     if not isinstance(config.get("sector_exposure_pct_by_sector"), dict):
         if "sector_exposure_pct_by_sector" not in missing:
@@ -58,6 +78,20 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
                 missing.append("INVALID:" + key)
         except (TypeError, ValueError):
             missing.append("INVALID:" + key)
+    for key in ("max_open_positions", "current_open_positions"):
+        # Older configs used a fixed four-stock shortlist and did not record
+        # these fields. Preserve that behavior when keys are absent; an
+        # explicitly supplied null/invalid value still fails closed.
+        if key not in config:
+            continue
+        if key in missing:
+            continue
+        value = config.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            missing.append("INVALID:" + key)
+    if not any(key in missing for key in ("max_open_positions", "current_open_positions")):
+        if config["max_open_positions"] <= 0 or config["current_open_positions"] > config["max_open_positions"]:
+            missing.append("INVALID:open_position_limits")
     if isinstance(config.get("sector_exposure_pct_by_sector"), dict):
         for sector, value in config["sector_exposure_pct_by_sector"].items():
             try:
@@ -93,6 +127,7 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
             if stop_pct > float(config["max_stop_distance_pct"]):
                 reason.append("STOP_DISTANCE_EXCEEDS_LIMIT")
             risk_budget = float(config["account_equity_inr"]) * float(config["risk_per_trade_pct"]) / 100
+            budget = risk_budget
             risk_per_share = entry - stop
             qty_by_risk = math.floor(risk_budget / risk_per_share) if risk_per_share > 0 else 0
             qty_by_single_position = math.floor(
@@ -106,6 +141,15 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
                 reason.append("SECTOR_REQUIRED_FOR_CONCENTRATION_CHECK")
             else:
                 sector_exposure = config["sector_exposure_pct_by_sector"].get(sector)
+                # A verified empty portfolio has zero exposure in every sector.
+                # Otherwise a missing sector entry must continue to fail closed.
+                if (
+                    sector_exposure is None
+                    and config.get("portfolio_exposure_verified") is True
+                    and config.get("current_total_exposure_pct") == 0
+                    and not config["sector_exposure_pct_by_sector"]
+                ):
+                    sector_exposure = 0
                 if sector_exposure is None:
                     reason.append("CURRENT_SECTOR_EXPOSURE_MISSING:" + sector)
                 elif float(sector_exposure) + exposure > float(config["max_sector_exposure_pct"]):
