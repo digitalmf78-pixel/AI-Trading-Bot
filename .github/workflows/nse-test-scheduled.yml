@@ -125,7 +125,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TELEGRAM: "true"
+          SEND_TELEGRAM: "${{ github.event_name == 'schedule' }}"
           RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
           NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
