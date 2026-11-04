@@ -75,7 +75,8 @@ def _num(value):
     return pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
 
 
-def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
+def _evaluate_row(row: pd.Series, asof, t: dict,
+                  metric_verification_by_symbol: dict[str, dict[str, str]] | None = None) -> tuple[str, str]:
     # Duplicate metric records make the selected row ambiguous. Do not let a
     # valid-looking last row silently PASS while the collection audit flags a
     # duplicate for the same symbol.
@@ -116,6 +117,21 @@ def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
     if waits:
         return "WAIT_FOR_DATA", ";".join(waits)
 
+    # When the production pipeline supplies the independent XBRL audit, do not
+    # treat filing metadata or a provider calculation basis as proof that the
+    # numeric values match official filings. Every metric used by the hard
+    # fundamental gate must have an exact official metric-level verification.
+    if metric_verification_by_symbol is not None:
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        verified_metrics = metric_verification_by_symbol.get(symbol, {})
+        unverified = []
+        for metric in REQUIRED_METRICS:
+            status = verified_metrics.get(metric, "NO_AUDIT_ROW")
+            if status != "OFFICIAL_XBRL_VERIFIED":
+                unverified.append(f"{metric}={status}")
+        if unverified:
+            return "WAIT_FOR_DATA", "OFFICIAL_METRICS_NOT_VERIFIED:" + ",".join(unverified)
+
     fails = []
     checks = [
         ("RevenueGrowthPct", ">=", t["min_revenue_growth_pct"]),
@@ -145,8 +161,14 @@ def _evaluate_row(row: pd.Series, asof, t: dict) -> tuple[str, str]:
 
 
 def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict | None = None,
-                                write: bool = True) -> pd.DataFrame:
-    """Return `audit` with FundamentalShortlistStatus/Reason; never drops rows."""
+                                write: bool = True,
+                                metric_verification: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Return `audit` with FundamentalShortlistStatus/Reason; never drops rows.
+
+    Production callers pass the independent metric-level XBRL audit. Omitting
+    it remains supported for isolated legacy callers, but is not the production
+    selection path.
+    """
     t = thresholds if thresholds is not None else load_thresholds()
     asof = pd.to_datetime(asof_date, errors="coerce")
     result = audit.copy()
@@ -154,7 +176,18 @@ def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict
         result["FundamentalShortlistStatus"] = pd.Series(dtype=str)
         result["FundamentalShortlistReason"] = pd.Series(dtype=str)
     else:
-        evaluated = result.apply(lambda r: _evaluate_row(r, asof, t), axis=1)
+        verification_by_symbol = None
+        if metric_verification is not None:
+            verification_by_symbol = {}
+            required_columns = {"TckrSymb", "MetricName", "MetricValueVerificationStatus"}
+            if required_columns.issubset(metric_verification.columns):
+                for _, metric_row in metric_verification.iterrows():
+                    symbol = str(metric_row.get("TckrSymb", "")).strip().upper()
+                    metric = str(metric_row.get("MetricName", "")).strip()
+                    status = str(metric_row.get("MetricValueVerificationStatus", "")).strip().upper()
+                    if symbol and metric:
+                        verification_by_symbol.setdefault(symbol, {})[metric] = status or "NO_VERIFICATION_STATUS"
+        evaluated = result.apply(lambda r: _evaluate_row(r, asof, t, verification_by_symbol), axis=1)
         result["FundamentalShortlistStatus"] = [e[0] for e in evaluated]
         result["FundamentalShortlistReason"] = [e[1] for e in evaluated]
     # Keep the two public assessment fields in sync at the source of truth,
@@ -167,3 +200,4 @@ def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict
         result[result["FundamentalShortlistStatus"] == "PASS"].to_csv(
             OUTPUT_DIR / "v8_fundamental_shortlist_pass.csv", index=False)
     return result
+
