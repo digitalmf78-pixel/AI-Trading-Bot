@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from fundamental_data_provider import _aligned_annual_metrics, collect_missing_fundamentals
-from fundamental_shortlist import build_fundamental_shortlist, DEFAULT_THRESHOLDS
+from fundamental_shortlist import build_fundamental_shortlist, DEFAULT_THRESHOLDS, REQUIRED_METRICS
 
 D0, D1 = pd.Timestamp("2026-03-31"), pd.Timestamp("2025-03-31")
 
@@ -91,6 +91,38 @@ def test_pass_even_with_negative_fcf_by_default():
 def test_fail_when_threshold_missed():
     s, why = status(DebtToEquity=2.5)
     assert s == "FAIL" and "DebtToEquity" in why
+
+
+def test_production_gate_waits_until_every_required_metric_is_officially_verified():
+    verification = pd.DataFrame([
+        {"TckrSymb": "AAA", "MetricName": metric,
+         "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED"}
+        for metric in REQUIRED_METRICS
+    ])
+    row = pd.DataFrame([_verified_row()])
+    passed = build_fundamental_shortlist(
+        row, "2026-10-22", thresholds=dict(DEFAULT_THRESHOLDS), write=False,
+        metric_verification=verification,
+    )
+    assert passed.iloc[0]["FundamentalShortlistStatus"] == "PASS"
+
+    verification.loc[verification["MetricName"].eq("RevenueGrowthPct"), "MetricValueVerificationStatus"] = "DERIVED_RECONCILIATION_REQUIRED"
+    waiting = build_fundamental_shortlist(
+        row, "2026-10-22", thresholds=dict(DEFAULT_THRESHOLDS), write=False,
+        metric_verification=verification,
+    )
+    assert waiting.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "OFFICIAL_METRICS_NOT_VERIFIED:RevenueGrowthPct=DERIVED_RECONCILIATION_REQUIRED" in waiting.iloc[0]["FundamentalShortlistReason"]
+
+
+def test_missing_metric_audit_rows_fail_closed():
+    row = pd.DataFrame([_verified_row()])
+    out = build_fundamental_shortlist(
+        row, "2026-10-22", thresholds=dict(DEFAULT_THRESHOLDS), write=False,
+        metric_verification=pd.DataFrame(columns=["TckrSymb", "MetricName", "MetricValueVerificationStatus"]),
+    )
+    assert out.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "NO_AUDIT_ROW" in out.iloc[0]["FundamentalShortlistReason"]
 
 
 def test_unverified_or_missing_data_is_wait_not_pass():
@@ -288,3 +320,4 @@ def test_quarterly_ttm_fails_closed_when_cashflow_period_basis_unknown():
     assert out["ok"] is False
     assert out["reason"] == "CASHFLOW_PERIOD_BASIS_UNVERIFIED"
     assert out["diagnostics"]["CashFlowPeriodBasis"] == "UNKNOWN"
+
