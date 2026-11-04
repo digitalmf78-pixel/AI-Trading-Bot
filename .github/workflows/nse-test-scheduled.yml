@@ -126,6 +126,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: "true"
+          RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
           NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
           set -e
@@ -313,6 +314,7 @@ jobs:
             outputs/xbrl_statement_reconciliation/
             data/inputs/*.csv
             data/inputs/*.json
+            !data/inputs/risk_config.json
             data/reports/
             data/cache/fundamental_history/
             data/cache/xbrl_samples/
