@@ -130,7 +130,7 @@ def test_delivery_average_category_passes_while_daily_category_fails():
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 1
+        assert qualified.empty  # Average alone is not enough for the matrix gate.
         assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         assert audit.iloc[0]["AvgDelivery5D"] >= 60.0
@@ -160,7 +160,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
                     for day, value in zip(dates, [60.0, 60.0, 59.99, 80.0, 90.0])]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 1  # Average category passes despite one day below 60.
+        assert qualified.empty  # One daily value below 60 fails the matrix gate.
         assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
@@ -170,14 +170,14 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
 
 
-def test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate():
+def test_news_gate_requires_category_b_each_day_status():
     candidates = pd.DataFrame([{
         "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
         "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
         "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
         "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
-    assert len(news_catalyst._filter_catalyst_candidates(candidates)) == 1
+    assert news_catalyst._filter_catalyst_candidates(candidates).empty
 
 
 def test_rvol_threshold_precedes_dual_delivery_in_scanner_source():
@@ -603,7 +603,7 @@ if __name__ == "__main__":
         test_delivery_average_category_passes_while_daily_category_fails,
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
-        test_news_gate_uses_category_a_average_status_and_keeps_category_b_separate,
+        test_news_gate_requires_category_b_each_day_status,
         test_rvol_threshold_precedes_dual_delivery_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
@@ -623,3 +623,4 @@ if __name__ == "__main__":
         test()
         print(f"PASS: {test.__name__}")
     print(f"PASS: all {len(tests)} V8 regression tests")
+
