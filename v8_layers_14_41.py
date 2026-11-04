@@ -867,7 +867,9 @@ def run_eod_layers(
             and isinstance(current_positions, int) and not isinstance(current_positions, bool)
             and max_positions > 0 and 0 <= current_positions <= max_positions
         ):
-            available_slots = max_positions - current_positions
+            # The account plan caps this scanner at four simultaneous stocks,
+            # even if a broader account config is supplied.
+            available_slots = min(4, max_positions - current_positions)
     except TypeError:
         available_slots = 0
     selected_symbols = set()
@@ -916,7 +918,7 @@ def run_eod_layers(
         OUTPUT_DIR / "v8_eod_watchlist.csv", index=False
     )
     shortlist = output[output["EODWatchlistStatus"] == "WATCH"].copy()
-    shortlist = shortlist.sort_values("V8Score", ascending=False).head(available_slots)
+    shortlist = shortlist.sort_values("V8Score", ascending=False).head(4)
     shortlist.to_csv(OUTPUT_DIR / "v8_final_shortlist.csv", index=False)
     return output
 
@@ -1260,3 +1262,4 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     report.to_csv(OUTPUT_DIR / "v8_position_monitor.csv", index=False)
     return report
+
