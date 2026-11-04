@@ -147,6 +147,25 @@ def test_production_gate_requires_explicit_non_null_threshold_configuration(tmp_
     assert configured.iloc[0]["FundamentalShortlistStatus"] == "PASS"
 
 
+def test_production_gate_rejects_incomplete_or_nonfinite_threshold_dict():
+    row = pd.DataFrame([_verified_row()])
+    partial = build_fundamental_shortlist(
+        row, "2026-10-22", thresholds={"min_roe_pct": 10}, write=False,
+        require_explicit_thresholds=True,
+    )
+    assert partial.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "min_revenue_growth_pct" in partial.iloc[0]["FundamentalShortlistReason"]
+
+    invalid = dict(DEFAULT_THRESHOLDS)
+    invalid["min_roe_pct"] = float("inf")
+    rejected = build_fundamental_shortlist(
+        row, "2026-10-22", thresholds=invalid, write=False,
+        require_explicit_thresholds=True,
+    )
+    assert rejected.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "FUNDAMENTAL_THRESHOLDS_INVALID:min_roe_pct" in rejected.iloc[0]["FundamentalShortlistReason"]
+
+
 def test_missing_metric_audit_rows_fail_closed():
     row = pd.DataFrame([_verified_row()])
     out = build_fundamental_shortlist(
