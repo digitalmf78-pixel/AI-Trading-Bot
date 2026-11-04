@@ -109,6 +109,7 @@ def test_fundamental_gate_waits_for_verified_metrics_and_pass_status():
     assert collection < assessment < liquidity
     assert 'current = fundamental_audit.loc[fundamental_pass_mask].copy()' in block
     assert "run_fundamental_metric_audit()" in source
+    assert "require_explicit_thresholds=True" in source
     assert 'fallback_pass_mask' in source
     assert 'current = fundamental_audit.loc[fallback_pass_mask].copy()' in source
     # Collection reports preserve every A/B candidate and statuses.
