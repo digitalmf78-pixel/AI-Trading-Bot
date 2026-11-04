@@ -7,6 +7,7 @@ Collection failures are recorded per symbol and never reject a Delivery A/B row.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import time
 from datetime import date, datetime, timezone
@@ -824,7 +825,23 @@ def collect_missing_fundamentals(
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
-        fetched, diagnostic = _fetch_one(symbol, ticker_factory=ticker_factory, asof_date=cutoff_text)
+        # Keep compatibility with injected fetchers that predate asof_date.
+        # The production fetcher accepts it so valuation snapshots remain tied
+        # to the requested EOD cutoff.
+        fetch_kwargs = {"ticker_factory": ticker_factory}
+        try:
+            fetch_parameters = inspect.signature(_fetch_one).parameters
+            if (
+                "asof_date" in fetch_parameters
+                or any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in fetch_parameters.values()
+                )
+            ):
+                fetch_kwargs["asof_date"] = cutoff_text
+        except (TypeError, ValueError):
+            fetch_kwargs["asof_date"] = cutoff_text
+        fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
         # Never overwrite manually supplied metric values. Existing provider rows
         # are refreshed to quarterly-derived metrics only when quarterly TTM is
         # fully aligned; missing fields can still be filled as before.
@@ -914,3 +931,4 @@ def collect_missing_fundamentals(
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
     print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; history snapshot={snapshot_path}; diagnostics={DIAGNOSTICS_PATH}")
     return combined
+
