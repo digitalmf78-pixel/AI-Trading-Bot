@@ -188,7 +188,11 @@ def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict
                     metric = str(metric_row.get("MetricName", "")).strip()
                     status = str(metric_row.get("MetricValueVerificationStatus", "")).strip().upper()
                     if symbol and metric:
-                        verification_by_symbol.setdefault(symbol, {})[metric] = status or "NO_VERIFICATION_STATUS"
+                        symbol_metrics = verification_by_symbol.setdefault(symbol, {})
+                        if metric in symbol_metrics:
+                            symbol_metrics[metric] = "DUPLICATE_VERIFICATION_ROWS"
+                        else:
+                            symbol_metrics[metric] = status or "NO_VERIFICATION_STATUS"
         evaluated = result.apply(lambda r: _evaluate_row(r, asof, t, verification_by_symbol), axis=1)
         result["FundamentalShortlistStatus"] = [e[0] for e in evaluated]
         result["FundamentalShortlistReason"] = [e[1] for e in evaluated]
