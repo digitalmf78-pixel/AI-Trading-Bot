@@ -127,7 +127,34 @@ def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[s
     url = _clean(metric.get('OfficialFilingURL'))
     pub = _clean(metric.get('PublicationDate'))[:10]
     if not url:
-        return 'FILING_URL_MISSING', 'OfficialFilingURL is empty'
+        reason = 'OfficialFilingURL is empty'
+        register_keys = {'TckrSymb', 'FinancialPeriodEnd', 'OfficialFilingURL'}
+        if not filings.empty and register_keys.issubset(filings.columns):
+            same_symbol = filings[
+                filings['TckrSymb'].astype(str).str.upper().eq(symbol)
+            ]
+            same_period = same_symbol[
+                same_symbol['FinancialPeriodEnd'].astype(str).str[:10].eq(period)
+            ]
+            if len(same_period):
+                candidate_urls = ';'.join(
+                    same_period['OfficialFilingURL'].astype(str).drop_duplicates().head(5).tolist()
+                )
+                reason += (
+                    f'; exact symbol/period candidate rows={len(same_period)}'
+                    f'; candidate URLs={candidate_urls}'
+                )
+            elif len(same_symbol):
+                periods = ';'.join(
+                    same_symbol['FinancialPeriodEnd'].astype(str).str[:10].drop_duplicates().head(5).tolist()
+                )
+                reason += (
+                    f'; no exact symbol/period filing in register'
+                    f'; other registered periods={periods}'
+                )
+            else:
+                reason += '; symbol not present in official filing register'
+        return 'FILING_URL_MISSING', reason
     if filings.empty:
         return 'FILING_REGISTER_UNAVAILABLE', 'Official filing register is missing or empty'
     required = {'TckrSymb', 'FinancialPeriodEnd', 'PublicationDate', 'PublicationDateStatus', 'OfficialFilingURL'}
@@ -380,3 +407,4 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
