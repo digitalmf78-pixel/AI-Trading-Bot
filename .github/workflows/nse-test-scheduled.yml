@@ -17,11 +17,6 @@ on:
     # 02:30 UTC = 08:00 IST: premarket refresh.
     - cron: "30 2 * * 1-5"
 
-  push:
-    branches:
-      - codex/nse-v8-audit-hard-gate-fii-dii
-    paths:
-      - .github/workflows/nse-test-scheduled.yml
 
 permissions:
   contents: write
