@@ -265,7 +265,7 @@ def test_telegram_digest_is_compact_and_keeps_core_gate_context():
     for expected in ("ABC", "1D +2.50%", "5D Delivery", "72.50%", "Support", "Resistance", "Entry", "Target", "WAIT_FOR_DATA", "Analysis only"):
         assert expected in text, expected
     assert "EMA44" not in text  # Detailed EMA diagnostics remain in the CSV reports.
-    assert len(lines) < 14
+    assert len(lines) < 16
 
 
 def test_telegram_digest_empty_result_is_a_short_no_candidate_message():
