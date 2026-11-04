@@ -78,6 +78,11 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
                 missing.append("INVALID:" + key)
         except (TypeError, ValueError):
             missing.append("INVALID:" + key)
+    # Older configurations predate position-count settings. Keep the historic
+    # four-position cap and zero-open-position assumption when those keys are
+    # absent; an explicitly supplied null or malformed setting still fails closed.
+    max_open_positions = config.get("max_open_positions", 4)
+    current_open_positions = config.get("current_open_positions", 0)
     for key in ("max_open_positions", "current_open_positions"):
         # Older configs used a fixed four-stock shortlist and did not record
         # these fields. Preserve that behavior when keys are absent; an
@@ -89,8 +94,12 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
         value = config.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             missing.append("INVALID:" + key)
-    if not any(key in missing for key in ("max_open_positions", "current_open_positions")):
-        if config["max_open_positions"] <= 0 or config["current_open_positions"] > config["max_open_positions"]:
+    position_limit_invalid = any(
+        key in missing
+        for key in ("INVALID:max_open_positions", "INVALID:current_open_positions")
+    )
+    if not position_limit_invalid:
+        if max_open_positions <= 0 or current_open_positions > max_open_positions:
             missing.append("INVALID:open_position_limits")
     if isinstance(config.get("sector_exposure_pct_by_sector"), dict):
         for sector, value in config["sector_exposure_pct_by_sector"].items():
@@ -171,3 +180,4 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUTPUT_DIR / "v8_risk_control_report.csv", index=False)
     return out
+
