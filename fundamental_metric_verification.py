@@ -307,7 +307,7 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
 
 def build_metric_verification(metrics: pd.DataFrame, filings: pd.DataFrame | None = None,
                               evidence: pd.DataFrame | None = None,
-                              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame]:
+                              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     filings = filings if filings is not None else pd.DataFrame()
     evidence = evidence if evidence is not None else pd.DataFrame(columns=EVIDENCE_COLUMNS)
     root = Path(repo_root).resolve()
@@ -365,7 +365,7 @@ def run_audit(metrics_path: str | Path = METRICS_PATH,
               filings_path: str | Path = FILINGS_PATH,
               evidence_path: str | Path = EVIDENCE_PATH,
               output_dir: str | Path = OUTPUT_DIR,
-              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame]:
+              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     metrics_path, filings_path, evidence_path = Path(metrics_path), Path(filings_path), Path(evidence_path)
     if not metrics_path.exists():
         raise FileNotFoundError(f'Fundamental cache not found: {metrics_path}')
@@ -407,4 +407,5 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
