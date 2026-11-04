@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import pytest
 
@@ -113,6 +114,37 @@ def test_production_gate_waits_until_every_required_metric_is_officially_verifie
     )
     assert waiting.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
     assert "OFFICIAL_METRICS_NOT_VERIFIED:RevenueGrowthPct=DERIVED_RECONCILIATION_REQUIRED" in waiting.iloc[0]["FundamentalShortlistReason"]
+
+
+def test_production_gate_requires_explicit_non_null_threshold_configuration(tmp_path):
+    verification = pd.DataFrame([
+        {"TckrSymb": "AAA", "MetricName": metric,
+         "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED"}
+        for metric in REQUIRED_METRICS
+    ])
+    row = pd.DataFrame([_verified_row()])
+    path = tmp_path / "fundamental_thresholds.json"
+    missing = build_fundamental_shortlist(
+        row, "2026-10-22", write=False, metric_verification=verification,
+        require_explicit_thresholds=True, thresholds_path=path,
+    )
+    assert missing.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "FILE_MISSING_OR_EMPTY" in missing.iloc[0]["FundamentalShortlistReason"]
+
+    path.write_text(json.dumps({key: None for key in DEFAULT_THRESHOLDS}), encoding="utf-8")
+    unconfigured = build_fundamental_shortlist(
+        row, "2026-10-22", write=False, metric_verification=verification,
+        require_explicit_thresholds=True, thresholds_path=path,
+    )
+    assert unconfigured.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "min_revenue_growth_pct" in unconfigured.iloc[0]["FundamentalShortlistReason"]
+
+    path.write_text(json.dumps(DEFAULT_THRESHOLDS), encoding="utf-8")
+    configured = build_fundamental_shortlist(
+        row, "2026-10-22", write=False, metric_verification=verification,
+        require_explicit_thresholds=True, thresholds_path=path,
+    )
+    assert configured.iloc[0]["FundamentalShortlistStatus"] == "PASS"
 
 
 def test_missing_metric_audit_rows_fail_closed():
