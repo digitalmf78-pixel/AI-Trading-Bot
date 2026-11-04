@@ -15,7 +15,8 @@ The following checks were run against the actual XML facts, preserving the filin
 - `TaxExpense = CurrentTax + DeferredTax`
 - `ProfitLossForPeriodFromContinuingOperations = ProfitBeforeTax - TaxExpense`
 - `ProfitLossForPeriod = continuing profit + discontinued-operation after-tax result + share of profit/loss of associates and joint ventures`
-- `CashFlowsFromUsedInOperatingActivities + CashFlowsFromUsedInInvestingActivities + CashFlowsFromUsedInFinancingActivities = IncreaseDecreaseInCashAndCashEquivalents`
+- `CashFlowsFromUsedInOperatingActivities + CashFlowsFromUsedInInvestingActivities + CashFlowsFromUsedInFinancingActivities = IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges`
+- `IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges + EffectOfExchangeRateChangesOnCashAndCashEquivalents = IncreaseDecreaseInCashAndCashEquivalents`
 
 Results on these five samples: **55 of 55 arithmetic checks passed within the XBRL-reported rounding precision**. DONEAR's total-profit reconciliation required including the separately reported share of profit/loss of associates and joint ventures; omitting this line produced a false mismatch, so the audit explicitly includes it.
 
@@ -61,3 +62,14 @@ All extracted facts remain `CANDIDATE_ONLY_NOT_VERIFIED`. Arithmetic consistency
 - Workflow YAML parsed successfully.
 
 These are local results against the user-supplied source snapshot and report artifact. The patch has not been pushed to GitHub or run in GitHub Actions.
+
+## Follow-up evidence check (2026-11-04)
+
+The earlier SETCO consolidated cash-flow difference of INR 11,200,000 is reconciled against the official [NSE consolidated audited filing](https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1745166_23102026104902_WEB.xml). In its `FourD` context (entity 505075, INR, decimals -5), CFO is INR 2,339,400,000, CFI is INR 55,600,000, and CFF is INR -2,182,800,000. Their sum is INR 212,200,000, exactly the reported pre-FX cash change. The FX effect is INR -11,200,000, which bridges pre-FX cash change to the reported post-FX INR 201,000,000. The old 11.2m difference was therefore the expected FX bridge, not a failed cash-flow cross-foot.
+
+This does **not** verify the cached SETCO `OperatingCashFlowINR`: that cache row points to the standalone filing and has `LEGACY_CACHE_BASIS_UNKNOWN`. Its cached value (INR 2,339,411,000) resembles the consolidated filing's INR 2,339,400,000 fact within filing precision, but the basis/link mismatch means it must remain unverified. The audit evidence ledger records the resolved arithmetic separately.
+
+The five exact 9M URLs used by the Q4 audit (SETCO, NIRAJ, LAL, DONEAR, DNAMEDIA; period 2025-04-01 to 2025-12-31) were inspected directly. None contains CFO, the alternate operations subtotal, CFI, CFF, or cash-change facts. The Q4 CFO script should therefore keep all five as `WAIT_FOR_DATA`; there is no supported 9M CFO to subtract from annual CFO.
+
+The uploaded workflow artifact's fundamental cache contains 374 rows, including 173 with `LEGACY_CACHE_BASIS_UNKNOWN`. Its 2,809 metric checks have no `OFFICIAL_XBRL_VERIFIED` rows; only direct annual CFO facts are currently eligible for metric-level verification. Other ratios and growth metrics still need component-level reconciliation, exact source URLs, and aligned filing periods. These findings do not change stock-selection thresholds or promote any cache value to verified.
+
