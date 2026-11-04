@@ -15,11 +15,14 @@ production pipeline advances only explicit PASS rows through its fundamental
 hard gate; WAIT and FAIL rows remain visible in the collection reports.
 
 Thresholds are starting points. Override any of them in
-data/inputs/fundamental_thresholds.json (keys with null/absent keep the default).
+data/inputs/fundamental_thresholds.json for legacy/isolated assessments. The
+production gate requires every configured threshold explicitly; missing or null
+settings remain WAIT_FOR_DATA as required by the EOD matrix.
 """
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -71,6 +74,40 @@ def load_thresholds(path: str | Path = THRESHOLDS_PATH) -> dict:
             if user.get(key) is not None:
                 thresholds[key] = user[key]
     return thresholds
+
+
+def _load_explicit_thresholds(path: str | Path = THRESHOLDS_PATH) -> tuple[dict | None, str]:
+    """Load only a complete, non-null threshold configuration for production."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:FILE_MISSING_OR_EMPTY"
+    try:
+        configured = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:INVALID_JSON"
+    if not isinstance(configured, dict):
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:ROOT_MUST_BE_OBJECT"
+
+    missing = [key for key in DEFAULT_THRESHOLDS if key not in configured or configured[key] is None]
+    if missing:
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:" + ",".join(missing)
+
+    values = dict(configured)
+    bool_keys = {"require_positive_operating_cash_flow", "require_positive_free_cash_flow"}
+    invalid = []
+    for key, value in values.items():
+        if key in bool_keys:
+            if type(value) is not bool:
+                invalid.append(key)
+        elif key in DEFAULT_THRESHOLDS:
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))):
+                invalid.append(key)
+    if invalid:
+        return None, "FUNDAMENTAL_THRESHOLDS_INVALID:" + ",".join(invalid)
+    if values["max_data_age_days"] <= 0:
+        return None, "FUNDAMENTAL_THRESHOLDS_INVALID:max_data_age_days"
+    return {key: values[key] for key in DEFAULT_THRESHOLDS}, ""
 
 
 def _num(value):
@@ -164,20 +201,39 @@ def _evaluate_row(row: pd.Series, asof, t: dict,
 
 def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict | None = None,
                                 write: bool = True,
-                                metric_verification: pd.DataFrame | None = None) -> pd.DataFrame:
+                                metric_verification: pd.DataFrame | None = None,
+                                require_explicit_thresholds: bool = False,
+                                thresholds_path: str | Path = THRESHOLDS_PATH) -> pd.DataFrame:
     """Return `audit` with FundamentalShortlistStatus/Reason; never drops rows.
 
     Production callers pass the independent metric-level XBRL audit. Omitting
     it remains supported for isolated legacy callers, but is not the production
     selection path.
     """
-    t = thresholds if thresholds is not None else load_thresholds()
+    threshold_error = ""
+    if thresholds is not None:
+        t = thresholds
+    elif require_explicit_thresholds:
+        t, threshold_error = _load_explicit_thresholds(thresholds_path)
+    else:
+        t = load_thresholds(thresholds_path)
     asof = pd.to_datetime(asof_date, errors="coerce")
     result = audit.copy()
     if result.empty:
         result["FundamentalShortlistStatus"] = pd.Series(dtype=str)
         result["FundamentalShortlistReason"] = pd.Series(dtype=str)
     else:
+        if threshold_error:
+            result["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+            result["FundamentalShortlistReason"] = threshold_error
+            result["FundamentalAssessmentStatus"] = "WAIT_FOR_DATA"
+            result["FundamentalAssessmentReason"] = threshold_error
+            if write:
+                OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                result.to_csv(OUTPUT_DIR / "v8_fundamental_shortlist_all.csv", index=False)
+                result[result["FundamentalShortlistStatus"] == "PASS"].to_csv(
+                    OUTPUT_DIR / "v8_fundamental_shortlist_pass.csv", index=False)
+            return result
         verification_by_symbol = None
         if metric_verification is not None:
             verification_by_symbol = {}
