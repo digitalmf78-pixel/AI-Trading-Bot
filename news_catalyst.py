@@ -1120,31 +1120,46 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
 def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str]) -> list[str]:
     """Build a short Marathi/English Telegram summary of the final candidates."""
     scan_mode = str(os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
+    heading = "🌅 NSE V8 • PRE-MARKET" if scan_mode == "PREMARKET" else "📊 NSE V8 • EOD"
     if result.empty:
-        heading = "🌅 NSE V8 • PRE-MARKET" if scan_mode == "PREMARKET" else "📊 NSE V8 • EOD"
         return [
             f"{heading} | {eod_date}",
-            "Candidates: 0",
-            "सर्व screening gates नंतर review साठी पात्र stock नाही.",
+            "Screened: 0 | Final WATCH: 0",
+            "आज final Watchlist मध्ये stock नाही.",
             "Analysis only • No automatic order."
         ]
 
-    candidates = result.copy()
-    if "RVOL" in candidates.columns:
-        candidates["RVOL"] = pd.to_numeric(candidates["RVOL"], errors="coerce")
-        candidates = candidates.sort_values("RVOL", ascending=False, na_position="last")
+    screened = result.copy()
+    status_col = screened.get("EODWatchlistStatus", pd.Series("WAIT_FOR_DATA", index=screened.index)).astype(str).str.upper()
+    candidates = screened.loc[status_col.eq("WATCH")].copy()
+    if "V8Score" in candidates.columns:
+        candidates["V8Score"] = pd.to_numeric(candidates["V8Score"], errors="coerce")
+        candidates = candidates.sort_values("V8Score", ascending=False, na_position="last").head(4)
+
+    status_counts = status_col.value_counts().to_dict()
+    wait_count = sum(count for status, count in status_counts.items() if status.startswith("WAIT"))
+    skip_count = sum(count for status, count in status_counts.items() if status in {"SKIP", "FAIL"} or status.startswith(("REJECT", "FILTERED_OUT")))
+    count_line = f"Screened: {len(screened)} | Final WATCH: {len(candidates)}"
+    if wait_count or skip_count:
+        count_line += f" | WAIT: {wait_count} | SKIP/FAIL: {skip_count}"
+    if candidates.empty:
+        return [
+            f"{heading} | {eod_date}",
+            count_line,
+            "सर्व V8 gates नंतर final WATCH stock नाही.",
+            "Analysis only • No automatic order."
+        ]
+
     def val(row, key, digits=2, suffix=""):
         value = pd.to_numeric(pd.Series([row.get(key)]), errors="coerce").iloc[0]
         return f"{value:+.{digits}f}{suffix}" if pd.notna(value) and suffix == "%" else f"{value:.{digits}f}{suffix}" if pd.notna(value) else "NA / उपलब्ध नाही"
 
     if scan_mode == "PREMARKET":
-        heading = f"🌅 NSE V8 • PRE-MARKET • {eod_date}"
         mode_note = "News refresh only • Technical data is from prior EOD."
     else:
-        heading = f"📊 NSE V8 • EOD • {eod_date}"
         mode_note = "Analysis only • No automatic order."
 
-    lines = [heading, f"Candidates: {len(candidates)}", mode_note, ""]
+    lines = [f"{heading} • {eod_date}", count_line, mode_note, ""]
     for number, (_, row) in enumerate(candidates.iterrows(), start=1):
         symbol = str(row.get("TckrSymb", "UNKNOWN")).strip().upper()
         status = row.get("EODWatchlistStatus", "WAIT_FOR_DATA")
@@ -1175,8 +1190,7 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
             headline = str(chosen.get("Headline", ""))
             source_type = str(chosen.get("SourceType", "")).lower()
             source_label = "official" if source_type in {"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"} else "secondary / not officially confirmed"
-            lines.append(f"News ({source_label}): {headline}")
-        lines.append(f"Reason: {row.get('CandidateScreenReasons', row.get('EODLayerReason', 'See report'))}")
+            lines.append(f"News ({source_label}): {headline[:120]}")
         lines.append("")
 
     lines.append("Missing values stay NA/WAIT. Analysis only • No automatic order.")
