@@ -17,6 +17,9 @@ on:
     # 02:30 UTC = 08:00 IST: premarket refresh.
     - cron: "30 2 * * 1-5"
 
+concurrency:
+  group: nse-data-test-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -301,6 +304,10 @@ jobs:
           git commit -m "chore: persist NSE V8 fundamental cache and history"
           echo "===== COMMITTED FUNDAMENTAL FILES ====="
           git show --format= --name-status HEAD
+          # Another workflow or audit-triggering commit may advance the branch
+          # while this scan is running. Rebase the cache commit onto that head.
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase "origin/${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Redact account-derived position sizing from public report artifacts
