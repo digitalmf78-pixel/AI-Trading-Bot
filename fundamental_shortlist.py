@@ -9,8 +9,10 @@ Statuses:
   WAIT_FOR_DATA   metrics missing, publication date / metric-period alignment / calculation
                   basis unverified, or sector needs different rules (banks, NBFCs, insurers)
 
-Missing or unverified data is never PASS and never guessed. This stage does not
-remove rows from the main pipeline; it only adds a status and writes a report.
+Missing or unverified data is never PASS and never guessed. This function
+preserves every input row while adding a status and writing reports. The
+production pipeline advances only explicit PASS rows through its fundamental
+hard gate; WAIT and FAIL rows remain visible in the collection reports.
 
 Thresholds are starting points. Override any of them in
 data/inputs/fundamental_thresholds.json (keys with null/absent keep the default).
