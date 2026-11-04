@@ -70,3 +70,8 @@ def test_workflow_commits_fundamental_cache_and_history_to_repository():
     assert 'git push origin "HEAD:${GITHUB_REF_NAME}"' in workflow
     assert "steps.nse_scan.outcome == 'success'" in workflow
 
+
+def test_manual_scan_does_not_send_telegram_notifications():
+    workflow = (ROOT / ".github/workflows/nse-test-scheduled.yml").read_text(encoding="utf-8")
+    assert 'SEND_TELEGRAM: "${{ github.event_name == \'schedule\' }}"' in workflow
+
