@@ -36,6 +36,8 @@ The samples contain both:
 
 Their values differ. This patch intentionally labels both as candidates and does **not** select either as the definitive Operating Cash Flow metric. Taxonomy/statement-row semantics and cross-company reconciliation must be completed before choosing a production mapping.
 
+The production metric verifier now follows this unresolved state: its approved direct-fact mapping table is empty, so neither cash-flow tag can receive `OFFICIAL_XBRL_VERIFIED` until the accounting mapping is reviewed and explicitly added. A matching hash/value/context alone cannot make an unapproved fact tag authoritative.
+
 Likewise:
 - `ProfitLossForPeriod` is extracted as a candidate net-profit fact.
 - `RevenueFromOperations` is extracted as a candidate revenue fact.
@@ -81,3 +83,4 @@ Files to add/update:
 3. `.github/workflows/nse-test-scheduled.yml` (updated)
 
 No push or deployment has been performed by this patch preparation.
+
