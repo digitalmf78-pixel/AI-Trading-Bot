@@ -845,6 +845,9 @@ def run_eod_layers(
         else "REQUIRED_DATA_MISSING" if value == "WAIT_FOR_DATA"
         else "ONE_OR_MORE_SELECTION_GATES_FAILED"
     )
+    if "CoreTechnicalScreenStatus" in output.columns:
+        core_rejected = output["CoreTechnicalScreenStatus"].astype(str).str.strip().str.upper().eq("REJECT")
+        output.loc[core_rejected, "EODWatchlistReason"] = "CORE_TECHNICAL_SCREEN_REJECT"
     # Respect the configured open-position limit and account for the combined
     # exposure of the candidates selected in this run.
     watch_rows = output[output["EODWatchlistStatus"] == "WATCH"].copy()
