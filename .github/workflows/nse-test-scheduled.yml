@@ -1,11 +1,6 @@
 name: NSE Data Test
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/nse-test-scheduled.yml
   workflow_dispatch:
     inputs:
       scan_mode:
