@@ -10,11 +10,13 @@
    अर्थहीन असल्याने ते `WAIT_FOR_DATA` राहतात.
 4. नवीन `fundamental_shortlist.py`: absolute thresholds वर PASS / FAIL / WAIT_FOR_DATA. Rows delete होत नाहीत.
    Reports: `outputs/v8_fundamental_shortlist_all.csv`, `outputs/v8_fundamental_shortlist_pass.csv`.
-5. Thresholds बदलायचे असतील तर `data/inputs/fundamental_thresholds.json` मध्ये value भरा (null = default).
+5. Production fundamental gate साठी `data/inputs/fundamental_thresholds.json` मधील प्रत्येक आवश्यक threshold स्पष्टपणे भरा. एखादी key absent/null असल्यास production status `WAIT_FOR_DATA` राहतो.
 
-## Default thresholds (सुरुवातीचे; तुमच्या style नुसार बदला)
+## Example thresholds (पूर्वीचे defaults; user-approved config समजू नका)
 Revenue growth >= 0, Profit growth >= 0, ROE >= 10, ROCE >= 12, D/E <= 1, Interest coverage >= 3,
 Operating cash flow > 0, FCF अट बंद, data age <= 548 दिवस.
+
+ही मूल्ये legacy/local assessment helper साठी उदाहरणे आहेत. 21 Oct EOD matrix आणि rebase audit नुसार production मध्ये explicit threshold config नसल्यास त्यांना लागू करू नये; null/missing config => `WAIT_FOR_DATA`.
 
 ## मर्यादा (प्रामाणिक नोंद)
 - Annual statements वापरल्यामुळे data नवीनतम quarter चा नसतो; 18 महिने जुना होऊ शकतो.
@@ -26,3 +28,4 @@ Operating cash flow > 0, FCF अट बंद, data age <= 548 दिवस.
 ## लागू करणे
 ZIP मधील फाइल्स त्याच paths वर replace/add करा (पूर्ण repo overwrite करू नका), commit/push, मग `NSE Data Test` चालवा.
 Report मध्ये `v8_fundamental_provider_diagnostics.csv` चा `AlignmentNote` column तपासा.
+
