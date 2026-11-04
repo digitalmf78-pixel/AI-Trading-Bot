@@ -50,14 +50,28 @@ def test_delivery_audit_labels_actual_window_when_asof_report_missing(monkeypatc
     )
 
     row = audit.iloc[0]
-    assert len(qualified) == 1
+    assert qualified.empty  # Average passes, but the matrix requires every day >=60%.
     assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+    assert row["DeliveryStatus"] == "FILTERED_OUT_LT_60_PERCENT"
     assert row["DeliveryAsOfDate"] == "2026-10-23"
     assert bool(row["DeliveryAsOfReportAvailable"]) is False
     assert row["DeliveryWindowStartDate"] == "2026-10-16"
     assert row["DeliveryWindowEndDate"] == "2026-10-22"
     assert row["LatestDeliveryPct"] == 62.0
+
+
+def test_every_day_delivery_passes_downstream_gate(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
+    candidates = pd.DataFrame([{"TckrSymb": "BBB", "SctySrs": "EQ"}])
+    dates = [date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    reports = [(day, _frame("BBB", (value,))) for day, value in zip(dates, [60, 65, 61, 70, 63])]
+    qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
+    assert qualified["TckrSymb"].tolist() == ["BBB"]
+    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
+    assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"
+    assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
 
 
 def test_fewer_than_five_valid_reports_still_waits_for_data(monkeypatch, tmp_path):
@@ -73,3 +87,4 @@ def test_fewer_than_five_valid_reports_still_waits_for_data(monkeypatch, tmp_pat
     assert qualified.empty
     assert audit.iloc[0]["DeliveryCategoryAStatus"] == "WAIT_FOR_DATA"
     assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
+
