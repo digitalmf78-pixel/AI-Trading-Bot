@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 16893)
-Total output lines: 1251
-
 """Collect official NSE filings and free news corroboration for V8 top-volume names.
 
 The NSE RSS feeds are the primary source. Google News RSS is used only to find
@@ -516,7 +513,400 @@ def _nse_announcement_api_items(
                 continue
             if not record_symbol:
                 records_without_symbol += 1
-            raw_stamp = record.ge…4893 tokens truncated…filing: RSS is global and
+            raw_stamp = record.get("an_dt") or record.get("sort_date") or record.get("dt") or ""
+            if not raw_stamp:
+                records_without_date += 1
+            try:
+                parsed_stamp = pd.Timestamp(raw_stamp)
+                if not pd.isna(parsed_stamp):
+                    # NSE API timestamps are India-local when no offset is present.
+                    if parsed_stamp.tzinfo is None:
+                        parsed_stamp = parsed_stamp.tz_localize("Asia/Kolkata")
+                    raw_stamp = parsed_stamp.isoformat()
+            except (TypeError, ValueError, OverflowError):
+                pass
+            fields = {
+                "title": record.get("desc") or record.get("subject") or "",
+                "description": record.get("attchmntText") or record.get("desc") or "",
+                "pubDate": raw_stamp,
+                "link": record.get("attchmntFile") or "",
+                "company": record.get("sm_name") or "",
+                "symbol": record_symbol,
+                "eventid": record.get("seq_id") or "",
+            }
+            item = ET.Element("item")
+            for key, value in fields.items():
+                node = ET.SubElement(item, key)
+                node.text = str(value or "")
+            items.append(item)
+        print(
+            f"[NEWS-DIAG] NSE_API_NORMALIZE_SUMMARY symbol={requested_symbol} "
+            f"raw_records={len(payload)} dict_records={len(dict_records)} "
+            f"normalized_items={len(items)} symbol_mismatch={symbol_mismatch} "
+            f"records_without_symbol={records_without_symbol} records_without_date={records_without_date}"
+        )
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_OK symbol={requested_symbol} items={len(items)} range={start}:{end}")
+        return _RSSItemList(items, partial=False, available=True)
+    except Exception as exc:
+        print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_FAIL symbol={requested_symbol} range={start}:{end} error={type(exc).__name__}: {exc}")
+        return _RSSItemList([], available=False)
+
+
+def _news_window_bounds(eod_date, scan_mode=None, now=None):
+    """Return the news scan window as UTC bounds plus its IST display bounds.
+
+    EOD mode: five calendar dates inclusive, from 00:00 IST on EOD date - 4
+    days through 22:00 IST on the EOD date.
+
+    PREMARKET mode: five calendar dates inclusive relative to the next entry
+    session's local scan date, through 09:15 IST on that date. This captures
+    overnight/weekend announcements without changing the technical EOD date.
+    """
+    mode = str(scan_mode or os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
+    if mode not in {"EOD", "PREMARKET"}:
+        print(f"[NEWS-DIAG] UNKNOWN_SCAN_MODE requested={mode!r}; falling back to EOD")
+        mode = "EOD"
+
+    if now is None:
+        now_ist = pd.Timestamp.now(tz="Asia/Kolkata")
+    else:
+        now_ist = pd.Timestamp(now)
+        now_ist = now_ist.tz_localize("Asia/Kolkata") if now_ist.tzinfo is None else now_ist.tz_convert("Asia/Kolkata")
+
+    if mode == "PREMARKET":
+        end_day = now_ist.normalize()
+        start_ist = end_day - pd.Timedelta(days=4)
+        end_ist = end_day + pd.Timedelta(hours=9, minutes=15)
+    else:
+        eod_day = pd.Timestamp(eod_date)
+        eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
+        end_day = eod_day.normalize()
+        start_ist = end_day - pd.Timedelta(days=4)
+        end_ist = end_day + pd.Timedelta(hours=22)
+
+    return (
+        start_ist.tz_convert("UTC").to_pydatetime(),
+        end_ist.tz_convert("UTC").to_pydatetime(),
+        start_ist,
+        end_ist,
+        mode,
+    )
+
+
+def _premarket_news_status(official_count: int, secondary_count: int, api_covered: bool) -> str:
+    """Classify PREMARKET news only from issuer-specific evidence/coverage.
+
+    A global RSS feed containing an unrelated company's filing does not prove that
+    this candidate's issuer was covered. A successful empty issuer-filtered NSE API
+    response does count as candidate-specific coverage; a failed API does not.
+    """
+    if official_count > 0:
+        return "OFFICIAL_NEWS_FOUND"
+    if not api_covered:
+        return "WAIT_FOR_DATA"
+    if secondary_count > 0:
+        return "SECONDARY_ONLY_UNVERIFIED"
+    return "NO_NEWS_FOUND"
+
+
+
+
+UPCOMING_EVENT_COLUMNS = [
+    "EODDate", "TckrSymb", "EventType", "EventDate", "AnnouncementDate",
+    "Headline", "Source", "SourceType", "URL", "Status", "LookbackDays",
+]
+
+_EVENT_KEYWORDS = re.compile(
+    r"\b(result|results|financial results|quarterly results|board meeting|"
+    r"dividend|bonus|stock split|split|buyback|buy-back|record date|"
+    r"rights issue|agm|egm|annual general meeting|extraordinary general meeting|"
+    r"fund raising|fundraising|preferential issue|qip|merger|acquisition|"
+    r"scheme of arrangement|demerger|corporate action)\b",
+    re.IGNORECASE,
+)
+
+def _event_type_from_text(text: str) -> str:
+    value = _clean(text).lower()
+    if re.search(r"\b(quarterly|financial|annual|half[- ]yearly|audited|unaudited)\b.{0,60}\b(results?|earnings?)\b|\b(results?|earnings?)\b.{0,60}\b(quarterly|financial|annual|half[- ]yearly|audited|unaudited)\b", value):
+        return "RESULTS"
+    if re.search(r"\bboard meeting\b", value):
+        return "BOARD_MEETING"
+    if re.search(r"\bdividend\b", value):
+        return "DIVIDEND"
+    if re.search(r"\bbonus\b", value):
+        return "BONUS"
+    if re.search(r"\b(stock )?split\b", value):
+        return "STOCK_SPLIT"
+    if re.search(r"\bbuy[- ]?back\b", value):
+        return "BUYBACK"
+    if re.search(r"\brecord date\b", value):
+        return "RECORD_DATE"
+    if re.search(r"\b(rights issue|preferential issue|qip|fund ?rais(ing|e))\b", value):
+        return "FUNDRAISING_OR_ISSUE"
+    if re.search(r"\b(agm|annual general meeting|egm|extraordinary general meeting)\b", value):
+        return "SHAREHOLDER_MEETING"
+    if re.search(r"\b(merger|acquisition|demerger|scheme of arrangement)\b", value):
+        return "M_AND_A"
+    if re.search(r"\bcorporate action\b", value):
+        return "CORPORATE_ACTION"
+    return "OTHER_OFFICIAL_EVENT"
+
+
+def _explicit_dates_in_text(text: str) -> list:
+    """Parse only explicit date-shaped strings; never infer a date from context."""
+    patterns = [
+        r"\b\d{4}-\d{1,2}-\d{1,2}\b",
+        r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",
+        r"\b\d{1,2}[- ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[- ,]+\d{2,4}\b",
+        r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[ ,]+\d{1,2}(?:st|nd|rd|th)?[,]?[ ]+\d{4}\b",
+        r"\b\d{1,2}(?:st|nd|rd|th)?[ ]+(?:of[ ]+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)[ ,]+\d{4}\b",
+    ]
+    found = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", re.IGNORECASE):
+            raw = match.group(0).strip()
+            try:
+                stamp = pd.to_datetime(raw, errors="raise", dayfirst=True)
+                if not pd.isna(stamp):
+                    day = stamp.date()
+                    if day not in found:
+                        found.append(day)
+            except (TypeError, ValueError, OverflowError):
+                continue
+    return sorted(found)
+
+
+def _upcoming_event_rows_for_item(
+    symbol: str, item: ET.Element, eod_date, scan_mode: str, lookback_days: int = 90
+) -> list[dict[str, str]]:
+    """Build official upcoming-event records from issuer-filtered NSE filings.
+
+    Only explicit dates in the filing text are accepted. Publication dates are
+    never substituted for event dates, and past dates are not labelled upcoming.
+    """
+    title = _item_text(item, "title")
+    description = _item_text(item, "description", "summary", "attchmntText")
+    text = " ".join(part for part in (title, description) if part).strip()
+    if not text or not _EVENT_KEYWORDS.search(text):
+        return []
+    published = _published(item)
+    announcement_date = ""
+    if published is not None:
+        announcement_date = published.astimezone(
+            pd.Timestamp.now(tz="UTC").tzinfo
+        ).isoformat()
+        # Display announcement dates in exchange-local time.
+        announcement_date = pd.Timestamp(published).tz_convert("Asia/Kolkata").strftime("%Y-%m-%d")
+    mode = str(scan_mode or "EOD").upper()
+    ref = pd.Timestamp.now(tz="Asia/Kolkata").date() if mode == "PREMARKET" else pd.Timestamp(eod_date).date()
+    event_type = _event_type_from_text(text)
+    future_dates = [d for d in _explicit_dates_in_text(text) if d > ref]
+    source_url = _item_text(item, "link") or "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+    base = {
+        "EODDate": str(pd.Timestamp(eod_date).date()),
+        "TckrSymb": symbol,
+        "EventType": event_type,
+        "AnnouncementDate": announcement_date,
+        "Headline": title or text,
+        "Source": "NSE India",
+        "SourceType": "PRIMARY_OFFICIAL",
+        "URL": source_url,
+        "LookbackDays": str(int(lookback_days)),
+    }
+    if future_dates:
+        return [{**base, "EventDate": d.isoformat(), "Status": "OFFICIAL_DATE_CONFIRMED"} for d in future_dates]
+    # Keep an explicit diagnostic row, but do not claim the event is upcoming.
+    return [{**base, "EventDate": "", "Status": "DATE_NOT_FOUND_OR_NO_FUTURE_DATE"}]
+
+
+def _write_upcoming_events_report(
+    symbols: set[str], event_rows: list[dict[str, str]], api_coverage: dict[str, bool], eod_date
+) -> None:
+    """Write one or more event/evidence status rows for every shortlist symbol."""
+    Path("outputs").mkdir(parents=True, exist_ok=True)
+    by_symbol: dict[str, list[dict[str, str]]] = {s: [] for s in sorted(symbols)}
+    for row in event_rows:
+        symbol = str(row.get("TckrSymb", "")).upper()
+        if symbol in by_symbol:
+            by_symbol[symbol].append(row)
+    final_rows = []
+    for symbol in sorted(symbols):
+        rows = by_symbol.get(symbol, [])
+        if rows:
+            # De-duplicate identical event date/type/headline records.
+            seen = set()
+            for row in rows:
+                key = (row.get("EventType"), row.get("EventDate"), row.get("Headline"))
+                if key not in seen:
+                    seen.add(key)
+                    final_rows.append(row)
+        elif api_coverage.get(symbol, False):
+            final_rows.append({
+                "EODDate": str(pd.Timestamp(eod_date).date()), "TckrSymb": symbol,
+                "EventType": "", "EventDate": "", "AnnouncementDate": "",
+                "Headline": "", "Source": "NSE India", "SourceType": "PRIMARY_OFFICIAL",
+                "URL": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+                "Status": "NO_MATCHING_UPCOMING_EVENT_FOUND", "LookbackDays": "90",
+            })
+        else:
+            final_rows.append({
+                "EODDate": str(pd.Timestamp(eod_date).date()), "TckrSymb": symbol,
+                "EventType": "", "EventDate": "", "AnnouncementDate": "",
+                "Headline": "", "Source": "", "SourceType": "",
+                "URL": "", "Status": "WAIT_FOR_DATA", "LookbackDays": "90",
+            })
+    out = pd.DataFrame(final_rows, columns=UPCOMING_EVENT_COLUMNS)
+    out.to_csv("outputs/v8_upcoming_corporate_events.csv", index=False)
+    print(
+        f"[NEWS-DIAG] UPCOMING_EVENTS_REPORT path=outputs/v8_upcoming_corporate_events.csv "
+        f"shortlist_symbols={len(symbols)} rows={len(out)} "
+        f"confirmed={int((out['Status'] == 'OFFICIAL_DATE_CONFIRMED').sum()) if not out.empty else 0} "
+        f"wait_for_data={int((out['Status'] == 'WAIT_FOR_DATA').sum()) if not out.empty else 0}"
+    )
+
+
+def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Collect NSE filings and secondary news for the candidate rows supplied by the V8 pipeline."""
+    if result.empty or "TckrSymb" not in result.columns:
+        return pd.DataFrame(columns=NEWS_COLUMNS), {"NSE": "no candidates", "secondary": "not checked"}
+
+    candidates = result.copy()
+    candidates["TckrSymb"] = candidates["TckrSymb"].astype(str).str.strip().str.upper()
+    candidates = candidates[
+        candidates["TckrSymb"].ne("")
+        & candidates["TckrSymb"].str.lower().ne("nan")
+    ].drop_duplicates(subset=["TckrSymb"]).copy()
+
+    # Enforce delivery and setup gates when upstream evidence is supplied.
+    # Delivery is inclusive: exactly 60.00% passes.
+    candidates = _filter_catalyst_candidates(candidates)
+
+    if candidates.empty:
+        Path("data/inputs").mkdir(parents=True, exist_ok=True)
+        empty = pd.DataFrame(columns=NEWS_COLUMNS)
+        empty.to_csv("data/inputs/news_evidence_auto.csv", index=False)
+        Path("outputs").mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=UPCOMING_EVENT_COLUMNS).to_csv("outputs/v8_upcoming_corporate_events.csv", index=False)
+        print("[NEWS-DIAG] UPCOMING_EVENTS_REPORT no shortlisted candidates; wrote empty report")
+        return empty, {"NSE": "no shortlisted candidates", "secondary": "not checked"}
+
+    symbols = set(candidates["TckrSymb"].tolist())
+    names = _read_equity_master()
+    print(
+        "[NEWS-DIAG] ISSUER_MASTER "
+        f"candidate_count={len(symbols)} mapped_company_names={sum(bool(str(names.get(sym, '')).strip()) for sym in symbols)} "
+        f"candidates={[(sym, names.get(sym, '')) for sym in sorted(symbols)]!r}"
+    )
+    cutoff, window_end, window_start_ist, window_end_ist, scan_mode = _news_window_bounds(eod_date)
+    cutoff_ist_date = window_start_ist.date()
+    window_end_ist_date = window_end_ist.date()
+    print(
+        f"[NEWS-DIAG] NEWS_WINDOW mode={scan_mode} "
+        f"start_ist={window_start_ist.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+        f"end_ist={window_end_ist.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+        f"eod_date={pd.Timestamp(eod_date).date()} "
+        f"calendar_days=5"
+    )
+
+    rows: list[dict[str, str]] = []
+    status = {"NSE": "available", "secondary": "available"}
+    nse_successes = 0
+    nse_partial = False
+    official_window_records = 0
+
+    # Read each exchange feed once, then map company names/symbols to all RVOL > 1.5 candidates.
+    for feed_name, feed_url in NSE_FEEDS.items():
+        try:
+            items = _rss_items(feed_url)
+        except Exception as exc:
+            print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_FAIL feed={feed_name!r} url={feed_url} error={type(exc).__name__}: {exc}")
+            continue
+        nse_successes += 1
+        partial = bool(getattr(items, "partial", False))
+        nse_partial = nse_partial or partial
+        feed_items = len(items)
+        date_valid = 0
+        date_rejected = 0
+        date_missing = 0
+        before_cutoff = 0
+        after_window = 0
+        issuer_matches = 0
+        in_window_samples: list[str] = []
+        timestamp_samples: list[str] = []
+        print(f"[NEWS-DIAG] OFFICIAL_FEED_FETCH_OK feed={feed_name!r} items={feed_items} partial={partial} url={feed_url}")
+        for item in items:
+            title = _item_text(item, "title")
+            description = _item_text(item, "description", "summary", "content", "abstract")
+            issuer_fields = _item_text(item, "company", "companyname", "issuer", "issuername", "symbol", "ticker")
+            match_text = " ".join(part for part in (title, description, issuer_fields) if part)
+            stamp = _published(item)
+            if len(timestamp_samples) < 5:
+                timestamp_samples.append(_rss_debug_fields(item, max_fields=16).get("pubdate", "") or
+                                         _rss_debug_fields(item, max_fields=16).get("date", "") or
+                                         _rss_debug_fields(item, max_fields=16).get("published", "") or
+                                         _rss_debug_fields(item, max_fields=16).get("filingdate", "") or
+                                         "NO_RECOGNIZED_DATE_FIELD")
+            if stamp is None:
+                date_missing += 1
+                date_rejected += 1
+                continue
+            if stamp < cutoff:
+                before_cutoff += 1
+                date_rejected += 1
+                continue
+            if stamp > window_end:
+                after_window += 1
+                date_rejected += 1
+                continue
+            date_valid += 1
+            if len(in_window_samples) < 5:
+                in_window_samples.append((title or description)[:220])
+            link = _clean(item.findtext("link", ""))
+            for symbol in symbols:
+                company = names.get(symbol, "")
+                match_reason = (
+                    "EXACT_OFFICIAL_SYMBOL_FIELD"
+                    if _item_has_exact_symbol(item, symbol)
+                    else _issuer_match_reason(symbol, match_text, company)
+                )
+                if not match_reason:
+                    continue
+                issuer_matches += 1
+                print(f"[NEWS-DIAG] OFFICIAL_ISSUER_MATCH feed={feed_name!r} symbol={symbol} reason={match_reason} headline={title[:180]!r}")
+                rows.append({
+                    "TckrSymb": symbol,
+                    "PublishedAt": stamp.isoformat() if stamp else "",
+                    "Headline": title or description,
+                    "Source": "NSE India",
+                    "SourceType": "primary",
+                    "URL": link or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+                    "Impact": _impact(title + " " + description),
+                    "EventID": "",
+                    "SourceDomain": _source_domain(feed_url) or "archives.nseindia.com",
+                })
+        print(
+            f"[NEWS-DIAG] OFFICIAL_FEED_SUMMARY feed={feed_name!r} items={feed_items} "
+            f"date_valid={date_valid} date_missing={date_missing} before_cutoff={before_cutoff} "
+            f"after_window={after_window} date_rejected_or_missing={date_rejected} issuer_matches={issuer_matches}"
+        )
+        official_window_records += date_valid
+        if date_valid == 0:
+            print(f"[NEWS-DIAG] OFFICIAL_DATE_ZERO_SAMPLES feed={feed_name!r} samples={timestamp_samples!r}")
+        if issuer_matches == 0 and in_window_samples:
+            print(f"[NEWS-DIAG] OFFICIAL_ZERO_MATCH_SAMPLES feed={feed_name!r} samples={in_window_samples!r}")
+
+    # The public RSS feeds are global and can omit issuer-specific filings.
+    # Query NSE's issuer/date-filtered official announcements endpoint for every
+    # candidate. The normal News/Catalyst rows are still restricted to the exact
+    # five-calendar-day window; a separate 90-day official announcement lookback
+    # is used only to discover explicitly dated future corporate events.
+    api_start_date = (pd.Timestamp(window_end_ist_date) - pd.Timedelta(days=90)).date()
+    api_end_date = window_end_ist_date
+    api_coverage: dict[str, bool] = {}
+    upcoming_event_rows: list[dict[str, str]] = []
+    api_session = requests.Session()
+    for api_index, symbol in enumerate(sorted(symbols)):
+        # Query every candidate even when RSS found one filing: RSS is global and
         # can omit additional issuer-specific filings. Reuse one warmed session.
         api_items = _nse_announcement_api_items(
             symbol, api_start_date, api_end_date,
@@ -858,4 +1248,3 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
         )
         print(f"Marathi Telegram digest part {index}/{len(chunks)}: HTTP {response.status_code}")
         response.raise_for_status()
-
