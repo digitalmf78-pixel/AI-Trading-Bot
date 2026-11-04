@@ -814,6 +814,11 @@ def run_eod_layers(
             row.get("NewsStatus"), row.get("RiskRewardStatus"),
             row.get("RiskControlStatus", "WAIT_FOR_DATA"),
         ]
+        # A failed core technical screen is a decisive rejection. Do not let
+        # unrelated missing downstream data mask it as WAIT_FOR_DATA.
+        if str(row.get("CoreTechnicalScreenStatus", "")).strip().upper() == "REJECT":
+            watch_statuses.append("SKIP")
+            continue
         if "WAIT_FOR_DATA" in required_data or pd.isna(score_coverage) or score_coverage < 100:
             watch_statuses.append("WAIT_FOR_DATA")
             continue
