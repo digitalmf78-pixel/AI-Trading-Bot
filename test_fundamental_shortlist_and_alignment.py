@@ -125,6 +125,27 @@ def test_missing_metric_audit_rows_fail_closed():
     assert "NO_AUDIT_ROW" in out.iloc[0]["FundamentalShortlistReason"]
 
 
+def test_duplicate_metric_audit_rows_fail_closed_independent_of_order():
+    verification = pd.DataFrame([
+        {"TckrSymb": "AAA", "MetricName": metric,
+         "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED"}
+        for metric in REQUIRED_METRICS
+    ] + [{
+        "TckrSymb": "AAA", "MetricName": "RevenueGrowthPct",
+        "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED",
+    }, {
+        "TckrSymb": "AAA", "MetricName": "RevenueGrowthPct",
+        "MetricValueVerificationStatus": "PROVIDER_ONLY",
+    }])
+    out = build_fundamental_shortlist(
+        pd.DataFrame([_verified_row()]), "2026-10-22",
+        thresholds=dict(DEFAULT_THRESHOLDS), write=False,
+        metric_verification=verification,
+    )
+    assert out.iloc[0]["FundamentalShortlistStatus"] == "WAIT_FOR_DATA"
+    assert "RevenueGrowthPct=DUPLICATE_VERIFICATION_ROWS" in out.iloc[0]["FundamentalShortlistReason"]
+
+
 def test_unverified_or_missing_data_is_wait_not_pass():
     assert status(MetricPeriodAlignmentStatus="UNVERIFIED")[0] == "WAIT_FOR_DATA"
     assert status(MetricCalculationBasis="LEGACY_CACHE_BASIS_UNKNOWN")[0] == "WAIT_FOR_DATA"
