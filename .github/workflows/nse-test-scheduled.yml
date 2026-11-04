@@ -313,6 +313,7 @@ jobs:
             outputs/xbrl_financial_fact_audit/
             outputs/xbrl_statement_reconciliation/
             data/inputs/*.csv
+            data/inputs/fundamental_thresholds.json
             data/inputs/*.json
             !data/inputs/risk_config.json
             data/reports/
