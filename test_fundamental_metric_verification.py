@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from fundamental_metric_verification import (
+    DIRECT_FACT_TAGS,
     EVIDENCE_COLUMNS,
     build_metric_verification,
     run_audit,
@@ -67,17 +68,26 @@ def _evidence(xml_path: Path, **overrides):
     return pd.DataFrame([row], columns=EVIDENCE_COLUMNS)
 
 
+def _approve_test_cashflow_mapping(monkeypatch):
+    # Exercise the generic evidence validator with a deliberately test-only
+    # mapping. Production has no approved tag until accounting review resolves
+    # the competing NSE cash-flow concepts.
+    monkeypatch.setitem(DIRECT_FACT_TAGS, 'OperatingCashFlowINR',
+                        {'CashFlowsFromUsedInOperatingActivities'})
+
+
 def test_official_filing_metadata_does_not_verify_provider_metric(tmp_path):
     metrics = pd.DataFrame([_metric()])
     detail, _, _ = build_metric_verification(metrics, _filings(), pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
     assert row['FilingMetadataStatus'] == 'OFFICIAL_FILING_METADATA_MATCHED'
-    assert row['MetricValueVerificationStatus'] == 'PROVIDER_ONLY'
+    assert row['MetricValueVerificationStatus'] == 'OFFICIAL_FACT_MAPPING_UNRESOLVED'
     assert 'does not verify metric values' in row['FilingMetadataReason']
 
 
 def test_direct_fact_verification_requires_xml_hash_context_and_value_match(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
     evidence = _evidence(xml_path)
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
@@ -87,6 +97,7 @@ def test_direct_fact_verification_requires_xml_hash_context_and_value_match(tmp_
 
 def test_provider_value_mismatch_cannot_be_verified(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml', value='12.6')
     evidence = _evidence(xml_path, OfficialMetricValue='12.6')
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
@@ -96,6 +107,7 @@ def test_provider_value_mismatch_cannot_be_verified(tmp_path, monkeypatch):
 
 def test_hash_mismatch_cannot_be_verified(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
     evidence = _evidence(xml_path, EvidenceSHA256='0' * 64)
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
@@ -105,6 +117,7 @@ def test_hash_mismatch_cannot_be_verified(tmp_path, monkeypatch):
 
 def test_derived_metric_is_not_promoted_by_direct_fact_rule(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
     evidence = _evidence(xml_path, VerificationMethod='DERIVED_FROM_COMPONENT_FACTS')
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
@@ -114,6 +127,7 @@ def test_derived_metric_is_not_promoted_by_direct_fact_rule(tmp_path, monkeypatc
 
 def test_dimension_conflict_is_not_verified(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
     dim = '<xbrli:scenario><xbrldi:explicitMember dimension="ns:SegmentAxis">ns:RetailMember</xbrldi:explicitMember></xbrli:scenario>'
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml', dimensions=dim)
     evidence = _evidence(xml_path, DimensionsJSON='[]')
@@ -135,7 +149,7 @@ def test_audit_creates_empty_evidence_template_and_does_not_modify_cache(tmp_pat
                                                 tmp_path / 'outputs', repo_root=tmp_path)
     assert len(detail) == 2
     ocf = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
-    assert ocf['MetricValueVerificationStatus'] == 'PROVIDER_ONLY'
+    assert ocf['MetricValueVerificationStatus'] == 'OFFICIAL_FACT_MAPPING_UNRESOLVED'
     assert not summary.empty
     assert not filing_summary.empty
     assert (tmp_path / 'outputs/v8_fundamental_filing_metadata_summary.csv').exists()
@@ -153,6 +167,16 @@ def test_growth_metric_cannot_be_marked_verified_by_single_direct_fact(tmp_path,
     assert row['MetricValueVerificationStatus'] == 'DERIVED_RECONCILIATION_REQUIRED'
 
 
+def test_operating_cashflow_tag_is_unverified_until_official_mapping_is_approved(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
+    evidence = _evidence(xml_path)
+    detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['MetricValueVerificationStatus'] == 'OFFICIAL_FACT_MAPPING_UNRESOLVED'
+    assert 'Competing NSE operating-cash-flow tags' in row['MetricValueVerificationReason']
+
+
 def test_metric_verification_is_blocked_when_exact_filing_metadata_does_not_match(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
@@ -161,3 +185,4 @@ def test_metric_verification_is_blocked_when_exact_filing_metadata_does_not_matc
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), wrong_filings, evidence, tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
     assert row['MetricValueVerificationStatus'] == 'FILING_METADATA_NOT_CONFIRMED'
+
