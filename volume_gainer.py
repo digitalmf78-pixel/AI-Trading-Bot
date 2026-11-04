@@ -249,7 +249,6 @@ def download_bhavcopy(date_obj):
 
 def prepare_equity_data(df, etf_symbols=None):
 
-
     required = [
         "TckrSymb",
         "OpnPric",
@@ -498,7 +497,6 @@ def collect_historical_days(
 # ============================================================
 # NIFTY 50 HISTORY CACHE
 # ============================================================
-
 
 def fetch_nifty_index_history(
     start_date,
@@ -750,7 +748,6 @@ def load_nifty_index_history(latest_date):
 
     combined = combined.dropna(
         subset=["Date", "NiftyClose"]
-
     )
 
     combined = (
@@ -1001,7 +998,6 @@ def calculate_5d_volume(
     result["LowVolumePct5D"] = (
         result["LowVolumeDays5D"]
         / 5
-
     ) * 100
 
     result["VolumePattern5D"] = patterns
@@ -1253,7 +1249,6 @@ def calculate_rsi(
         upper=0
     )
 
-
     avg_gain = gain.ewm(
         alpha=1 / period,
         adjust=False,
@@ -1503,7 +1498,6 @@ def calculate_trend(result, historical):
     EMA44 proximity is informational: NOT_NEAR_EMA44 never rejects a candidate.
     A breakout/breakdown requires an EOD cross plus volume confirmation.
     """
-
     print("\nSTEP 9: Calculating EMA20 / EMA44 + RSI14 + ADX14...")
     print("Indicators run only for the current screened candidates; EMA44 proximity is not a rejection gate.")
 
@@ -1755,7 +1749,6 @@ def calculate_breakout_pullback(
 
         recent_swing_high = high20
 
-
         recent_swing_low = float(
             previous["LwPric"]
             .tail(20)
@@ -2006,7 +1999,6 @@ def calculate_breakout_pullback(
 
             setup_type = "Breakout"
 
-
         elif (
             pullback_status
             == "Strong Pullback"
@@ -2256,7 +2248,6 @@ def calculate_support_resistance(
                 stock_previous_week[
                     "LwPric"
                 ].min()
-
             )
 
         else:
@@ -2507,7 +2498,6 @@ def calculate_support_resistance(
 
         if (
             pd.notna(resistance)
-
             and current_close > resistance
         ):
 
@@ -2758,7 +2748,6 @@ def calculate_relative_strength_nifty(
 
                 stock_return_20d = (
                     (float(current_close) / float(base_close)) - 1
-
                 ) * 100
 
                 relative_strength = (
@@ -3009,7 +2998,6 @@ def display_top20(result):
             f"   20DHigh="
             f"{fmt(row['High20D'])}"
             f" | 50DHigh="
-
             f"{fmt(row['High50D'])}"
             f" | SwingHigh="
             f"{fmt(row['RecentSwingHigh'])}"
@@ -3260,7 +3248,6 @@ def main():
 
     print(
         "NSE MAINBOARD + RVOL > 1.5 + DUAL DELIVERY + LIQUIDITY + FUNDAMENTALS + 5D "
-
         "+ PRICE/VOLUME + CLV "
         "+ TREND "
         "+ BREAKOUT/PULLBACK "
@@ -3511,7 +3498,6 @@ def main():
     # --------------------------------------------------------
     # STEP 7: PRICE + VOLUME — all candidates that passed non-fundamental gates
     # --------------------------------------------------------
-
     result = calculate_price_volume_relationship(result)
 
     # --------------------------------------------------------
@@ -3762,7 +3748,6 @@ def main():
         "=" * 70
     )
 
-
     print(
         f"\nEOD Date: {eod_date}"
     )
@@ -3791,4 +3776,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
