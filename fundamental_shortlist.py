@@ -76,15 +76,8 @@ def load_thresholds(path: str | Path = THRESHOLDS_PATH) -> dict:
     return thresholds
 
 
-def _load_explicit_thresholds(path: str | Path = THRESHOLDS_PATH) -> tuple[dict | None, str]:
-    """Load only a complete, non-null threshold configuration for production."""
-    path = Path(path)
-    if not path.exists() or path.stat().st_size == 0:
-        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:FILE_MISSING_OR_EMPTY"
-    try:
-        configured = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:INVALID_JSON"
+def _validate_explicit_thresholds(configured: object) -> tuple[dict | None, str]:
+    """Accept only a complete, non-null threshold configuration for production."""
     if not isinstance(configured, dict):
         return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:ROOT_MUST_BE_OBJECT"
 
@@ -108,6 +101,18 @@ def _load_explicit_thresholds(path: str | Path = THRESHOLDS_PATH) -> tuple[dict 
     if values["max_data_age_days"] <= 0:
         return None, "FUNDAMENTAL_THRESHOLDS_INVALID:max_data_age_days"
     return {key: values[key] for key in DEFAULT_THRESHOLDS}, ""
+
+
+def _load_explicit_thresholds(path: str | Path = THRESHOLDS_PATH) -> tuple[dict | None, str]:
+    """Load only a complete, non-null threshold configuration for production."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:FILE_MISSING_OR_EMPTY"
+    try:
+        configured = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "FUNDAMENTAL_THRESHOLDS_UNCONFIGURED:INVALID_JSON"
+    return _validate_explicit_thresholds(configured)
 
 
 def _num(value):
@@ -212,7 +217,10 @@ def build_fundamental_shortlist(audit: pd.DataFrame, asof_date, thresholds: dict
     """
     threshold_error = ""
     if thresholds is not None:
-        t = thresholds
+        if require_explicit_thresholds:
+            t, threshold_error = _validate_explicit_thresholds(thresholds)
+        else:
+            t = thresholds
     elif require_explicit_thresholds:
         t, threshold_error = _load_explicit_thresholds(thresholds_path)
     else:
