@@ -257,22 +257,33 @@ def test_telegram_digest_is_compact_and_keeps_core_gate_context():
         "IndependentConfirmationCategories": "PRICE_VOLUME", "NewsPrimarySourceVerified": False,
         "V8Score": 50, "EntryPricePlan": 110.0, "StopLossPlan": 100.0,
         "TargetPricePlan": 125.0, "RiskReward": 1.5, "ChaseStatus": "CLEAR",
-        "EODWatchlistStatus": "WAIT_FOR_DATA", "EODLayerStatus": "WAIT_FOR_DATA",
+        "EODWatchlistStatus": "WATCH", "EODLayerStatus": "PASS",
         "CandidateScreenReasons": "SECTOR_WAIT_FOR_DATA",
     }
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {"NSE": "available", "secondary": "available"})
     text = "\n".join(lines)
-    for expected in ("ABC", "1D +2.50%", "5D Delivery", "72.50%", "Support", "Resistance", "Entry", "Target", "WAIT_FOR_DATA", "Analysis only"):
+    for expected in ("ABC", "WATCH", "1D +2.50%", "5D Delivery", "72.50%", "Support", "Resistance", "Entry", "Target", "Analysis only"):
         assert expected in text, expected
     assert "EMA44" not in text  # Detailed EMA diagnostics remain in the CSV reports.
     assert len(lines) < 16
 
 
+def test_telegram_digest_only_lists_final_watch_stocks():
+    rows = pd.DataFrame([
+        {"TckrSymb": "SKIPME", "EODWatchlistStatus": "SKIP", "CandidateScreenReasons": "TECHNICAL_FAIL"},
+        {"TckrSymb": "WATCHME", "EODWatchlistStatus": "WATCH", "V8Score": 70},
+    ])
+    text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}))
+    assert "Screened: 2 | Final WATCH: 1 | SKIP/FAIL: 1" in text
+    assert "WATCHME" in text
+    assert "SKIPME" not in text
+
+
 def test_telegram_digest_empty_result_is_a_short_no_candidate_message():
     lines = news_catalyst.build_marathi_digest(pd.DataFrame(), "2026-10-13", pd.DataFrame(), {"NSE": "available"})
     text = "\n".join(lines)
-    assert "Candidates: 0" in text
-    assert "सर्व screening gates नंतर review साठी पात्र stock नाही." in text
+    assert "Screened: 0 | Final WATCH: 0" in text
+    assert "आज final Watchlist मध्ये stock नाही." in text
     assert "No automatic order" in text
     assert len(lines) == 4
 
