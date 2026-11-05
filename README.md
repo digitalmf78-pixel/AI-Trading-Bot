@@ -26,8 +26,9 @@ This is a local patch only; it has not been pushed to GitHub and has not been ru
 No changes to Master Specification, RVOL, Delivery A/B, liquidity thresholds, 30-day refresh interval, or downstream trading filters.
 
 
-## Optional Upstox fundamentals fallback
+## Free-source fundamentals policy
 
-Set the repository Actions secret `UPSTOX_ACCESS_TOKEN` to enable the optional provider fallback in the NSE workflow. The scanner uses each candidate ISIN and requests annual consolidated income, balance-sheet, and cash-flow statements from the [Upstox Fundamentals API](https://upstox.com/developer/api-documentation/announcements/company-fundamentals-api/).
-
-The fallback fills only missing Revenue Growth, Profit Growth, and Operating Cash Flow values when all three statement sources report the same annual period. It records per-metric provenance in `ProviderMetricSourcesJSON` and an Upstox status in provider diagnostics. It does not replace existing/manual values, loosen shortlist thresholds, or mark provider data as official XBRL evidence. The NSE XBRL audit remains the verification gate. If the token is absent or rejected, the run continues and records the reason without logging the token.
+- Official NSE integrated financial filings and XBRL are the primary verification source. A value is treated as officially verified only after it is reconciled with a dated filing and matching period/basis.
+- Yahoo Finance accessed through `yfinance` is a secondary, no-token provider for candidate metrics and valuation snapshots. It can be delayed, incomplete, revised, or inconsistent; provider values remain unverified until the NSE filing audit confirms them.
+- No paid provider token or paid data API is required by the scanner. Missing, stale, or conflicting figures remain visible as `WAIT_FOR_DATA` or a mismatch instead of being guessed or promoted.
+- No shortlist threshold is weakened to compensate for missing source data. Review NSE XBRL and provider diagnostics when coverage is incomplete.
