@@ -8,6 +8,7 @@ from fundamental_metric_verification import (
     DIRECT_FACT_TAGS,
     EVIDENCE_COLUMNS,
     build_metric_verification,
+    _generated_ocf_evidence,
     run_audit,
 )
 
@@ -192,6 +193,41 @@ def test_operating_cashflow_requires_statement_crossfoot(tmp_path, monkeypatch):
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
     assert row['MetricValueVerificationStatus'] == 'XBRL_CASHFLOW_CROSSFOOT_FAILED'
     assert 'does not reconcile' in row['MetricValueVerificationReason']
+
+
+def test_generated_ocf_evidence_uses_official_filing_and_xml_crossfoot(tmp_path, monkeypatch):
+    import nse_xbrl_fetch
+    source = _xml(tmp_path / 'source.xml')
+    fetches = []
+
+    def fake_fetch(url, destination):
+        assert url == URL
+        fetches.append(url)
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+        return destination
+
+    monkeypatch.setattr(nse_xbrl_fetch, 'fetch_official_xbrl_xml', fake_fetch)
+    metrics = pd.DataFrame([_metric()])
+    generated, diagnostics = _generated_ocf_evidence(
+        metrics, _filings(), pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path, {'AAA'})
+    assert len(generated) == 1
+    assert generated.loc[0, 'XbrlFactTag'] == 'CashFlowsFromUsedInOperatingActivities'
+    assert generated.loc[0, 'VerificationMethod'] == 'DIRECT_FACT_MATCH'
+    assert generated.loc[0, 'EvidenceSHA256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert diagnostics.empty
+    assert fetches == [URL]
+
+
+def test_generated_ocf_evidence_does_not_touch_manual_ledger_or_fetch_unrequested_symbols(tmp_path, monkeypatch):
+    import nse_xbrl_fetch
+    monkeypatch.setattr(nse_xbrl_fetch, 'fetch_official_xbrl_xml',
+                        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('unexpected fetch')))
+    generated, diagnostics = _generated_ocf_evidence(
+        pd.DataFrame([_metric()]), _filings(), pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path, {'BBB'})
+    assert generated.empty
+    assert diagnostics.empty
 
 
 def test_metric_verification_is_blocked_when_exact_filing_metadata_does_not_match(tmp_path, monkeypatch):
