@@ -1117,17 +1117,53 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
     pd.DataFrame(report_rows).to_csv("outputs/v8_catalyst_rvol_gt_1_5.csv", index=False)
 
 
-def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str]) -> list[str]:
+def _observation_digest_lines(report: pd.DataFrame | None) -> list[str]:
+    """Format every current scanner observation for Telegram."""
+    if report is None or report.empty or "TckrSymb" not in report.columns:
+        return ["", "👀 Scanner observation: आज Delivery A/B में कोई stock नहीं."]
+    labels = {
+        "P1": "अधिक प्राथमिकता: verified मजबूत fundamentals + अपेक्षाकृत सस्ता valuation",
+        "P2": "दूसरी प्राथमिकता: verified मजबूत fundamentals + उचित valuation",
+        "P3": "निगरानी: मजबूत delivery; fundamental/valuation verification बाकी",
+        "P4": "कम प्राथमिकता: केवल Category A या verification/assessment कमजोर",
+    }
+    lines = [
+        "",
+        f"👀 OBSERVATION ONLY • कुल scanner stocks: {len(report)}",
+        "P1/P2 केवल verified fundamental और peer valuation पर; यह buy signal नहीं है.",
+        "लगातार sessions = stock कितने EOD scans में रोज़ Delivery A/B में आया:",
+    ]
+    for tier in ("P1", "P2", "P3", "P4"):
+        group = report[report.get("ObservationPriority", pd.Series("", index=report.index)).astype(str).eq(tier)]
+        lines.append(f"{tier} ({len(group)}): {labels[tier]}")
+        if group.empty:
+            lines.append("  कोई stock नहीं")
+            continue
+        items = []
+        for _, row in group.iterrows():
+            symbol = str(row.get("TckrSymb", "")).strip().upper()
+            sessions = pd.to_numeric(pd.Series([row.get("ConsecutiveAorBScanSessions")]), errors="coerce").iloc[0]
+            session_text = str(int(sessions)) if pd.notna(sessions) else "?"
+            items.append(f"{symbol} ({session_text} sessions)")
+        for offset in range(0, len(items), 8):
+            lines.append("  " + ", ".join(items[offset:offset + 8]))
+    lines.append("ये सिर्फ review/observation के लिए हैं; final V8 checks और आपका manual decision जरूरी है. कोई automatic order नहीं.")
+    return lines
+
+
+def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], observation_report: pd.DataFrame | None = None) -> list[str]:
     """Build a short Marathi/English Telegram summary of the final candidates."""
     scan_mode = str(os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
     heading = "🌅 NSE V8 • PRE-MARKET" if scan_mode == "PREMARKET" else "📊 NSE V8 • EOD"
     if result.empty:
-        return [
+        lines = [
             f"{heading} | {eod_date}",
             "Screened: 0 | Final WATCH: 0",
             "आज final Watchlist मध्ये stock नाही.",
             "Analysis only • No automatic order."
         ]
+        lines.extend(_observation_digest_lines(observation_report))
+        return lines
 
     screened = result.copy()
     status_col = screened.get("EODWatchlistStatus", pd.Series("WAIT_FOR_DATA", index=screened.index)).astype(str).str.upper()
@@ -1143,12 +1179,14 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
     if wait_count or skip_count:
         count_line += f" | WAIT: {wait_count} | SKIP/FAIL: {skip_count}"
     if candidates.empty:
-        return [
+        lines = [
             f"{heading} | {eod_date}",
             count_line,
             "सर्व V8 gates नंतर final WATCH stock नाही.",
             "Analysis only • No automatic order."
         ]
+        lines.extend(_observation_digest_lines(observation_report))
+        return lines
 
     def val(row, key, digits=2, suffix=""):
         value = pd.to_numeric(pd.Series([row.get(key)]), errors="coerce").iloc[0]
@@ -1194,16 +1232,17 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
         lines.append("")
 
     lines.append("Missing values stay NA/WAIT. Analysis only • No automatic order.")
+    lines.extend(_observation_digest_lines(observation_report))
     return lines
 
-def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None) -> None:
+def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None, observation_report: pd.DataFrame | None = None) -> None:
     """Send the complete scan digest and verify Telegram's acknowledgement."""
     import time
 
     if not token or not chat_id:
         raise RuntimeError("Telegram enabled but TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is missing; configure both GitHub Actions secrets.")
 
-    lines = build_marathi_digest(result, eod_date, news, feed_status)
+    lines = build_marathi_digest(result, eod_date, news, feed_status, observation_report)
     chunks: list[str] = []
     current = ""
     for line in lines:
