@@ -345,13 +345,8 @@ def prepare_equity_data(df, etf_symbols=None):
         keep="first"
     )
 
-    data["PriceChangePct"] = (
-        (
-            data["ClsPric"]
-            - data["PrvsClsgPric"]
-        )
-        / data["PrvsClsgPric"]
-    ) * 100
+    previous_close = data["PrvsClsgPric"].where(data["PrvsClsgPric"] != 0)
+    data["PriceChangePct"] = ((data["ClsPric"] - previous_close) / previous_close) * 100
 
     return data
 

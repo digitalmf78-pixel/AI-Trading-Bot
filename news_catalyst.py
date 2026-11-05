@@ -1117,125 +1117,73 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
     pd.DataFrame(report_rows).to_csv("outputs/v8_catalyst_rvol_gt_1_5.csv", index=False)
 
 
-def _observation_digest_lines(report: pd.DataFrame | None) -> list[str]:
-    """Format every current scanner observation for Telegram."""
+def _telegram_observation_rows(report: pd.DataFrame | None,
+                               result: pd.DataFrame | None,
+                               limit: int = 16) -> pd.DataFrame:
+    """Keep only the best-ranked names that reached the liquidity/technical pipeline."""
     if report is None or report.empty or "TckrSymb" not in report.columns:
-        return ["", "👀 Scanner observation: आज Delivery A/B में कोई stock नहीं."]
-    labels = {
-        "P1": "अधिक प्राथमिकता: verified मजबूत fundamentals + अपेक्षाकृत सस्ता valuation",
-        "P2": "दूसरी प्राथमिकता: verified मजबूत fundamentals + उचित valuation",
-        "P3": "निगरानी: मजबूत delivery; fundamental/valuation verification बाकी",
-        "P4": "कम प्राथमिकता: केवल Category A या verification/assessment कमजोर",
-    }
+        return pd.DataFrame()
+    rows = report.copy()
+    rows["TckrSymb"] = rows["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
+    rows = rows[rows["TckrSymb"].ne("")].drop_duplicates("TckrSymb", keep="first")
+    # `result` is the post-liquidity frame passed through technical/news layers.
+    # Intersecting with it prevents the early A/B observation report from
+    # advertising names that did not qualify for the downstream gates.
+    if result is not None and not result.empty and "TckrSymb" in result.columns:
+        downstream = result.copy()
+        downstream["TckrSymb"] = downstream["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
+        downstream = downstream.drop_duplicates("TckrSymb", keep="last").set_index("TckrSymb")
+        rows = rows[rows["TckrSymb"].isin(downstream.index)].copy()
+        rows = rows.merge(downstream, how="left", left_on="TckrSymb", right_index=True,
+                          suffixes=("", "_pipeline"), sort=False)
+        liquidity_col = next((c for c in ("LiquidityFilterStatus", "LiquidityStatus") if c in rows.columns), None)
+        if liquidity_col:
+            rows = rows[rows[liquidity_col].fillna("WAIT_FOR_DATA").astype(str).str.upper().eq("PASS")]
+    else:
+        rows = rows.iloc[0:0].copy()
+    return rows.head(max(0, int(limit))).reset_index(drop=True)
+
+
+def _observation_digest_lines(report: pd.DataFrame | None,
+                              result: pd.DataFrame | None = None) -> list[str]:
+    """Format at most 16 liquidity-qualified P1-P4 names with their current gate states."""
+    selected = _telegram_observation_rows(report, result, limit=16)
+    if selected.empty:
+        return ["", "🔎 Liquidity + Fundamental filter नंतर Telegram साठी stock उपलब्ध नाही.",
+                "Missing किंवा unverified माहिती WAIT_FOR_DATA म्हणूनच दाखवली आहे."]
     lines = [
         "",
-        f"👀 OBSERVATION ONLY • कुल scanner stocks: {len(report)}",
-        "P1/P2 केवल verified fundamental और peer valuation पर; यह buy signal नहीं है.",
-        "लगातार sessions = stock कितने EOD scans में रोज़ Delivery A/B में आया:",
+        f"🔎 FILTERED OBSERVATIONS • दाखवलेले {len(selected)}/16",
+        "क्रम: P1 → P2 → P3 → P4. P1/P2 साठी official metric verification आवश्यक.",
+        "प्रत्येक stock ची सध्याची स्थिती खाली दिली आहे; WAIT म्हणजे तपासणी बाकी.",
     ]
-    for tier in ("P1", "P2", "P3", "P4"):
-        group = report[report.get("ObservationPriority", pd.Series("", index=report.index)).astype(str).eq(tier)]
-        lines.append(f"{tier} ({len(group)}): {labels[tier]}")
-        if group.empty:
-            lines.append("  कोई stock नहीं")
-            continue
-        items = []
-        for _, row in group.iterrows():
-            symbol = str(row.get("TckrSymb", "")).strip().upper()
-            sessions = pd.to_numeric(pd.Series([row.get("ConsecutiveAorBScanSessions")]), errors="coerce").iloc[0]
-            session_text = str(int(sessions)) if pd.notna(sessions) else "?"
-            items.append(f"{symbol} ({session_text} sessions)")
-        for offset in range(0, len(items), 8):
-            lines.append("  " + ", ".join(items[offset:offset + 8]))
-    lines.append("ये सिर्फ review/observation के लिए हैं; final V8 checks और आपका manual decision जरूरी है. कोई automatic order नहीं.")
+    for number, (_, row) in enumerate(selected.iterrows(), start=1):
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        tier = str(row.get("ObservationPriority", "WAIT_FOR_DATA"))
+        fund = row.get("FundamentalShortlistStatus", row.get("FundamentalShortlistStatus_pipeline", "WAIT_FOR_DATA"))
+        liquidity = row.get("LiquidityFilterStatus", row.get("LiquidityFilterStatus_pipeline", "PASS"))
+        technical = row.get("CoreTechnicalScreenStatus", row.get("CandidateScreenStatus", row.get("EODWatchlistStatus", "WAIT_FOR_DATA")))
+        news = row.get("NewsEvidenceStatus", "WAIT_FOR_DATA")
+        final = row.get("EODWatchlistStatus", "WAIT_FOR_DATA")
+        lines.append(f"{number}. {symbol} • {tier} | Fundamental {fund} | Liquidity {liquidity}")
+        lines.append(f"   Technical {technical} | News {news} | Final {final}")
+    lines.append("हे निरीक्षणासाठीचे निकाल आहेत; कोणताही automatic order किंवा BUY recommendation नाही.")
     return lines
 
 
 def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], observation_report: pd.DataFrame | None = None) -> list[str]:
-    """Build a short Marathi/English Telegram summary of the final candidates."""
+    """Build a capped Telegram digest with current statuses for filtered names."""
     scan_mode = str(os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
     heading = "🌅 NSE V8 • PRE-MARKET" if scan_mode == "PREMARKET" else "📊 NSE V8 • EOD"
-    if result.empty:
-        lines = [
-            f"{heading} | {eod_date}",
-            "Screened: 0 | Final WATCH: 0",
-            "आज final Watchlist मध्ये stock नाही.",
-            "Analysis only • No automatic order."
-        ]
-        if observation_report is not None:
-            lines.extend(_observation_digest_lines(observation_report))
-        return lines
-
-    screened = result.copy()
-    status_col = screened.get("EODWatchlistStatus", pd.Series("WAIT_FOR_DATA", index=screened.index)).astype(str).str.upper()
-    candidates = screened.loc[status_col.eq("WATCH")].copy()
-    if "V8Score" in candidates.columns:
-        candidates["V8Score"] = pd.to_numeric(candidates["V8Score"], errors="coerce")
-        candidates = candidates.sort_values("V8Score", ascending=False, na_position="last").head(4)
-
-    status_counts = status_col.value_counts().to_dict()
-    wait_count = sum(count for status, count in status_counts.items() if status.startswith("WAIT"))
-    skip_count = sum(count for status, count in status_counts.items() if status in {"SKIP", "FAIL"} or status.startswith(("REJECT", "FILTERED_OUT")))
-    count_line = f"Screened: {len(screened)} | Final WATCH: {len(candidates)}"
-    if wait_count or skip_count:
-        count_line += f" | WAIT: {wait_count} | SKIP/FAIL: {skip_count}"
-    if candidates.empty:
-        lines = [
-            f"{heading} | {eod_date}",
-            count_line,
-            "सर्व V8 gates नंतर final WATCH stock नाही.",
-            "Analysis only • No automatic order."
-        ]
-        if observation_report is not None:
-            lines.extend(_observation_digest_lines(observation_report))
-        return lines
-
-    def val(row, key, digits=2, suffix=""):
-        value = pd.to_numeric(pd.Series([row.get(key)]), errors="coerce").iloc[0]
-        return f"{value:+.{digits}f}{suffix}" if pd.notna(value) and suffix == "%" else f"{value:.{digits}f}{suffix}" if pd.notna(value) else "NA / उपलब्ध नाही"
-
+    status_col = result.get("EODWatchlistStatus", pd.Series("WAIT_FOR_DATA", index=result.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper() if isinstance(result, pd.DataFrame) else pd.Series(dtype=str)
+    counts = status_col.value_counts().to_dict()
+    waiting = sum(v for k, v in counts.items() if k.startswith("WAIT"))
+    lines = [f"{heading} • {eod_date}",
+             f"Liquidity/Fundamental pipeline rows: {len(result)} | Final WATCH: {counts.get('WATCH', 0)} | WAIT: {waiting}"]
     if scan_mode == "PREMARKET":
-        mode_note = "News refresh only • Technical data is from prior EOD."
-    else:
-        mode_note = "Analysis only • No automatic order."
-
-    lines = [f"{heading} • {eod_date}", count_line, mode_note, ""]
-    for number, (_, row) in enumerate(candidates.iterrows(), start=1):
-        symbol = str(row.get("TckrSymb", "UNKNOWN")).strip().upper()
-        status = row.get("EODWatchlistStatus", "WAIT_FOR_DATA")
-        lines.append(f"{number}. {symbol} — {status} | V8 {val(row, 'V8Score', 0)}/100")
-        lines.append(f"Close ₹{val(row, 'ClsPric')} | 1D {val(row, 'PriceChangePct', 2, '%')} | RVOL {val(row, 'RVOL')}x")
-        min_delivery = val(row, "DeliveryMin5D", 2, "%")
-        avg_delivery = val(row, "AvgDelivery5D", 2, "%")
-        delivery_status = row.get("DeliveryFilterStatus", row.get("DeliveryStatus", "WAIT_FOR_DATA"))
-        lines.append(f"5D Delivery: avg {avg_delivery}, min {min_delivery} | {delivery_status}")
-        lines.append(f"Setup: {row.get('SetupType', 'NA')} | Trend: {row.get('TrendClassification', 'WAIT_FOR_DATA')}")
-        lines.append(f"Support ₹{val(row, 'SRSupport')} | Resistance ₹{val(row, 'SRResistance')}")
-
-        entry_low = val(row, "EntryZoneLow")
-        entry_high = val(row, "EntryZoneHigh")
-        entry = f"₹{entry_low}–₹{entry_high}" if entry_low != "NA / उपलब्ध नाही" and entry_high != "NA / उपलब्ध नाही" else f"₹{val(row, 'EntryPricePlan')}"
-        target = row.get("Target1PricePlan", row.get("TargetPricePlan"))
-        if pd.isna(pd.to_numeric(pd.Series([target]), errors="coerce").iloc[0]):
-            target = row.get("TargetPricePlan")
-        lines.append(f"Entry {entry} | Stop ₹{val(row, 'StopLossPlan')} | Target ₹{val({'target': target}, 'target')} | R:R {val(row, 'RiskReward')} | Chase {row.get('ChaseStatus', 'WAIT_FOR_DATA')}")
-
-        matched = news[news["TckrSymb"].astype(str).str.upper() == symbol] if news is not None and not news.empty and "TckrSymb" in news.columns else pd.DataFrame()
-        official = matched[matched["SourceType"].astype(str).str.lower().isin({"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"})] if not matched.empty and "SourceType" in matched.columns else pd.DataFrame()
-        secondary = matched[~matched.index.isin(official.index)] if not matched.empty else pd.DataFrame()
-        chosen = official.iloc[0] if not official.empty else secondary.iloc[0] if not secondary.empty else None
-        if chosen is None:
-            lines.append(f"News: {row.get('NewsEvidenceStatus', 'NO_DATA')} — matching source unavailable.")
-        else:
-            headline = str(chosen.get("Headline", ""))
-            source_type = str(chosen.get("SourceType", "")).lower()
-            source_label = "official" if source_type in {"primary", "official", "exchange", "company", "regulator", "company_verified", "issuer_verified"} else "secondary / not officially confirmed"
-            lines.append(f"News ({source_label}): {headline[:120]}")
-        lines.append("")
-
-    lines.append("Missing values stay NA/WAIT. Analysis only • No automatic order.")
-    if observation_report is not None:
-        lines.extend(_observation_digest_lines(observation_report))
+        lines.append("News refresh only • Technical status मागील EOD scan मधील आहे.")
+    lines.extend(_observation_digest_lines(observation_report, result))
+    lines.append("रिकामी/unverified माहिती WAIT_FOR_DATA राहते. हा अहवाल BUY शिफारस नाही; automatic order नाही.")
     return lines
 
 def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None, observation_report: pd.DataFrame | None = None) -> None:

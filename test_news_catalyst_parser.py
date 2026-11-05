@@ -2,6 +2,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 import news_catalyst as news
+import pandas as pd
 
 
 class FakeResponse:
@@ -52,3 +53,38 @@ def test_namespace_declared_on_feed_root_is_supported_during_recovery(monkeypatc
     assert len(items) == 1
     assert items.partial is True
     assert items[0].find("{http://purl.org/dc/elements/1.1/}date") is not None
+
+
+def test_telegram_observation_is_capped_at_16_and_reports_gate_statuses():
+    report = pd.DataFrame({
+        "TckrSymb": [f"STK{i:02d}" for i in range(20)],
+        "ObservationPriority": ["P1"] * 20,
+        "FundamentalShortlistStatus": ["PASS"] * 20,
+    })
+    result = pd.DataFrame({
+        "TckrSymb": [f"STK{i:02d}" for i in range(20)],
+        "LiquidityFilterStatus": ["PASS"] * 20,
+        "CoreTechnicalScreenStatus": ["WAIT_FOR_DATA"] * 20,
+        "NewsEvidenceStatus": ["NO_DATA"] * 20,
+        "EODWatchlistStatus": ["WAIT_FOR_DATA"] * 20,
+    })
+
+    selected = news._telegram_observation_rows(report, result)
+    message = "\n".join(news._observation_digest_lines(report, result))
+
+    assert len(selected) == 16
+    assert selected["TckrSymb"].tolist() == [f"STK{i:02d}" for i in range(16)]
+    assert "16/16" in message
+    assert "Technical WAIT_FOR_DATA" in message
+    assert "News NO_DATA" in message
+    assert "STK15" in message
+    assert "STK16" not in message
+
+
+def test_telegram_observation_excludes_names_that_failed_liquidity():
+    report = pd.DataFrame({"TckrSymb": ["AAA", "BBB"], "ObservationPriority": ["P1", "P2"]})
+    result = pd.DataFrame({"TckrSymb": ["AAA", "BBB"], "LiquidityFilterStatus": ["PASS", "WAIT_FOR_DATA"]})
+
+    selected = news._telegram_observation_rows(report, result)
+
+    assert selected["TckrSymb"].tolist() == ["AAA"]
