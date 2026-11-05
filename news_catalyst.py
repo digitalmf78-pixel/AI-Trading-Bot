@@ -1190,8 +1190,64 @@ def _upcoming_event_summaries() -> dict[str, str]:
     return {symbol: " / ".join(items) for symbol, items in summaries.items()}
 
 
+def _telegram_news_lines(news: pd.DataFrame | None, symbol: str, limit: int = 2) -> list[str]:
+    """Return a small, source-labelled headline sentiment digest for one symbol."""
+    if news is None or news.empty or not {"TckrSymb", "Headline"}.issubset(news.columns):
+        return ["   📰 News: no matched headline in this scan window."]
+    matched = news[
+        news["TckrSymb"].fillna("").astype(str).str.strip().str.upper().eq(symbol.upper())
+    ].copy()
+    if matched.empty:
+        return ["   📰 News: no matched headline in this scan window."]
+
+    matched["_source_priority"] = matched.get(
+        "SourceType", pd.Series("", index=matched.index)
+    ).fillna("").astype(str).str.lower().map(
+        {"primary": 0, "official": 0, "exchange": 0, "company": 0, "regulator": 0, "secondary": 1}
+    ).fillna(2)
+    matched["_published_sort"] = pd.to_datetime(
+        matched.get("PublishedAt", pd.Series("", index=matched.index)),
+        errors="coerce", utc=True,
+    )
+    matched = matched.sort_values(
+        ["_source_priority", "_published_sort"], ascending=[True, False],
+        na_position="last", kind="stable",
+    )
+    selected = []
+    seen = set()
+    for _, row in matched.iterrows():
+        headline = _clean(str(row.get("Headline", "")))
+        url = str(row.get("URL", "")).strip()
+        key = (headline.casefold(), url.casefold())
+        if not headline or key in seen:
+            continue
+        seen.add(key)
+        selected.append(row)
+        if len(selected) >= max(1, int(limit)):
+            break
+
+    lines = []
+    for row in selected:
+        impact = str(row.get("Impact", "")).strip().lower()
+        if impact == "positive":
+            sentiment = "🟢 POSITIVE / सकारात्मक"
+        elif impact == "negative":
+            sentiment = "🔴 NEGATIVE / नकारात्मक"
+        else:
+            sentiment = "⚪ UNCLEAR / स्पष्ट संकेत नाही"
+        source_type = str(row.get("SourceType", "news")).strip().upper()
+        source = _clean(str(row.get("Source", ""))) or source_type
+        headline = _clean(str(row.get("Headline", "")))[:180]
+        lines.append(f"   📰 {sentiment} • {source}: {headline}")
+        url = str(row.get("URL", "")).strip()
+        if url and url.lower() not in {"nan", "none"}:
+            lines.append(f"      Link: {url[:1200]}")
+    return lines or ["   📰 News: no matched headline in this scan window."]
+
+
 def _observation_digest_lines(report: pd.DataFrame | None,
-                              result: pd.DataFrame | None = None) -> list[str]:
+                              result: pd.DataFrame | None = None,
+                              news: pd.DataFrame | None = None) -> list[str]:
     """Format every liquidity-qualified stock with its score and current checks."""
     selected = _telegram_observation_rows(report, result, limit=None)
     if selected.empty:
@@ -1238,6 +1294,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"   Fundamental {score} | Source {source}")
         lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news} | Final {final}")
+        lines.extend(_telegram_news_lines(news, symbol, limit=2))
         lines.append(f"   पुढील NSE result/announcement: {event}")
     lines.append("ही निरीक्षण यादी आहे; BUY शिफारस किंवा automatic order नाही.")
     return lines
@@ -1254,7 +1311,8 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
              f"Liquidity/Fundamental pipeline rows: {len(result)} | Final WATCH: {counts.get('WATCH', 0)} | WAIT: {waiting}"]
     if scan_mode == "PREMARKET":
         lines.append("News refresh only • Technical status मागील EOD scan मधील आहे.")
-    lines.extend(_observation_digest_lines(observation_report, result))
+    lines.extend(_observation_digest_lines(observation_report, result, news))
+    lines.append("News sentiment headline/description वर आधारित आहे; पूर्ण बातमी वाचल्याची किंवा स्वतंत्र पुष्टीची हमी नाही.")
     lines.append("रिकामी/unverified माहिती WAIT_FOR_DATA राहते. हा अहवाल BUY शिफारस नाही; automatic order नाही.")
     return lines
 
