@@ -25,7 +25,7 @@ def test_average_daily_traded_value_below_two_crore_rejects():
 
 
 
-def test_average_between_two_and_two_crore_rejects_per_matrix():
+def test_average_between_two_and_five_crore_passes_at_two_crore_threshold():
     candidates = pd.DataFrame([{"TckrSymb": "ABC"}])
     qualified, audit = apply_liquidity_filter(candidates, history_for([30_000_000] * 20))
     assert len(qualified) == 1

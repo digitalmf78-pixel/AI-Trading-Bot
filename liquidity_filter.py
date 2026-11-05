@@ -13,7 +13,7 @@ from typing import Iterable
 
 import pandas as pd
 
-MINIMUM_AVG_DAILY_TRADED_VALUE_INR = 50_000_000.0  # ₹2 crore per the 21 Oct implementation matrix
+MINIMUM_AVG_DAILY_TRADED_VALUE_INR = 20_000_000.0  # User-approved ₹2 crore threshold
 REQUIRED_LIQUIDITY_SESSIONS = 20
 VALUE_COLUMN = "TtlTrfVal"
 
