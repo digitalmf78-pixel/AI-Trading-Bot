@@ -116,4 +116,5 @@ def test_fundamental_score_fields_are_written_by_filter_source():
     source = Path("fundamental_filter.py").read_text(encoding="utf-8")
     assert "FundamentalScore" in source
     assert "FundamentalRank" in source
-    assert "Equal-weight percentile mean" in source
+    assert "FundamentalScoreMethod" in source
+    assert "informational only" in source
