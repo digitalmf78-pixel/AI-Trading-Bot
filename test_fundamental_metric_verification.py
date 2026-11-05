@@ -36,8 +36,8 @@ def _filings():
     }])
 
 
-def _xml(path: Path, value='12.5', dimensions=''):
-    cash_change = float(value) + 7.0
+def _xml(path: Path, value='12.5', dimensions='', cash_change=None):
+    cash_change = float(value) + 7.0 if cash_change is None else float(cash_change)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
 <xbrl xmlns="{NS}" xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:xbrldi="http://xbrl.org/2006/xbrldi">
@@ -185,9 +185,7 @@ def test_operating_cashflow_tag_is_approved_only_with_crossfoot_evidence(tmp_pat
 def test_operating_cashflow_requires_statement_crossfoot(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _approve_test_cashflow_mapping(monkeypatch)
-    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
-    xml_path.write_text(xml_path.read_text(encoding='utf-8').replace(
-        '>19.5<', '>20.5<'), encoding='utf-8')
+    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml', cash_change=22.5)
     evidence = _evidence(xml_path)
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]

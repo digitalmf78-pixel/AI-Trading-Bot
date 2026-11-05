@@ -35,7 +35,7 @@ def test_dual_delivery_categories_are_written_separately():
 def test_fundamental_hard_gate_follows_full_collection_and_metric_verification():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     collection = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
-    audit = source.index("run_fundamental_metric_audit()", collection)
+    audit = source.index("run_fundamental_metric_audit(", collection)
     assessment = source.index("metric_verification=metric_verification", audit)
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER", assessment)
     block = source[assessment:liquidity]
@@ -108,7 +108,7 @@ def test_fundamental_gate_waits_for_verified_metrics_and_pass_status():
     block = source[source.index("# Preserve all A/B fundamentals in the collection reports."):liquidity]
     assert collection < assessment < liquidity
     assert 'current = fundamental_audit.loc[fundamental_pass_mask].copy()' in block
-    assert "run_fundamental_metric_audit()" in source
+    assert "run_fundamental_metric_audit(symbols=evidence_symbols)" in source
     assert "require_explicit_thresholds=True" in source
     assert 'fallback_pass_mask' in source
     assert 'current = fundamental_audit.loc[fallback_pass_mask].copy()' in source
