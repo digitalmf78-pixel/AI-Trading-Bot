@@ -74,10 +74,16 @@ def _get_official_symbols(name: str, url: str, session: requests.Session | None 
             fetched_at = int(timestamp_path.read_text(encoding="utf-8").strip()) if timestamp_path.exists() else 0
             age = max(0, int(time.time()) - fetched_at) if fetched_at else None
             age_text = f"age_seconds={age}" if age is not None else "cache_age=unknown"
-            print(f"[MAIN_BOARD] {name} live fetch failed; using validated cache ({age_text}): {fetch_error}")
+            if age is None:
+                raise ValueError("cache fetch timestamp is missing or invalid")
+            if age > CACHE_MAX_AGE_SECONDS:
+                raise ValueError(
+                    f"cache is stale ({age_text}; max_age_seconds={CACHE_MAX_AGE_SECONDS})"
+                )
+            print(f"[MAIN_BOARD] {name} live fetch failed; using fresh validated cache ({age_text}): {fetch_error}")
             return symbols, "OFFICIAL_CACHED"
         except Exception as cache_exc:
-            raise RuntimeError(f"Official NSE {name} list unavailable and cache invalid: live={fetch_error}; cache={cache_exc}") from cache_exc
+            raise RuntimeError(f"Official NSE {name} list unavailable and cached list cannot be used: live={fetch_error}; cache={cache_exc}") from cache_exc
     raise RuntimeError(f"Official NSE {name} list unavailable and no validated cache exists: {fetch_error}") from fetch_error
 
 
