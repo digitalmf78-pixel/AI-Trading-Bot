@@ -412,10 +412,18 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
         basis = _clean(metric.get('MetricCalculationBasis')).upper()
         current_url = _clean(metric.get('OfficialFilingURL'))
         current_pub = _clean(metric.get('PublicationDate'))[:10]
-        if basis != 'ANNUAL_ALIGNED_STATEMENTS' or not period.endswith('-03-31'):
+        if basis != 'ANNUAL_ALIGNED_STATEMENTS':
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'ANNUAL_BASIS_REQUIRED', 'Reason': f'Provider calculation basis is {basis or "empty"}'})
+            continue
+        if not period.endswith('-03-31'):
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'ANNUAL_PERIOD_UNSUPPORTED', 'Reason': f'Financial period is {period}; only March year-end is mapped'})
             continue
         current_status, current_reason = _filing_metadata_status(metric, filings)
         if current_status != 'OFFICIAL_FILING_METADATA_MATCHED':
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': current_status, 'Reason': current_reason})
             continue
         current_row = filings[
             filings['TckrSymb'].astype(str).str.upper().eq(symbol)
@@ -429,6 +437,8 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
             continue
         previous_period = f'{int(period[:4]) - 1}-03-31'
         if not {'TckrSymb', 'FinancialPeriodEnd', 'PublicationDateStatus', 'OfficialFilingURL', 'FilingDescription'}.issubset(filings.columns):
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'FILING_REGISTER_SCHEMA_INVALID', 'Reason': 'Prior filing lookup columns missing'})
             continue
         prior_rows = filings[
             filings['TckrSymb'].astype(str).str.upper().eq(symbol)
@@ -885,6 +895,12 @@ def run_audit(metrics_path: str | Path = METRICS_PATH,
     filing_summary.to_csv(output_dir / FILING_SUMMARY_PATH.name, index=False)
     generated.to_csv(output_dir / 'v8_fundamental_generated_evidence.csv', index=False)
     diagnostics.to_csv(output_dir / 'v8_fundamental_evidence_generation_diagnostics.csv', index=False)
+    if not generated.empty:
+        print('GENERATED_EVIDENCE_METHOD_SUMMARY')
+        print(generated.groupby(['MetricName', 'VerificationMethod'], dropna=False).size().rename('Rows').to_string())
+    if not diagnostics.empty:
+        print('EVIDENCE_GENERATION_DIAGNOSTIC_SUMMARY')
+        print(diagnostics.groupby(['MetricName', 'Status'], dropna=False).size().rename('Rows').to_string())
     return detail, summary, filing_summary
 
 
