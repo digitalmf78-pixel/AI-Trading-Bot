@@ -761,65 +761,6 @@ def _atomic_write_csv(frame: pd.DataFrame, path: str | Path) -> None:
 
 
 def collect_missing_fundamentals(
-    requested = ("RevenueGrowthPct", "ProfitGrowthPct", "OperatingCashFlowINR")
-    missing = [name for name in requested if not _present(fetched.get(name))]
-    if not missing:
-        fetched["UpstoxStatus"] = "SKIPPED_NOT_NEEDED"
-        fetched["UpstoxReason"] = "Yahoo/provider already supplied the mapped metrics"
-        diagnostic["UpstoxStatus"] = fetched["UpstoxStatus"]
-        return
-    from upstox_fundamentals import fetch_upstox_fundamentals
-    result = fetch_upstox_fundamentals(isin)
-    for name in ("UpstoxStatus", "UpstoxReason", "UpstoxRetrievedAtUTC", "UpstoxReportingBasis", "UpstoxUnits", "UpstoxProviderSourceURL"):
-        if _present(result.get(name)):
-            fetched[name] = result[name]
-            diagnostic[name] = result[name]
-    if result.get("UpstoxStatus") != "DATA_FOUND":
-        return
-    period = str(result.get("FinancialPeriodEnd", ""))[:10]
-    current_period = str(fetched.get("FinancialPeriodEnd", ""))[:10]
-    current_basis = str(fetched.get("MetricCalculationBasis", "")).strip().upper()
-    has_existing_values = any(_present(fetched.get(col)) for col in METRIC_COLUMNS)
-    if current_period and current_period != period:
-        fetched["UpstoxStatus"] = diagnostic["UpstoxStatus"] = "UPSTOX_PERIOD_MISMATCH"
-        fetched["UpstoxReason"] = diagnostic["UpstoxReason"] = f"Yahoo period {current_period} differs from Upstox annual period {period}"
-        return
-    if has_existing_values and current_basis != "ANNUAL_ALIGNED_STATEMENTS":
-        fetched["UpstoxStatus"] = diagnostic["UpstoxStatus"] = "UPSTOX_BASIS_MISMATCH"
-        fetched["UpstoxReason"] = diagnostic["UpstoxReason"] = f"Existing provider basis {current_basis or 'empty'} is not annual aligned"
-        return
-    try:
-        source_map = json.loads(str(fetched.get("ProviderMetricSourcesJSON", "{}") or "{}"))
-        if not isinstance(source_map, dict):
-            source_map = {}
-    except (TypeError, ValueError):
-        source_map = {}
-    filled = []
-    for name in missing:
-        value = result.get(name)
-        if _present(value):
-            fetched[name] = value
-            source_map[name] = "Upstox Fundamentals API (secondary; pending official filing verification)"
-            filled.append(name)
-    if filled:
-        fetched["ProviderMetricSourcesJSON"] = json.dumps(source_map, sort_keys=True)
-        fetched["FinancialPeriodEnd"] = period
-        fetched["MetricCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
-        fetched["MetricPeriodAlignmentStatus"] = "VERIFIED"
-        fetched["ProviderFetchCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
-        fetched["UpstoxStatus"] = diagnostic["UpstoxStatus"] = "DATA_FOUND_PARTIAL_METRICS_ADDED"
-        fetched["UpstoxReason"] = diagnostic["UpstoxReason"] = "Filled only missing metrics from same-period consolidated annual statements: " + ",".join(filled)
-        fetched["Source"] = ("Yahoo Finance via yfinance + Upstox Fundamentals API" if any(
-            value.startswith("Yahoo Finance") for value in source_map.values()) else "Upstox Fundamentals API (secondary; verify against NSE/BSE filings)")
-        diagnostic["UpstoxFilledMetrics"] = ";".join(filled)
-        diagnostic["ProviderStatus"] = "DATA_FOUND"
-        diagnostic["ProviderReason"] = "Upstox supplied missing annual metrics: " + ",".join(filled)
-        diagnostic["MetricsAvailable"] = sum(_present(fetched.get(col)) for col in METRIC_COLUMNS)
-        diagnostic["ProviderSource"] = fetched["Source"]
-        diagnostic["ProviderSourceURL"] = fetched.get("UpstoxProviderSourceURL", "")
-
-
-def collect_missing_fundamentals(
     candidates: pd.DataFrame,
     metrics_path: str | Path = METRICS_PATH,
     enabled: bool | None = None,
