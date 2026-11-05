@@ -8,6 +8,7 @@ Collection failures are recorded per symbol and never reject a Delivery A/B row.
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import tempfile
 import time
@@ -64,6 +65,8 @@ BASE_COLUMNS = [
     "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
     "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
+    "ProviderMetricSourcesJSON", "UpstoxStatus", "UpstoxReason", "UpstoxRetrievedAtUTC",
+    "UpstoxReportingBasis", "UpstoxUnits", "UpstoxProviderSourceURL",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 BASE_COLUMNS += VALUATION_COLUMNS
 
@@ -680,6 +683,10 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, 
         record["TTMCalculationAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
         for col, value in values.items():
             record[col] = value if _present(value) else pd.NA
+        record["ProviderMetricSourcesJSON"] = json.dumps(
+            {col: "Yahoo Finance via yfinance" for col in METRIC_COLUMNS if _present(record.get(col))},
+            sort_keys=True,
+        )
         sector = info.get("sector") if isinstance(info, dict) else None
         record["ProviderSector"] = str(sector).strip() if sector else pd.NA
         stored_ocf = values.get("OperatingCashFlowINR", pd.NA)
@@ -709,7 +716,7 @@ def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
     """Provider-sourced (never manual) records older than refresh_days are refetched."""
     raw_source = record.get("Source", "")
     source = str(raw_source) if _present(raw_source) else ""
-    if not source.startswith("Yahoo Finance"):
+    if not (source.startswith("Yahoo Finance") or "Upstox Fundamentals API" in source):
         return False
     retrieved = pd.to_datetime(record.get("DataRetrievedAtUTC"), errors="coerce", utc=True)
     if pd.isna(retrieved):
@@ -758,6 +765,63 @@ def _atomic_write_csv(frame: pd.DataFrame, path: str | Path) -> None:
                 temp_path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def _apply_upstox_fallback(fetched: dict, diagnostic: dict, symbol: str, isin: str) -> None:
+    """Fill only missing annual metrics when Upstox and provider periods align."""
+    requested = ("RevenueGrowthPct", "ProfitGrowthPct", "OperatingCashFlowINR")
+    missing = [name for name in requested if not _present(fetched.get(name))]
+    if not missing:
+        fetched["UpstoxStatus"] = "SKIPPED_NOT_NEEDED"
+        fetched["UpstoxReason"] = "Yahoo/provider already supplied the mapped metrics"
+        diagnostic["UpstoxStatus"] = fetched["UpstoxStatus"]
+        return
+    from upstox_fundamentals import fetch_upstox_fundamentals
+    result = fetch_upstox_fundamentals(isin)
+    for name in ("UpstoxStatus", "UpstoxReason", "UpstoxRetrievedAtUTC", "UpstoxReportingBasis", "UpstoxUnits", "UpstoxProviderSourceURL"):
+        if _present(result.get(name)):
+            fetched[name] = result[name]
+            diagnostic[name] = result[name]
+    if result.get("UpstoxStatus") != "DATA_FOUND":
+        return
+    period = str(result.get("FinancialPeriodEnd", ""))[:10]
+    current_period = str(fetched.get("FinancialPeriodEnd", ""))[:10]
+    current_basis = str(fetched.get("MetricCalculationBasis", "")).strip().upper()
+    has_existing_values = any(_present(fetched.get(col)) for col in METRIC_COLUMNS)
+    if current_period and current_period != period:
+        fetched["UpstoxStatus"] = diagnostic["UpstoxStatus"] = "UPSTOX_PERIOD_MISMATCH"
+        fetched["UpstoxReason"] = diagnostic["UpstoxReason"] = f"Yahoo period {current_period} differs from Upstox annual period {period}"
+        return
+    if has_existing_values and current_basis != "ANNUAL_ALIGNED_STATEMENTS":
+        fetched["UpstoxStatus"] = diagnostic["UpstoxStatus"] = "UPSTOX_BASIS_MISMATCH"
+        fetched["UpstoxReason"] = diagnostic["UpstoxReason"] = f"Existing provider basis {current_basis or 'empty'} is not annual aligned"
+        return
+    try:
+        source_map = json.loads(str(fetched.get("ProviderMetricSourcesJSON", "{}") or "{}"))
+        if not isinstance(source_map, dict):
+            source_map = {}
+    except (TypeError, ValueError):
+        source_map = {}
+    filled = []
+    for name in missing:
+        value = result.get(name)
+        if _present(value):
+            fetched[name] = value
+            source_map[name] = "Upstox Fundamentals API (secondary; pending official filing verification)"
+            filled.append(name)
+    if filled:
+        fetched["ProviderMetricSourcesJSON"] = json.dumps(source_map, sort_keys=True)
+        fetched["FinancialPeriodEnd"] = period
+        fetched["MetricCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
+        fetched["MetricPeriodAlignmentStatus"] = "VERIFIED"
+        fetched["ProviderFetchCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
+        fetched["UpstoxStatus"] = diagnostic["UpstoxStatus"] = "DATA_FOUND_PARTIAL_METRICS_ADDED"
+        fetched["UpstoxReason"] = diagnostic["UpstoxReason"] = "Filled only missing metrics from same-period consolidated annual statements: " + ",".join(filled)
+        fetched["Source"] = ("Yahoo Finance via yfinance + Upstox Fundamentals API" if any(
+            value.startswith("Yahoo Finance") for value in source_map.values()) else "Upstox Fundamentals API (secondary; verify against NSE/BSE filings)")
+        diagnostic["UpstoxFilledMetrics"] = ";".join(filled)
+        diagnostic["ProviderSource"] = fetched["Source"]
+        diagnostic["ProviderSourceURL"] = fetched.get("UpstoxProviderSourceURL", "")
 
 
 def collect_missing_fundamentals(
@@ -824,8 +888,15 @@ def collect_missing_fundamentals(
     existing.loc[basis_blank, "MetricCalculationBasis"] = "LEGACY_CACHE_BASIS_UNKNOWN"
 
     symbols = []
+    isins_by_symbol = {}
     if candidates is not None and not candidates.empty and "TckrSymb" in candidates.columns:
         symbols = sorted({str(x).strip().upper() for x in candidates["TckrSymb"].dropna() if str(x).strip() and str(x).strip().lower() != "nan"})
+        if "ISIN" in candidates.columns:
+            for _, candidate in candidates.iterrows():
+                candidate_symbol = str(candidate.get("TckrSymb", "")).strip().upper()
+                candidate_isin = str(candidate.get("ISIN", "")).strip().upper()
+                if candidate_symbol and candidate_isin and candidate_isin.lower() != "nan":
+                    isins_by_symbol[candidate_symbol] = candidate_isin
     records = {str(row["TckrSymb"]): row.to_dict() for _, row in existing.iterrows() if str(row.get("TckrSymb", "")).strip() not in {"", "NAN", "nan"}}
     diagnostics = []
     for symbol in symbols:
@@ -844,7 +915,9 @@ def collect_missing_fundamentals(
                                          "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
                                          "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
                                          "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
-                                         "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC"]:
+                                         "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
+                                         "ProviderMetricSourcesJSON", "UpstoxStatus", "UpstoxReason", "UpstoxRetrievedAtUTC",
+                                         "UpstoxReportingBasis", "UpstoxUnits", "UpstoxProviderSourceURL"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
@@ -890,6 +963,7 @@ def collect_missing_fundamentals(
         except (TypeError, ValueError):
             fetch_kwargs["asof_date"] = cutoff_text
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
+        _apply_upstox_fallback(fetched, diagnostic, symbol, isins_by_symbol.get(symbol, ""))
         # Never overwrite manually supplied metric values. Existing provider rows
         # are refreshed to quarterly-derived metrics only when quarterly TTM is
         # fully aligned; missing fields can still be filled as before.
