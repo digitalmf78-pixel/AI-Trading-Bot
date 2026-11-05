@@ -62,7 +62,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py delivery_streak_tracker.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -89,7 +89,7 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py delivery_streak_tracker.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD ONLY TESTS ====="
           python -m pytest -q test_main_board_filter.py
