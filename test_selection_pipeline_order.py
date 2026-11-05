@@ -93,3 +93,47 @@ def test_fundamentals_only_fetch_after_liquidity_pass():
     assert "liquidity_pass_candidates = current.copy()" in source
     assert "v8_liquidity_fundamental_candidates.csv" in source
     assert "never remove a row" in (ROOT / "fundamental_filter.py").read_text(encoding="utf-8")
+
+
+def test_technical_parameter_audit_shows_values_rules_and_statuses(tmp_path, monkeypatch):
+    import pandas as pd
+    import volume_gainer as scanner
+
+    monkeypatch.chdir(tmp_path)
+    candidates = pd.DataFrame([
+        {
+            "TckrSymb": "BREAK", "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
+            "RVOLStatus": "PASS", "RVOL": 2.2, "SetupType": "Breakout",
+            "TrendClassification": "Sideways / Mixed", "CLV": 0.91,
+            "PriceVolumeRelationship": "Strong Bullish", "RelativeStrengthNifty": 2.4,
+            "SRSupport": 98.0, "SRResistance": 120.0, "BreakoutStatus": "Breakout",
+            "PullbackStatus": "No Pullback", "PriceChangePct": 7.6,
+            "RSI14": 70.6, "EMA20": 968.4, "EMA44": 986.3,
+            "CandidateScreenStatus": "REJECT", "CandidateScreenReasons": "TREND_NOT_BULLISH",
+        },
+        {
+            "TckrSymb": "POSSIBLE", "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
+            "RVOLStatus": "PASS", "RVOL": 2.7, "SetupType": "Possible Pullback",
+            "TrendClassification": "Strong Bullish Trend", "CLV": 0.006,
+            "PriceVolumeRelationship": "Possible Accumulation/Event", "RelativeStrengthNifty": -10.6,
+            "SRSupport": 540.0, "SRResistance": 559.8, "BreakoutStatus": "No Breakout",
+            "PullbackStatus": "Possible Pullback", "PriceChangePct": 0.0, "LowVolumeDays5D": 3,
+            "RSI14": 53.9, "EMA20": 539.8, "EMA44": 521.6,
+            "CandidateScreenStatus": "REJECT", "CandidateScreenReasons": "NO_CONFIRMED_BREAKOUT_OR_PULLBACK_SETUP",
+        },
+    ])
+
+    details, summary = scanner.write_technical_parameter_audit(candidates, "2026-11-05")
+    indexed = details.set_index(["TckrSymb", "Parameter"])
+
+    assert indexed.loc[("BREAK", "Trend"), "Status"] == "FAIL"
+    assert indexed.loc[("BREAK", "Breakout confirmation"), "Status"] == "PASS"
+    assert indexed.loc[("BREAK", "Candle quality (CLV)"), "RequiredRule"] == "Breakout CLV must be >0.75."
+    assert indexed.loc[("POSSIBLE", "Confirmed setup"), "Status"] == "FAIL"
+    assert indexed.loc[("POSSIBLE", "Pullback confirmation"), "Status"] == "FAIL"
+    assert indexed.loc[("POSSIBLE", "Relative strength vs Nifty"), "Status"] == "INFO"
+    assert {"ObservedValue", "RequiredRule", "Reason", "OverallTechnicalStatus"}.issubset(details.columns)
+    assert summary.loc[summary["Parameter"] == "Trend", "FailCount"].iloc[0] == 1
+    assert (tmp_path / "outputs/v8_technical_parameter_audit.csv").exists()
+    assert (tmp_path / "outputs/v8_technical_parameter_summary.csv").exists()
+
