@@ -93,7 +93,10 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
             missing.append("INVALID:" + key)
     position_limit_invalid = any(
         key in missing
-        for key in ("INVALID:max_open_positions", "INVALID:current_open_positions")
+        for key in (
+            "max_open_positions", "current_open_positions",
+            "INVALID:max_open_positions", "INVALID:current_open_positions",
+        )
     )
     if not position_limit_invalid:
         if max_open_positions <= 0 or current_open_positions > max_open_positions:
