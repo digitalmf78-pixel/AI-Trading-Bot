@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter
 from delivery_streak_tracker import update_delivery_scan_streak
+from observation_priorities import build_observation_priority_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3488,6 +3489,15 @@ def main():
         ).astype(str).eq("PASS_EACH_DAY_GE_60_PERCENT")
         current = fundamental_audit.loc[fallback_pass_mask].copy() if not fundamental_audit.empty else pd.DataFrame(columns=list(fundamental_audit.columns))
 
+    # Build an all-symbol observation report before later selection gates narrow the list.
+    try:
+        observation_report = build_observation_priority_report(fundamental_audit, eod_date)
+        tier_counts = observation_report.get("ObservationPriority", pd.Series(dtype=str)).value_counts().to_dict()
+        print(f"[OBSERVATION PRIORITIES] {tier_counts}; saved outputs/v8_observation_priority_report.csv")
+    except Exception as observation_exc:
+        print(f"[OBSERVATION PRIORITIES] WAIT_FOR_DATA: report generation failed: {observation_exc}")
+        observation_report = pd.DataFrame()
+
     # --------------------------------------------------------
     # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹5 CRORE
     # --------------------------------------------------------
@@ -3761,6 +3771,7 @@ def main():
             news_feed_status,
             TELEGRAM_BOT_TOKEN,
             TELEGRAM_CHAT_ID,
+            observation_report=observation_report,
         )
     else:
         print("Telegram notification skipped (SEND_TELEGRAM is disabled).")
