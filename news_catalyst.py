@@ -1247,7 +1247,7 @@ def _telegram_news_lines(news: pd.DataFrame | None, symbol: str, limit: int = 2)
 
 def _observation_digest_lines(report: pd.DataFrame | None,
                               result: pd.DataFrame | None = None,
-                              news: pd.DataFrame | None = None) -> list[str]:
+                              news_data: pd.DataFrame | None = None) -> list[str]:
     """Format every liquidity-qualified stock with its score and current checks."""
     selected = _telegram_observation_rows(report, result, limit=None)
     if selected.empty:
@@ -1276,7 +1276,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         ema20 = pd.to_numeric(pd.Series([row.get("EMA20")]), errors="coerce").iloc[0]
         rsi_text = f"RSI {rsi:.1f}" if pd.notna(rsi) else "RSI WAIT"
         ema_text = f"EMA20 {ema20:.2f}" if pd.notna(ema20) else "EMA20 WAIT"
-        news = row.get("NewsEvidenceStatus", row.get("NewsEvidenceStatus_pipeline", "WAIT_FOR_DATA"))
+        news_status = row.get("NewsEvidenceStatus", row.get("NewsEvidenceStatus_pipeline", "WAIT_FOR_DATA"))
         final = row.get("EODWatchlistStatus", row.get("EODWatchlistStatus_pipeline", "WAIT_FOR_DATA"))
         event = events.get(symbol, "Event date WAIT_FOR_DATA")
         delivery_a = row.get("DeliveryCategoryAStatus", row.get("DeliveryCategoryAStatus_pipeline", "WAIT_FOR_DATA"))
@@ -1293,8 +1293,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
         lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"   Fundamental {score} | Source {source}")
-        lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news} | Final {final}")
-        lines.extend(_telegram_news_lines(news, symbol, limit=2))
+        lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news_status} | Final {final}")
+        lines.extend(_telegram_news_lines(news_data, symbol, limit=2))
         lines.append(f"   पुढील NSE result/announcement: {event}")
     lines.append("ही निरीक्षण यादी आहे; BUY शिफारस किंवा automatic order नाही.")
     return lines
