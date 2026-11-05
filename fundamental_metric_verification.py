@@ -36,10 +36,13 @@ FILING_SUMMARY_PATH = OUTPUT_DIR / 'v8_fundamental_filing_metadata_summary.csv'
 
 # Metrics used by the shortlist plus persisted TTM totals.  Status/text fields
 # are deliberately excluded.
-# No direct-fact mapping is approved yet. The five-filing diagnostic found
-# competing cash-flow tags with different values; do not choose one by default.
-# Add a metric/tag pair here only after the accounting mapping is reconciled.
-DIRECT_FACT_TAGS: dict[str, set[str]] = {}
+# The five-filing statement cross-foot audit consistently selected this NSE
+# concept over the similarly named competing concept.  Operating cash flow is
+# still accepted only when the filing itself reconciles CFO + CFI + CFF to the
+# reported net cash change (see _verify_cashflow_crossfoot below).
+DIRECT_FACT_TAGS: dict[str, set[str]] = {
+    'OperatingCashFlowINR': {'CashFlowsFromUsedInOperatingActivities'},
+}
 NUMERIC_METRICS = [
     'RevenueGrowthPct', 'ProfitGrowthPct', 'ROEPercent', 'ROCEPercent',
     'DebtToEquity', 'InterestCoverage', 'OperatingCashFlowINR',
@@ -123,6 +126,54 @@ def _parse_xbrl(path: Path) -> tuple[dict[str, dict], dict[str, str], list[ET.El
             units[uid] = '*'.join(measures)
     facts = [node for node in root.iter() if node.attrib.get('contextRef')]
     return contexts, units, facts
+
+
+def _fact_value(fact: ET.Element) -> float | None:
+    """Return an XBRL numeric fact after applying scale and sign attributes."""
+    try:
+        value = float((fact.text or '').strip())
+        value *= 10 ** int(fact.attrib.get('scale', '0') or 0)
+        if fact.attrib.get('sign') == '-':
+            value *= -1
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _verify_cashflow_crossfoot(facts: list[ET.Element], context_ref: str,
+                               unit_ref: str, unit_measure: str,
+                               taxonomy_namespace: str) -> tuple[bool, str]:
+    """Require a same-context, same-unit operating/investing/financing cross-foot."""
+    component_tags = {
+        'operating': 'CashFlowsFromUsedInOperatingActivities',
+        'investing': 'CashFlowsFromUsedInInvestingActivities',
+        'financing': 'CashFlowsFromUsedInFinancingActivities',
+        'net_change': 'IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges',
+    }
+    values: dict[str, float] = {}
+    for component, tag in component_tags.items():
+        matched = [fact for fact in facts
+                   if _local(fact.tag) == tag
+                   and _namespace(fact.tag) == taxonomy_namespace
+                   and fact.attrib.get('contextRef') == context_ref]
+        if len(matched) != 1:
+            return False, f'{component} fact {tag} is not unique in the selected annual context'
+        fact = matched[0]
+        if fact.attrib.get('unitRef', '') != unit_ref:
+            return False, f'{component} cash-flow fact does not use the selected INR unit'
+        value = _fact_value(fact)
+        if value is None:
+            return False, f'{component} cash-flow fact is not a valid numeric XBRL value'
+        values[component] = value
+    components = values['operating'] + values['investing'] + values['financing']
+    reported = values['net_change']
+    tolerance = max(1.0, max(abs(components), abs(reported)) * 1e-9)
+    if unit_measure not in {'INR', 'INR:INR'} and not unit_measure.endswith(':INR'):
+        return False, f'cash-flow cross-foot requires INR, got {unit_measure}'
+    if abs(components - reported) > tolerance:
+        return False, ('Operating + investing + financing cash flow does not reconcile to '
+                       'the filing net cash change before FX')
+    return True, 'Same-context operating, investing and financing facts reconcile to net cash change before FX'
 
 
 def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[str, str]:
@@ -290,14 +341,14 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
         return 'XBRL_UNIT_NOT_CURRENCY_INR', f'OperatingCashFlowINR requires INR unit, got {actual_unit}', ev
     if _namespace(fact.tag) != _clean(ev['TaxonomyNamespace']):
         return 'XBRL_TAXONOMY_MISMATCH', 'Fact namespace differs from evidence ledger', ev
-    try:
-        fact_value = float((fact.text or '').strip())
-        scale = int(fact.attrib.get('scale', '0') or 0)
-        fact_value *= 10 ** scale
-        if fact.attrib.get('sign') == '-':
-            fact_value *= -1
-    except (TypeError, ValueError, OverflowError):
+    fact_value = _fact_value(fact)
+    if fact_value is None:
         return 'XBRL_FACT_VALUE_INVALID', 'XBRL fact value/scale/sign is invalid', ev
+    if metric_name == 'OperatingCashFlowINR':
+        crossfoot_ok, crossfoot_reason = _verify_cashflow_crossfoot(
+            facts, context_ref, unit_ref, actual_unit, _namespace(fact.tag))
+        if not crossfoot_ok:
+            return 'XBRL_CASHFLOW_CROSSFOOT_FAILED', crossfoot_reason, ev
     provider_value = _number(metric.get(metric_name))
     recorded_provider = _number(ev.get('ProviderMetricValue'))
     official_value = _number(ev.get('OfficialMetricValue'))
@@ -311,7 +362,10 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
         return 'XBRL_FACT_VALUE_DIFFERS_FROM_LEDGER', 'XML fact value differs from OfficialMetricValue in ledger', ev
     if abs(provider_value - fact_value) > tolerance:
         return 'PROVIDER_VALUE_MISMATCH', 'Cached provider value does not match the official XBRL fact', ev
-    return 'OFFICIAL_XBRL_VERIFIED', 'Exact direct fact, context, entity, period, dimensions, unit, taxonomy and SHA-256 matched', ev
+    reason = 'Exact direct fact, context, entity, period, dimensions, unit, taxonomy and SHA-256 matched'
+    if metric_name == 'OperatingCashFlowINR':
+        reason += '; cash-flow statement cross-foot reconciled'
+    return 'OFFICIAL_XBRL_VERIFIED', reason, ev
 
 
 def build_metric_verification(metrics: pd.DataFrame, filings: pd.DataFrame | None = None,
@@ -416,5 +470,6 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 
 

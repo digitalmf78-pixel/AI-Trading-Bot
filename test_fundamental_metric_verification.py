@@ -36,6 +36,7 @@ def _filings():
 
 
 def _xml(path: Path, value='12.5', dimensions=''):
+    cash_change = float(value) + 7.0
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
 <xbrl xmlns="{NS}" xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:xbrldi="http://xbrl.org/2006/xbrldi">
@@ -46,6 +47,9 @@ def _xml(path: Path, value='12.5', dimensions=''):
   </xbrli:context>
   <xbrli:unit id="INR"><xbrli:measure>INR</xbrli:measure></xbrli:unit>
   <CashFlowsFromUsedInOperatingActivities contextRef="FY2026" unitRef="INR">{value}</CashFlowsFromUsedInOperatingActivities>
+  <CashFlowsFromUsedInInvestingActivities contextRef="FY2026" unitRef="INR">3</CashFlowsFromUsedInInvestingActivities>
+  <CashFlowsFromUsedInFinancingActivities contextRef="FY2026" unitRef="INR">4</CashFlowsFromUsedInFinancingActivities>
+  <IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges contextRef="FY2026" unitRef="INR">{cash_change}</IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges>
 </xbrl>''', encoding='utf-8')
     return path
 
@@ -81,7 +85,7 @@ def test_official_filing_metadata_does_not_verify_provider_metric(tmp_path):
     detail, _, _ = build_metric_verification(metrics, _filings(), pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
     assert row['FilingMetadataStatus'] == 'OFFICIAL_FILING_METADATA_MATCHED'
-    assert row['MetricValueVerificationStatus'] == 'OFFICIAL_FACT_MAPPING_UNRESOLVED'
+    assert row['MetricValueVerificationStatus'] == 'PROVIDER_ONLY'
     assert 'does not verify metric values' in row['FilingMetadataReason']
 
 
@@ -149,7 +153,7 @@ def test_audit_creates_empty_evidence_template_and_does_not_modify_cache(tmp_pat
                                                 tmp_path / 'outputs', repo_root=tmp_path)
     assert len(detail) == 2
     ocf = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
-    assert ocf['MetricValueVerificationStatus'] == 'OFFICIAL_FACT_MAPPING_UNRESOLVED'
+    assert ocf['MetricValueVerificationStatus'] == 'PROVIDER_ONLY'
     assert not summary.empty
     assert not filing_summary.empty
     assert (tmp_path / 'outputs/v8_fundamental_filing_metadata_summary.csv').exists()
@@ -167,14 +171,27 @@ def test_growth_metric_cannot_be_marked_verified_by_single_direct_fact(tmp_path,
     assert row['MetricValueVerificationStatus'] == 'DERIVED_RECONCILIATION_REQUIRED'
 
 
-def test_operating_cashflow_tag_is_unverified_until_official_mapping_is_approved(tmp_path, monkeypatch):
+def test_operating_cashflow_tag_is_approved_only_with_crossfoot_evidence(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
     evidence = _evidence(xml_path)
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
-    assert row['MetricValueVerificationStatus'] == 'OFFICIAL_FACT_MAPPING_UNRESOLVED'
-    assert 'Competing NSE operating-cash-flow tags' in row['MetricValueVerificationReason']
+    assert row['MetricValueVerificationStatus'] == 'OFFICIAL_XBRL_VERIFIED'
+    assert 'cross-foot reconciled' in row['MetricValueVerificationReason']
+
+
+def test_operating_cashflow_requires_statement_crossfoot(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
+    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml')
+    xml_path.write_text(xml_path.read_text(encoding='utf-8').replace(
+        '>19.5<', '>20.5<'), encoding='utf-8')
+    evidence = _evidence(xml_path)
+    detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), _filings(), evidence, tmp_path)
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['MetricValueVerificationStatus'] == 'XBRL_CASHFLOW_CROSSFOOT_FAILED'
+    assert 'does not reconcile' in row['MetricValueVerificationReason']
 
 
 def test_metric_verification_is_blocked_when_exact_filing_metadata_does_not_match(tmp_path, monkeypatch):
@@ -185,4 +202,5 @@ def test_metric_verification_is_blocked_when_exact_filing_metadata_does_not_matc
     detail, _, _ = build_metric_verification(pd.DataFrame([_metric()]), wrong_filings, evidence, tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
     assert row['MetricValueVerificationStatus'] == 'FILING_METADATA_NOT_CONFIRMED'
+
 
