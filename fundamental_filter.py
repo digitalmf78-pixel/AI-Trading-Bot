@@ -48,7 +48,7 @@ STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
     "FundamentalSource", "FundamentalSourceURL",
     "FundamentalMetricsCompletenessPct", "FundamentalScoreCoveragePct",
-    "FundamentalAssessmentStatus", "ValuationCoveragePct",
+    "FundamentalAssessmentStatus", "Fundamental65PlusStatus", "ValuationCoveragePct",
     "ValuationFieldsAvailable", "ValuationFieldsMissing",
     "ValuationAssessmentStatus",
 ]
@@ -254,8 +254,11 @@ def apply_fundamental_filter(
         point_in_time_valid &= publication_date.dt.normalize().le(eod_cutoff.normalize())
     score_eligible = complete_score & publication_verified & alignment_verified & point_in_time_valid
     audit["FundamentalScore"] = score_frame.mean(axis=1, skipna=False).where(score_eligible).round(2)
+    audit["Fundamental65PlusStatus"] = "WAIT_FOR_DATA"
+    audit.loc[audit["FundamentalScore"].notna() & audit["FundamentalScore"].ge(65), "Fundamental65PlusStatus"] = "SCORE_GE_65"
+    audit.loc[audit["FundamentalScore"].notna() & audit["FundamentalScore"].lt(65), "Fundamental65PlusStatus"] = "SCORE_BELOW_65"
     audit["FundamentalRank"] = audit["FundamentalScore"].rank(method="min", ascending=False).astype("Int64")
-    audit["FundamentalScoreMethod"] = "Equal-weight percentile mean; only when six numeric metrics, official publication date, period end, and metric-period alignment are verified point-in-time"
+    audit["FundamentalScoreMethod"] = "Equal-weight relative percentile mean within current liquidity-qualified cohort; informational only, only when six numeric metrics, official publication date, period end, and metric-period alignment are verified point-in-time"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)

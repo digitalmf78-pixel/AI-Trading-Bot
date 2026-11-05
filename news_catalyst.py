@@ -284,11 +284,6 @@ def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
         else:
             filtered = filtered.iloc[0:0].copy()
             print("[NEWS-DIAG] Delivery evidence/status missing; fail-closed with zero candidates.")
-    if "SetupType" in filtered.columns:
-        setup = filtered["SetupType"].astype(str).str.upper().str.strip()
-        before_setup = len(filtered)
-        filtered = filtered[setup.str.contains(r"BREAKOUT|PULLBACK", regex=True, na=False)].copy()
-        print(f"[NEWS-DIAG] SetupType gate: before={before_setup}, after={len(filtered)}")
     return filtered
 
 
@@ -1119,55 +1114,117 @@ def write_catalyst_top20_report(result: pd.DataFrame, eod_date, news: pd.DataFra
 
 def _telegram_observation_rows(report: pd.DataFrame | None,
                                result: pd.DataFrame | None,
-                               limit: int = 16) -> pd.DataFrame:
-    """Keep only the best-ranked names that reached the liquidity/technical pipeline."""
+                               limit: int | None = None) -> pd.DataFrame:
+    """Return every liquidity-passed stock, overlaying later gate statuses."""
     if report is None or report.empty or "TckrSymb" not in report.columns:
         return pd.DataFrame()
     rows = report.copy()
     rows["TckrSymb"] = rows["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
     rows = rows[rows["TckrSymb"].ne("")].drop_duplicates("TckrSymb", keep="first")
-    # `result` is the post-liquidity frame passed through technical/news layers.
-    # Intersecting with it prevents the early A/B observation report from
-    # advertising names that did not qualify for the downstream gates.
+
+    # Merge later statuses without dropping liquidity-qualified rows that fail
+    # a later technical, news, or final watchlist check.
     if result is not None and not result.empty and "TckrSymb" in result.columns:
         downstream = result.copy()
         downstream["TckrSymb"] = downstream["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
         downstream = downstream.drop_duplicates("TckrSymb", keep="last").set_index("TckrSymb")
-        rows = rows[rows["TckrSymb"].isin(downstream.index)].copy()
-        rows = rows.merge(downstream, how="left", left_on="TckrSymb", right_index=True,
+        columns = [c for c in downstream.columns if c in {
+            "LiquidityFilterStatus", "LiquidityStatus", "LiquidityTier",
+            "FundamentalScore", "Fundamental65PlusStatus", "FundamentalStatus",
+            "FundamentalSource", "CoreTechnicalScreenStatus", "CandidateScreenStatus",
+            "SetupType", "RSI14", "EMA20", "EMA44", "NewsEvidenceStatus",
+            "EODWatchlistStatus",
+        }]
+        overlay = downstream[columns] if columns else downstream.iloc[:, 0:0]
+        rows = rows.merge(overlay, how="left", left_on="TckrSymb", right_index=True,
                           suffixes=("", "_pipeline"), sort=False)
-        liquidity_col = next((c for c in ("LiquidityFilterStatus", "LiquidityStatus") if c in rows.columns), None)
-        if liquidity_col:
-            rows = rows[rows[liquidity_col].fillna("WAIT_FOR_DATA").astype(str).str.upper().eq("PASS")]
-    else:
-        rows = rows.iloc[0:0].copy()
-    return rows.head(max(0, int(limit))).reset_index(drop=True)
+
+    liquidity_col = next((c for c in ("LiquidityFilterStatus", "LiquidityStatus",
+                                      "LiquidityFilterStatus_pipeline", "LiquidityStatus_pipeline")
+                          if c in rows.columns), None)
+    if liquidity_col:
+        status = rows[liquidity_col].fillna("").astype(str).str.upper()
+        rows = rows[status.eq("PASS") | status.str.startswith("PASS_")].copy()
+
+    tier_col = next((c for c in ("LiquidityTier", "LiquidityTier_pipeline") if c in rows.columns), None)
+    if tier_col:
+        tiers = {"STRONG": 0, "MEDIUM": 1, "LOW": 2}
+        rows["_liquidity_order"] = rows[tier_col].fillna("WAIT_FOR_DATA").astype(str).str.upper().map(tiers).fillna(3)
+        sort_cols, ascending = ["_liquidity_order"], [True]
+        if "FundamentalScore" in rows.columns:
+            rows["FundamentalScore"] = pd.to_numeric(rows["FundamentalScore"], errors="coerce")
+            sort_cols.append("FundamentalScore")
+            ascending.append(False)
+        rows = rows.sort_values(sort_cols, ascending=ascending, na_position="last", kind="stable").drop(columns="_liquidity_order")
+    if limit is not None:
+        rows = rows.head(max(0, int(limit)))
+    return rows.reset_index(drop=True)
+
+
+def _upcoming_event_summaries() -> dict[str, str]:
+    """Read NSE event dates; never infer an event date from announcement date."""
+    try:
+        events = pd.read_csv("outputs/v8_upcoming_corporate_events.csv")
+    except Exception:
+        return {}
+    if events.empty or "TckrSymb" not in events.columns:
+        return {}
+    summaries: dict[str, list[str]] = {}
+    for _, row in events.iterrows():
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        status = str(row.get("Status", "")).strip().upper()
+        event_date = str(row.get("EventDate", "")).strip()
+        if status == "OFFICIAL_DATE_CONFIRMED" and event_date:
+            item = f"{event_date} {row.get('EventType', '')}".strip()
+        elif status == "NO_MATCHING_UPCOMING_EVENT_FOUND":
+            item = "NSE: पुढील event date सापडली नाही"
+        else:
+            item = "Event date WAIT_FOR_DATA"
+        if symbol:
+            summaries.setdefault(symbol, [])
+            if item not in summaries[symbol]:
+                summaries[symbol].append(item)
+    return {symbol: " / ".join(items) for symbol, items in summaries.items()}
 
 
 def _observation_digest_lines(report: pd.DataFrame | None,
                               result: pd.DataFrame | None = None) -> list[str]:
-    """Format at most 16 liquidity-qualified P1-P4 names with their current gate states."""
-    selected = _telegram_observation_rows(report, result, limit=16)
+    """Format every liquidity-qualified stock with its score and current checks."""
+    selected = _telegram_observation_rows(report, result, limit=None)
     if selected.empty:
-        return ["", "🔎 Liquidity + Fundamental filter नंतर Telegram साठी stock उपलब्ध नाही.",
-                "Missing किंवा unverified माहिती WAIT_FOR_DATA म्हणूनच दाखवली आहे."]
+        return ["", "🔎 Liquidity filter नंतर Telegram साठी stock उपलब्ध नाही.",
+                "Liquidity इतिहास अपुरा असल्यास तो WAIT_FOR_DATA म्हणून audit मध्ये राहतो."]
+    tiers = selected.get("LiquidityTier", pd.Series("UNKNOWN", index=selected.index)).fillna("UNKNOWN").astype(str).str.upper().value_counts().to_dict()
     lines = [
         "",
-        f"🔎 FILTERED OBSERVATIONS • दाखवलेले {len(selected)}/16",
-        "क्रम: P1 → P2 → P3 → P4. P1/P2 साठी official metric verification आवश्यक.",
-        "प्रत्येक stock ची सध्याची स्थिती खाली दिली आहे; WAIT म्हणजे तपासणी बाकी.",
+        f"🔎 LIQUIDITY-PASSED STOCKS • एकूण {len(selected)} • कमी {tiers.get('LOW', 0)} / मध्यम {tiers.get('MEDIUM', 0)} / मजबूत {tiers.get('STRONG', 0)}",
+        "या यादीत liquidity नंतरचे सर्व stocks आहेत; पुढचे filters status सह दाखवले आहेत.",
     ]
+    events = _upcoming_event_summaries()
     for number, (_, row) in enumerate(selected.iterrows(), start=1):
         symbol = str(row.get("TckrSymb", "")).strip().upper()
-        tier = str(row.get("ObservationPriority", "WAIT_FOR_DATA"))
-        fund = row.get("FundamentalShortlistStatus", row.get("FundamentalShortlistStatus_pipeline", "WAIT_FOR_DATA"))
-        liquidity = row.get("LiquidityFilterStatus_pipeline", row.get("LiquidityFilterStatus", "PASS"))
-        technical = row.get("CoreTechnicalScreenStatus_pipeline", row.get("CandidateScreenStatus_pipeline", row.get("CoreTechnicalScreenStatus", row.get("CandidateScreenStatus", row.get("EODWatchlistStatus_pipeline", "WAIT_FOR_DATA")))))
-        news = row.get("NewsEvidenceStatus_pipeline", row.get("NewsEvidenceStatus", "WAIT_FOR_DATA"))
-        final = row.get("EODWatchlistStatus_pipeline", row.get("EODWatchlistStatus", "WAIT_FOR_DATA"))
-        lines.append(f"{number}. {symbol} • {tier} | Fundamental {fund} | Liquidity {liquidity}")
-        lines.append(f"   Technical {technical} | News {news} | Final {final}")
-    lines.append("हे निरीक्षणासाठीचे निकाल आहेत; कोणताही automatic order किंवा BUY recommendation नाही.")
+        tier = str(row.get("LiquidityTier", row.get("LiquidityTier_pipeline", "WAIT_FOR_DATA")))
+        avg = pd.to_numeric(pd.Series([row.get("AvgDailyTradedValue20D")]), errors="coerce").iloc[0]
+        turnover = f"₹{avg / 10_000_000:.2f}cr/day" if pd.notna(avg) else "turnover WAIT_FOR_DATA"
+        score_val = pd.to_numeric(pd.Series([row.get("FundamentalScore")]), errors="coerce").iloc[0]
+        score_raw = row.get("Fundamental65PlusStatus", "")
+        score_status = "" if pd.isna(score_raw) else str(score_raw).strip()
+        score = f"{score_val:.2f}/100 {score_status}".strip() if pd.notna(score_val) else f"WAIT_FOR_DATA ({score_status or 'score incomplete'})"
+        source_raw = row.get("FundamentalSource", row.get("Source", "source pending"))
+        source = "source pending" if pd.isna(source_raw) or not str(source_raw).strip() else str(source_raw).strip()
+        technical = row.get("CoreTechnicalScreenStatus", row.get("CandidateScreenStatus", row.get("SetupType", "WAIT_FOR_DATA")))
+        rsi = pd.to_numeric(pd.Series([row.get("RSI14")]), errors="coerce").iloc[0]
+        ema20 = pd.to_numeric(pd.Series([row.get("EMA20")]), errors="coerce").iloc[0]
+        rsi_text = f"RSI {rsi:.1f}" if pd.notna(rsi) else "RSI WAIT"
+        ema_text = f"EMA20 {ema20:.2f}" if pd.notna(ema20) else "EMA20 WAIT"
+        news = row.get("NewsEvidenceStatus", row.get("NewsEvidenceStatus_pipeline", "WAIT_FOR_DATA"))
+        final = row.get("EODWatchlistStatus", row.get("EODWatchlistStatus_pipeline", "WAIT_FOR_DATA"))
+        event = events.get(symbol, "Event date WAIT_FOR_DATA")
+        lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
+        lines.append(f"   Fundamental {score} | Source {source}")
+        lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news} | Final {final}")
+        lines.append(f"   पुढील NSE result/announcement: {event}")
+    lines.append("ही निरीक्षण यादी आहे; BUY शिफारस किंवा automatic order नाही.")
     return lines
 
 

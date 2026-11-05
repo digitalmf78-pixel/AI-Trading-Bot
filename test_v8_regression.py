@@ -184,10 +184,10 @@ def test_rvol_threshold_precedes_dual_delivery_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
     rvol_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
     delivery_step = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
-    fundamental_step = source.index("STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS")
     liquidity_step = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
+    fundamental_step = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical_step = source.index("STEP 7: PRICE + VOLUME")
-    assert rvol_step < delivery_step < fundamental_step < liquidity_step < technical_step
+    assert rvol_step < delivery_step < liquidity_step < fundamental_step < technical_step
     assert "def select_rvol_above_threshold" in source
     assert "minimum_rvol=1.5" in source
     assert ".head(50)" not in source[source.index("def select_rvol_above_threshold"):source.index("# PRICE + VOLUME")]
@@ -243,13 +243,13 @@ def test_telegram_digest_is_compact_and_keeps_core_gate_context():
     row = {"TckrSymb": "ABC", "LiquidityFilterStatus": "PASS",
            "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "NewsEvidenceStatus": "NO_DATA",
            "EODWatchlistStatus": "WAIT_FOR_DATA"}
-    report = pd.DataFrame([{"TckrSymb": "ABC", "ObservationPriority": "P1",
-                            "FundamentalShortlistStatus": "PASS"}])
+    report = pd.DataFrame([{"TckrSymb": "ABC", "LiquidityTier": "MEDIUM",
+                            "FundamentalScore": 72.5, "Fundamental65PlusStatus": "SCORE_GE_65"}])
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {}, observation_report=report)
     text = "\n".join(lines)
-    for expected in ("ABC", "P1", "Fundamental PASS", "Liquidity PASS", "Technical WAIT_FOR_DATA", "News NO_DATA", "Final WAIT_FOR_DATA"):
+    for expected in ("ABC", "MEDIUM", "Fundamental 72.50/100", "Liquidity MEDIUM", "Technical WAIT_FOR_DATA", "News NO_DATA", "Final WAIT_FOR_DATA"):
         assert expected in text, expected
-    assert "BUY recommendation नाही" in text
+    assert "BUY शिफारस" in text
 
 
 def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
@@ -257,8 +257,8 @@ def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
         {"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA", "EODWatchlistStatus": "WAIT_FOR_DATA"},
         {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "EODWatchlistStatus": "WATCH"},
     ])
-    report = pd.DataFrame([{"TckrSymb": "NOTLIQ", "ObservationPriority": "P1"},
-                           {"TckrSymb": "WATCHME", "ObservationPriority": "P2"}])
+    report = pd.DataFrame([{"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA"},
+                           {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "LiquidityTier": "LOW"}])
     text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}, observation_report=report))
     assert "WATCHME" in text
     assert "NOTLIQ" not in text
@@ -268,7 +268,7 @@ def test_telegram_digest_empty_result_is_a_short_no_candidate_message():
     lines = news_catalyst.build_marathi_digest(pd.DataFrame(), "2026-10-13", pd.DataFrame(), {"NSE": "available"})
     text = "\n".join(lines)
     assert "Final WATCH: 0" in text
-    assert "Liquidity + Fundamental filter नंतर Telegram साठी stock उपलब्ध नाही." in text
+    assert "Liquidity filter नंतर Telegram साठी stock उपलब्ध नाही." in text
     assert "automatic order नाही" in text
 
 def test_next_day_pipeline_only_receives_final_watch_candidates():

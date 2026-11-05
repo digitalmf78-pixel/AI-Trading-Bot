@@ -55,36 +55,33 @@ def test_namespace_declared_on_feed_root_is_supported_during_recovery(monkeypatc
     assert items[0].find("{http://purl.org/dc/elements/1.1/}date") is not None
 
 
-def test_telegram_observation_is_capped_at_16_and_reports_gate_statuses():
+def test_telegram_observation_includes_all_liquidity_passed_stocks(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     report = pd.DataFrame({
         "TckrSymb": [f"STK{i:02d}" for i in range(20)],
-        "ObservationPriority": ["P1"] * 20,
-        "FundamentalShortlistStatus": ["PASS"] * 20,
+        "LiquidityFilterStatus": ["PASS"] * 20,
+        "LiquidityTier": ["LOW"] * 20,
+        "FundamentalScore": [66.0] * 20,
+        "Fundamental65PlusStatus": ["SCORE_GE_65"] * 20,
     })
     result = pd.DataFrame({
-        "TckrSymb": [f"STK{i:02d}" for i in range(20)],
-        "LiquidityFilterStatus": ["PASS"] * 20,
-        "CoreTechnicalScreenStatus": ["WAIT_FOR_DATA"] * 20,
-        "NewsEvidenceStatus": ["NO_DATA"] * 20,
-        "EODWatchlistStatus": ["WAIT_FOR_DATA"] * 20,
+        "TckrSymb": ["STK00", "STK01"],
+        "CoreTechnicalScreenStatus": ["WAIT_FOR_DATA", "PASS"],
+        "NewsEvidenceStatus": ["NO_DATA", "AVAILABLE"],
+        "EODWatchlistStatus": ["WAIT_FOR_DATA", "WATCH"],
     })
-
     selected = news._telegram_observation_rows(report, result)
     message = "\n".join(news._observation_digest_lines(report, result))
-
-    assert len(selected) == 16
-    assert selected["TckrSymb"].tolist() == [f"STK{i:02d}" for i in range(16)]
-    assert "16/16" in message
+    assert len(selected) == 20
+    assert "एकूण 20" in message
     assert "Technical WAIT_FOR_DATA" in message
     assert "News NO_DATA" in message
-    assert "STK15" in message
-    assert "STK16" not in message
+    assert "STK19" in message
 
 
 def test_telegram_observation_excludes_names_that_failed_liquidity():
-    report = pd.DataFrame({"TckrSymb": ["AAA", "BBB"], "ObservationPriority": ["P1", "P2"]})
-    result = pd.DataFrame({"TckrSymb": ["AAA", "BBB"], "LiquidityFilterStatus": ["PASS", "WAIT_FOR_DATA"]})
-
-    selected = news._telegram_observation_rows(report, result)
-
+    report = pd.DataFrame({"TckrSymb": ["AAA", "BBB"], "LiquidityFilterStatus": ["PASS", "WAIT_FOR_DATA"]})
+    selected = news._telegram_observation_rows(report, None)
     assert selected["TckrSymb"].tolist() == ["AAA"]
+
+3861

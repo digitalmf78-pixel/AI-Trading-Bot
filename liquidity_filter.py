@@ -1,8 +1,9 @@
 """NSE V8 liquidity gate based on prior 20 complete EOD sessions.
 
 Eligibility rule: mean daily traded value (NSE CM Bhavcopy TtlTrfVal, INR)
-across 20 distinct prior sessions must be >= INR 2 crore. If a full 20-session
-history or a valid traded-value observation is missing, status is WAIT_FOR_DATA.
+across 20 distinct prior sessions must be >= INR 1.5 crore. Qualified names are
+tiered as low (₹1.5–2 crore), medium (₹2–5 crore), or strong (>=₹5 crore). Missing
+sessions or values remain WAIT_FOR_DATA.
 This is a turnover-based liquidity proxy; it does not claim to validate bid-ask
 spread or market depth, which are not present in the daily bhavcopy.
 """
@@ -13,7 +14,9 @@ from typing import Iterable
 
 import pandas as pd
 
-MINIMUM_AVG_DAILY_TRADED_VALUE_INR = 20_000_000.0  # User-approved ₹2 crore threshold
+MINIMUM_AVG_DAILY_TRADED_VALUE_INR = 15_000_000.0  # ₹1.5 crore minimum, mildly relaxed from ₹2 crore
+LOW_LIQUIDITY_MAX_INR = 20_000_000.0
+MEDIUM_LIQUIDITY_MAX_INR = 50_000_000.0
 REQUIRED_LIQUIDITY_SESSIONS = 20
 VALUE_COLUMN = "TtlTrfVal"
 
@@ -39,6 +42,7 @@ def apply_liquidity_filter(
         "MinimumAvgDailyTradedValueINR",
         "LiquidityStatus",
         "LiquidityFilterStatus",
+        "LiquidityTier",
     ]
     if candidates.empty:
         empty = candidates.copy()
@@ -78,23 +82,29 @@ def apply_liquidity_filter(
             status = "WAIT_FOR_DATA"
             session_count = sum(value is not None for value in values) if values else 0
         elif average_value >= float(minimum_average_daily_value):
-            status = "PASS_GE_2CR_AVG_DAILY_VALUE"
+            if average_value < LOW_LIQUIDITY_MAX_INR:
+                status, tier = "PASS_LOW_LIQUIDITY", "LOW"
+            elif average_value < MEDIUM_LIQUIDITY_MAX_INR:
+                status, tier = "PASS_MEDIUM_LIQUIDITY", "MEDIUM"
+            else:
+                status, tier = "PASS_STRONG_LIQUIDITY", "STRONG"
             session_count = required_sessions
         else:
-            status = "FILTERED_OUT_LT_2CR_AVG_DAILY_VALUE"
+            status, tier = "FILTERED_OUT_BELOW_MINIMUM", "BELOW_MINIMUM"
             session_count = required_sessions
         record.update({
             "LiquiditySessions": int(session_count),
             "AvgDailyTradedValue20D": average_value,
             "MinimumAvgDailyTradedValueINR": float(minimum_average_daily_value),
             "LiquidityStatus": status,
-            "LiquidityFilterStatus": status,
+            "LiquidityFilterStatus": "PASS" if status.startswith("PASS_") else status,
+            "LiquidityTier": tier if valid else "WAIT_FOR_DATA",
         })
         rows.append(record)
 
     audit = pd.DataFrame(rows)
-    qualified = audit[audit["LiquidityStatus"] == "PASS_GE_2CR_AVG_DAILY_VALUE"].copy()
-    print(f"[LIQUIDITY] Threshold: average daily traded value >= ₹{minimum_average_daily_value:,.0f} over {required_sessions} prior sessions")
-    print(f"[LIQUIDITY] PASS: {len(qualified)}; REJECT: {(audit['LiquidityStatus'] == 'FILTERED_OUT_LT_2CR_AVG_DAILY_VALUE').sum()}; WAIT_FOR_DATA: {(audit['LiquidityStatus'] == 'WAIT_FOR_DATA').sum()}")
+    qualified = audit[audit["LiquidityStatus"].astype(str).str.startswith("PASS_")].copy()
+    print(f"[LIQUIDITY] Minimum ₹{minimum_average_daily_value:,.0f}; LOW ₹1.5–2cr, MEDIUM ₹2–5cr, STRONG >=₹5cr over {required_sessions} prior sessions")
+    print(f"[LIQUIDITY] PASS={len(qualified)} tiers={qualified.get('LiquidityTier', pd.Series(dtype=str)).value_counts().to_dict()}; REJECT={audit['LiquidityStatus'].astype(str).str.startswith('FILTERED_OUT').sum()}; WAIT_FOR_DATA={(audit['LiquidityStatus'] == 'WAIT_FOR_DATA').sum()}")
     return qualified, audit
 
