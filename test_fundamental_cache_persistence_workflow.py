@@ -48,7 +48,7 @@ def test_fundamental_assessment_uses_metric_verification_before_selection():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     assert 'fundamental_audit["FundamentalAssessmentStatus"] = fundamental_audit["FundamentalShortlistStatus"].astype(str)' in source
     assert 'eq("PASS")' in source  # PASS-only report is still emitted for diagnostics.
-    assert "run_fundamental_metric_audit()" in source
+    assert "run_fundamental_metric_audit(symbols=evidence_symbols)" in source
     assert 'current = fundamental_audit.loc[fundamental_pass_mask].copy()' in source
     assert "all A/B records remain in their audit reports" in source
     assert "fundamental_pass_mask" in source

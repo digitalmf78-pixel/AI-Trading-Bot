@@ -176,6 +176,124 @@ def _verify_cashflow_crossfoot(facts: list[ET.Element], context_ref: str,
     return True, 'Same-context operating, investing and financing facts reconcile to net cash change before FX'
 
 
+def _generated_ocf_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
+                            manual_evidence: pd.DataFrame, repo_root: Path,
+                            symbols: set[str] | None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build ephemeral direct-fact evidence for requested symbols from official NSE XML.
+
+    The hand-maintained evidence ledger is never changed.  XML is cached by URL
+    hash, re-hashed on every run, and every generated fact has to pass the same
+    exact filing/context/unit/value and cash-flow cross-foot checks as manual
+    evidence. Per-symbol download or mapping failures remain diagnostic rows.
+    """
+    generated: list[dict[str, str]] = []
+    diagnostics: list[dict[str, str]] = []
+    if symbols is None:
+        return pd.DataFrame(columns=EVIDENCE_COLUMNS), pd.DataFrame()
+    requested = {str(s).strip().upper() for s in symbols if str(s).strip()}
+    if not requested or filings.empty:
+        return pd.DataFrame(columns=EVIDENCE_COLUMNS), pd.DataFrame()
+    from nse_xbrl_fetch import fetch_official_xbrl_xml
+
+    target_metrics = metrics[
+        metrics['TckrSymb'].astype(str).str.upper().isin(requested)
+        & metrics['OperatingCashFlowINR'].notna()
+    ] if {'TckrSymb', 'OperatingCashFlowINR'}.issubset(metrics.columns) else metrics.iloc[0:0]
+    seen: set[tuple[str, str, str]] = set()
+    for _, metric in target_metrics.iterrows():
+        symbol = _clean(metric.get('TckrSymb')).upper()
+        period = _clean(metric.get('FinancialPeriodEnd'))[:10]
+        pub = _clean(metric.get('PublicationDate'))[:10]
+        basis = _clean(metric.get('MetricCalculationBasis')).upper()
+        url = _clean(metric.get('OfficialFilingURL'))
+        key = (symbol, period, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        manual_match = False
+        manual_keys = {'TckrSymb', 'MetricName', 'FinancialPeriodEnd', 'OfficialFilingURL'}
+        if not manual_evidence.empty and manual_keys.issubset(manual_evidence.columns):
+            manual_match = bool((manual_evidence['TckrSymb'].astype(str).str.upper().eq(symbol)
+                                 & manual_evidence['MetricName'].astype(str).eq('OperatingCashFlowINR')
+                                 & manual_evidence['FinancialPeriodEnd'].astype(str).str[:10].eq(period)
+                                 & manual_evidence['OfficialFilingURL'].astype(str).eq(url)).any())
+        if manual_match:
+            continue
+        filing_status, filing_reason = _filing_metadata_status(metric, filings)
+        if filing_status != 'OFFICIAL_FILING_METADATA_MATCHED':
+            diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                'Status': filing_status, 'Reason': filing_reason})
+            continue
+        if basis != 'ANNUAL_ALIGNED_STATEMENTS':
+            diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                'Status': 'ANNUAL_BASIS_REQUIRED', 'Reason': 'Provider metric is not annual aligned'})
+            continue
+        if not period.endswith('-03-31'):
+            diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                'Status': 'ANNUAL_PERIOD_UNSUPPORTED', 'Reason': 'Only March year-end contexts are currently mapped'})
+            continue
+        start = f'{int(period[:4]) - 1}-04-01'
+        cache_name = hashlib.sha256(url.encode('utf-8')).hexdigest()[:16] + '.xml'
+        cache_path = repo_root / 'data' / 'cache' / 'xbrl_samples' / cache_name
+        try:
+            if not cache_path.is_file():
+                fetch_official_xbrl_xml(url, cache_path)
+            digest = hashlib.sha256(cache_path.read_bytes()).hexdigest()
+            contexts, units, facts = _parse_xbrl(cache_path)
+        except Exception as exc:
+            diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                'Status': 'OFFICIAL_XBRL_FETCH_OR_PARSE_FAILED',
+                                'Reason': f'{type(exc).__name__}: {exc}'})
+            continue
+
+        candidates = []
+        for context_ref, context in contexts.items():
+            if (context.get('PeriodStart') != start or context.get('PeriodEnd') != period
+                    or context.get('DimensionsJSON') != '[]' or not context.get('EntityIdentifier')):
+                continue
+            for tag in DIRECT_FACT_TAGS.get('OperatingCashFlowINR', set()):
+                matching = [fact for fact in facts if _local(fact.tag) == tag
+                            and fact.attrib.get('contextRef') == context_ref]
+                for fact in matching:
+                    unit_ref = fact.attrib.get('unitRef', '')
+                    unit_measure = units.get(unit_ref, '')
+                    namespace = _namespace(fact.tag)
+                    fact_value = _fact_value(fact)
+                    if fact_value is None or not (unit_measure == 'INR' or unit_measure.endswith(':INR')):
+                        continue
+                    crossfoot_ok, reason = _verify_cashflow_crossfoot(
+                        facts, context_ref, unit_ref, unit_measure, namespace)
+                    if crossfoot_ok:
+                        candidates.append((context_ref, context, fact, unit_ref, unit_measure,
+                                           namespace, fact_value))
+                    else:
+                        diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                            'Status': 'XBRL_CASHFLOW_CROSSFOOT_FAILED', 'Reason': reason})
+        if len(candidates) != 1:
+            diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                'Status': 'XBRL_ANNUAL_CONTEXT_AMBIGUOUS' if len(candidates) > 1 else 'XBRL_ANNUAL_CONTEXT_UNRESOLVED',
+                                'Reason': f'Expected one unsegmented annual CFO fact with reconciled statement; found {len(candidates)}'})
+            continue
+        context_ref, context, fact, _, unit_measure, namespace, official_value = candidates[0]
+        generated.append({
+            'TckrSymb': symbol, 'MetricName': 'OperatingCashFlowINR',
+            'ProviderMetricValue': _clean(metric.get('OperatingCashFlowINR')),
+            'OfficialMetricValue': str(official_value), 'Tolerance': '0',
+            'FinancialPeriodEnd': period, 'PublicationDate': pub,
+            'MetricCalculationBasis': basis, 'OfficialFilingURL': url,
+            'XbrlFactTag': _local(fact.tag), 'XbrlContextRef': context_ref,
+            'EntityIdentifier': context['EntityIdentifier'],
+            'EntityIdentifierScheme': context['EntityIdentifierScheme'],
+            'UnitMeasure': unit_measure, 'TaxonomyNamespace': namespace,
+            'PeriodStart': context['PeriodStart'], 'PeriodEnd': context['PeriodEnd'],
+            'DimensionsJSON': context['DimensionsJSON'],
+            'EvidenceFilePath': str(cache_path.relative_to(repo_root)), 'EvidenceSHA256': digest,
+            'VerificationMethod': 'DIRECT_FACT_MATCH',
+            'EvidenceDetailsJSON': json.dumps({'generated': True, 'cashflowCrossfoot': 'PASS'}, separators=(',', ':')),
+        })
+    return pd.DataFrame(generated, columns=EVIDENCE_COLUMNS), pd.DataFrame(diagnostics)
+
+
 def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[str, str]:
     symbol = _clean(metric.get('TckrSymb')).upper()
     period = _clean(metric.get('FinancialPeriodEnd'))[:10]
@@ -428,7 +546,8 @@ def run_audit(metrics_path: str | Path = METRICS_PATH,
               filings_path: str | Path = FILINGS_PATH,
               evidence_path: str | Path = EVIDENCE_PATH,
               output_dir: str | Path = OUTPUT_DIR,
-              repo_root: str | Path = '.') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+              repo_root: str | Path = '.',
+              symbols: set[str] | list[str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     metrics_path, filings_path, evidence_path = Path(metrics_path), Path(filings_path), Path(evidence_path)
     if not metrics_path.exists():
         raise FileNotFoundError(f'Fundamental cache not found: {metrics_path}')
@@ -440,12 +559,23 @@ def run_audit(metrics_path: str | Path = METRICS_PATH,
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(columns=EVIDENCE_COLUMNS).to_csv(evidence_path, index=False)
         evidence = pd.DataFrame(columns=EVIDENCE_COLUMNS)
-    detail, summary, filing_summary = build_metric_verification(metrics, filings, evidence, repo_root=repo_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    repo_root = Path(repo_root).resolve()
+    if symbols is None:
+        recent_report = output_dir / 'v8_fundamental_report.csv'
+        if recent_report.is_file():
+            report = pd.read_csv(recent_report)
+            if 'TckrSymb' in report.columns:
+                symbols = set(report['TckrSymb'].dropna().astype(str).str.upper())
+    generated, diagnostics = _generated_ocf_evidence(metrics, filings, evidence, repo_root, symbols)
+    combined_evidence = pd.concat([evidence, generated], ignore_index=True)
+    detail, summary, filing_summary = build_metric_verification(metrics, filings, combined_evidence, repo_root=repo_root)
     detail.to_csv(output_dir / DETAILS_PATH.name, index=False)
     summary.to_csv(output_dir / SUMMARY_PATH.name, index=False)
     filing_summary.to_csv(output_dir / FILING_SUMMARY_PATH.name, index=False)
+    generated.to_csv(output_dir / 'v8_fundamental_generated_evidence.csv', index=False)
+    diagnostics.to_csv(output_dir / 'v8_fundamental_evidence_generation_diagnostics.csv', index=False)
     return detail, summary, filing_summary
 
 
@@ -463,7 +593,8 @@ def main() -> int:
     print('FILING_METADATA_SUMMARY')
     if not filing_summary.empty:
         print(filing_summary.to_string(index=False))
-    print('CACHE_MUTATION=NONE')
+    print('FUNDAMENTAL_METRIC_CACHE_AND_MANUAL_EVIDENCE_LEDGER_MUTATION=NONE')
+    print('GENERATED_EVIDENCE=EPHEMERAL; OFFICIAL_XML_CACHE=data/cache/xbrl_samples')
     print('VERIFIED_STATUS_REQUIRES_HASHED_OFFICIAL_XML_DIRECT_FACT_MATCH')
     return 0
 

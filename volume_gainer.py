@@ -3415,7 +3415,10 @@ def main():
                 # Filing metadata or a provider calculation basis alone does
                 # not prove that a cached value matches an official filing.
                 from fundamental_metric_verification import run_audit as run_fundamental_metric_audit
-                metric_verification, _, _ = run_fundamental_metric_audit()
+                evidence_symbols = set(
+                    fundamental_universe['TckrSymb'].dropna().astype(str).str.upper()
+                ) if 'TckrSymb' in fundamental_universe.columns else set()
+                metric_verification, _, _ = run_fundamental_metric_audit(symbols=evidence_symbols)
                 fundamental_audit = build_fundamental_shortlist(
                     fundamental_audit, eod_date, metric_verification=metric_verification,
                     require_explicit_thresholds=True,
