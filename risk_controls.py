@@ -78,16 +78,13 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
                 missing.append("INVALID:" + key)
         except (TypeError, ValueError):
             missing.append("INVALID:" + key)
-    # Older configurations predate position-count settings. Keep the historic
-    # four-position cap and zero-open-position assumption when those keys are
-    # absent; an explicitly supplied null or malformed setting still fails closed.
-    max_open_positions = config.get("max_open_positions", 4)
-    current_open_positions = config.get("current_open_positions", 0)
+    # Position counts affect concentration limits, so missing values must not
+    # silently assume a four-position cap or an empty account.
+    max_open_positions = config.get("max_open_positions")
+    current_open_positions = config.get("current_open_positions")
     for key in ("max_open_positions", "current_open_positions"):
-        # Older configs used a fixed four-stock shortlist and did not record
-        # these fields. Preserve that behavior when keys are absent; an
-        # explicitly supplied null/invalid value still fails closed.
-        if key not in config:
+        if key not in config or config.get(key) is None:
+            missing.append(key)
             continue
         if key in missing:
             continue
@@ -96,7 +93,10 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
             missing.append("INVALID:" + key)
     position_limit_invalid = any(
         key in missing
-        for key in ("INVALID:max_open_positions", "INVALID:current_open_positions")
+        for key in (
+            "max_open_positions", "current_open_positions",
+            "INVALID:max_open_positions", "INVALID:current_open_positions",
+        )
     )
     if not position_limit_invalid:
         if max_open_positions <= 0 or current_open_positions > max_open_positions:

@@ -752,7 +752,9 @@ def run_eod_layers(
                 prev_close = close
             atr = sum(ranges[-14:]) / min(len(ranges[-14:]), 14) if ranges else float("nan")
         stop_candidates = [value for value in [support, price - 1.5 * atr if pd.notna(atr) else float("nan")] if pd.notna(value) and pd.notna(price) and 0 < value < price]
-        stop = max(stop_candidates) if stop_candidates else float("nan")
+        # Use the lower valid protective level. The nearest level can make the
+        # stop artificially tight and inflate the displayed risk/reward ratio.
+        stop = min(stop_candidates) if stop_candidates else float("nan")
         entry = _num(row.get("EntryZoneHigh"))
         if pd.isna(entry) or entry <= 0:
             entry = price
@@ -854,8 +856,8 @@ def run_eod_layers(
     risk_config = load_risk_config()
     # Backward-compatible defaults preserve the historical four-stock cap;
     # account-specific configs should always set both values explicitly.
-    max_positions = risk_config.get("max_open_positions", 4)
-    current_positions = risk_config.get("current_open_positions", 0)
+    max_positions = risk_config.get("max_open_positions")
+    current_positions = risk_config.get("current_open_positions")
     max_total_exposure = _num(risk_config.get("max_total_exposure_pct"))
     current_total_exposure = _num(risk_config.get("current_total_exposure_pct"))
     sector_limits = risk_config.get("sector_exposure_pct_by_sector")

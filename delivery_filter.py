@@ -24,6 +24,7 @@ BASE_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_
 CACHE_DIR = Path("data/cache/delivery")
 AUDIT_DIR = Path("data/reports")
 MINIMUM_DAILY_DELIVERY = 60.0
+MAX_REPORT_AGE_DAYS = 7
 # Compatibility alias for existing callers; this threshold is applied to EACH day.
 MINIMUM_AVERAGE = MINIMUM_DAILY_DELIVERY
 REQUIRED_COLUMNS = {"SYMBOL", "SERIES", "DELIV_PER"}
@@ -199,6 +200,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     report_dates = [day.isoformat() for day, _ in reports]
     latest_valid_report_date = reports[-1][0].isoformat()
     asof_report_available = _parse_date(asof_date).isoformat() in report_dates
+    report_age_days = (_parse_date(asof_date) - reports[-1][0]).days
+    window_stale = report_age_days > MAX_REPORT_AGE_DAYS
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
@@ -216,6 +219,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             category_a = "PASS_AVG_GE_60_PERCENT" if avg >= threshold else "FILTERED_OUT_AVG_LT_60_PERCENT"
             category_b = "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values) else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
             overall = "PASS_GE_60_PERCENT" if category_b == "PASS_EACH_DAY_GE_60_PERCENT" else "FILTERED_OUT_LT_60_PERCENT"
+        if window_stale:
+            category_a = category_b = overall = "WAIT_FOR_DATA_STALE_REPORT"
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
             "DeliverySessions": count,
@@ -227,6 +232,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "LatestDeliveryPct": by_date.get(latest_valid_report_date, float("nan")),
             "DeliveryAsOfDate": _parse_date(asof_date).isoformat(),
             "DeliveryAsOfReportAvailable": asof_report_available,
+            "DeliveryReportAgeDays": report_age_days,
+            "DeliveryWindowStale": window_stale,
             "DeliveryWindowStartDate": report_dates[0],
             "DeliveryWindowEndDate": report_dates[-1],
             "DeliveryCategoryAStatus": category_a,

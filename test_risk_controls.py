@@ -15,6 +15,8 @@ CONFIG = {
     "current_total_exposure_pct": 20,
     "sector_exposure_pct_by_sector": {"IT": 10},
     "portfolio_exposure_verified": True,
+    "max_open_positions": 4,
+    "current_open_positions": 0,
 }
 
 class RiskControlTests(unittest.TestCase):
@@ -42,5 +44,15 @@ class RiskControlTests(unittest.TestCase):
         self.config.write_text(json.dumps(CONFIG2), encoding="utf-8")
         out = apply_portfolio_risk_controls(self.frame, self.config)
         self.assertEqual(out.iloc[0]["RiskControlStatus"], "WAIT_FOR_DATA")
+
+    def test_missing_position_counts_wait(self):
+        CONFIG2 = dict(CONFIG)
+        CONFIG2.pop("max_open_positions")
+        CONFIG2.pop("current_open_positions")
+        self.config.write_text(json.dumps(CONFIG2), encoding="utf-8")
+        out = apply_portfolio_risk_controls(self.frame, self.config)
+        self.assertEqual(out.iloc[0]["RiskControlStatus"], "WAIT_FOR_DATA")
+        self.assertIn("max_open_positions", out.iloc[0]["RiskControlReason"])
+        self.assertIn("current_open_positions", out.iloc[0]["RiskControlReason"])
 
 if __name__ == "__main__": unittest.main()

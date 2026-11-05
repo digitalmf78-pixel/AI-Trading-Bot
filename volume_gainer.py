@@ -345,13 +345,8 @@ def prepare_equity_data(df, etf_symbols=None):
         keep="first"
     )
 
-    data["PriceChangePct"] = (
-        (
-            data["ClsPric"]
-            - data["PrvsClsgPric"]
-        )
-        / data["PrvsClsgPric"]
-    ) * 100
+    previous_close = data["PrvsClsgPric"].where(data["PrvsClsgPric"] != 0)
+    data["PriceChangePct"] = ((data["ClsPric"] - previous_close) / previous_close) * 100
 
     return data
 
@@ -3499,9 +3494,9 @@ def main():
         observation_report = pd.DataFrame()
 
     # --------------------------------------------------------
-    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹5 CRORE
+    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹2 CRORE
     # --------------------------------------------------------
-    print("\nSTEP 6: Applying matrix liquidity gate (20D average traded value >= ₹5 crore)...")
+    print("\nSTEP 6: Applying matrix liquidity gate (20D average traded value >= ₹2 crore)...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
     if current.empty:
         for col in liquidity_audit_columns:

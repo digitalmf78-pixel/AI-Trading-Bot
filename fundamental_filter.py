@@ -69,20 +69,20 @@ def create_fundamental_templates() -> None:
     if not METRICS_PATH.exists():
         pd.DataFrame(columns=INPUT_COLUMNS).to_csv(METRICS_PATH, index=False)
     if not THRESHOLDS_PATH.exists():
-        # Retained for backward compatibility. Thresholds are not used during
-        # collection; they belong to the later strong-fundamental shortlist.
+        # Explicit conservative baseline for the later strict shortlist. This
+        # config defines thresholds only; it does not create or verify metrics.
         template = {
-            "min_revenue_growth_pct": None,
-            "min_profit_growth_pct": None,
-            "min_roe_pct": None,
-            "min_roce_pct": None,
-            "max_debt_to_equity": None,
-            "min_interest_coverage": None,
-            "require_positive_operating_cash_flow": None,
-            "require_positive_free_cash_flow": None,
+            "min_revenue_growth_pct": 0.0,
+            "min_profit_growth_pct": 0.0,
+            "min_roe_pct": 10.0,
+            "min_roce_pct": 12.0,
+            "max_debt_to_equity": 1.0,
+            "min_interest_coverage": 3.0,
+            "require_positive_operating_cash_flow": True,
+            "require_positive_free_cash_flow": False,
             "acceptable_earnings_quality_status": None,
             "acceptable_valuation_status": None,
-            "max_data_age_days": None,
+            "max_data_age_days": 548,
         }
         THRESHOLDS_PATH.write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
 
