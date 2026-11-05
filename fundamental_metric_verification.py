@@ -694,6 +694,8 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
     method = _clean(ev.get('VerificationMethod')).upper()
     if method == 'DERIVED_COMPONENT_FACTS' and metric_name in {'RevenueGrowthPct', 'ProfitGrowthPct'}:
         return _verify_derived_growth_evidence(metric, metric_name, ev, repo_root)
+    if metric_name in {'RevenueGrowthPct', 'ProfitGrowthPct'}:
+        return 'DERIVED_RECONCILIATION_REQUIRED', 'Growth cannot be verified from a single direct fact; two annual component filings are required', ev
     if method != 'DIRECT_FACT_MATCH':
         return 'DERIVED_RECONCILIATION_REQUIRED', 'Evidence method is not supported for this metric', ev
     details = _clean(ev.get('EvidenceDetailsJSON'))
