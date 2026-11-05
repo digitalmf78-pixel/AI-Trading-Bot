@@ -1133,7 +1133,10 @@ def _telegram_observation_rows(report: pd.DataFrame | None,
             "FundamentalScore", "Fundamental65PlusStatus", "FundamentalStatus",
             "FundamentalSource", "CoreTechnicalScreenStatus", "CandidateScreenStatus",
             "SetupType", "RSI14", "EMA20", "EMA44", "NewsEvidenceStatus",
-            "EODWatchlistStatus",
+            "EODWatchlistStatus", "DeliveryCategoryAStatus",
+            "DeliveryCategoryBStatus", "AvgDelivery5D",
+            "DeliveryDailyPassCount", "DeliverySessions", "DeliveryMin5D",
+            "LatestDeliveryPct",
         }]
         overlay = downstream[columns] if columns else downstream.iloc[:, 0:0]
         rows = rows.merge(overlay, how="left", left_on="TckrSymb", right_index=True,
@@ -1220,6 +1223,18 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         news = row.get("NewsEvidenceStatus", row.get("NewsEvidenceStatus_pipeline", "WAIT_FOR_DATA"))
         final = row.get("EODWatchlistStatus", row.get("EODWatchlistStatus_pipeline", "WAIT_FOR_DATA"))
         event = events.get(symbol, "Event date WAIT_FOR_DATA")
+        delivery_a = row.get("DeliveryCategoryAStatus", row.get("DeliveryCategoryAStatus_pipeline", "WAIT_FOR_DATA"))
+        delivery_b = row.get("DeliveryCategoryBStatus", row.get("DeliveryCategoryBStatus_pipeline", "WAIT_FOR_DATA"))
+        avg_delivery = pd.to_numeric(pd.Series([row.get("AvgDelivery5D")]), errors="coerce").iloc[0]
+        daily_pass = pd.to_numeric(pd.Series([row.get("DeliveryDailyPassCount")]), errors="coerce").iloc[0]
+        delivery_sessions = pd.to_numeric(pd.Series([row.get("DeliverySessions")]), errors="coerce").iloc[0]
+        min_delivery = pd.to_numeric(pd.Series([row.get("DeliveryMin5D")]), errors="coerce").iloc[0]
+        latest_delivery = pd.to_numeric(pd.Series([row.get("LatestDeliveryPct")]), errors="coerce").iloc[0]
+        avg_text = f"{avg_delivery:.1f}% avg" if pd.notna(avg_delivery) else "avg WAIT"
+        daily_text = f"{int(daily_pass)}/{int(delivery_sessions)} दिवस" if pd.notna(daily_pass) and pd.notna(delivery_sessions) else "दैनिक WAIT"
+        min_text = f", min {min_delivery:.1f}%" if pd.notna(min_delivery) else ""
+        latest_text = f", latest {latest_delivery:.1f}%" if pd.notna(latest_delivery) else ""
+        lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
         lines.append(f"   Fundamental {score} | Source {source}")
         lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news} | Final {final}")
