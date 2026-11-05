@@ -1162,7 +1162,8 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
             "आज final Watchlist मध्ये stock नाही.",
             "Analysis only • No automatic order."
         ]
-        lines.extend(_observation_digest_lines(observation_report))
+        if observation_report is not None:
+            lines.extend(_observation_digest_lines(observation_report)
         return lines
 
     screened = result.copy()
@@ -1185,7 +1186,8 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
             "सर्व V8 gates नंतर final WATCH stock नाही.",
             "Analysis only • No automatic order."
         ]
-        lines.extend(_observation_digest_lines(observation_report))
+        if observation_report is not None:
+            lines.extend(_observation_digest_lines(observation_report)
         return lines
 
     def val(row, key, digits=2, suffix=""):
@@ -1232,7 +1234,8 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
         lines.append("")
 
     lines.append("Missing values stay NA/WAIT. Analysis only • No automatic order.")
-    lines.extend(_observation_digest_lines(observation_report))
+    if observation_report is not None:
+        lines.extend(_observation_digest_lines(observation_report)
     return lines
 
 def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None, observation_report: pd.DataFrame | None = None) -> None:
