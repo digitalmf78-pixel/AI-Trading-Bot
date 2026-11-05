@@ -129,7 +129,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TELEGRAM: "${{ github.event_name == 'schedule' }}"
+          SEND_TELEGRAM: "true"
           RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
           NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
@@ -137,6 +137,46 @@ jobs:
           echo "===== NEWS SCAN MODE: ${NEWS_SCAN_MODE} ====="
           python -u ./volume_gainer.py
           echo "===== NSE SCANNER FINISHED ====="
+
+      - name: Notify Telegram when the NSE scan fails
+        if: ${{ failure() && steps.nse_scan.outcome == 'failure' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
+        run: |
+          python - <<'PY'
+          import os, sys, time, requests
+          token = os.getenv("TELEGRAM_BOT_TOKEN")
+          chat_id = os.getenv("TELEGRAM_CHAT_ID")
+          if not token or not chat_id:
+              print("Telegram failure alert unavailable: configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets.")
+              sys.exit(1)
+          message = ("❌ NSE V8 scan FAILED\n"
+                     f"Mode: {os.getenv('SCAN_MODE', 'UNKNOWN')}\n"
+                     f"Repository: {os.getenv('GITHUB_REPOSITORY', 'unknown')}\n"
+                     f"Run: {os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID', '')}\n"
+                     "GitHub Actions logs तपासा.")
+          error = None
+          for attempt in range(1, 4):
+              try:
+                  response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                      data={"chat_id": chat_id, "text": message}, timeout=25)
+                  response.raise_for_status()
+                  payload = response.json()
+                  if payload.get("ok") is not True:
+                      raise RuntimeError(f"Telegram API rejected alert: {payload}")
+                  print(f"Failure alert delivered. message_id={payload.get('result', {}).get('message_id')}")
+                  error = None
+                  break
+              except Exception as exc:
+                  error = exc
+                  print(f"Failure alert attempt {attempt}/3 failed: {exc}")
+                  if attempt < 3:
+                      time.sleep(2 ** attempt)
+          if error:
+              raise error
+          PY
 
       - name: Fetch and inspect up to five official NSE XBRL samples (diagnostic only)
         id: xbrl_diagnostic

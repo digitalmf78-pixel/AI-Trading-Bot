@@ -6,13 +6,26 @@ on:
 jobs:
   telegram-test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Send Telegram Test Message
+      - name: Send and verify Telegram test message
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="✅ GitHub Bot Test Successful! NSE Swing Trading V8 setup is working."
+          python - <<'PY'
+          import os, sys, requests
+          token = os.getenv("TELEGRAM_BOT_TOKEN")
+          chat_id = os.getenv("TELEGRAM_CHAT_ID")
+          if not token or not chat_id:
+              sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID repository secret")
+          response = requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data={"chat_id": chat_id, "text": "✅ GitHub Telegram Test Successful! NSE V8 notifications are configured."},
+              timeout=25,
+          )
+          response.raise_for_status()
+          payload = response.json()
+          if payload.get("ok") is not True:
+              sys.exit(f"Telegram rejected test message: {payload}")
+          print(f"Telegram test delivered. message_id={payload.get('result', {}).get('message_id')}")
+          PY
