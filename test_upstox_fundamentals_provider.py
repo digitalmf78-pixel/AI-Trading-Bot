@@ -28,7 +28,7 @@ def test_parses_only_period_aligned_consolidated_metrics():
 
 
 def test_rejects_inconsistent_balance_sheet_period():
-    with pytest.raises(ValueError, match="common annual period"):
+    with pytest.raises(ValueError, match="reporting period differs"):
         metrics_from_responses(*_responses("Mar 2024"))
 
 
