@@ -73,10 +73,10 @@ def metrics_from_responses(income: dict, balance: dict, cashflow: dict) -> dict:
     operating = _unique_history(cash_data, "cash_flow", "operating")
     balance_periods = {period[0] for row in balance_data.get("history", [])
                        if (period := _month_end_period(row.get("period")))}
-    common_periods = sorted(set(revenue) & set(profit) & set(operating) & balance_periods, reverse=True)
-    if not common_periods:
-        raise ValueError("No common annual period across revenue, net profit, and operating cash flow")
-    latest = common_periods[0]
+    latest_periods = [max(values) for values in (revenue, profit, operating, balance_periods) if values]
+    if len(latest_periods) != 4 or len(set(latest_periods)) != 1:
+        raise ValueError("Latest annual reporting period differs across income, balance, or cash-flow statements")
+    latest = latest_periods[0]
     result = {
         "FinancialPeriodEnd": latest,
         "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
@@ -87,12 +87,11 @@ def metrics_from_responses(income: dict, balance: dict, cashflow: dict) -> dict:
         "UpstoxUnits": "INR_CRORE",
         "UpstoxStatus": "DATA_FOUND",
     }
-    if len(common_periods) > 1:
-        prior = common_periods[1]
-        if prior < latest and revenue[prior] > 0:
-            result["RevenueGrowthPct"] = (revenue[latest] - revenue[prior]) / revenue[prior] * 100.0
-        if prior < latest and profit[prior] > 0:
-            result["ProfitGrowthPct"] = (profit[latest] - profit[prior]) / profit[prior] * 100.0
+    prior = f"{int(latest[:4]) - 1:04d}{latest[4:]}"
+    if prior in revenue and latest in revenue and revenue[prior] > 0:
+        result["RevenueGrowthPct"] = (revenue[latest] - revenue[prior]) / revenue[prior] * 100.0
+    if prior in profit and latest in profit and profit[prior] > 0:
+        result["ProfitGrowthPct"] = (profit[latest] - profit[prior]) / profit[prior] * 100.0
     result["OperatingCashFlowINR"] = operating[latest] * 10_000_000
     result["UpstoxProviderSource"] = "Upstox Fundamentals API"
     result["UpstoxProviderSourceURL"] = f"{BASE_URL}/<ISIN>"

@@ -820,6 +820,9 @@ def _apply_upstox_fallback(fetched: dict, diagnostic: dict, symbol: str, isin: s
         fetched["Source"] = ("Yahoo Finance via yfinance + Upstox Fundamentals API" if any(
             value.startswith("Yahoo Finance") for value in source_map.values()) else "Upstox Fundamentals API (secondary; verify against NSE/BSE filings)")
         diagnostic["UpstoxFilledMetrics"] = ";".join(filled)
+        diagnostic["ProviderStatus"] = "DATA_FOUND"
+        diagnostic["ProviderReason"] = "Upstox supplied missing annual metrics: " + ",".join(filled)
+        diagnostic["MetricsAvailable"] = sum(_present(fetched.get(col)) for col in METRIC_COLUMNS)
         diagnostic["ProviderSource"] = fetched["Source"]
         diagnostic["ProviderSourceURL"] = fetched.get("UpstoxProviderSourceURL", "")
 
