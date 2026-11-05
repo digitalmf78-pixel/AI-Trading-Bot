@@ -1197,9 +1197,12 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
     return lines
 
 def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None) -> None:
+    """Send the complete scan digest and verify Telegram's acknowledgement."""
+    import time
+
     if not token or not chat_id:
-        print("Telegram secrets are not configured; Marathi digest was not sent.")
-        return
+        raise RuntimeError("Telegram enabled but TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is missing; configure both GitHub Actions secrets.")
+
     lines = build_marathi_digest(result, eod_date, news, feed_status)
     chunks: list[str] = []
     current = ""
@@ -1211,12 +1214,30 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
         current += addition
     if current:
         chunks.append(current.rstrip())
+    if not chunks:
+        chunks = [f"NSE V8 Scan completed | {eod_date}\nरिपोर्टमध्ये दाखवण्यासाठी डेटा उपलब्ध नाही."]
+
     for index, chunk in enumerate(chunks, start=1):
-        text = f"भाग {index}/{len(chunks)}\n{chunk}" if len(chunks) > 1 else chunk
-        response = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
-            timeout=20,
-        )
-        print(f"Marathi Telegram digest part {index}/{len(chunks)}: HTTP {response.status_code}")
-        response.raise_for_status()
+        message = f"भाग {index}/{len(chunks)}\n{chunk}" if len(chunks) > 1 else chunk
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                response = requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
+                    timeout=25,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict) or payload.get("ok") is not True:
+                    raise RuntimeError(f"Telegram API rejected message: {payload}")
+                print(f"TELEGRAM_DELIVERED part={index}/{len(chunks)} message_id={payload.get('result', {}).get('message_id')}")
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                print(f"Telegram send failed part={index}/{len(chunks)} attempt={attempt}/3: {type(exc).__name__}: {exc}")
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+        if last_error is not None:
+            raise RuntimeError(f"Telegram delivery failed for part {index}/{len(chunks)} after 3 attempts") from last_error
