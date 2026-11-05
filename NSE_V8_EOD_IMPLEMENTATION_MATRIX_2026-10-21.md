@@ -6,7 +6,7 @@
 | 2. Validate symbols/security types | Preserved | Existing symbol/security-series and ETF handling remains in place. |
 | 3. Latest valid EOD data | Preserved | Existing retrieval/cache fallback remains; latest supplied run used 2026-10-19 after 404s for 20/21 Oct. |
 | 4. Five-session Delivery >=60% each day | Preserved | Existing per-session threshold is authoritative; missing history => WAIT_FOR_DATA. |
-| 5. 20-session liquidity | Reordered to match latest spec | Remains >=₹5 crore average daily traded value; missing history => WAIT_FOR_DATA. |
+| 5. 20-session liquidity | Reordered to match latest spec | Current user-set threshold is >=₹2 crore average daily traded value; missing history => WAIT_FOR_DATA. Earlier 5-crore audit runs are historical and use their old threshold. |
 | 6. Fundamental strength | New hard gate | Supports the requested metrics, source provenance, and explicit thresholds. No financial source connector is yet automated; absent data/config => WAIT_FOR_DATA. |
 | 7. Sector mapping/strength | Preserved | Existing sector module is still used; missing evidence is not guessed. |
 | 8. News/corporate announcements | Preserved | Existing news/catalyst and upcoming-event logic remains in place. |

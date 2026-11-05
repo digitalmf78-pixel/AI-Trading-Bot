@@ -3494,9 +3494,9 @@ def main():
         observation_report = pd.DataFrame()
 
     # --------------------------------------------------------
-    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹5 CRORE
+    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹2 CRORE
     # --------------------------------------------------------
-    print("\nSTEP 6: Applying matrix liquidity gate (20D average traded value >= ₹5 crore)...")
+    print("\nSTEP 6: Applying matrix liquidity gate (20D average traded value >= ₹2 crore)...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus"]
     if current.empty:
         for col in liquidity_audit_columns:
