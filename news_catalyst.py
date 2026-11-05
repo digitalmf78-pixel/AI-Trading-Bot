@@ -1137,8 +1137,9 @@ def _telegram_observation_rows(report: pd.DataFrame | None,
             "DeliveryCategoryBStatus", "AvgDelivery5D",
             "DeliveryDailyPassCount", "DeliverySessions", "DeliveryMin5D",
             "LatestDeliveryPct", "ClsPric", "ValuationPriceINR",
-            "ValuationStatus", "TrailingPE", "ForwardPE", "PriceToBook",
-            "PriceToSales",
+            "ValuationStatus", "ValuationAsOfDate", "ValuationSource",
+            "ValuationAssessmentStatus", "TrailingPE", "ForwardPE",
+            "PriceToBook", "PriceToSales",
         }]
         overlay = downstream[columns] if columns else downstream.iloc[:, 0:0]
         rows = rows.merge(overlay, how="left", left_on="TckrSymb", right_index=True,
@@ -1269,11 +1270,15 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         turnover = f"₹{avg / 10_000_000:.2f}cr/day" if pd.notna(avg) else "turnover WAIT_FOR_DATA"
         close_price = pd.to_numeric(pd.Series([row.get("ClsPric", row.get("ValuationPriceINR"))]), errors="coerce").iloc[0]
         valuation_status = str(row.get("ValuationStatus", "DATA_INSUFFICIENT")).strip().upper()
-        valuation_label = (
-            "multiples available; cheap/expensive not classified"
-            if valuation_status == "VALUATION_MULTIPLE_AVAILABLE"
-            else valuation_status or "DATA_INSUFFICIENT"
-        )
+        valuation_assessment = str(row.get("ValuationAssessmentStatus", "")).strip().upper()
+        valuation_date = str(row.get("ValuationAsOfDate", "")).strip()
+        valuation_source = str(row.get("ValuationSource", "")).strip()
+        if valuation_status == "VALUATION_MULTIPLE_AVAILABLE":
+            valuation_label = "multiples available; cheap/expensive not classified"
+        else:
+            valuation_label = valuation_assessment or valuation_status or "DATA_INSUFFICIENT"
+        valuation_date_text = f"as of {valuation_date}" if valuation_date and valuation_date.lower() != "nan" else "date unavailable"
+        valuation_source_text = valuation_source or "source unavailable"
         def _multiple_text(column):
             value = pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
             return f"{value:.2f}x" if pd.notna(value) else "WAIT"
@@ -1308,7 +1313,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         min_text = f", min {min_delivery:.1f}%" if pd.notna(min_delivery) else ""
         latest_text = f", latest {latest_delivery:.1f}%" if pd.notna(latest_delivery) else ""
         lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
-        lines.append(f"   Close {price_text} | Valuation: {valuation_label}")
+        lines.append(f"   Close {price_text} | Valuation: {valuation_label} ({valuation_date_text}; {valuation_source_text})")
         lines.append(f"   Multiples: {valuation_metrics}")
         lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"   Fundamental {score} | Source {source}")
