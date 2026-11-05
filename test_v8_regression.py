@@ -240,52 +240,36 @@ def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates()
 
 
 def test_telegram_digest_is_compact_and_keeps_core_gate_context():
-    row = {
-        "TckrSymb": "ABC", "ClsPric": 110.0, "PriceChangePct": 2.5,
-        "PriceChange5D": 7.5, "TtlTradgVol": 2500, "AvgVolume20D": 1000,
-        "RVOL": 2.5, "AvgDelivery5D": 72.5, "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
-        "Delivery_2026-10-13": 70.0, "Delivery_2026-10-12": 75.0,
-        "EMA20": 105.0, "EMA44": 102.0, "EMA44DistancePct": 7.84,
-        "EMA44Trend": "RISING", "EMA44Position": "ABOVE_EMA44",
-        "EMA44ProximityStatus": "NOT_NEAR_EMA44", "EMA44SignalStatus": "ABOVE_EMA44",
-        "RSI14": 61.0, "ADX14": 25.0, "TrendClassification": "Bullish Trend",
-        "PriceVolumeRelationship": "Positive", "CLV": 0.8,
-        "BreakoutStatus": "Breakout", "PullbackStatus": "No Pullback",
-        "SRSupport": 100.0, "SRResistance": 115.0, "BreakoutLevel": 115.0,
-        "Sector": "Unknown", "SectorStrengthStatus": "WAIT_FOR_DATA", "MarketRegime": "MIXED",
-        "NewsEvidenceStatus": "NO_DATA", "MandatoryConfirmationStatus": "WAIT_FOR_DATA",
-        "IndependentConfirmationCategories": "PRICE_VOLUME", "NewsPrimarySourceVerified": False,
-        "V8Score": 50, "EntryPricePlan": 110.0, "StopLossPlan": 100.0,
-        "TargetPricePlan": 125.0, "RiskReward": 1.5, "ChaseStatus": "CLEAR",
-        "EODWatchlistStatus": "WATCH", "EODLayerStatus": "PASS",
-        "CandidateScreenReasons": "SECTOR_WAIT_FOR_DATA",
-    }
-    lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {"NSE": "available", "secondary": "available"})
+    row = {"TckrSymb": "ABC", "LiquidityFilterStatus": "PASS",
+           "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "NewsEvidenceStatus": "NO_DATA",
+           "EODWatchlistStatus": "WAIT_FOR_DATA"}
+    report = pd.DataFrame([{"TckrSymb": "ABC", "ObservationPriority": "P1",
+                            "FundamentalShortlistStatus": "PASS"}])
+    lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {}, observation_report=report)
     text = "\n".join(lines)
-    for expected in ("ABC", "WATCH", "1D +2.50%", "5D Delivery", "72.50%", "Support", "Resistance", "Entry", "Target", "Analysis only"):
+    for expected in ("ABC", "P1", "Fundamental PASS", "Liquidity PASS", "Technical WAIT_FOR_DATA", "News NO_DATA", "Final WAIT_FOR_DATA"):
         assert expected in text, expected
-    assert "EMA44" not in text  # Detailed EMA diagnostics remain in the CSV reports.
-    assert len(lines) < 16
+    assert "BUY recommendation नाही" in text
 
 
-def test_telegram_digest_only_lists_final_watch_stocks():
+def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
     rows = pd.DataFrame([
-        {"TckrSymb": "SKIPME", "EODWatchlistStatus": "SKIP", "CandidateScreenReasons": "TECHNICAL_FAIL"},
-        {"TckrSymb": "WATCHME", "EODWatchlistStatus": "WATCH", "V8Score": 70},
+        {"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA", "EODWatchlistStatus": "WAIT_FOR_DATA"},
+        {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "EODWatchlistStatus": "WATCH"},
     ])
-    text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}))
-    assert "Screened: 2 | Final WATCH: 1 | SKIP/FAIL: 1" in text
+    report = pd.DataFrame([{"TckrSymb": "NOTLIQ", "ObservationPriority": "P1"},
+                           {"TckrSymb": "WATCHME", "ObservationPriority": "P2"}])
+    text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}, observation_report=report))
     assert "WATCHME" in text
-    assert "SKIPME" not in text
+    assert "NOTLIQ" not in text
 
 
 def test_telegram_digest_empty_result_is_a_short_no_candidate_message():
     lines = news_catalyst.build_marathi_digest(pd.DataFrame(), "2026-10-13", pd.DataFrame(), {"NSE": "available"})
     text = "\n".join(lines)
-    assert "Screened: 0 | Final WATCH: 0" in text
-    assert "आज final Watchlist मध्ये stock नाही." in text
-    assert "No automatic order" in text
-    assert len(lines) == 4
+    assert "Final WATCH: 0" in text
+    assert "Liquidity + Fundamental filter नंतर Telegram साठी stock उपलब्ध नाही." in text
+    assert "automatic order नाही" in text
 
 def test_next_day_pipeline_only_receives_final_watch_candidates():
     with tempfile.TemporaryDirectory() as tmp:
