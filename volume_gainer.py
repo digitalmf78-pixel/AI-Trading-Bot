@@ -4,6 +4,7 @@ import zipfile
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter
+from delivery_streak_tracker import update_delivery_scan_streak
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3328,6 +3329,8 @@ def main():
     # STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5
     # --------------------------------------------------------
     print("\nSTEP 4: Applying separate 5-session Delivery Categories after RVOL > 1.5...")
+    # The scan streak tracks delivery-stage appearances after the existing RVOL > 1.5 gate.
+    delivery_data_available = True
     if current.empty:
         delivery_audit = current.copy()
         for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
@@ -3338,6 +3341,10 @@ def main():
             delivery_qualified, delivery_audit = apply_delivery_filter(
                 current, eod_date, symbol_col="TckrSymb", series_col="SctySrs", minimum_average=60.0
             )
+            delivery_data_available = not delivery_audit.empty
+            if delivery_data_available and "DeliverySessions" in delivery_audit.columns:
+                session_counts = pd.to_numeric(delivery_audit["DeliverySessions"], errors="coerce")
+                delivery_data_available = bool(session_counts.ge(5).any())
             os.makedirs("outputs", exist_ok=True)
             delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
             current = delivery_qualified.copy()
@@ -3346,12 +3353,33 @@ def main():
             print(f"[DELIVERY] Category B (each of 5 days >=60%) qualified={len(current)}")
             print("[DELIVERY] Category A (5-day average >=60%) remains available in audit reports.")
         except Exception as exc:
+            delivery_data_available = False
             print(f"[DELIVERY] WAIT_FOR_DATA: delivery categories could not be verified: {exc}")
             current = current.iloc[0:0].copy()
             delivery_audit = current.copy()
             for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
                 if col not in current.columns:
                     current[col] = pd.Series(dtype="object")
+
+    # Persist A/B delivery scan streaks independently of downstream fundamental,
+    # technical, news, or sector gates. A duplicate EOD date is idempotent.
+    market_session_dates = []
+    for history_frame in historical:
+        if "Date" in history_frame.columns:
+            market_session_dates.extend(
+                pd.to_datetime(history_frame["Date"], errors="coerce").dropna().tolist()
+            )
+    try:
+        delivery_audit = update_delivery_scan_streak(
+            delivery_audit,
+            eod_date,
+            market_session_dates,
+            data_available=delivery_data_available,
+        )
+        os.makedirs("outputs", exist_ok=True)
+        delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
+    except Exception as tracker_exc:
+        print(f"[DELIVERY TRACKER] WAIT_FOR_DATA: streak report could not be updated: {tracker_exc}")
 
     # --------------------------------------------------------
     # STEP 5: FUNDAMENTAL DATA COLLECTION FOR ALL DELIVERY A/B STOCKS
