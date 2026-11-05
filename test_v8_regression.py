@@ -249,7 +249,7 @@ def test_telegram_digest_is_compact_and_keeps_core_gate_context():
     text = "\n".join(lines)
     for expected in ("ABC", "MEDIUM", "Fundamental 72.50/100", "Liquidity MEDIUM", "Technical WAIT_FOR_DATA", "News NO_DATA", "Final WAIT_FOR_DATA"):
         assert expected in text, expected
-    assert "BUY recommendation नाही" in text
+    assert "BUY शिफारस" in text
 
 
 def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
