@@ -58,6 +58,7 @@ class FundamentalFilterTests(unittest.TestCase):
 
     def test_complete_qualified_record_passes(self):
         self.assertEqual(self.run_filter([good_record()])["FundamentalStatus"], "COMPLETE")
+        self.assertEqual(self.run_filter([good_record()])["Fundamental65PlusStatus"], "SCORE_GE_65")
 
     def test_missing_record_waits(self):
         row = self.run_filter([])
