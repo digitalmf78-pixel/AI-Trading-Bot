@@ -7,11 +7,10 @@ OFFICIAL_XBRL_VERIFIED only when a separately recorded evidence row points to a
 local XML file whose SHA-256, XBRL context, entity, period, unit, namespace,
 contextRef and numeric fact all match the cached value.
 
-Only DIRECT_FACT_MATCH is supported; it is still gated by an explicitly
-approved metric-to-fact mapping. No NSE operating-cash-flow tag is approved
-while the competing concepts in the five-filing diagnostic remain unresolved.
-Derived ratios/growth metrics require a future component-level reconciliation
-engine and remain pending rather than being guessed.
+Direct cash flow evidence and annual revenue/profit growth are verified against
+official NSE XBRL. Derived growth is calculated from same-basis, consecutive
+annual filings with statement cross-foot checks. Other derived ratios remain
+pending rather than being guessed.
 """
 from __future__ import annotations
 
@@ -294,6 +293,231 @@ def _generated_ocf_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
     return pd.DataFrame(generated, columns=EVIDENCE_COLUMNS), pd.DataFrame(diagnostics)
 
 
+def _filing_reporting_basis(row: pd.Series) -> str:
+    description = _clean(row.get('FilingDescription')).upper()
+    if 'CONSOLIDATED' in description:
+        return 'CONSOLIDATED'
+    if 'STANDALONE' in description:
+        return 'STANDALONE'
+    return ''
+
+
+def _annual_fact(contexts: dict[str, dict], units: dict[str, str], facts: list[ET.Element],
+                 period_end: str, tag: str) -> tuple[dict | None, str]:
+    start = f'{int(period_end[:4]) - 1}-04-01'
+    found = []
+    for context_ref, context in contexts.items():
+        if (context.get('PeriodStart') != start or context.get('PeriodEnd') != period_end
+                or context.get('DimensionsJSON') != '[]' or not context.get('EntityIdentifier')):
+            continue
+        matching = [fact for fact in facts if _local(fact.tag) == tag
+                    and fact.attrib.get('contextRef') == context_ref]
+        for fact in matching:
+            unit_ref = fact.attrib.get('unitRef', '')
+            unit_measure = units.get(unit_ref, '')
+            value = _fact_value(fact)
+            if value is not None and (unit_measure == 'INR' or unit_measure.endswith(':INR')):
+                found.append({
+                    'FactTag': tag, 'ContextRef': context_ref,
+                    'EntityIdentifier': context['EntityIdentifier'],
+                    'EntityIdentifierScheme': context['EntityIdentifierScheme'],
+                    'UnitRef': unit_ref, 'UnitMeasure': unit_measure,
+                    'TaxonomyNamespace': _namespace(fact.tag),
+                    'PeriodStart': context['PeriodStart'], 'PeriodEnd': context['PeriodEnd'],
+                    'DimensionsJSON': context['DimensionsJSON'], 'Value': value,
+                })
+    if len(found) != 1:
+        return None, f'Expected exactly one unsegmented annual {tag} INR fact; found {len(found)}'
+    return found[0], ''
+
+
+def _check_growth_components(metric_name: str, current: dict, prior: dict,
+                             contexts_by_file: list[tuple[dict, dict, list[ET.Element]]]) -> tuple[bool, str]:
+    """Require official statement arithmetic to support each growth component."""
+    for contexts, units, facts in contexts_by_file:
+        primary = current if contexts is contexts_by_file[0][0] else prior
+        context_ref = primary['ContextRef']
+        namespace = primary['TaxonomyNamespace']
+        unit_ref = primary['UnitRef']
+        if metric_name == 'RevenueGrowthPct':
+            tags = ('Income', 'OtherIncome')
+            expected = primary['Value']
+            calculation = None
+        else:
+            tags = ('ProfitLossForPeriodFromContinuingOperations',
+                    'ProfitLossFromDiscontinuedOperationsAfterTax',
+                    'ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod')
+            expected = primary['Value']
+            calculation = 0.0
+        values = []
+        for tag in tags:
+            matches = [f for f in facts if _local(f.tag) == tag
+                       and _namespace(f.tag) == namespace
+                       and f.attrib.get('contextRef') == context_ref]
+            if len(matches) != 1 or matches[0].attrib.get('unitRef', '') != unit_ref:
+                return False, f'{metric_name} cross-foot component {tag} is not unique in the same annual INR context'
+            value = _fact_value(matches[0])
+            if value is None:
+                return False, f'{metric_name} cross-foot component {tag} is not numeric'
+            values.append(value)
+        if metric_name == 'RevenueGrowthPct':
+            revenue = [f for f in facts if _local(f.tag) == 'RevenueFromOperations'
+                       and _namespace(f.tag) == namespace and f.attrib.get('contextRef') == context_ref]
+            if len(revenue) != 1 or revenue[0].attrib.get('unitRef', '') != unit_ref:
+                return False, 'RevenueFromOperations is not unique in the same annual INR context'
+            revenue_value = _fact_value(revenue[0])
+            if revenue_value is None:
+                return False, 'RevenueFromOperations is not numeric'
+            calculation = revenue_value + values[1]
+            expected = values[0]
+        else:
+            calculation = sum(values)
+        tolerance = max(1.0, max(abs(calculation), abs(expected)) * 1e-9)
+        if abs(calculation - expected) > tolerance:
+            return False, f'{metric_name} annual component statement does not cross-foot'
+    return True, 'Annual revenue/profit component facts reconcile to the filing statement totals'
+
+
+def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
+                               manual_evidence: pd.DataFrame, repo_root: Path,
+                               symbols: set[str] | None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Derive revenue/profit growth from two basis-matched official NSE annual filings."""
+    generated: list[dict[str, str]] = []
+    diagnostics: list[dict[str, str]] = []
+    if symbols is None or filings.empty:
+        return pd.DataFrame(columns=EVIDENCE_COLUMNS), pd.DataFrame()
+    requested = {str(s).strip().upper() for s in symbols if str(s).strip()}
+    target_metrics = metrics[metrics['TckrSymb'].astype(str).str.upper().isin(requested)].copy()
+    growth_columns = [name for name in ('RevenueGrowthPct', 'ProfitGrowthPct') if name in target_metrics]
+    if not growth_columns:
+        return pd.DataFrame(columns=EVIDENCE_COLUMNS), pd.DataFrame()
+    target_metrics = target_metrics[target_metrics[growth_columns].notna().any(axis=1)]
+    from nse_xbrl_fetch import fetch_official_xbrl_xml
+
+    xml_cache: dict[str, tuple[Path, str, dict[str, dict], dict[str, str], list[ET.Element]]] = {}
+
+    def load_filing(url: str):
+        if url not in xml_cache:
+            cache_path = repo_root / 'data' / 'cache' / 'xbrl_samples' / (hashlib.sha256(url.encode('utf-8')).hexdigest()[:16] + '.xml')
+            if not cache_path.is_file():
+                fetch_official_xbrl_xml(url, cache_path)
+            digest = hashlib.sha256(cache_path.read_bytes()).hexdigest()
+            contexts, units, facts = _parse_xbrl(cache_path)
+            xml_cache[url] = (cache_path, digest, contexts, units, facts)
+        return xml_cache[url]
+
+    for _, metric in target_metrics.iterrows():
+        symbol = _clean(metric.get('TckrSymb')).upper()
+        period = _clean(metric.get('FinancialPeriodEnd'))[:10]
+        basis = _clean(metric.get('MetricCalculationBasis')).upper()
+        current_url = _clean(metric.get('OfficialFilingURL'))
+        current_pub = _clean(metric.get('PublicationDate'))[:10]
+        if basis != 'ANNUAL_ALIGNED_STATEMENTS' or not period.endswith('-03-31'):
+            continue
+        current_status, current_reason = _filing_metadata_status(metric, filings)
+        if current_status != 'OFFICIAL_FILING_METADATA_MATCHED':
+            continue
+        current_row = filings[
+            filings['TckrSymb'].astype(str).str.upper().eq(symbol)
+            & filings['FinancialPeriodEnd'].astype(str).str[:10].eq(period)
+            & filings['OfficialFilingURL'].astype(str).eq(current_url)
+        ].iloc[0]
+        reporting_basis = _filing_reporting_basis(current_row)
+        if not reporting_basis:
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'XBRL_REPORTING_BASIS_UNRESOLVED', 'Reason': 'Current filing description does not identify standalone/consolidated basis'})
+            continue
+        previous_period = f'{int(period[:4]) - 1}-03-31'
+        if not {'TckrSymb', 'FinancialPeriodEnd', 'PublicationDateStatus', 'OfficialFilingURL', 'FilingDescription'}.issubset(filings.columns):
+            continue
+        prior_rows = filings[
+            filings['TckrSymb'].astype(str).str.upper().eq(symbol)
+            & filings['FinancialPeriodEnd'].astype(str).str[:10].eq(previous_period)
+            & filings['PublicationDateStatus'].astype(str).str.upper().eq('VERIFIED')
+        ].copy()
+        prior_rows = prior_rows[
+            prior_rows['FilingDescription'].astype(str).str.upper().str.contains(reporting_basis)
+            & prior_rows['FilingDescription'].astype(str).str.upper().str.contains('AUDITED')
+        ]
+        if prior_rows.empty:
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'PRIOR_YEAR_AUDITED_FILING_NOT_FOUND', 'Reason': f'No verified {reporting_basis} audited filing for {previous_period}'})
+            continue
+        prior_rows = prior_rows.sort_values('PublicationDate', kind='stable')
+        latest_prior = prior_rows[prior_rows['PublicationDate'].eq(prior_rows['PublicationDate'].max())]
+        if latest_prior['OfficialFilingURL'].nunique() != 1:
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'PRIOR_YEAR_FILING_AMBIGUOUS', 'Reason': 'Multiple latest audited URLs share the selected reporting basis'})
+            continue
+        prior_url = _clean(latest_prior.iloc[0]['OfficialFilingURL'])
+        try:
+            current_path, current_digest, current_contexts, current_units, current_facts = load_filing(current_url)
+            prior_path, prior_digest, prior_contexts, prior_units, prior_facts = load_filing(prior_url)
+        except Exception as exc:
+            diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                'Status': 'OFFICIAL_XBRL_FETCH_OR_PARSE_FAILED', 'Reason': f'{type(exc).__name__}: {exc}'})
+            continue
+        for metric_name, tag in (('RevenueGrowthPct', 'RevenueFromOperations'), ('ProfitGrowthPct', 'ProfitLossForPeriod')):
+            if metric_name not in metric.index or _number(metric.get(metric_name)) is None:
+                continue
+            manual_match = False
+            keys = {'TckrSymb', 'MetricName', 'FinancialPeriodEnd', 'OfficialFilingURL'}
+            if not manual_evidence.empty and keys.issubset(manual_evidence.columns):
+                manual_match = bool((manual_evidence['TckrSymb'].astype(str).str.upper().eq(symbol)
+                                     & manual_evidence['MetricName'].astype(str).eq(metric_name)
+                                     & manual_evidence['FinancialPeriodEnd'].astype(str).str[:10].eq(period)
+                                     & manual_evidence['OfficialFilingURL'].astype(str).eq(current_url)).any())
+            if manual_match:
+                continue
+            current_component, c_reason = _annual_fact(current_contexts, current_units, current_facts, period, tag)
+            prior_component, p_reason = _annual_fact(prior_contexts, prior_units, prior_facts, previous_period, tag)
+            if current_component is None or prior_component is None:
+                diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
+                                    'Status': 'XBRL_ANNUAL_COMPONENT_UNRESOLVED', 'Reason': c_reason or p_reason})
+                continue
+            if (current_component['EntityIdentifier'] != prior_component['EntityIdentifier']
+                    or current_component['EntityIdentifierScheme'] != prior_component['EntityIdentifierScheme']):
+                diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
+                                    'Status': 'XBRL_ENTITY_MISMATCH', 'Reason': 'Current and prior year filings identify different entities'})
+                continue
+            crossfoot, crossfoot_reason = _check_growth_components(
+                metric_name, current_component, prior_component,
+                [(current_contexts, current_units, current_facts), (prior_contexts, prior_units, prior_facts)])
+            if not crossfoot:
+                diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
+                                    'Status': 'XBRL_COMPONENT_CROSSFOOT_FAILED', 'Reason': crossfoot_reason})
+                continue
+            if prior_component['Value'] <= 0:
+                diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
+                                    'Status': 'XBRL_GROWTH_BASE_NOT_POSITIVE', 'Reason': 'Provider growth formula requires positive prior-year base'})
+                continue
+            official_growth = (current_component['Value'] - prior_component['Value']) / prior_component['Value'] * 100.0
+            def component_record(component, path, digest):
+                return {**component, 'EvidenceFilePath': str(path.relative_to(repo_root)), 'EvidenceSHA256': digest}
+            details = {'formula': 'growth_percent', 'metric': metric_name,
+                       'current': component_record(current_component, current_path, current_digest),
+                       'prior': component_record(prior_component, prior_path, prior_digest),
+                       'reportingBasis': reporting_basis, 'arithmeticCrossfoot': 'PASS'}
+            generated.append({
+                'TckrSymb': symbol, 'MetricName': metric_name,
+                'ProviderMetricValue': _clean(metric.get(metric_name)),
+                'OfficialMetricValue': str(official_growth), 'Tolerance': '0.01',
+                'FinancialPeriodEnd': period, 'PublicationDate': current_pub,
+                'MetricCalculationBasis': basis, 'OfficialFilingURL': current_url,
+                'XbrlFactTag': tag, 'XbrlContextRef': current_component['ContextRef'],
+                'EntityIdentifier': current_component['EntityIdentifier'],
+                'EntityIdentifierScheme': current_component['EntityIdentifierScheme'],
+                'UnitMeasure': current_component['UnitMeasure'],
+                'TaxonomyNamespace': current_component['TaxonomyNamespace'],
+                'PeriodStart': current_component['PeriodStart'], 'PeriodEnd': current_component['PeriodEnd'],
+                'DimensionsJSON': current_component['DimensionsJSON'],
+                'EvidenceFilePath': str(current_path.relative_to(repo_root)), 'EvidenceSHA256': current_digest,
+                'VerificationMethod': 'DERIVED_COMPONENT_FACTS',
+                'EvidenceDetailsJSON': json.dumps(details, separators=(',', ':')),
+            })
+    return pd.DataFrame(generated, columns=EVIDENCE_COLUMNS), pd.DataFrame(diagnostics)
+
+
 def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[str, str]:
     symbol = _clean(metric.get('TckrSymb')).upper()
     period = _clean(metric.get('FinancialPeriodEnd'))[:10]
@@ -358,6 +582,83 @@ def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[s
     return 'OFFICIAL_FILING_METADATA_MATCHED', 'Exact symbol, period, URL and publication date matched; this does not verify metric values'
 
 
+def _verify_derived_growth_evidence(metric: pd.Series, metric_name: str,
+                                   ev: dict, repo_root: Path) -> tuple[str, str, dict]:
+    """Reopen both official filing snapshots and independently recompute growth."""
+    try:
+        details = json.loads(_clean(ev.get('EvidenceDetailsJSON')))
+        if details.get('formula') != 'growth_percent' or details.get('metric') != metric_name:
+            raise ValueError('Evidence formula/metric is not the approved growth calculation')
+        current = details['current']
+        prior = details['prior']
+        expected_tag = ('RevenueFromOperations' if metric_name == 'RevenueGrowthPct'
+                        else 'ProfitLossForPeriod')
+        parsed = []
+        for component in (current, prior):
+            path = (repo_root / component['EvidenceFilePath']).resolve()
+            path.relative_to(repo_root.resolve())
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest.lower() != _clean(component['EvidenceSHA256']).lower():
+                return 'EVIDENCE_SHA256_MISMATCH', 'Current/prior XBRL snapshot hash changed', ev
+            contexts, units, facts = _parse_xbrl(path)
+            context_ref = _clean(component['ContextRef'])
+            context = contexts.get(context_ref)
+            if context is None:
+                return 'XBRL_CONTEXT_NOT_FOUND', 'Growth component context is absent from its XML filing', ev
+            expected_end = _clean(metric.get('FinancialPeriodEnd'))[:10]
+            if component is prior:
+                expected_end = f'{int(expected_end[:4]) - 1}-03-31'
+            if _clean(component.get('PeriodEnd')) != expected_end:
+                return 'XBRL_PERIOD_MISMATCH', 'Current/prior component period does not match consecutive fiscal years', ev
+            for key in ('EntityIdentifier', 'EntityIdentifierScheme', 'PeriodStart', 'PeriodEnd', 'DimensionsJSON'):
+                if context.get(key, '') != _clean(component.get(key)):
+                    return 'XBRL_CONTEXT_MISMATCH', f'{key} differs in current/prior filing context', ev
+            fact_tag = _clean(component.get('FactTag'))
+            if fact_tag != expected_tag:
+                return 'XBRL_FACT_TAG_NOT_APPROVED_FOR_METRIC', f'{fact_tag} is not approved for {metric_name}', ev
+            found = [fact for fact in facts if _local(fact.tag) == expected_tag
+                     and _namespace(fact.tag) == _clean(component.get('TaxonomyNamespace'))
+                     and fact.attrib.get('contextRef') == context_ref]
+            if len(found) != 1:
+                return 'XBRL_FACT_NOT_UNIQUE', f'Expected one {expected_tag} in annual context; found {len(found)}', ev
+            fact = found[0]
+            unit = units.get(fact.attrib.get('unitRef', ''), '')
+            value = _fact_value(fact)
+            if unit != _clean(component.get('UnitMeasure')) or not (unit == 'INR' or unit.endswith(':INR')):
+                return 'XBRL_UNIT_MISMATCH', 'Growth components must use the same currency INR unit', ev
+            if value is None or abs(value - float(component['Value'])) > 0.01:
+                return 'XBRL_FACT_VALUE_DIFFERS_FROM_LEDGER', 'Official component value differs from evidence details', ev
+            parsed.append((contexts, units, facts, component))
+        if (parsed[0][3]['EntityIdentifier'] != parsed[1][3]['EntityIdentifier']
+                or parsed[0][3]['EntityIdentifierScheme'] != parsed[1][3]['EntityIdentifierScheme']
+                or parsed[0][3]['UnitMeasure'] != parsed[1][3]['UnitMeasure']):
+            return 'XBRL_ENTITY_MISMATCH', 'Current and prior filings do not describe the same entity and unit', ev
+        ok, reason = _check_growth_components(metric_name, parsed[0][3], parsed[1][3],
+                                             [(parsed[0][0], parsed[0][1], parsed[0][2]),
+                                              (parsed[1][0], parsed[1][1], parsed[1][2])])
+        if not ok:
+            return 'XBRL_COMPONENT_CROSSFOOT_FAILED', reason, ev
+        prior_value = float(prior['Value'])
+        if prior_value <= 0:
+            return 'XBRL_GROWTH_BASE_NOT_POSITIVE', 'Prior-year base must be positive', ev
+        official = (float(current['Value']) - prior_value) / prior_value * 100.0
+        tolerance = _number(ev.get('Tolerance')) or 0.0
+        provider = _number(metric.get(metric_name))
+        recorded_provider = _number(ev.get('ProviderMetricValue'))
+        recorded_official = _number(ev.get('OfficialMetricValue'))
+        if None in (provider, recorded_provider, recorded_official):
+            return 'EVIDENCE_VALUE_INVALID', 'Provider or derived growth value is not numeric', ev
+        if abs(provider - recorded_provider) > tolerance:
+            return 'CACHE_VALUE_CHANGED_SINCE_EVIDENCE', 'Cached growth differs from generated evidence', ev
+        if abs(official - recorded_official) > tolerance:
+            return 'XBRL_FACT_VALUE_DIFFERS_FROM_LEDGER', 'Recomputed growth differs from generated evidence', ev
+        if abs(provider - official) > tolerance:
+            return 'PROVIDER_VALUE_MISMATCH', 'Provider growth differs from official two-year calculation', ev
+        return 'OFFICIAL_XBRL_VERIFIED', 'Growth independently recomputed from hash-verified, basis-matched annual filings with statement cross-foot checks', ev
+    except (KeyError, TypeError, ValueError, OSError, ET.ParseError) as exc:
+        return 'DERIVED_EVIDENCE_INVALID', f'{type(exc).__name__}: {exc}', ev
+
+
 def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
                     repo_root: Path) -> tuple[str, str, dict]:
     symbol = _clean(metric.get('TckrSymb')).upper()
@@ -365,7 +666,7 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
     pub = _clean(metric.get('PublicationDate'))[:10]
     basis = _clean(metric.get('MetricCalculationBasis')).upper()
     url = _clean(metric.get('OfficialFilingURL'))
-    if metric_name not in DIRECT_FACT_TAGS:
+    if metric_name not in DIRECT_FACT_TAGS and metric_name not in {'RevenueGrowthPct', 'ProfitGrowthPct'}:
         if metric_name == 'OperatingCashFlowINR':
             return ('OFFICIAL_FACT_MAPPING_UNRESOLVED',
                     'Competing NSE operating-cash-flow tags have not been reconciled; no direct-fact mapping is approved', {})
@@ -390,8 +691,13 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
     if len(candidates) != 1:
         return 'EVIDENCE_DUPLICATE_MATCH', f'Expected one exact evidence row; found {len(candidates)}', {}
     ev = candidates.iloc[0].to_dict()
-    if _clean(ev.get('VerificationMethod')).upper() != 'DIRECT_FACT_MATCH':
-        return 'DERIVED_RECONCILIATION_REQUIRED', 'Only DIRECT_FACT_MATCH is supported; derived metrics need component-level reconciliation', ev
+    method = _clean(ev.get('VerificationMethod')).upper()
+    if method == 'DERIVED_COMPONENT_FACTS' and metric_name in {'RevenueGrowthPct', 'ProfitGrowthPct'}:
+        return _verify_derived_growth_evidence(metric, metric_name, ev, repo_root)
+    if metric_name in {'RevenueGrowthPct', 'ProfitGrowthPct'}:
+        return 'DERIVED_RECONCILIATION_REQUIRED', 'Growth cannot be verified from a single direct fact; two annual component filings are required', ev
+    if method != 'DIRECT_FACT_MATCH':
+        return 'DERIVED_RECONCILIATION_REQUIRED', 'Evidence method is not supported for this metric', ev
     details = _clean(ev.get('EvidenceDetailsJSON'))
     try:
         parsed_details = json.loads(details)
@@ -568,7 +874,10 @@ def run_audit(metrics_path: str | Path = METRICS_PATH,
             report = pd.read_csv(recent_report)
             if 'TckrSymb' in report.columns:
                 symbols = set(report['TckrSymb'].dropna().astype(str).str.upper())
-    generated, diagnostics = _generated_ocf_evidence(metrics, filings, evidence, repo_root, symbols)
+    generated_ocf, ocf_diagnostics = _generated_ocf_evidence(metrics, filings, evidence, repo_root, symbols)
+    generated_growth, growth_diagnostics = _generated_growth_evidence(metrics, filings, evidence, repo_root, symbols)
+    generated = pd.concat([generated_ocf, generated_growth], ignore_index=True)
+    diagnostics = pd.concat([ocf_diagnostics, growth_diagnostics], ignore_index=True)
     combined_evidence = pd.concat([evidence, generated], ignore_index=True)
     detail, summary, filing_summary = build_metric_verification(metrics, filings, combined_evidence, repo_root=repo_root)
     detail.to_csv(output_dir / DETAILS_PATH.name, index=False)
@@ -601,6 +910,5 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
 
 
