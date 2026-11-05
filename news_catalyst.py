@@ -1234,8 +1234,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         daily_text = f"{int(daily_pass)}/{int(delivery_sessions)} दिवस" if pd.notna(daily_pass) and pd.notna(delivery_sessions) else "दैनिक WAIT"
         min_text = f", min {min_delivery:.1f}%" if pd.notna(min_delivery) else ""
         latest_text = f", latest {latest_delivery:.1f}%" if pd.notna(latest_delivery) else ""
-        lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
+        lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"   Fundamental {score} | Source {source}")
         lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news} | Final {final}")
         lines.append(f"   पुढील NSE result/announcement: {event}")
