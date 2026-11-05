@@ -1210,20 +1210,32 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
     ).tz_localize("Asia/Kolkata")
     market = eod_result.set_index(eod_result["TckrSymb"].astype(str).str.upper(), drop=False)
     eod_ts = pd.to_datetime(eod_date, errors="coerce")
+    if pd.notna(eod_ts) and eod_ts.tzinfo is not None:
+        eod_ts = eod_ts.tz_convert("Asia/Kolkata").tz_localize(None)
     eod_ts = eod_ts.normalize() if pd.notna(eod_ts) else pd.NaT
     market_sessions = set()
     for history_frame in historical:
         if "Date" not in history_frame.columns:
             continue
         dates = pd.to_datetime(history_frame["Date"], errors="coerce").dropna()
-        market_sessions.update(ts.normalize() for ts in dates)
+        for value in dates:
+            session = pd.Timestamp(value)
+            if session.tzinfo is not None:
+                session = session.tz_convert("Asia/Kolkata").tz_localize(None)
+            market_sessions.add(session.normalize())
     if pd.notna(eod_ts):
         market_sessions.add(eod_ts)
     rows = []
     for _, position in positions.iterrows():
         symbol = str(position.get("TckrSymb", "")).upper().strip()
         if not symbol or symbol not in market.index:
-            rows.append({"TckrSymb": symbol, "PositionAction": "CAUTION", "DecisionMode": "MANUAL_REVIEW_ONLY", "Reason": "Position symbol missing from latest EOD data"})
+            rows.append({
+                "TckrSymb": symbol, "PositionAction": "CAUTION",
+                "DecisionMode": "MANUAL_REVIEW_ONLY",
+                "HoldingPeriodSessions": float("nan"),
+                "HoldingPeriodStatus": "WAIT_FOR_DATA",
+                "Reason": "Position symbol missing from latest EOD data",
+            })
             continue
         row = market.loc[symbol]
         if isinstance(row, pd.DataFrame):
@@ -1237,6 +1249,8 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
         holding_sessions = float("nan")
         holding_status = "WAIT_FOR_DATA"
         if pd.notna(entry_date) and pd.notna(eod_ts):
+            if entry_date.tzinfo is not None:
+                entry_date = entry_date.tz_convert("Asia/Kolkata").tz_localize(None)
             entry_session = entry_date.normalize()
             if entry_session in market_sessions and entry_session <= eod_ts:
                 holding_sessions = sum(entry_session <= session <= eod_ts for session in market_sessions)
