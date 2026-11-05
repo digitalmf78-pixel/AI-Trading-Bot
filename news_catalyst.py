@@ -1136,7 +1136,9 @@ def _telegram_observation_rows(report: pd.DataFrame | None,
             "EODWatchlistStatus", "DeliveryCategoryAStatus",
             "DeliveryCategoryBStatus", "AvgDelivery5D",
             "DeliveryDailyPassCount", "DeliverySessions", "DeliveryMin5D",
-            "LatestDeliveryPct",
+            "LatestDeliveryPct", "ClsPric", "ValuationPriceINR",
+            "ValuationStatus", "TrailingPE", "ForwardPE", "PriceToBook",
+            "PriceToSales",
         }]
         overlay = downstream[columns] if columns else downstream.iloc[:, 0:0]
         rows = rows.merge(overlay, how="left", left_on="TckrSymb", right_index=True,
@@ -1265,6 +1267,21 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         tier = str(row.get("LiquidityTier", row.get("LiquidityTier_pipeline", "WAIT_FOR_DATA")))
         avg = pd.to_numeric(pd.Series([row.get("AvgDailyTradedValue20D")]), errors="coerce").iloc[0]
         turnover = f"₹{avg / 10_000_000:.2f}cr/day" if pd.notna(avg) else "turnover WAIT_FOR_DATA"
+        close_price = pd.to_numeric(pd.Series([row.get("ClsPric", row.get("ValuationPriceINR"))]), errors="coerce").iloc[0]
+        valuation_status = str(row.get("ValuationStatus", "DATA_INSUFFICIENT")).strip().upper()
+        valuation_label = (
+            "multiples available; cheap/expensive not classified"
+            if valuation_status == "VALUATION_MULTIPLE_AVAILABLE"
+            else valuation_status or "DATA_INSUFFICIENT"
+        )
+        def _multiple_text(column):
+            value = pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
+            return f"{value:.2f}x" if pd.notna(value) else "WAIT"
+        price_text = f"₹{close_price:.2f}" if pd.notna(close_price) else "WAIT_FOR_DATA"
+        valuation_metrics = (
+            f"P/E {_multiple_text('TrailingPE')} | P/B {_multiple_text('PriceToBook')} | "
+            f"P/S {_multiple_text('PriceToSales')}"
+        )
         score_val = pd.to_numeric(pd.Series([row.get("FundamentalScore")]), errors="coerce").iloc[0]
         score_raw = row.get("Fundamental65PlusStatus", "")
         score_status = "" if pd.isna(score_raw) else str(score_raw).strip()
@@ -1291,6 +1308,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         min_text = f", min {min_delivery:.1f}%" if pd.notna(min_delivery) else ""
         latest_text = f", latest {latest_delivery:.1f}%" if pd.notna(latest_delivery) else ""
         lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
+        lines.append(f"   Close {price_text} | Valuation: {valuation_label}")
+        lines.append(f"   Multiples: {valuation_metrics}")
         lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"   Fundamental {score} | Source {source}")
         lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news_status} | Final {final}")
