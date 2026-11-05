@@ -2780,6 +2780,220 @@ def calculate_relative_strength_nifty(
 # V8 CORE CANDIDATE SELECTION — AUDITABLE, NO FORCED FILL
 # ============================================================
 
+def write_technical_parameter_audit(candidates, eod_date):
+    """Write a compact per-symbol, per-rule technical audit and count summary."""
+    detail_columns = [
+        "EODDate", "TckrSymb", "CheckOrder", "Parameter", "ObservedValue",
+        "RequiredRule", "Status", "Reason", "OverallTechnicalStatus",
+        "RSI14", "EMA20", "EMA44", "TrendClassification", "SetupType",
+    ]
+    detail_rows = []
+
+    def is_missing(value):
+        try:
+            return bool(pd.isna(value))
+        except (TypeError, ValueError):
+            return value is None
+
+    def display(value):
+        return "WAIT_FOR_DATA" if is_missing(value) else str(value)
+
+    if candidates is not None and not candidates.empty:
+        for _, row in candidates.iterrows():
+            symbol = str(row.get("TckrSymb", "")).strip().upper()
+            if not symbol:
+                continue
+            check_order = 0
+            overall = display(row.get("CoreTechnicalScreenStatus", row.get("CandidateScreenStatus", "WAIT_FOR_DATA")))
+            trend = display(row.get("TrendClassification", "WAIT_FOR_DATA"))
+            setup = display(row.get("SetupType", "WAIT_FOR_DATA"))
+            delivery = display(row.get("DeliveryFilterStatus", "WAIT_FOR_DATA"))
+            rvol_status = display(row.get("RVOLStatus", "WAIT_FOR_DATA")).upper()
+            rvol = pd.to_numeric(pd.Series([row.get("RVOL")]), errors="coerce").iloc[0]
+            clv = pd.to_numeric(pd.Series([row.get("CLV")]), errors="coerce").iloc[0]
+            price_change = pd.to_numeric(pd.Series([row.get("PriceChangePct")]), errors="coerce").iloc[0]
+            relative_strength = pd.to_numeric(pd.Series([row.get("RelativeStrengthNifty")]), errors="coerce").iloc[0]
+            support = pd.to_numeric(pd.Series([row.get("SRSupport")]), errors="coerce").iloc[0]
+            resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
+            breakout = display(row.get("BreakoutStatus", "WAIT_FOR_DATA"))
+            pullback = display(row.get("PullbackStatus", "WAIT_FOR_DATA"))
+            price_volume = display(row.get("PriceVolumeRelationship", "WAIT_FOR_DATA"))
+
+            def add(parameter, observed, rule, status, reason):
+                nonlocal check_order
+                check_order += 1
+                detail_rows.append({
+                    "EODDate": str(eod_date),
+                    "TckrSymb": symbol,
+                    "CheckOrder": check_order,
+                    "Parameter": parameter,
+                    "ObservedValue": observed,
+                    "RequiredRule": rule,
+                    "Status": status,
+                    "Reason": reason,
+                    "OverallTechnicalStatus": overall,
+                    "RSI14": row.get("RSI14", pd.NA),
+                    "EMA20": row.get("EMA20", pd.NA),
+                    "EMA44": row.get("EMA44", pd.NA),
+                    "TrendClassification": trend,
+                    "SetupType": setup,
+                })
+
+            delivery_ok = delivery.upper() in {"PASS_GE_60_PERCENT", "PASS_AVG_GE_60_PERCENT"}
+            add(
+                "Delivery gate",
+                delivery,
+                "Delivery category A/B must already have PASS status; current pipeline normally requires category B.",
+                "PASS" if delivery_ok else ("WAIT_FOR_DATA" if "WAIT" in delivery.upper() else "FAIL"),
+                "Delivery passed." if delivery_ok else ("Delivery data/status missing." if "WAIT" in delivery.upper() else "Delivery status is not eligible."),
+            )
+
+            rvol_ok = rvol_status == "PASS" and pd.notna(rvol) and float(rvol) > 0
+            add(
+                "RVOL data check",
+                f"status={rvol_status}; RVOL={display(rvol)}",
+                "RVOLStatus=PASS and RVOL>0; the earlier universe gate enforces RVOL>1.5.",
+                "PASS" if rvol_ok else ("WAIT_FOR_DATA" if rvol_status == "WAIT_FOR_DATA" or pd.isna(rvol) else "FAIL"),
+                "RVOL passed upstream." if rvol_ok else "RVOL baseline/status is missing or invalid.",
+            )
+
+            setup_ok = setup in {"Breakout", "Pullback"}
+            add(
+                "Confirmed setup",
+                f"SetupType={setup}; BreakoutStatus={breakout}; PullbackStatus={pullback}",
+                "SetupType must be exactly Breakout or Pullback; near/possible setups are informational only.",
+                "PASS" if setup_ok else ("WAIT_FOR_DATA" if "WAIT" in setup.upper() or "INSUFFICIENT" in setup.upper() else "FAIL"),
+                "Confirmed setup selected." if setup_ok else "No confirmed Breakout/Pullback setup; see both raw setup statuses.",
+            )
+
+            trend_ok = "Bullish" in trend
+            add(
+                "Trend",
+                trend,
+                'TrendClassification must contain "Bullish"; EMA20/EMA44 ordering determines the label, with RSI/ADX used for strong labels.',
+                "PASS" if trend_ok else ("WAIT_FOR_DATA" if "WAIT" in trend.upper() or "INSUFFICIENT" in trend.upper() else "FAIL"),
+                "Bullish trend label present." if trend_ok else "Trend label is not bullish.",
+            )
+
+            if setup == "Breakout":
+                clv_threshold = 0.75
+                clv_rule = "Breakout CLV must be >0.75."
+            elif setup == "Pullback":
+                clv_threshold = 0.50
+                clv_rule = "Pullback CLV must be >0.50."
+            else:
+                clv_threshold = None
+                clv_rule = "Only evaluated after a confirmed Breakout or Pullback setup; inspect setup statuses and CLV value."
+            if clv_threshold is None:
+                clv_status, clv_reason = "NOT_EVALUATED", "No confirmed setup selected; candle threshold is conditional."
+            elif pd.isna(clv):
+                clv_status, clv_reason = "WAIT_FOR_DATA", "CLV is missing."
+            elif float(clv) > clv_threshold:
+                clv_status, clv_reason = "PASS", "CLV is above the setup-specific threshold."
+            else:
+                clv_status, clv_reason = "FAIL", "CLV does not exceed the setup-specific threshold."
+            add("Candle quality (CLV)", display(clv), clv_rule, clv_status, clv_reason)
+
+            if "Selling / Distribution" in price_volume:
+                pv_status, pv_reason = "FAIL", "Price/volume classification is Selling / Distribution."
+            elif "WAIT" in price_volume.upper() or "INSUFFICIENT" in price_volume.upper():
+                pv_status, pv_reason = "WAIT_FOR_DATA", "Price/volume classification is missing."
+            else:
+                pv_status, pv_reason = "PASS", "No Selling / Distribution classification."
+            add("Price-volume", price_volume, "Must not be Selling / Distribution.", pv_status, pv_reason)
+
+            if pd.isna(relative_strength):
+                rs_status, rs_reason = "WAIT_FOR_DATA", "Relative strength is missing."
+            elif float(relative_strength) < 0:
+                rs_status, rs_reason = "INFO", "Negative relative strength adds a warning/score penalty; it is not a standalone reject."
+            else:
+                rs_status, rs_reason = "PASS", "Relative strength is non-negative."
+            add(
+                "Relative strength vs Nifty",
+                display(relative_strength),
+                "Must be available; negative values are a warning, not a hard rejection.",
+                rs_status,
+                rs_reason,
+            )
+
+            if pd.isna(support) or pd.isna(resistance):
+                sr_status, sr_reason = "WAIT_FOR_DATA", "Support or resistance value is missing."
+            elif float(support) <= 0 or float(resistance) <= 0:
+                sr_status, sr_reason = "FAIL", "Support and resistance must be positive."
+            else:
+                sr_status, sr_reason = "PASS", "Support and resistance values are available."
+            add(
+                "Support / resistance",
+                f"support={display(support)}; resistance={display(resistance)}",
+                "Both support and resistance must be positive and available.",
+                sr_status,
+                sr_reason,
+            )
+
+            if setup == "Breakout":
+                breakout_ok = breakout in {"Breakout", "Strong Breakout"}
+                positive_close_ok = pd.notna(price_change) and float(price_change) > 0
+                status = "PASS" if breakout_ok and positive_close_ok else ("WAIT_FOR_DATA" if pd.isna(price_change) or "INSUFFICIENT" in breakout.upper() else "FAIL")
+                reason = "Confirmed breakout and positive close change." if status == "PASS" else "Breakout status must be confirmed and close change must be positive."
+                add(
+                    "Breakout confirmation",
+                    f"BreakoutStatus={breakout}; PriceChangePct={display(price_change)}",
+                    "BreakoutStatus=Breakout/Strong Breakout and PriceChangePct>0.",
+                    status,
+                    reason,
+                )
+            else:
+                status = "NOT_EVALUATED"
+                reason = "Breakout-specific check does not apply to this SetupType."
+                add("Breakout confirmation", f"BreakoutStatus={breakout}; PriceChangePct={display(price_change)}", "Only evaluated for SetupType=Breakout.", status, reason)
+
+            if setup == "Pullback" or setup == "Possible Pullback":
+                pullback_ok = pullback in {"Pullback", "Strong Pullback"}
+                status = "PASS" if pullback_ok else ("WAIT_FOR_DATA" if "INSUFFICIENT" in pullback.upper() or "WAIT" in pullback.upper() else "FAIL")
+                reason = "Confirmed pullback status." if status == "PASS" else "Possible/no pullback is not confirmed; reversal, volume contraction, EMA proximity and trend conditions must align."
+                rule = "PullbackStatus=Pullback/Strong Pullback; current implementation requires controlled 1–15% correction, within 3% of EMA20/EMA44, RVOL<=1.5, >=3/5 low-volume days and bullish reversal candle with CLV>0.50."
+                add("Pullback confirmation", f"PullbackStatus={pullback}; LowVolumeDays5D={display(row.get('LowVolumeDays5D'))}", rule, status, reason)
+            else:
+                add(
+                    "Pullback confirmation",
+                    f"PullbackStatus={pullback}; LowVolumeDays5D={display(row.get('LowVolumeDays5D'))}",
+                    "Only evaluated for Pullback/Possible Pullback setup.",
+                    "NOT_EVALUATED",
+                    "Pullback-specific check does not apply to this SetupType.",
+                )
+
+    details = pd.DataFrame(detail_rows, columns=detail_columns)
+    status_order = ["PASS", "FAIL", "WAIT_FOR_DATA", "INFO", "NOT_EVALUATED"]
+    summary_rows = []
+    if not details.empty:
+        for (check_order, parameter), group in details.groupby(["CheckOrder", "Parameter"], sort=True):
+            counts = group["Status"].value_counts()
+            summary_rows.append({
+                "EODDate": str(eod_date),
+                "CheckOrder": int(check_order),
+                "Parameter": parameter,
+                "PassCount": int(counts.get("PASS", 0)),
+                "FailCount": int(counts.get("FAIL", 0)),
+                "WaitForDataCount": int(counts.get("WAIT_FOR_DATA", 0)),
+                "InfoCount": int(counts.get("INFO", 0)),
+                "NotEvaluatedCount": int(counts.get("NOT_EVALUATED", 0)),
+                "TotalSymbols": int(len(group)),
+            })
+    summary = pd.DataFrame(summary_rows, columns=[
+        "EODDate", "CheckOrder", "Parameter", "PassCount", "FailCount",
+        "WaitForDataCount", "InfoCount", "NotEvaluatedCount", "TotalSymbols",
+    ])
+
+    os.makedirs("outputs", exist_ok=True)
+    os.makedirs(os.path.join("data", "reports"), exist_ok=True)
+    details.to_csv("outputs/v8_technical_parameter_audit.csv", index=False)
+    summary.to_csv("outputs/v8_technical_parameter_summary.csv", index=False)
+    date_suffix = pd.Timestamp(eod_date).strftime("%Y%m%d")
+    details.to_csv(os.path.join("data", "reports", f"v8_technical_parameter_audit_{date_suffix}.csv"), index=False)
+    summary.to_csv(os.path.join("data", "reports", f"v8_technical_parameter_summary_{date_suffix}.csv"), index=False)
+    return details, summary
+
+
 def select_top20_analysis_candidates(result, eod_date):
     """Annotate every RVOL > 1.5 technical candidate after core EOD screens.
 
@@ -2791,7 +3005,9 @@ def select_top20_analysis_candidates(result, eod_date):
     """
     if result is None or result.empty:
         print("[CANDIDATE SCREEN] No rows available; no candidates selected.")
-        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+        empty = result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+        write_technical_parameter_audit(empty, eod_date)
+        return empty
 
     frame = result.copy()
     audit_rows = []
@@ -2897,6 +3113,7 @@ def select_top20_analysis_candidates(result, eod_date):
         ascending=[False, False, False], na_position="last", kind="mergesort",
     ).copy()
     frame["CandidateRank"] = range(1, len(frame) + 1)
+    write_technical_parameter_audit(frame, eod_date)
 
     ranks = dict(zip(frame["TckrSymb"].astype(str).str.upper(), frame["CandidateRank"]))
     audit["CandidateRank"] = audit["TckrSymb"].map(ranks)
