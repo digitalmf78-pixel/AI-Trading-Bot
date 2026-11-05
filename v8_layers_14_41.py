@@ -38,7 +38,7 @@ POSITION_REPORT_COLUMNS = [
     "TckrSymb", "AsOfDate", "Quantity", "AverageEntryPrice",
     "CurrentPrice", "UnrealizedPnLPct", "ThesisStatus",
     "NewsEvidenceStatus", "NegativePrimaryNews", "SellingPressure",
-    "SellingPressureStatus",
+    "SellingPressureStatus", "HoldingPeriodSessions", "HoldingPeriodStatus",
     "TargetStatus", "TrailingStop", "PositionAction", "DecisionMode",
     "Reason",
 ]
@@ -1209,6 +1209,16 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
         - pd.Timedelta(microseconds=1)
     ).tz_localize("Asia/Kolkata")
     market = eod_result.set_index(eod_result["TckrSymb"].astype(str).str.upper(), drop=False)
+    eod_ts = pd.to_datetime(eod_date, errors="coerce")
+    eod_ts = eod_ts.normalize() if pd.notna(eod_ts) else pd.NaT
+    market_sessions = set()
+    for history_frame in historical:
+        if "Date" not in history_frame.columns:
+            continue
+        dates = pd.to_datetime(history_frame["Date"], errors="coerce").dropna()
+        market_sessions.update(ts.normalize() for ts in dates)
+    if pd.notna(eod_ts):
+        market_sessions.add(eod_ts)
     rows = []
     for _, position in positions.iterrows():
         symbol = str(position.get("TckrSymb", "")).upper().strip()
@@ -1223,6 +1233,19 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
         quantity = _num(position.get("Quantity"))
         initial_stop = _num(position.get("InitialStop"))
         target = _num(position.get("Target"))
+        entry_date = pd.to_datetime(position.get("EntryDate"), errors="coerce")
+        holding_sessions = float("nan")
+        holding_status = "WAIT_FOR_DATA"
+        if pd.notna(entry_date) and pd.notna(eod_ts):
+            entry_session = entry_date.normalize()
+            if entry_session in market_sessions and entry_session <= eod_ts:
+                holding_sessions = sum(entry_session <= session <= eod_ts for session in market_sessions)
+                if holding_sessions >= 20:
+                    holding_status = "REVIEW_DUE_20_PLUS_SESSIONS"
+                elif holding_sessions >= 10:
+                    holding_status = "WITHIN_2_TO_4_WEEK_WINDOW"
+                else:
+                    holding_status = "UNDER_2_WEEKS"
         pnl_pct = (price / entry - 1) * 100 if pd.notna(price) and pd.notna(entry) and entry > 0 else float("nan")
         stop_breached = pd.notna(price) and pd.notna(initial_stop) and price <= initial_stop
         ema44 = _num(row.get("EMA44"))
@@ -1253,6 +1276,10 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
             action, reason = "CAUTION", "Position fields or current news evidence are missing"
         elif thesis == "WEAKENING" or target_near:
             action, reason = "CAUTION", "Thesis weakening or target near"
+        elif holding_status == "WAIT_FOR_DATA":
+            action, reason = "CAUTION", "Entry date or matching market-session history is missing"
+        elif holding_status == "REVIEW_DUE_20_PLUS_SESSIONS":
+            action, reason = "CAUTION", "20+ market sessions held; review the 2–4 week holding horizon"
         else:
             action, reason = "HOLD", "No configured exit condition; manual review required"
         rows.append({
@@ -1262,6 +1289,7 @@ def monitor_positions(eod_result: pd.DataFrame, historical: list[pd.DataFrame], 
             "NewsEvidenceStatus": news_state["NewsEvidenceStatus"],
             "NegativePrimaryNews": negative_news, "SellingPressure": selling_pressure,
             "SellingPressureStatus": selling_pressure_status,
+            "HoldingPeriodSessions": holding_sessions, "HoldingPeriodStatus": holding_status,
             "TargetStatus": "WAIT_FOR_DATA" if pd.isna(target) else "REACHED" if target_reached else "NEAR" if target_near else "OPEN",
             "TrailingStop": trailing_stop, "PositionAction": action,
             "DecisionMode": "MANUAL_REVIEW_ONLY", "Reason": reason,
