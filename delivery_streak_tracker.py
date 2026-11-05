@@ -19,6 +19,7 @@ STATE_COLUMNS = [
     "TckrSymb", "LastScanDate", "ConsecutiveAorBScanSessions",
     "TotalAorBQualifyingScanSessions", "LastQualifying", "LastDeliveryCategory",
     "LastDeliveryStatus", "LastAvgDelivery5D", "LastLatestDeliveryPct",
+    "FirstDateOfCurrentStreak",
 ]
 TRACKER_COLUMNS = [
     "AorBScanStreakStatus", "DeliveryCategory",
@@ -203,8 +204,7 @@ def update_delivery_scan_streak(
         })
         output_rows.append(report_row)
 
-    state_columns = STATE_COLUMNS + ["FirstDateOfCurrentStreak"]
-    next_state = pd.DataFrame(next_rows, columns=state_columns)
+    next_state = pd.DataFrame(next_rows, columns=STATE_COLUMNS)
     if data_available:
         _write_csv_atomic(next_state, STATE_PATH)
 
