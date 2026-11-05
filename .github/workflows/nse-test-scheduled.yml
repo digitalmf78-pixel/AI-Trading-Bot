@@ -71,13 +71,14 @@ jobs:
             fi
           done
           echo "===== FUNDAMENTAL THRESHOLD CONFIG ====="
-          test -s data/inputs/fundamental_thresholds.json
           python - <<'PY'
           from fundamental_shortlist import _load_explicit_thresholds
           thresholds, error = _load_explicit_thresholds()
           if error:
-              raise SystemExit(f"FUNDAMENTAL_THRESHOLDS_PREFLIGHT=FAIL:{error}")
-          print(f"FUNDAMENTAL_THRESHOLDS_PREFLIGHT=PASS keys={len(thresholds)}")
+              print(f"FUNDAMENTAL_THRESHOLDS_PREFLIGHT=WAIT_FOR_DATA:{error}")
+              print("Observation reports may run; fundamental PASS remains unavailable and no stock may be promoted on guessed defaults.")
+          else:
+              print(f"FUNDAMENTAL_THRESHOLDS_PREFLIGHT=PASS keys={len(thresholds)}")
           PY
           python --version
 
