@@ -28,7 +28,7 @@ jobs:
 
       - name: Compile scanner and audit modules
         run: >-
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py
+          python -m py_compile bottom_detection.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py
           sector_data.py delivery_filter.py delivery_streak_tracker.py liquidity_filter.py fundamental_filter.py
           fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py
           fundamental_metric_verification.py fii_dii_activity.py risk_controls.py nse_xbrl_fetch.py
@@ -49,7 +49,7 @@ jobs:
           test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py
           test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py
           test_sanitize_public_artifacts.py
-          test_news_catalyst_parser.py test_upcoming_corporate_events.py
+          test_news_catalyst_parser.py test_upcoming_corporate_events.py test_bottom_detection.py
 
       - name: Run V8 regression script
         run: python -u test_v8_regression.py
