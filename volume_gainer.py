@@ -3556,6 +3556,17 @@ def main():
                 session_counts = pd.to_numeric(delivery_audit["DeliverySessions"], errors="coerce")
                 delivery_data_available = bool(session_counts.ge(5).any())
             os.makedirs("outputs", exist_ok=True)
+            delivery_audit["DeliveryFilterStatus"] = delivery_audit.apply(
+                lambda row: "PASS_A_OR_B"
+                if (
+                    str(row.get("DeliveryCategoryAStatus", "")).upper() == "PASS_AVG_GE_60_PERCENT"
+                    or str(row.get("DeliveryCategoryBStatus", "")).upper() == "PASS_EACH_DAY_GE_60_PERCENT"
+                )
+                else ("WAIT_FOR_DATA" if str(row.get("DeliveryCategoryAStatus", "")).upper().startswith("WAIT_FOR_DATA")
+                      or str(row.get("DeliveryCategoryBStatus", "")).upper().startswith("WAIT_FOR_DATA")
+                      else "FILTERED_OUT_A_AND_B"),
+                axis=1,
+            )
             delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
 
             # Category A and B are screened independently. B is mathematically
