@@ -180,17 +180,26 @@ def test_news_gate_requires_category_b_each_day_status():
     assert news_catalyst._filter_catalyst_candidates(candidates).empty
 
 
-def test_rvol_threshold_precedes_dual_delivery_in_scanner_source():
+def test_delivery_categories_precede_independent_rvol_gates_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
-    rvol_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
-    delivery_step = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
+
+    # RVOL is calculated for the full Mainboard universe as a metric only.
+    rvol_metrics_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL METRICS (NO RVOL GATE YET)")
+    delivery_step = source.index("STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE")
+    category_a_gate = source.index("category_a_rvol = select_rvol_above_threshold(")
+    category_b_gate = source.index("category_b_rvol = select_rvol_above_threshold(")
     liquidity_step = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     fundamental_step = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical_step = source.index("STEP 7: PRICE + VOLUME")
-    assert rvol_step < delivery_step < liquidity_step < fundamental_step < technical_step
+
+    assert rvol_metrics_step < delivery_step < category_a_gate < category_b_gate < liquidity_step
+    assert liquidity_step < fundamental_step < technical_step
     assert "def select_rvol_above_threshold" in source
     assert "minimum_rvol=1.5" in source
-    assert ".head(50)" not in source[source.index("def select_rvol_above_threshold"):source.index("# PRICE + VOLUME")]
+    assert 'outputs/v8_delivery_category_a_rvol.csv' in source
+    assert 'outputs/v8_delivery_category_b_rvol.csv' in source
+    assert 'current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
+    assert ".head(50)" not in source
 
 
 def test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps():
