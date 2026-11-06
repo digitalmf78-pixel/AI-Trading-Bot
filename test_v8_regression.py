@@ -249,7 +249,32 @@ def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates()
     assert pd.notna(analyzed.iloc[0]["PriceChange5D"])
 
 
-def test_telegram_digest_is_compact_and_keeps_core_gate_context():
+def test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx():
+    classify = scanner._classify_ema44_trend
+    # Close above EMA44 remains bullish even if it is below EMA20.
+    assert classify(101.0, 100.0) == "Bullish (Close > EMA44)"
+    # Close below EMA44 remains bearish even if it is above EMA20.
+    assert classify(99.0, 100.0) == "Bearish (Close < EMA44)"
+    # Exact equality is neutral; unavailable/invalid EMA44 waits for data.
+    assert classify(100.0, 100.0) == "NEUTRAL (Close = EMA44)"
+    assert classify(100.0, float("nan")) == "WAIT_FOR_DATA"
+    assert classify(100.0, 0.0) == "WAIT_FOR_DATA"
+    assert "EMA50" not in scanner.calculate_trend.__code__.co_names
+
+
+def test_ema44_missing_history_returns_wait_for_data():
+    candidate = pd.DataFrame([{"TckrSymb": "SHORT"}])
+    dates = pd.bdate_range("2026-10-01", periods=20)
+    history = pd.DataFrame({
+        "TckrSymb": ["SHORT"] * 20, "Date": dates,
+        "ClsPric": [100.0 + i for i in range(20)],
+    })
+    analyzed = scanner.calculate_trend(candidate, [history])
+    assert analyzed.iloc[0]["TrendClassification"] == "WAIT_FOR_DATA"
+    assert analyzed.iloc[0]["EMA44Position"] == "WAIT_FOR_DATA"
+
+
+def test_telegram_digest_excludes_wait_for_data_from_ranked_top4():
     row = {"TckrSymb": "ABC", "LiquidityFilterStatus": "PASS",
            "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "NewsEvidenceStatus": "NO_DATA",
            "EODWatchlistStatus": "WAIT_FOR_DATA"}
@@ -257,12 +282,13 @@ def test_telegram_digest_is_compact_and_keeps_core_gate_context():
                             "FundamentalScore": 72.5, "Fundamental65PlusStatus": "SCORE_GE_65"}])
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {}, observation_report=report)
     text = "\n".join(lines)
-    for expected in ("ABC", "MEDIUM", "Fundamental 72.50/100", "Liquidity MEDIUM", "Technical WAIT_FOR_DATA", "News NO_DATA", "Final WAIT_FOR_DATA"):
-        assert expected in text, expected
+    assert "MEDIUM: 1" in text
+    assert "ranked stock उपलब्ध नाही" in text
+    assert "ABC" not in text
     assert "BUY शिफारस" in text
 
 
-def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
+def test_telegram_digest_only_ranks_complete_liquidity_qualified_pipeline_stocks():
     rows = pd.DataFrame([
         {"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA", "EODWatchlistStatus": "WAIT_FOR_DATA"},
         {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "EODWatchlistStatus": "WATCH"},
@@ -270,7 +296,9 @@ def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
     report = pd.DataFrame([{"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA"},
                            {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "LiquidityTier": "LOW"}])
     text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}, observation_report=report))
-    assert "WATCHME" in text
+    assert "Liquidity filter नंतर stock उपलब्ध नाही" not in text
+    assert "ranked stock उपलब्ध नाही" in text
+    assert "WATCHME" not in text
     assert "NOTLIQ" not in text
 
 
@@ -623,7 +651,10 @@ if __name__ == "__main__":
         test_delivery_categories_precede_independent_rvol_gates_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
-        test_telegram_digest_is_compact_and_keeps_core_gate_context,
+        test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx,
+        test_ema44_missing_history_returns_wait_for_data,
+        test_telegram_digest_excludes_wait_for_data_from_ranked_top4,
+        test_telegram_digest_only_ranks_complete_liquidity_qualified_pipeline_stocks,
         test_telegram_digest_empty_result_is_a_short_no_candidate_message,
         test_next_day_pipeline_only_receives_final_watch_candidates,
         test_risk_reward_requires_structural_resistance_and_never_synthesizes_2r,

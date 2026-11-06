@@ -55,7 +55,7 @@ def test_namespace_declared_on_feed_root_is_supported_during_recovery(monkeypatc
     assert items[0].find("{http://purl.org/dc/elements/1.1/}date") is not None
 
 
-def test_telegram_observation_includes_all_liquidity_passed_stocks(monkeypatch, tmp_path):
+def test_telegram_observation_preserves_all_liquidity_rows_but_digest_only_ranks_eligible(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     report = pd.DataFrame({
         "TckrSymb": [f"STK{i:02d}" for i in range(20)],
@@ -74,9 +74,9 @@ def test_telegram_observation_includes_all_liquidity_passed_stocks(monkeypatch, 
     message = "\n".join(news._observation_digest_lines(report, result))
     assert len(selected) == 20
     assert "एकूण 20" in message
-    assert "Technical WAIT_FOR_DATA" in message
-    assert "News NO_DATA" in message
-    assert "STK19" in message
+    assert "WEAK: 20" in message
+    assert "ranked stock उपलब्ध नाही" in message
+    assert "STK19" not in message
 
 
 def test_telegram_observation_excludes_names_that_failed_liquidity():

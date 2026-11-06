@@ -105,7 +105,7 @@ def test_news_delivery_gate_uses_union_delivery_status_when_category_columns_abs
     assert selected["TckrSymb"].tolist() == ["A_OR_B"]
 
 
-def test_telegram_liquidity_digest_groups_strong_medium_then_weak():
+def test_telegram_liquidity_digest_counts_all_tiers_without_forced_fill():
     import pandas as pd
 
     report = pd.DataFrame([
@@ -117,8 +117,69 @@ def test_telegram_liquidity_digest_groups_strong_medium_then_weak():
          "AvgDailyTradedValue20D": 80_000_000},
     ])
 
-    lines = news._observation_digest_lines(report, result=None, news_data=None)
-    message = "\\n".join(lines)
-    assert message.index("STRONG LIQUIDITY") < message.index("MEDIUM LIQUIDITY") < message.index("WEAK LIQUIDITY")
-    assert message.index("STRONG_STOCK") < message.index("MEDIUM_STOCK") < message.index("WEAK_STOCK")
+    message = "\\n".join(news._observation_digest_lines(report, result=None, news_data=None))
+    assert "STRONG: 1" in message
+    assert "MEDIUM: 1" in message
     assert "WEAK: 1" in message
+    assert "ranked stock उपलब्ध नाही" in message
+    assert "STRONG_STOCK" not in message
+
+def test_telegram_top4_is_ranked_independently_for_each_liquidity_tier():
+    import pandas as pd
+
+    rows = []
+    for tier in ("STRONG", "MEDIUM", "LOW"):
+        for rank in range(1, 7):
+            rows.append({
+                "TckrSymb": f"{tier}_{rank}",
+                "LiquidityTier": tier,
+                "FundamentalScore": 100 - rank,
+                "RelativeStrengthNifty": 10 - rank,
+                "SectorStrengthNifty": 8 - rank,
+                "RVOL": 3.0 - (rank / 10),
+                "RiskReward": 3.0 - (rank / 10),
+                "EMA44": 100.0,
+                "TrendClassification": "Bullish (Close > EMA44)",
+                "CoreTechnicalScreenStatus": "PASS",
+                "RiskRewardStatus": "PASS",
+                "NewsEvidenceStatus": "PRIMARY_CONFIRMED",
+                "NewsPrimarySourceVerified": True,
+                "SetupType": "Breakout",
+            })
+    selected = news._top_ranked_observations_by_tier(pd.DataFrame(rows), limit_per_tier=4)
+    assert len(selected) == 12
+    counts = selected["LiquidityTier"].value_counts().to_dict()
+    assert counts == {"STRONG": 4, "MEDIUM": 4, "LOW": 4}
+    for tier in ("STRONG", "MEDIUM", "LOW"):
+        group = selected[selected["LiquidityTier"] == tier]
+        assert group["TckrSymb"].tolist() == [f"{tier}_{i}" for i in range(1, 5)]
+        assert group["_TierRank"].tolist() == [1, 2, 3, 4]
+
+
+def test_telegram_top4_does_not_force_fill_or_rank_wait_for_data():
+    import pandas as pd
+
+    rows = []
+    for tier in ("STRONG", "MEDIUM", "LOW"):
+        rows.append({
+            "TckrSymb": tier + "_PASS", "LiquidityTier": tier,
+            "FundamentalScore": 80, "RelativeStrengthNifty": 5,
+            "SectorStrengthNifty": 3, "RVOL": 2, "RiskReward": 2.5,
+            "EMA44": 100, "TrendClassification": "Bullish (Close > EMA44)",
+            "CoreTechnicalScreenStatus": "PASS", "RiskRewardStatus": "PASS",
+            "NewsEvidenceStatus": "PRIMARY_CONFIRMED", "NewsPrimarySourceVerified": True,
+            "SetupType": "Pullback",
+        })
+        rows.append({
+            "TckrSymb": tier + "_WAIT", "LiquidityTier": tier,
+            "FundamentalScore": 99, "RelativeStrengthNifty": 9,
+            "SectorStrengthNifty": 9, "RVOL": 9, "RiskReward": 4,
+            "EMA44": 100, "TrendClassification": "WAIT_FOR_DATA",
+            "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "RiskRewardStatus": "WAIT_FOR_DATA",
+            "NewsEvidenceStatus": "NO_DATA", "NewsPrimarySourceVerified": False,
+            "SetupType": "Breakout",
+        })
+    selected = news._top_ranked_observations_by_tier(pd.DataFrame(rows), limit_per_tier=4)
+    assert selected["TckrSymb"].tolist() == ["STRONG_PASS", "MEDIUM_PASS", "LOW_PASS"]
+    assert len(selected) == 3
+

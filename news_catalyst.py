@@ -1151,7 +1151,9 @@ def _telegram_observation_rows(report: pd.DataFrame | None,
             "LiquidityFilterStatus", "LiquidityStatus", "LiquidityTier",
             "FundamentalScore", "Fundamental65PlusStatus", "FundamentalStatus",
             "FundamentalSource", "CoreTechnicalScreenStatus", "CandidateScreenStatus",
-            "SetupType", "RSI14", "EMA20", "EMA44", "NewsEvidenceStatus",
+            "SetupType", "RSI14", "EMA20", "EMA44", "EMA44Position", "TrendClassification",
+            "RVOL", "RelativeStrengthNifty", "SectorStrengthNifty", "SectorStrengthStatus",
+            "RiskReward", "RiskRewardStatus", "NewsEvidenceStatus", "NewsPrimarySourceVerified",
             "EODWatchlistStatus", "DeliveryCategoryAStatus",
             "DeliveryCategoryBStatus", "AvgDelivery5D",
             "DeliveryDailyPassCount", "DeliverySessions", "DeliveryMin5D",
@@ -1267,21 +1269,71 @@ def _telegram_news_lines(news: pd.DataFrame | None, symbol: str, limit: int = 2)
     return lines or ["   📰 News: no matched headline in this scan window."]
 
 
+def _top_ranked_observations_by_tier(selected: pd.DataFrame, limit_per_tier: int = 4) -> pd.DataFrame:
+    """Return up to four fully evidenced candidates independently per liquidity tier."""
+    if selected is None or selected.empty:
+        return pd.DataFrame()
+    rows = selected.copy()
+    required = ["FundamentalScore", "RelativeStrengthNifty", "SectorStrengthNifty", "RVOL", "RiskReward", "EMA44"]
+    for column in required:
+        if column not in rows.columns:
+            return rows.iloc[0:0].copy()
+        rows[column] = pd.to_numeric(rows[column], errors="coerce")
+    trend = rows.get("TrendClassification", pd.Series("", index=rows.index)).fillna("").astype(str)
+    technical = rows.get("CoreTechnicalScreenStatus", rows.get("CandidateScreenStatus", pd.Series("", index=rows.index))).fillna("").astype(str).str.upper()
+    rr_status = rows.get("RiskRewardStatus", pd.Series("", index=rows.index)).fillna("").astype(str).str.upper()
+    news = rows.get("NewsEvidenceStatus", pd.Series("", index=rows.index)).fillna("").astype(str).str.upper()
+    setup = rows.get("SetupType", pd.Series("", index=rows.index)).fillna("").astype(str)
+    verified = rows.get("NewsPrimarySourceVerified", pd.Series(False, index=rows.index)).fillna(False).astype(str).str.upper().isin(["TRUE", "1", "YES"])
+    eligible = (
+        rows[required].notna().all(axis=1)
+        & trend.str.contains("Bullish", case=False, regex=False)
+        & technical.eq("PASS")
+        & rr_status.eq("PASS")
+        & rows["RiskReward"].ge(2.0)
+        & news.eq("PRIMARY_CONFIRMED")
+        & verified
+        & setup.isin(["Breakout", "Pullback", "Pre-Breakout", "Possible Pullback"])
+    )
+    rows = rows[eligible].copy()
+    tier_col = "LiquidityTier" if "LiquidityTier" in rows.columns else "LiquidityTier_pipeline"
+    if rows.empty or tier_col not in rows.columns:
+        return rows.iloc[0:0].copy()
+    rows["_setup_rank"] = rows["SetupType"].map({"Breakout": 0, "Pullback": 1, "Pre-Breakout": 2, "Possible Pullback": 3}).fillna(4)
+    groups = []
+    for tier in ("STRONG", "MEDIUM", "LOW"):
+        group = rows[rows[tier_col].fillna("").astype(str).str.upper().eq(tier)].copy()
+        group = group.sort_values(
+            ["FundamentalScore", "_setup_rank", "RelativeStrengthNifty", "SectorStrengthNifty", "RVOL", "RiskReward"],
+            ascending=[False, True, False, False, False, False],
+            na_position="last", kind="stable",
+        ).head(max(0, int(limit_per_tier)))
+        group["_TierRank"] = range(1, len(group) + 1)
+        groups.append(group)
+    return pd.concat(groups, ignore_index=True) if groups else rows.iloc[0:0].copy()
+
+
 def _observation_digest_lines(report: pd.DataFrame | None,
                               result: pd.DataFrame | None = None,
                               news_data: pd.DataFrame | None = None) -> list[str]:
-    """Format every liquidity-qualified stock with its score and current checks."""
-    selected = _telegram_observation_rows(report, result, limit=None)
-    if selected.empty:
+    """Format independently ranked Top 4 fully evidenced stocks per liquidity tier."""
+    all_selected = _telegram_observation_rows(report, result, limit=None)
+    selected = _top_ranked_observations_by_tier(all_selected, limit_per_tier=4)
+    if all_selected.empty:
         return ["", "🔎 Liquidity filter नंतर Telegram साठी stock उपलब्ध नाही.",
                 "Liquidity इतिहास अपुरा असल्यास तो WAIT_FOR_DATA म्हणून audit मध्ये राहतो."]
-    tiers = selected.get("LiquidityTier", pd.Series("UNKNOWN", index=selected.index)).fillna("UNKNOWN").astype(str).str.upper().value_counts().to_dict()
+    tiers = all_selected.get("LiquidityTier", pd.Series("UNKNOWN", index=all_selected.index)).fillna("UNKNOWN").astype(str).str.upper().value_counts().to_dict()
     lines = [
         "",
-        f"🔎 LIQUIDITY-PASSED STOCKS • एकूण {len(selected)}",
+        f"🔎 LIQUIDITY-PASSED STOCKS • एकूण {len(all_selected)}",
         f"🟢 STRONG: {tiers.get('STRONG', 0)} • 🟡 MEDIUM: {tiers.get('MEDIUM', 0)} • 🔵 WEAK: {tiers.get('LOW', 0)}",
-        "यादी liquidity नुसार STRONG → MEDIUM → WEAK क्रमाने आहे; पुढचे filters फक्त status म्हणून दाखवले आहेत.",
+        f"प्रत्येक tier मधील स्वतंत्र Top 4 • ranked picks: {len(selected)} (कमाल 12).",
+        "फक्त पूर्ण डेटा, EMA44 bullish, Technical PASS, verified primary news आणि RR ≥2 असलेले उमेदवार; WAIT_FOR_DATA ला rank नाही.",
     ]
+    if selected.empty:
+        lines.extend(["", "सध्या आवश्यक निकष पूर्ण करणारा ranked stock उपलब्ध नाही; कोणताही stock जबरदस्तीने निवडलेला नाही."])
+        lines.append("ही निरीक्षण यादी आहे; BUY शिफारस किंवा automatic order नाही.")
+        return lines
     events = _upcoming_event_summaries()
     current_tier = None
     tier_headers = {
@@ -1289,12 +1341,13 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         "MEDIUM": "🟡 MEDIUM LIQUIDITY • ₹2–5 कोटी",
         "LOW": "🔵 WEAK LIQUIDITY • ₹1.5–2 कोटी",
     }
-    for number, (_, row) in enumerate(selected.iterrows(), start=1):
+    for _, row in selected.iterrows():
+        number = int(row.get("_TierRank", 0))
         symbol = str(row.get("TckrSymb", "")).strip().upper()
         tier = str(row.get("LiquidityTier", row.get("LiquidityTier_pipeline", "WAIT_FOR_DATA"))).upper()
         if tier != current_tier:
             lines.append("")
-            lines.append(tier_headers.get(tier, f"⚪ {tier} LIQUIDITY"))
+            lines.append(tier_headers.get(tier, f"⚪ {tier} LIQUIDITY") + " • स्वतंत्र TOP 4")
             current_tier = tier
         tier_label = "WEAK" if tier == "LOW" else tier
         avg = pd.to_numeric(pd.Series([row.get("AvgDailyTradedValue20D")]), errors="coerce").iloc[0]
@@ -1328,7 +1381,9 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         rsi = pd.to_numeric(pd.Series([row.get("RSI14")]), errors="coerce").iloc[0]
         ema20 = pd.to_numeric(pd.Series([row.get("EMA20")]), errors="coerce").iloc[0]
         rsi_text = f"RSI {rsi:.1f}" if pd.notna(rsi) else "RSI WAIT"
-        ema_text = f"EMA20 {ema20:.2f}" if pd.notna(ema20) else "EMA20 WAIT"
+        ema44 = pd.to_numeric(pd.Series([row.get("EMA44")]), errors="coerce").iloc[0]
+        trend = str(row.get("TrendClassification", "WAIT_FOR_DATA"))
+        ema_text = f"EMA44 {ema44:.2f} • {trend}" if pd.notna(ema44) else "EMA44 WAIT_FOR_DATA"
         news_status = row.get("NewsEvidenceStatus", row.get("NewsEvidenceStatus_pipeline", "WAIT_FOR_DATA"))
         final = row.get("EODWatchlistStatus", row.get("EODWatchlistStatus_pipeline", "WAIT_FOR_DATA"))
         event = events.get(symbol, "Event date WAIT_FOR_DATA")
@@ -1348,7 +1403,13 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         lines.append(f"   Multiples: {valuation_metrics}")
         lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")
         lines.append(f"   Fundamental {score} | Source {source}")
-        lines.append(f"   Technical {technical} | {rsi_text} | {ema_text} | News {news_status} | Final {final}")
+        rs_nifty = pd.to_numeric(pd.Series([row.get("RelativeStrengthNifty")]), errors="coerce").iloc[0]
+        rs_sector = pd.to_numeric(pd.Series([row.get("SectorStrengthNifty")]), errors="coerce").iloc[0]
+        rvol_value = pd.to_numeric(pd.Series([row.get("RVOL")]), errors="coerce").iloc[0]
+        rr_value = pd.to_numeric(pd.Series([row.get("RiskReward")]), errors="coerce").iloc[0]
+        lines.append(f"   Technical {technical} | {rsi_text} | {ema_text}")
+        lines.append(f"   RS Nifty {rs_nifty:.2f}% | Sector RS {rs_sector:.2f}% | RVOL {rvol_value:.2f} | RR {rr_value:.2f}R")
+        lines.append(f"   News {news_status} | Final {final}")
         lines.extend(_telegram_news_lines(news_data, symbol, limit=2))
         lines.append(f"   पुढील NSE result/announcement: {event}")
     lines.append("ही निरीक्षण यादी आहे; BUY शिफारस किंवा automatic order नाही.")
