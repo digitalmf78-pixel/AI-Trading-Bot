@@ -170,14 +170,15 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
 
 
-def test_news_gate_requires_category_b_each_day_status():
+def test_news_gate_preserves_category_a_only_candidates():
     candidates = pd.DataFrame([{
         "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
         "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
         "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
         "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
-    assert news_catalyst._filter_catalyst_candidates(candidates).empty
+    selected = news_catalyst._filter_catalyst_candidates(candidates)
+    assert selected["TckrSymb"].tolist() == ["ABC"]
 
 
 def test_delivery_categories_precede_independent_rvol_gates_in_scanner_source():
