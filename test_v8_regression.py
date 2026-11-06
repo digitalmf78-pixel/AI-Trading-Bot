@@ -619,7 +619,7 @@ if __name__ == "__main__":
         test_delivery_average_category_passes_while_daily_category_fails,
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
-        test_news_gate_requires_category_b_each_day_status,
+        test_news_gate_preserves_category_a_only_candidates,
         test_delivery_categories_precede_independent_rvol_gates_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
