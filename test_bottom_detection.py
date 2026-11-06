@@ -14,7 +14,8 @@ def _history(symbol="ABC", periods=70):
     volumes = [1000.0] * periods
     # Pivot lows at 20 and 40, with the second one higher.
     lows[20], highs[20], opens[20], closes[20] = 90.0, 94.0, 91.0, 93.0
-    lows[40], highs[40], opens[40], closes[40] = 94.0, 98.0, 95.0, 97.0
+    if periods > 40:
+        lows[40], highs[40], opens[40], closes[40] = 94.0, 98.0, 95.0, 97.0
     # Post-pivot swing highs are cleared by the final bullish candle.
     for i in range(41, periods - 1):
         highs[i] = 98.0
