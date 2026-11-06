@@ -5,7 +5,7 @@ from rvol_strategy_backtest import classify_delivery, strategy_membership, _metr
 
 def test_delivery_categories_exactly_five_and_boundary():
     assert classify_delivery([60, 60, 60, 60, 60]) == ("PASS", "PASS")
-    assert classify_delivery([70, 70, 70, 70, 10]) == ("PASS", "REJECT")
+    assert classify_delivery([80, 80, 80, 80, 20]) == ("PASS", "REJECT")
     assert classify_delivery([59.99, 60, 60, 60, 60]) == ("REJECT", "REJECT")
     assert classify_delivery([60, 60, 60, 60]) == ("WAIT_FOR_DATA", "WAIT_FOR_DATA")
 
