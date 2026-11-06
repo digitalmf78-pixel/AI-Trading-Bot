@@ -175,6 +175,8 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             records.append(rec)
 
     signals = pd.DataFrame(records)
+    if signals.empty:
+        signals = pd.DataFrame(columns=["Date", "Symbol", "Close", "RVOL", "DeliveryCategoryA", "DeliveryCategoryB", *[f"ForwardReturn{h}D_Pct" for h in HORIZONS], *[f"MaxFavorable{h}D_Pct" for h in HORIZONS], *[f"MaxAdverse{h}D_Pct" for h in HORIZONS], "Strategy_A_RVOL_GT_1_5", "Strategy_B_RVOL_GT_1_2", "Strategy_C_No_RVOL_Hard_Gate"])
     signals.to_csv(output_dir / "signals.csv", index=False)
     pd.DataFrame([{"Stage": k, "Rows": v} for k, v in rejection.items()]).to_csv(output_dir / "rejection_counts.csv", index=False)
 
