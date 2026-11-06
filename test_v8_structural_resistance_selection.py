@@ -34,6 +34,27 @@ def test_prefers_nearest_overhead_level_not_highest_level():
     assert source == "RECENT_SWING_HIGH", (level, source)
 
 
+def test_uses_longer_term_resistance_when_short_term_highs_are_below_entry():
+    row = pd.Series({
+        "SRResistance": 118.90,
+        "SRSwingHigh": 118.90,
+        "SR20DHigh": 118.90,
+        "SR50DHigh": 118.90,
+        "SR100DHigh": 124.50,
+        "SR200DHigh": 129.00,
+    })
+    level, source = layers._structural_resistance_candidate(row, 120.089)
+    assert level == 124.50, (level, source)
+    assert source == "SR_100D_HIGH", (level, source)
+
+    # If the 100D high is already cleared, the 200D high remains a valid
+    # observed overhead level; no synthetic target is generated.
+    row["SR100DHigh"] = 119.50
+    level, source = layers._structural_resistance_candidate(row, 120.089)
+    assert level == 129.00, (level, source)
+    assert source == "SR_200D_HIGH", (level, source)
+
+
 def test_no_overhead_structure_stays_wait_for_data():
     row = pd.Series({
         "SRResistance": 118.90,
@@ -74,6 +95,7 @@ def run():
     tests = [
         test_uses_nearest_observed_resistance_above_entry,
         test_prefers_nearest_overhead_level_not_highest_level,
+        test_uses_longer_term_resistance_when_short_term_highs_are_below_entry,
         test_no_overhead_structure_stays_wait_for_data,
         test_observed_target_rr_pass_or_fail_is_calculated_from_structure,
         test_invalid_entry_or_stop_does_not_pass,

@@ -143,10 +143,11 @@ def _calculate_structural_risk_reward(
 
 
 def _structural_resistance_candidate(row: pd.Series, entry: float) -> tuple[float, str]:
-    """Return the nearest known historical resistance above entry, never an invented price.
+    """Return the nearest verified historical high above entry, never an invented target.
 
-    Candidate levels are already computed from EOD price history by the upstream
-    technical screen. A level at/below entry cannot be a target for this plan.
+    Candidate levels are computed from complete EOD lookbacks upstream. The
+    100D/200D levels provide overhead structure when a breakout has cleared
+    the shorter 20D/50D highs. A level at/below entry is not a valid target.
     """
     entry = _num(entry)
     if pd.isna(entry) or entry <= 0:
@@ -160,6 +161,10 @@ def _structural_resistance_candidate(row: pd.Series, entry: float) -> tuple[floa
         ("High20D", "HIGH_20D"),
         ("SR50DHigh", "SR_50D_HIGH"),
         ("High50D", "HIGH_50D"),
+        ("SR100DHigh", "SR_100D_HIGH"),
+        ("High100D", "HIGH_100D"),
+        ("SR200DHigh", "SR_200D_HIGH"),
+        ("High200D", "HIGH_200D"),
     ]
     valid = []
     for priority, (field, source) in enumerate(fields):

@@ -32,7 +32,7 @@ from news_catalyst import (
 # ============================================================
 
 NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
-HISTORY_DAYS = 50
+HISTORY_DAYS = 200  # retain enough EOD sessions for verified 100D/200D resistance
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
 BHAVCOPY_404_CACHE_DAYS = 2
 NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
@@ -398,7 +398,7 @@ def get_latest_eod():
 def collect_historical_days(
     latest_date,
     days=HISTORY_DAYS,
-    max_calendar_days=120,
+    max_calendar_days=320,  # approximately 200 NSE sessions plus holidays
 ):
 
     print(
@@ -2089,6 +2089,7 @@ def calculate_support_resistance(
 
     sr_columns = [
         "PDH", "PDL", "PWH", "PWL", "SR20DHigh", "SR50DHigh",
+        "SR100DHigh", "SR200DHigh",
         "SRSwingHigh", "SRSwingLow", "SRSupport", "SRResistance", "BreakoutLevel",
         "EntryZoneLow", "EntryZoneHigh", "SRStatus",
     ]
@@ -2187,6 +2188,8 @@ def calculate_support_resistance(
                 "PWL": float("nan"),
                 "SR20DHigh": float("nan"),
                 "SR50DHigh": float("nan"),
+                "SR100DHigh": float("nan"),
+                "SR200DHigh": float("nan"),
                 "SRSwingHigh": float("nan"),
                 "SRSwingLow": float("nan"),
                 "SRSupport": float("nan"),
@@ -2284,6 +2287,17 @@ def calculate_support_resistance(
             previous_50[
                 "LwPric"
             ].min()
+        )
+
+        # Long-horizon resistance is only published when the full lookback
+        # exists. A partial 100D/200D window must not be mislabeled as complete.
+        high100 = (
+            float(previous_rows.tail(100)["HghPric"].max())
+            if len(previous_rows) >= 100 else float("nan")
+        )
+        high200 = (
+            float(previous_rows.tail(200)["HghPric"].max())
+            if len(previous_rows) >= 200 else float("nan")
         )
 
         # ----------------------------------------------------
@@ -2549,6 +2563,8 @@ def calculate_support_resistance(
 
             "SR20DHigh": high20,
             "SR50DHigh": high50,
+            "SR100DHigh": high100,
+            "SR200DHigh": high200,
 
             "SRSwingHigh": swing_high,
             "SRSwingLow": swing_low,
@@ -2571,6 +2587,7 @@ def calculate_support_resistance(
 
     sr_columns = [
         "TckrSymb", "PDH", "PDL", "PWH", "PWL", "SR20DHigh", "SR50DHigh",
+        "SR100DHigh", "SR200DHigh",
         "SRSwingHigh", "SRSwingLow", "SRSupport", "SRResistance", "BreakoutLevel",
         "EntryZoneLow", "EntryZoneHigh", "SRStatus",
     ]
