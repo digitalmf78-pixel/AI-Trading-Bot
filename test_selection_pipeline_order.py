@@ -3,14 +3,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def test_rvol_delivery_liquidity_fundamentals_then_technical():
+def test_delivery_precedes_rvol_gate_then_liquidity_fundamentals_and_technical():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    rvol = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY")
-    delivery = source.index("STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5")
+    delivery = source.index("STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE")
+    rvol_gate_a = source.index("category_a_rvol = select_rvol_above_threshold")
+    rvol_gate_b = source.index("category_b_rvol = select_rvol_above_threshold")
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     fundamental = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical = source.index("STEP 7: PRICE + VOLUME")
-    assert rvol < delivery < liquidity < fundamental < technical
+    assert delivery < rvol_gate_a < rvol_gate_b < liquidity < fundamental < technical
+    assert 'v8_delivery_category_a_rvol.csv' in source
+    assert 'v8_delivery_category_b_rvol.csv' in source
+    assert 'A_AND_B' in source
 
 
 
