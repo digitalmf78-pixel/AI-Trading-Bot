@@ -25,3 +25,19 @@ def test_return_metrics_are_deterministic():
     assert result["RAverageReturnPct"] == 1.667
     assert result["RMedianReturnPct"] == 0.0
     assert result["RProfitFactor"] == 2.0
+
+
+def test_missing_cache_writes_wait_for_data_reports(tmp_path):
+    from rvol_strategy_backtest import run_backtest
+
+    result = run_backtest(
+        price_dir=tmp_path / "missing_prices",
+        delivery_dir=tmp_path / "missing_delivery",
+        output_dir=tmp_path / "reports",
+    )
+
+    assert result["status"] == "WAIT_FOR_DATA"
+    assert (tmp_path / "reports" / "comparison.csv").exists()
+    assert (tmp_path / "reports" / "signals.csv").exists()
+    rejection = pd.read_csv(tmp_path / "reports" / "rejection_counts.csv")
+    assert rejection.iloc[0]["Status"] == "WAIT_FOR_DATA"
