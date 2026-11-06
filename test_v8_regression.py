@@ -288,7 +288,7 @@ def test_telegram_digest_excludes_wait_for_data_from_ranked_top4():
     assert "BUY शिफारस" in text
 
 
-def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
+def test_telegram_digest_only_ranks_complete_liquidity_qualified_pipeline_stocks():
     rows = pd.DataFrame([
         {"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA", "EODWatchlistStatus": "WAIT_FOR_DATA"},
         {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "EODWatchlistStatus": "WATCH"},
@@ -296,7 +296,9 @@ def test_telegram_digest_only_lists_liquidity_qualified_pipeline_stocks():
     report = pd.DataFrame([{"TckrSymb": "NOTLIQ", "LiquidityFilterStatus": "WAIT_FOR_DATA"},
                            {"TckrSymb": "WATCHME", "LiquidityFilterStatus": "PASS", "LiquidityTier": "LOW"}])
     text = "\n".join(news_catalyst.build_marathi_digest(rows, "2026-10-13", pd.DataFrame(), {}, observation_report=report))
-    assert "WATCHME" in text
+    assert "Liquidity filter नंतर stock उपलब्ध नाही" not in text
+    assert "ranked stock उपलब्ध नाही" in text
+    assert "WATCHME" not in text
     assert "NOTLIQ" not in text
 
 
