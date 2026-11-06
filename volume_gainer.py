@@ -333,9 +333,11 @@ def prepare_equity_data(df, etf_symbols=None):
     excluded_etfs = sorted(set(symbol_text[etf_mask].tolist()))
     if excluded_etfs:
         data = data.loc[~etf_mask].copy()
+        sample = excluded_etfs[:10]
+        suffix = " ..." if len(excluded_etfs) > len(sample) else ""
         print(
             f"[UNIVERSE] Excluded {len(excluded_etfs)} ETF/mutual-fund symbols "
-            f"before stock ranking: {excluded_etfs}"
+            f"before stock ranking (sample: {sample}{suffix})"
         )
     else:
         print("[UNIVERSE] No ETF-like instruments found by official list/ISIN/name checks.")
@@ -402,92 +404,85 @@ def collect_historical_days(
     days=HISTORY_DAYS,
     max_calendar_days=320,  # approximately 200 NSE sessions plus holidays
 ):
+    """Load the existing Bhavcopy history first; download only genuinely missing dates.
+
+    GitHub Actions restores data/bhavcopy before the scanner starts. Reading the
+    dated cache inventory directly avoids walking the calendar and making slow
+    NSE requests for dates whose Bhavcopy is already stored.
+    """
+    print(f"\nSTEP 3: Loading up to {days} prior trading sessions from Bhavcopy cache...")
+
+    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+    cached_files = []
+    for filename in os.listdir(DATA_CACHE_DIR):
+        if not (filename.startswith("bhavcopy_") and filename.endswith(".csv")):
+            continue
+        date_text = filename[len("bhavcopy_"):-len(".csv")]
+        try:
+            cache_date = datetime.strptime(date_text, "%Y%m%d").date()
+        except ValueError:
+            continue
+        if cache_date < latest_date:
+            cached_files.append((cache_date, os.path.join(DATA_CACHE_DIR, filename)))
+
+    cached_files.sort(key=lambda item: item[0], reverse=True)
+    historical_by_date = {}
+    cached_dates = {item[0] for item in cached_files}
+
+    # Fast path: consume already-restored CSVs without calling download_bhavcopy.
+    for cache_date, cache_path in cached_files:
+        if len(historical_by_date) >= days:
+            break
+        try:
+            raw = pd.read_csv(cache_path)
+            if raw.empty:
+                continue
+            clean = prepare_equity_data(raw)
+            if not clean.empty:
+                clean["Date"] = pd.Timestamp(cache_date)
+                historical_by_date[cache_date] = clean
+        except Exception as exc:
+            print(f"[BHAVCOPY CACHE] Invalid cached file {os.path.basename(cache_path)}: {exc}")
 
     print(
-        "\nSTEP 3: Collecting historical "
-        f"{days} trading days..."
+        f"[BHAVCOPY CACHE] Reused {len(historical_by_date)}/{days} required sessions "
+        f"from {len(cached_files)} dated cache files."
     )
 
-    print("\n" + "=" * 60)
-
-    print(
-        f"COLLECTING PREVIOUS "
-        f"{days} TRADING DAYS"
-    )
-
-    print("=" * 60)
-
-    historical = []
-
-    current_date = (
-        latest_date
-        - timedelta(days=1)
-    )
-
+    # Only if the restored cache is incomplete, request missing weekdays.
+    current_date = latest_date - timedelta(days=1)
     attempted_days = 0
-    while len(historical) < days and attempted_days < max_calendar_days:
-
+    while len(historical_by_date) < days and attempted_days < max_calendar_days:
         attempted_days += 1
-        print(
-            f"\nChecking {current_date} | "
-            f"Found {len(historical)}/{days}"
-        )
-
-        df = download_bhavcopy(
-            datetime.combine(
-                current_date,
-                datetime.min.time()
+        if current_date.weekday() < 5 and current_date not in cached_dates:
+            print(
+                f"[BHAVCOPY CACHE] Missing session candidate {current_date} | "
+                f"have {len(historical_by_date)}/{days}; fetching once."
             )
-        )
-
-        if df is not None and len(df) > 0:
-
-            try:
-
-                clean = prepare_equity_data(
-                    df
-                )
-
-                if len(clean) > 0:
-
-                    clean["Date"] = pd.Timestamp(
-                        current_date
-                    )
-
-                    historical.append(
-                        clean
-                    )
-
-                    print(
-                        f"Accepted trading day: "
-                        f"{current_date}"
-                    )
-
-            except Exception as e:
-
-                print(
-                    f"Historical data error: {e}"
-                )
-
+            raw = download_bhavcopy(datetime.combine(current_date, datetime.min.time()))
+            if raw is not None and not raw.empty:
+                try:
+                    clean = prepare_equity_data(raw)
+                    if not clean.empty:
+                        clean["Date"] = pd.Timestamp(current_date)
+                        historical_by_date[current_date] = clean
+                        print(f"Accepted trading day: {current_date}")
+                except Exception as exc:
+                    print(f"Historical data error for {current_date}: {exc}")
         current_date -= timedelta(days=1)
+
+    historical = [
+        historical_by_date[date]
+        for date in sorted(historical_by_date)
+    ][-days:]
 
     if len(historical) < days:
         raise RuntimeError(
             f"WAIT_FOR_DATA: only {len(historical)}/{days} historical EOD sessions "
-            f"collected within {max_calendar_days} calendar days."
+            f"available after cache reuse and {max_calendar_days} calendar-day fallback."
         )
 
-    historical.reverse()
-
-    print("\n" + "=" * 60)
-
-    print(
-        f"Historical trading days collected: "
-        f"{len(historical)}"
-    )
-
-    print("=" * 60)
-
+    print(f"[BHAVCOPY CACHE] Historical sessions ready: {len(historical)}/{days}.")
     return historical
 
 
