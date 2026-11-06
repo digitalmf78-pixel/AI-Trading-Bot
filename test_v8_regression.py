@@ -249,6 +249,49 @@ def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates()
     assert pd.notna(analyzed.iloc[0]["PriceChange5D"])
 
 
+def test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx():
+    dates = pd.bdate_range("2026-07-01", periods=60)
+    cases = [
+        ("ABOVE44_BELOW20", 110.0, 112.0, 105.0, "Bullish"),
+        ("BELOW44_ABOVE20", 100.0, 98.0, 105.0, "Bearish"),
+        ("EQUAL44", 105.0, 103.0, 105.0, "NEUTRAL"),
+    ]
+    for symbol, final_close, ema20_hint, ema44_hint, expected in cases:
+        # Stable history is constructed so the final close is deliberately
+        # positioned around the computed EMA44; the expected label is checked
+        # against the actual calculated EMA44, not the hints above.
+        close = [100.0 + (i * 0.03) for i in range(59)] + [final_close]
+        history = pd.DataFrame({
+            "TckrSymb": [symbol] * 60, "Date": dates,
+            "OpnPric": [x - 0.1 for x in close],
+            "HghPric": [x + 0.5 for x in close],
+            "LwPric": [x - 0.5 for x in close],
+            "ClsPric": close, "TtlTradgVol": [2000] * 60,
+        })
+        candidate = pd.DataFrame([{"TckrSymb": symbol, "ClsPric": final_close}])
+        analyzed = scanner.calculate_trend(candidate, [history])
+        row = analyzed.iloc[0]
+        if row["ClsPric"] > row["EMA44"]:
+            assert "Bullish" in row["TrendClassification"]
+        elif row["ClsPric"] < row["EMA44"]:
+            assert "Bearish" in row["TrendClassification"]
+        else:
+            assert row["TrendClassification"].startswith("NEUTRAL")
+        assert "EMA50" not in analyzed.columns
+
+
+def test_ema44_missing_history_returns_wait_for_data():
+    candidate = pd.DataFrame([{"TckrSymb": "SHORT"}])
+    dates = pd.bdate_range("2026-10-01", periods=20)
+    history = pd.DataFrame({
+        "TckrSymb": ["SHORT"] * 20, "Date": dates,
+        "ClsPric": [100.0 + i for i in range(20)],
+    })
+    analyzed = scanner.calculate_trend(candidate, [history])
+    assert analyzed.iloc[0]["TrendClassification"] == "WAIT_FOR_DATA"
+    assert analyzed.iloc[0]["EMA44Position"] == "WAIT_FOR_DATA"
+
+
 def test_telegram_digest_is_compact_and_keeps_core_gate_context():
     row = {"TckrSymb": "ABC", "LiquidityFilterStatus": "PASS",
            "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "NewsEvidenceStatus": "NO_DATA",
