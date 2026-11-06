@@ -15,6 +15,9 @@ def test_delivery_precedes_rvol_gate_then_liquidity_fundamentals_and_technical()
     assert 'v8_delivery_category_a_rvol.csv' in source
     assert 'v8_delivery_category_b_rvol.csv' in source
     assert 'A_AND_B' in source
+    assert 'current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
+    assert 'current["DeliveryStatus"] = "PASS"' in source
+    assert 'outputs/v8_rvol_gt_1_5_candidates.csv' in source
 
 
 
