@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter
 from delivery_streak_tracker import update_delivery_scan_streak
+from delivery_consistency import build_delivery_consistency_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3570,6 +3571,36 @@ def main():
                 current, eod_date, symbol_col="TckrSymb", series_col="SctySrs", minimum_average=60.0
             )
             delivery_data_available = not delivery_audit.empty
+
+            # Independent observational tracker only. A 20-session history
+            # failure must never change or block the existing 5-session A/B gate.
+            try:
+                delivery_audit, _ = build_delivery_consistency_report(
+                    delivery_audit, eod_date, http_session=session, threshold=60.0
+                )
+            except Exception as consistency_exc:
+                consistency_columns = [
+                    "Delivery5DSessions", "Delivery5DDailyPassCount", "Delivery5DAverage",
+                    "Delivery5DCategoryAStatus", "Delivery5DCategoryBStatus",
+                    "Delivery10DSessions", "Delivery10DDailyPassCount", "Delivery10DAverage",
+                    "Delivery10DCategoryAStatus", "Delivery10DCategoryBStatus",
+                    "Delivery20DSessions", "Delivery20DDailyPassCount", "Delivery20DAverage",
+                    "Delivery20DCategoryAStatus", "Delivery20DCategoryBStatus",
+                    "Delivery20DCurrentStreak", "Delivery20DTag",
+                    "DeliveryConsistencyAsOfDate", "DeliveryConsistencyWindowStart",
+                    "DeliveryConsistencyWindowEnd",
+                ]
+                for column in consistency_columns:
+                    delivery_audit[column] = "WAIT_FOR_DATA"
+                os.makedirs("outputs", exist_ok=True)
+                delivery_audit[["TckrSymb"] + consistency_columns].to_csv(
+                    f"outputs/v8_delivery_consistency_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv",
+                    index=False,
+                )
+                print(
+                    "[DELIVERY CONSISTENCY] WAIT_FOR_DATA; existing 5D Delivery A/B "
+                    f"pipeline continues unchanged: {type(consistency_exc).__name__}: {consistency_exc}"
+                )
             if delivery_data_available and "DeliverySessions" in delivery_audit.columns:
                 session_counts = pd.to_numeric(delivery_audit["DeliverySessions"], errors="coerce")
                 delivery_data_available = bool(session_counts.ge(5).any())
