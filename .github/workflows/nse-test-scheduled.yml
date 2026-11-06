@@ -272,6 +272,22 @@ jobs:
           echo "===== CACHE COVERAGE PREVIEW ====="
           if [ -f outputs/rsi_retest/cache_coverage.csv ]; then cat outputs/rsi_retest/cache_coverage.csv; fi
 
+      - name: Run historical RVOL strategy comparison from existing cache
+        if: always()
+        continue-on-error: true
+        run: |
+          set -e
+          echo "===== RVOL BACKTEST UNIT TESTS ====="
+          python -m pytest -q test_rvol_strategy_backtest.py
+          echo "===== RVOL STRATEGY BACKTEST (NO NETWORK) ====="
+          python -u rvol_strategy_backtest.py
+          echo "===== RVOL STRATEGY COMPARISON ====="
+          if [ -f outputs/rvol_strategy_backtest/comparison.csv ]; then cat outputs/rvol_strategy_backtest/comparison.csv; fi
+          echo "===== RVOL CACHE COVERAGE ====="
+          if [ -f outputs/rvol_strategy_backtest/cache_coverage.csv ]; then cat outputs/rvol_strategy_backtest/cache_coverage.csv; fi
+          echo "===== RVOL REJECTION COUNTS ====="
+          if [ -f outputs/rvol_strategy_backtest/rejection_counts.csv ]; then cat outputs/rvol_strategy_backtest/rejection_counts.csv; fi
+
       - name: Diagnose NSE V8 data files
         if: always()
         run: |
