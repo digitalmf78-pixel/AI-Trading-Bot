@@ -18,6 +18,7 @@ from v8_layers_14_41 import (
 )
 import sector_data
 from main_board_filter import apply_official_main_board_filter
+from bottom_detection import write_bottom_detection_report
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
     collect_catalyst_news,
@@ -3811,6 +3812,14 @@ def main():
             result,
             analysis_history
         )
+    )
+
+    # Independent bottom diagnostics: separate report only; never filters or
+    # re-ranks the existing V8 candidate pipeline.
+    bottom_report = write_bottom_detection_report(
+        result,
+        analysis_history,
+        eod_date,
     )
 
     # --------------------------------------------------------
