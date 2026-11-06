@@ -1512,7 +1512,7 @@ def calculate_trend(result, historical):
             "EMA44SignalStatus": "WAIT_FOR_DATA",
             "PriceChange5D": float("nan"),
             "RSI14": float("nan"), "ADX14": float("nan"),
-            "TrendClassification": "Insufficient Data",
+            "TrendClassification": "WAIT_FOR_DATA",
         }
         if hist is None or hist.empty:
             trend_rows.append(missing)
@@ -1582,20 +1582,16 @@ def calculate_trend(result, historical):
         else:
             signal = "AT_EMA44"
 
-        if current_close > ema20 and ema20 > ema44 and pd.notna(rsi) and rsi >= 50 and pd.notna(adx) and adx >= 20:
-            trend = "Strong Bullish Trend"
-        elif current_close > ema20 and ema20 > ema44:
-            trend = "Bullish Trend"
-        elif current_close < ema20 and ema20 < ema44 and pd.notna(rsi) and rsi < 50 and pd.notna(adx) and adx >= 20:
-            trend = "Strong Bearish Trend"
-        elif current_close < ema20 and ema20 < ema44:
-            trend = "Bearish Trend"
-        elif current_close > ema44 and ema20 > ema44:
-            trend = "Mixed / Improving"
-        elif current_close < ema44 and ema20 < ema44:
-            trend = "Mixed / Weak"
+        # Global stock trend rule: the latest close versus EMA44 is decisive.
+        # EMA20, RSI14 and ADX14 remain supporting indicators and cannot override it.
+        if not pd.notna(ema44) or ema44 <= 0:
+            trend = "WAIT_FOR_DATA"
+        elif current_close > ema44:
+            trend = "Bullish (Close > EMA44)"
+        elif current_close < ema44:
+            trend = "Bearish (Close < EMA44)"
         else:
-            trend = "Sideways / Mixed"
+            trend = "NEUTRAL (Close = EMA44)"
 
         trend_rows.append({
             "TckrSymb": symbol,
@@ -2870,9 +2866,9 @@ def write_technical_parameter_audit(candidates, eod_date):
             add(
                 "Trend",
                 trend,
-                'TrendClassification must contain "Bullish"; EMA20/EMA44 ordering determines the label, with RSI/ADX used for strong labels.',
+                'Close > EMA44 = BULLISH; Close < EMA44 = BEARISH; Close = EMA44 = NEUTRAL; missing EMA44 = WAIT_FOR_DATA. EMA20/RSI14/ADX14 do not override this classification.',
                 "PASS" if trend_ok else ("WAIT_FOR_DATA" if "WAIT" in trend.upper() or "INSUFFICIENT" in trend.upper() else "FAIL"),
-                "Bullish trend label present." if trend_ok else "Trend label is not bullish.",
+                "Latest close is above EMA44." if trend_ok else "Latest close is not above EMA44.",
             )
 
             if setup == "Breakout":
