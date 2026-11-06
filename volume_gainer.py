@@ -3528,28 +3528,27 @@ def main():
     print(f"Current verified Main Board symbols: {len(current)}")
 
     # --------------------------------------------------------
-    # STEP 3: LOAD HISTORY AND CALCULATE RVOL BEFORE DELIVERY
-    # --------------------------------------------------------
+    # STEP 3: LOAD HISTORY AND CALCULATE RVOL METRICS (NO RVOL GATE YET)
     historical = collect_historical_days(eod_date, HISTORY_DAYS)
     avg_volume = calculate_average_volume(historical)
-    print("\nSTEP 3A: Calculate RVOL for the full verified Main Board universe...")
+    print("\\nSTEP 3A: Calculate RVOL metrics for the full verified Main Board universe; do not filter yet...")
     current = calculate_rvol(current, avg_volume)
-    current = select_rvol_above_threshold(current, eod_date, minimum_rvol=1.5)
 
     # --------------------------------------------------------
-    # STEP 4: TWO DELIVERY CATEGORIES, AFTER RVOL > 1.5
+    # STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE
     # --------------------------------------------------------
-    print("\nSTEP 4: Applying separate 5-session Delivery Categories after RVOL > 1.5...")
-    # The scan streak tracks delivery-stage appearances after the existing RVOL > 1.5 gate.
+    print("\\nSTEP 4: Classifying independent 5-session Delivery Categories A and B...")
     delivery_data_available = True
+    category_a_rvol = current.iloc[0:0].copy()
+    category_b_rvol = current.iloc[0:0].copy()
     if current.empty:
         delivery_audit = current.copy()
         for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
-            if col not in current.columns:
-                current[col] = pd.Series(dtype="object")
+            if col not in delivery_audit.columns:
+                delivery_audit[col] = pd.Series(dtype="object")
     else:
         try:
-            delivery_qualified, delivery_audit = apply_delivery_filter(
+            _, delivery_audit = apply_delivery_filter(
                 current, eod_date, symbol_col="TckrSymb", series_col="SctySrs", minimum_average=60.0
             )
             delivery_data_available = not delivery_audit.empty
@@ -3557,12 +3556,62 @@ def main():
                 session_counts = pd.to_numeric(delivery_audit["DeliverySessions"], errors="coerce")
                 delivery_data_available = bool(session_counts.ge(5).any())
             os.makedirs("outputs", exist_ok=True)
+            delivery_audit["DeliveryFilterStatus"] = delivery_audit.apply(
+                lambda row: "PASS_A_OR_B"
+                if (
+                    str(row.get("DeliveryCategoryAStatus", "")).upper() == "PASS_AVG_GE_60_PERCENT"
+                    or str(row.get("DeliveryCategoryBStatus", "")).upper() == "PASS_EACH_DAY_GE_60_PERCENT"
+                )
+                else ("WAIT_FOR_DATA" if str(row.get("DeliveryCategoryAStatus", "")).upper().startswith("WAIT_FOR_DATA")
+                      or str(row.get("DeliveryCategoryBStatus", "")).upper().startswith("WAIT_FOR_DATA")
+                      else "FILTERED_OUT_A_AND_B"),
+                axis=1,
+            )
             delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
-            current = delivery_qualified.copy()
-            if not current.empty:
-                current["DeliveryFilterStatus"] = current["DeliveryStatus"].astype(str)
-            print(f"[DELIVERY] Category B (each of 5 days >=60%) qualified={len(current)}")
-            print("[DELIVERY] Category A (5-day average >=60%) remains available in audit reports.")
+
+            # Category A and B are screened independently. B is mathematically
+            # a subset of A, but both category outputs and statuses remain distinct.
+            category_a = delivery_audit[
+                delivery_audit["DeliveryCategoryAStatus"].eq("PASS_AVG_GE_60_PERCENT")
+            ].copy()
+            category_b = delivery_audit[
+                delivery_audit["DeliveryCategoryBStatus"].eq("PASS_EACH_DAY_GE_60_PERCENT")
+            ].copy()
+
+            category_a_rvol = select_rvol_above_threshold(
+                category_a, eod_date, minimum_rvol=1.5
+            )
+            category_b_rvol = select_rvol_above_threshold(
+                category_b, eod_date, minimum_rvol=1.5
+            )
+            category_a_rvol["DeliveryCategory"] = "A"
+            category_b_rvol["DeliveryCategory"] = "B"
+            category_a_rvol.to_csv("outputs/v8_delivery_category_a_rvol.csv", index=False)
+            category_b_rvol.to_csv("outputs/v8_delivery_category_b_rvol.csv", index=False)
+
+            # Liquidity is calculated once per symbol after both independent
+            # category paths have completed RVOL. Preserve membership in both.
+            combined = pd.concat([category_a_rvol, category_b_rvol], ignore_index=True, sort=False)
+            if not combined.empty:
+                membership = combined.groupby("TckrSymb")["DeliveryCategory"].agg(
+                    lambda values: "A_AND_B" if set(values) >= {"A", "B"} else str(values.iloc[0])
+                )
+                current = combined.drop_duplicates("TckrSymb", keep="first").copy()
+                current["DeliveryCategory"] = current["TckrSymb"].map(membership)
+                current["DeliveryCategoryAStatus"] = current["DeliveryCategoryAStatus"].fillna("WAIT_FOR_DATA")
+                current["DeliveryCategoryBStatus"] = current["DeliveryCategoryBStatus"].fillna("WAIT_FOR_DATA")
+                # Existing downstream layers consume the generic Delivery PASS
+                # fields; an A-only candidate must therefore remain eligible too.
+                current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"
+                current["DeliveryStatus"] = "PASS"
+                current = current.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort").reset_index(drop=True)
+                current["RVOLRank"] = range(1, len(current) + 1)
+                current.to_csv("outputs/v8_rvol_gt_1_5_candidates.csv", index=False)
+            else:
+                current = combined
+            print(f"[DELIVERY A] Average of five sessions >=60%; RVOL >1.5 qualified={len(category_a_rvol)}")
+            print(f"[DELIVERY B] Every one of five sessions >=60%; RVOL >1.5 qualified={len(category_b_rvol)}")
+            print(f"[DELIVERY] Unique A/B members proceeding to liquidity={len(current)}")
         except Exception as exc:
             delivery_data_available = False
             print(f"[DELIVERY] WAIT_FOR_DATA: delivery categories could not be verified: {exc}")
@@ -3602,7 +3651,7 @@ def main():
     fundamental_audit = pd.DataFrame()
     observation_report = pd.DataFrame()
 
-    # STEP 6: EXISTING LIQUIDITY FILTER — MATRIX THRESHOLD ₹2 CRORE
+    # STEP 6: EXISTING LIQUIDITY FILTER — ₹1.5 CRORE
     # --------------------------------------------------------
     print("\nSTEP 6: Applying 20-session liquidity tiers; minimum average daily traded value ₹1.5 crore...")
     liquidity_audit_columns = ["LiquiditySessions", "AvgDailyTradedValue20D", "MinimumAvgDailyTradedValueINR", "LiquidityStatus", "LiquidityFilterStatus", "LiquidityTier"]

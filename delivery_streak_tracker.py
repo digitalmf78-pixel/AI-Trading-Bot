@@ -172,7 +172,7 @@ def update_delivery_scan_streak(
                 last_category = "NONE"
                 last_status = (
                     "DUPLICATE_SYMBOL_AMBIGUOUS" if symbol in duplicate_symbols
-                    else "NOT_IN_CURRENT_RVOL_SCAN" if current is None
+                    else "NOT_IN_CURRENT_MAINBOARD_DELIVERY_SCAN" if current is None
                     else "WAIT_FOR_DATA" if str(current.get("DeliveryStatus", "")).upper() == "WAIT_FOR_DATA"
                     else "NO_A_OR_B_PASS"
                 )
