@@ -158,7 +158,7 @@ def _first_value(item, keys):
     return None
 
 
-def fetch_nse_financial_results(asof_date, lookback_days: int = 450, session_factory=None,
+def fetch_nse_financial_results(asof_date, lookback_days: int = 730, session_factory=None,
                                 diagnostics_path=FETCH_DIAGNOSTICS):
     """Fetch NSE Integrated Filing-Financials using its observed JSON schema.
 

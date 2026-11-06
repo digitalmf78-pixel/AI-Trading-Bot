@@ -116,6 +116,9 @@ def test_nse_observed_schema_creation_date_qe_date_and_zero_based_probe(tmp_path
             assert url == NSE_RESULTS_API
             params = kwargs["params"]
             assert params["period_ended"] == "all"
+            # Include the prior audited March year-end needed for annual growth
+            # reconciliation when the current filing is the latest FY result.
+            assert params["from_date"] == "23-10-2024"
             assert params["type"] == "Integrated Filing- Financials"
             assert params["page"] == 0
             if params["size"] == 1:
