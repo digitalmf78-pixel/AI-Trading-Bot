@@ -1487,6 +1487,18 @@ def prepare_history_by_symbol(
 
     return all_history, history_by_symbol
 
+def _classify_ema44_trend(close_value, ema44_value):
+    """Classify stock trend solely by latest close versus EMA44."""
+    close = pd.to_numeric(pd.Series([close_value]), errors="coerce").iloc[0]
+    ema44 = pd.to_numeric(pd.Series([ema44_value]), errors="coerce").iloc[0]
+    if pd.isna(close) or pd.isna(ema44) or ema44 <= 0:
+        return "WAIT_FOR_DATA"
+    if close > ema44:
+        return "Bullish (Close > EMA44)"
+    if close < ema44:
+        return "Bearish (Close < EMA44)"
+    return "NEUTRAL (Close = EMA44)"
+
 def calculate_trend(result, historical):
     """Calculate EMA20/EMA44 and descriptive EMA44 states for screened candidates only.
 
@@ -1582,16 +1594,8 @@ def calculate_trend(result, historical):
         else:
             signal = "AT_EMA44"
 
-        # Global stock trend rule: the latest close versus EMA44 is decisive.
-        # EMA20, RSI14 and ADX14 remain supporting indicators and cannot override it.
-        if not pd.notna(ema44) or ema44 <= 0:
-            trend = "WAIT_FOR_DATA"
-        elif current_close > ema44:
-            trend = "Bullish (Close > EMA44)"
-        elif current_close < ema44:
-            trend = "Bearish (Close < EMA44)"
-        else:
-            trend = "NEUTRAL (Close = EMA44)"
+        # EMA20, RSI14 and ADX14 are supporting metrics only; EMA44 decides trend.
+        trend = _classify_ema44_trend(current_close, ema44)
 
         trend_rows.append({
             "TckrSymb": symbol,
