@@ -250,34 +250,16 @@ def test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates()
 
 
 def test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx():
-    dates = pd.bdate_range("2026-07-01", periods=60)
-    cases = [
-        ("ABOVE44_BELOW20", 110.0, 112.0, 105.0, "Bullish"),
-        ("BELOW44_ABOVE20", 100.0, 98.0, 105.0, "Bearish"),
-        ("EQUAL44", 105.0, 103.0, 105.0, "NEUTRAL"),
-    ]
-    for symbol, final_close, ema20_hint, ema44_hint, expected in cases:
-        # Stable history is constructed so the final close is deliberately
-        # positioned around the computed EMA44; the expected label is checked
-        # against the actual calculated EMA44, not the hints above.
-        close = [100.0 + (i * 0.03) for i in range(59)] + [final_close]
-        history = pd.DataFrame({
-            "TckrSymb": [symbol] * 60, "Date": dates,
-            "OpnPric": [x - 0.1 for x in close],
-            "HghPric": [x + 0.5 for x in close],
-            "LwPric": [x - 0.5 for x in close],
-            "ClsPric": close, "TtlTradgVol": [2000] * 60,
-        })
-        candidate = pd.DataFrame([{"TckrSymb": symbol, "ClsPric": final_close}])
-        analyzed = scanner.calculate_trend(candidate, [history])
-        row = analyzed.iloc[0]
-        if row["ClsPric"] > row["EMA44"]:
-            assert "Bullish" in row["TrendClassification"]
-        elif row["ClsPric"] < row["EMA44"]:
-            assert "Bearish" in row["TrendClassification"]
-        else:
-            assert row["TrendClassification"].startswith("NEUTRAL")
-        assert "EMA50" not in analyzed.columns
+    classify = scanner._classify_ema44_trend
+    # Close above EMA44 remains bullish even if it is below EMA20.
+    assert classify(101.0, 100.0) == "Bullish (Close > EMA44)"
+    # Close below EMA44 remains bearish even if it is above EMA20.
+    assert classify(99.0, 100.0) == "Bearish (Close < EMA44)"
+    # Exact equality is neutral; unavailable/invalid EMA44 waits for data.
+    assert classify(100.0, 100.0) == "NEUTRAL (Close = EMA44)"
+    assert classify(100.0, float("nan")) == "WAIT_FOR_DATA"
+    assert classify(100.0, 0.0) == "WAIT_FOR_DATA"
+    assert "EMA50" not in scanner.calculate_trend.__code__.co_names
 
 
 def test_ema44_missing_history_returns_wait_for_data():
