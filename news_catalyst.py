@@ -258,18 +258,33 @@ def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
 
 
 def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
-    """Honor the matrix's strict five-session daily Delivery gate.
+    """Keep candidates that passed either upstream Delivery category.
 
-    Category A average status remains separately visible for reporting. If the
-    daily category status is absent,
-    preserve the legacy fail-closed daily-status behavior.
+    Category A (five-session average >=60%) and Category B (each of five
+    sessions >=60%) are independent upstream routes. News enrichment must not
+    silently narrow the union to Category B only.
     """
     filtered = candidates.copy()
     before = len(filtered)
-    if "DeliveryCategoryBStatus" in filtered.columns:
-        statuses = filtered["DeliveryCategoryBStatus"].astype(str).str.upper().str.strip()
-        filtered = filtered[statuses.eq("PASS_EACH_DAY_GE_60_PERCENT")].copy()
-        print(f"[NEWS-DIAG] Delivery Category B gate: before={before}, after={len(filtered)}, rule=each of 5 sessions>=60%")
+    has_a = "DeliveryCategoryAStatus" in filtered.columns
+    has_b = "DeliveryCategoryBStatus" in filtered.columns
+
+    if has_a or has_b:
+        a_pass = (
+            filtered["DeliveryCategoryAStatus"].astype(str).str.upper().str.strip().eq("PASS_AVG_GE_60_PERCENT")
+            if has_a else pd.Series(False, index=filtered.index)
+        )
+        b_pass = (
+            filtered["DeliveryCategoryBStatus"].astype(str).str.upper().str.strip().eq("PASS_EACH_DAY_GE_60_PERCENT")
+            if has_b else pd.Series(False, index=filtered.index)
+        )
+        keep = a_pass | b_pass
+        filtered = filtered.loc[keep].copy()
+        print(
+            f"[NEWS-DIAG] Delivery A/B union: before={before}, after={len(filtered)}, "
+            f"category_a_pass={int(a_pass.sum())}, category_b_pass={int(b_pass.sum())}, "
+            f"union_pass={int(keep.sum())}; Category A OR Category B"
+        )
     else:
         daily_cols = [c for c in filtered.columns if str(c).startswith("Delivery_")]
         if len(daily_cols) >= 5:
@@ -279,8 +294,12 @@ def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
             print(f"[NEWS-DIAG] Legacy daily Delivery gate: before={before}, after={len(filtered)}, rule=each_of_5_sessions>=60%")
         elif "DeliveryFilterStatus" in filtered.columns:
             statuses = filtered["DeliveryFilterStatus"].astype(str).str.upper().str.strip()
-            allowed = {"PASS_GE_60_PERCENT", "PASS_GT_60_PERCENT", "PASS_AT_OR_ABOVE_60_PERCENT", "PASS"}
+            allowed = {
+                "PASS_GE_60_PERCENT", "PASS_GT_60_PERCENT",
+                "PASS_AT_OR_ABOVE_60_PERCENT", "PASS_A_OR_B", "PASS",
+            }
             filtered = filtered[statuses.isin(allowed)].copy()
+            print(f"[NEWS-DIAG] Legacy Delivery union status: before={before}, after={len(filtered)}")
         else:
             filtered = filtered.iloc[0:0].copy()
             print("[NEWS-DIAG] Delivery evidence/status missing; fail-closed with zero candidates.")
@@ -1259,13 +1278,25 @@ def _observation_digest_lines(report: pd.DataFrame | None,
     tiers = selected.get("LiquidityTier", pd.Series("UNKNOWN", index=selected.index)).fillna("UNKNOWN").astype(str).str.upper().value_counts().to_dict()
     lines = [
         "",
-        f"🔎 LIQUIDITY-PASSED STOCKS • एकूण {len(selected)} • कमी {tiers.get('LOW', 0)} / मध्यम {tiers.get('MEDIUM', 0)} / मजबूत {tiers.get('STRONG', 0)}",
-        "या यादीत liquidity नंतरचे सर्व stocks आहेत; पुढचे filters status सह दाखवले आहेत.",
+        f"🔎 LIQUIDITY-PASSED STOCKS • एकूण {len(selected)}",
+        f"🟢 STRONG: {tiers.get('STRONG', 0)} • 🟡 MEDIUM: {tiers.get('MEDIUM', 0)} • 🔵 WEAK: {tiers.get('LOW', 0)}",
+        "यादी liquidity नुसार STRONG → MEDIUM → WEAK क्रमाने आहे; पुढचे filters फक्त status म्हणून दाखवले आहेत.",
     ]
     events = _upcoming_event_summaries()
+    current_tier = None
+    tier_headers = {
+        "STRONG": "🟢 STRONG LIQUIDITY • सरासरी दैनिक व्यवहार ≥ ₹5 कोटी",
+        "MEDIUM": "🟡 MEDIUM LIQUIDITY • ₹2–5 कोटी",
+        "LOW": "🔵 WEAK LIQUIDITY • ₹1.5–2 कोटी",
+    }
     for number, (_, row) in enumerate(selected.iterrows(), start=1):
         symbol = str(row.get("TckrSymb", "")).strip().upper()
-        tier = str(row.get("LiquidityTier", row.get("LiquidityTier_pipeline", "WAIT_FOR_DATA")))
+        tier = str(row.get("LiquidityTier", row.get("LiquidityTier_pipeline", "WAIT_FOR_DATA"))).upper()
+        if tier != current_tier:
+            lines.append("")
+            lines.append(tier_headers.get(tier, f"⚪ {tier} LIQUIDITY"))
+            current_tier = tier
+        tier_label = "WEAK" if tier == "LOW" else tier
         avg = pd.to_numeric(pd.Series([row.get("AvgDailyTradedValue20D")]), errors="coerce").iloc[0]
         turnover = f"₹{avg / 10_000_000:.2f}cr/day" if pd.notna(avg) else "turnover WAIT_FOR_DATA"
         close_price = pd.to_numeric(pd.Series([row.get("ClsPric", row.get("ValuationPriceINR"))]), errors="coerce").iloc[0]
@@ -1312,7 +1343,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         daily_text = f"{int(daily_pass)}/{int(delivery_sessions)} दिवस" if pd.notna(daily_pass) and pd.notna(delivery_sessions) else "दैनिक WAIT"
         min_text = f", min {min_delivery:.1f}%" if pd.notna(min_delivery) else ""
         latest_text = f", latest {latest_delivery:.1f}%" if pd.notna(latest_delivery) else ""
-        lines.append(f"{number}. {symbol} • Liquidity {tier} ({turnover})")
+        lines.append(f"{number}. {symbol} • Liquidity {tier_label} ({turnover})")
         lines.append(f"   Close {price_text} | Valuation: {valuation_label} ({valuation_date_text}; {valuation_source_text})")
         lines.append(f"   Multiples: {valuation_metrics}")
         lines.append(f"   Delivery A {delivery_a} ({avg_text}) | B {delivery_b} ({daily_text}{min_text}{latest_text})")

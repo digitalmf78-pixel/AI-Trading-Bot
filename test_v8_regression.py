@@ -170,14 +170,15 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
 
 
-def test_news_gate_requires_category_b_each_day_status():
+def test_news_gate_preserves_category_a_only_candidates():
     candidates = pd.DataFrame([{
         "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
         "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
         "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
         "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
-    assert news_catalyst._filter_catalyst_candidates(candidates).empty
+    selected = news_catalyst._filter_catalyst_candidates(candidates)
+    assert selected["TckrSymb"].tolist() == ["ABC"]
 
 
 def test_delivery_categories_precede_independent_rvol_gates_in_scanner_source():
@@ -618,7 +619,7 @@ if __name__ == "__main__":
         test_delivery_average_category_passes_while_daily_category_fails,
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
-        test_news_gate_requires_category_b_each_day_status,
+        test_news_gate_preserves_category_a_only_candidates,
         test_delivery_categories_precede_independent_rvol_gates_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
