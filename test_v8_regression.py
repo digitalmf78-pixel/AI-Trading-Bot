@@ -274,7 +274,7 @@ def test_ema44_missing_history_returns_wait_for_data():
     assert analyzed.iloc[0]["EMA44Position"] == "WAIT_FOR_DATA"
 
 
-def test_telegram_digest_is_compact_and_keeps_core_gate_context():
+def test_telegram_digest_excludes_wait_for_data_from_ranked_top4():
     row = {"TckrSymb": "ABC", "LiquidityFilterStatus": "PASS",
            "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "NewsEvidenceStatus": "NO_DATA",
            "EODWatchlistStatus": "WAIT_FOR_DATA"}
@@ -282,8 +282,9 @@ def test_telegram_digest_is_compact_and_keeps_core_gate_context():
                             "FundamentalScore": 72.5, "Fundamental65PlusStatus": "SCORE_GE_65"}])
     lines = news_catalyst.build_marathi_digest(pd.DataFrame([row]), "2026-10-13", pd.DataFrame(), {}, observation_report=report)
     text = "\n".join(lines)
-    for expected in ("ABC", "MEDIUM", "Fundamental 72.50/100", "Liquidity MEDIUM", "Technical WAIT_FOR_DATA", "News NO_DATA", "Final WAIT_FOR_DATA"):
-        assert expected in text, expected
+    assert "MEDIUM: 1" in text
+    assert "ranked stock उपलब्ध नाही" in text
+    assert "ABC" not in text
     assert "BUY शिफारस" in text
 
 
