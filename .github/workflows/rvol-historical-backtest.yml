@@ -28,9 +28,19 @@ jobs:
       - name: Restore existing NSE Bhavcopy and Delivery cache
         uses: actions/cache/restore@v5
         with:
+          # Keep this path list identical to nse-test-scheduled.yml so the
+          # Actions cache version matches the cache saved by the NSE scan.
           path: |
             data/bhavcopy/
             data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/xbrl_samples/
+            outputs/v8_official_financial_results_filings.csv
           key: rvol-backtest-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-main-
@@ -47,7 +57,6 @@ jobs:
           pip install pandas numpy pytest
 
       - name: Inventory restored historical cache
-        id: cache_inventory
         shell: bash
         run: |
           set -euo pipefail
@@ -55,14 +64,13 @@ jobs:
           DELIVERY_COUNT=$(find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | wc -l || true)
           echo "PRICE_CACHE_FILES=$PRICE_COUNT"
           echo "DELIVERY_CACHE_FILES=$DELIVERY_COUNT"
-          echo "price_files=$PRICE_COUNT" >> "$GITHUB_OUTPUT"
-          echo "delivery_files=$DELIVERY_COUNT" >> "$GITHUB_OUTPUT"
           echo "===== PRICE CACHE DATE RANGE ====="
           find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
           echo "===== DELIVERY CACHE DATE RANGE ====="
           find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
           if [ "$PRICE_COUNT" -eq 0 ] || [ "$DELIVERY_COUNT" -eq 0 ]; then
-            echo "::warning::Restored cache is missing price or delivery history; backtest will report WAIT_FOR_DATA."
+            echo "::error::NSE cache was not restored. Do not report a backtest result until cache restore is fixed."
+            exit 1
           fi
 
       - name: Run RVOL backtest unit tests
@@ -73,12 +81,7 @@ jobs:
           set -euo pipefail
           python -u rvol_strategy_backtest.py
           echo "===== STRATEGY COMPARISON ====="
-          if [ -f outputs/rvol_strategy_backtest/comparison.csv ]; then
-            cat outputs/rvol_strategy_backtest/comparison.csv
-          else
-            echo "::error::comparison.csv was not generated"
-            exit 1
-          fi
+          cat outputs/rvol_strategy_backtest/comparison.csv
           echo "===== CACHE COVERAGE ====="
           cat outputs/rvol_strategy_backtest/cache_coverage.csv
           echo "===== STAGE REJECTION COUNTS ====="
