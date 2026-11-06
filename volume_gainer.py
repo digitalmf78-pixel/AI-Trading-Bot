@@ -3600,7 +3600,13 @@ def main():
                 current["DeliveryCategory"] = current["TckrSymb"].map(membership)
                 current["DeliveryCategoryAStatus"] = current["DeliveryCategoryAStatus"].fillna("WAIT_FOR_DATA")
                 current["DeliveryCategoryBStatus"] = current["DeliveryCategoryBStatus"].fillna("WAIT_FOR_DATA")
-                current["DeliveryFilterStatus"] = "PASS_A_OR_B_AND_RVOL"
+                # Existing downstream layers consume the generic Delivery PASS
+                # fields; an A-only candidate must therefore remain eligible too.
+                current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"
+                current["DeliveryStatus"] = "PASS"
+                current = current.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort").reset_index(drop=True)
+                current["RVOLRank"] = range(1, len(current) + 1)
+                current.to_csv("outputs/v8_rvol_gt_1_5_candidates.csv", index=False)
             else:
                 current = combined
             print(f"[DELIVERY A] Average of five sessions >=60%; RVOL >1.5 qualified={len(category_a_rvol)}")
