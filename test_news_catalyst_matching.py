@@ -105,7 +105,7 @@ def test_news_delivery_gate_uses_union_delivery_status_when_category_columns_abs
     assert selected["TckrSymb"].tolist() == ["A_OR_B"]
 
 
-def test_telegram_liquidity_digest_groups_strong_medium_then_weak():
+def test_telegram_liquidity_digest_counts_all_tiers_without_forced_fill():
     import pandas as pd
 
     report = pd.DataFrame([
@@ -117,11 +117,12 @@ def test_telegram_liquidity_digest_groups_strong_medium_then_weak():
          "AvgDailyTradedValue20D": 80_000_000},
     ])
 
-    lines = news._observation_digest_lines(report, result=None, news_data=None)
-    message = "\\n".join(lines)
-    assert message.index("STRONG LIQUIDITY") < message.index("MEDIUM LIQUIDITY") < message.index("WEAK LIQUIDITY")
-    assert message.index("STRONG_STOCK") < message.index("MEDIUM_STOCK") < message.index("WEAK_STOCK")
+    message = "\\n".join(news._observation_digest_lines(report, result=None, news_data=None))
+    assert "STRONG: 1" in message
+    assert "MEDIUM: 1" in message
     assert "WEAK: 1" in message
+    assert "ranked stock उपलब्ध नाही" in message
+    assert "STRONG_STOCK" not in message
 
 def test_telegram_top4_is_ranked_independently_for_each_liquidity_tier():
     import pandas as pd
