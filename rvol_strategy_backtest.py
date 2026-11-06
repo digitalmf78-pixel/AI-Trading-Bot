@@ -83,6 +83,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
     if prices.empty or not delivery_by_date:
         pd.DataFrame([{"Status": "WAIT_FOR_DATA", "Reason": "Valid price and delivery cache files are both required; no network access is used."}]).to_csv(output_dir / "comparison.csv", index=False)
         pd.DataFrame().to_csv(output_dir / "signals.csv", index=False)
+        pd.DataFrame([{"Stage": "backtest", "Rows": 0, "Status": "WAIT_FOR_DATA"}]).to_csv(output_dir / "rejection_counts.csv", index=False)
         print("[RVOL BACKTEST] WAIT_FOR_DATA: cached price or delivery history is missing.")
         return {"status": "WAIT_FOR_DATA", "price_rows": len(prices), "delivery_dates": len(delivery_by_date)}
 
