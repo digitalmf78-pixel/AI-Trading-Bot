@@ -35,7 +35,7 @@ def test_all_twenty_days_at_or_above_sixty_gets_very_high_tag():
 
 def test_twenty_day_average_category_a_can_pass_while_b_fails():
     values = [61.0] * 19 + [59.0]
-    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySymb": "EQ"}])
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     enriched, _ = build_delivery_consistency_report(
         candidates, "2026-10-28", sessions=_sessions({"AAA": values})
     )
@@ -50,7 +50,7 @@ def test_twenty_day_average_category_a_can_pass_while_b_fails():
 def test_missing_symbol_session_fails_closed_without_rejecting_candidate():
     values = [65.0] * 20
     values[12] = None
-    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySymb": "EQ"}])
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     enriched, _ = build_delivery_consistency_report(
         candidates, "2026-10-28", sessions=_sessions({"AAA": values})
     )
@@ -63,7 +63,7 @@ def test_missing_symbol_session_fails_closed_without_rejecting_candidate():
 
 
 def test_threshold_is_inclusive_at_exactly_sixty():
-    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySymb": "EQ"}])
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     enriched, _ = build_delivery_consistency_report(
         candidates, "2026-10-28", sessions=_sessions({"AAA": [60.0] * 20})
     )
