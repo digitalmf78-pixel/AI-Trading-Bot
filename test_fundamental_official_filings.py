@@ -381,3 +381,73 @@ def test_targeted_lookup_diagnostics_do_not_count_other_period_as_accepted(tmp_p
     assert int(equity["RowsReturnedInWindow"]) == 1
     assert int(equity["RowsRejectedPeriodMismatch"]) == 1
     assert int(equity["RowsAccepted"]) == 0
+
+
+def test_apply_official_dates_scopes_targeted_fallback_to_current_symbols(monkeypatch, tmp_path):
+    import fundamental_official_filings as mod
+
+    bulk = pd.DataFrame([{
+        "TckrSymb": "BULKONLY", "FinancialPeriodEnd": "2026-03-31",
+        "PublicationDate": "2026-05-01", "PublicationDateStatus": "VERIFIED",
+        "OfficialFilingURL": "https://nsearchives.nseindia.com/corporate/xbrl/BULKONLY.xml",
+        "OfficialSource": "NSE Integrated Filing - Financials",
+    }])
+    captured = {}
+
+    def targeted(asof, candidates, **kwargs):
+        captured["asof"] = asof
+        captured["candidates"] = candidates
+        captured["kwargs"] = kwargs
+        return pd.DataFrame()
+
+    monkeypatch.setattr(mod, "fetch_nse_financial_results", lambda asof: bulk)
+    monkeypatch.setattr(mod, "_fetch_targeted_nse_filings", targeted)
+    records = pd.DataFrame([
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDateStatus": "UNVERIFIED"},
+        {"TckrSymb": "OLD_CACHE", "FinancialPeriodEnd": "2026-03-31", "PublicationDateStatus": "UNVERIFIED"},
+    ])
+    mod.apply_official_publication_dates(
+        records, "2026-10-23",
+        cache_path=tmp_path / "filings.csv",
+        diagnostics_path=tmp_path / "verify.csv",
+        targeted_symbols=["abc"],
+        targeted_segments=("equities",),
+        targeted_timeout=(5, 12),
+    )
+
+    assert captured["candidates"] == [{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"}]
+    assert captured["kwargs"]["segments"] == ("equities",)
+    assert captured["kwargs"]["request_timeout"] == (5, 12)
+
+
+def test_targeted_lookup_honors_segment_scope_and_timeout():
+    import fundamental_official_filings as mod
+
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"totalCount": 0, "data": []}
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append(kwargs)
+            return Response()
+
+    session = Session()
+    out = mod._fetch_targeted_nse_filings(
+        "2026-10-23",
+        [{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"}],
+        session_factory=lambda: session,
+        segments=("equities",),
+        request_timeout=(5, 12),
+    )
+
+    assert out.empty
+    assert len(session.calls) == 1
+    assert session.calls[0]["params"]["index"] == "equities"
+    assert session.calls[0]["timeout"] == (5, 12)
