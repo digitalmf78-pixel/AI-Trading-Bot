@@ -1363,6 +1363,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
     core_col = "CoreTechnicalScreenStatus" if "CoreTechnicalScreenStatus" in rows.columns else "CandidateScreenStatus"
     core_status = rows.get(core_col, pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
     core_pass = rows.loc[core_status.eq("PASS"), "TckrSymb"].astype(str).tolist()
+    fully_confirmed = _top_ranked_observations_by_tier(rows, limit_per_tier=4)
     mandatory = rows.get("MandatoryConfirmationStatus", pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
     rr = rows.get("RiskRewardStatus", pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
     risk = rows.get("RiskControlStatus", pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
@@ -1381,6 +1382,9 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         lines.append("⭐ CORE TECHNICAL PASS: " + ", ".join(core_pass))
     else:
         lines.append("⭐ CORE TECHNICAL PASS: या scan मध्ये नाही.")
+    lines.append(f"Fully confirmed ranked stocks: {len(fully_confirmed)}")
+    if fully_confirmed.empty:
+        lines.append("सध्या ranked stock उपलब्ध नाही; कोणताही stock जबरदस्तीने निवडलेला नाही.")
 
     tier_headers = {
         "STRONG": "🟢 STRONG LIQUIDITY (≥₹5cr/day)",
