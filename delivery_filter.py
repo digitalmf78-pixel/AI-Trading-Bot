@@ -103,7 +103,7 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
     http.headers.update(HEADERS)
     found: list[tuple[date, pd.DataFrame]] = []
     seen: set[date] = set()
-    for offset in range(max_calendar_days + 1):
+    for offset in range(max_calendar_days):
         day = asof - timedelta(days=offset)
         if day.weekday() >= 5:
             continue
