@@ -159,7 +159,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         delivery.AUDIT_DIR = Path(tmp)
         dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}]))
-                    for day, value in zip(dates, [60.0, 60.0, 59.99, 80.0, 90.0])]
+                    for day, value in zip(dates, [50.0, 55.0, 59.99, 60.0, 60.0])]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1  # Category A passes even though Category B fails.
