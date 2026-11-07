@@ -411,7 +411,8 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 730, session_fac
     ])
 
 def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
-                                diagnostics_path=OUTPUT_DIR / "v8_official_targeted_lookup_diagnostics.csv"):
+                                diagnostics_path=OUTPUT_DIR / "v8_official_targeted_lookup_diagnostics.csv",
+                                segments=("equities", "sme"), request_timeout=45):
     """Query NSE by candidate symbol and emit per-symbol/per-segment diagnostics.
 
     Verification remains strict: the exact symbol, exact period-end and an
@@ -450,7 +451,7 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
             continue
         period_date = period.date()
         found_exact = False
-        for segment in ("equities", "sme"):
+        for segment in segments:
             params = {
                 "index": segment,
                 "symbol": symbol,
@@ -469,7 +470,7 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
             error = ""
             request_status = "OK"
             try:
-                response = session.get(NSE_RESULTS_API, params=params, timeout=45)
+                response = session.get(NSE_RESULTS_API, params=params, timeout=request_timeout)
                 http_status = getattr(response, "status_code", pd.NA)
                 response.raise_for_status()
                 payload = response.json()
@@ -486,7 +487,7 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
                     seen_ids = set()
                     for page in range(min(max(total_count + 1, 2), 250)):
                         page_params = dict(params, page=page)
-                        page_response = session.get(NSE_RESULTS_API, params=page_params, timeout=45)
+                        page_response = session.get(NSE_RESULTS_API, params=page_params, timeout=request_timeout)
                         http_status = getattr(page_response, "status_code", http_status)
                         page_response.raise_for_status()
                         page_items, _page_meta, _page_keys = _extract_result_items(page_response.json())
@@ -600,7 +601,8 @@ def _fetch_targeted_nse_filings(asof_date, candidates, session_factory=None,
 
 def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: pd.DataFrame | None = None,
                                     fetcher: Callable | None = None, cache_path=FILINGS_CACHE,
-                                    diagnostics_path=VERIFY_DIAGNOSTICS):
+                                    diagnostics_path=VERIFY_DIAGNOSTICS, targeted_symbols=None,
+                                    targeted_segments=("equities", "sme"), targeted_timeout=45):
     """Annotate publication dates; preserve every input row and every metric."""
     output = records.copy()
     if "TckrSymb" not in output:
@@ -690,14 +692,37 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
     # absent from the bulk/cache result; keep every unresolved candidate WAIT.
     if use_targeted_fallback:
         unmatched = []
+        targeted_symbol_set = None
+        if targeted_symbols is not None:
+            targeted_symbol_set = {
+                str(value).strip().upper()
+                for value in targeted_symbols
+                if str(value).strip() and str(value).strip().lower() != "nan"
+            }
+        seen_targeted_pairs = set()
         for _, candidate in output.iterrows():
             symbol = str(candidate.get("TckrSymb", "")).strip().upper()
+            if targeted_symbol_set is not None and symbol not in targeted_symbol_set:
+                continue
             period = pd.to_datetime(candidate.get("FinancialPeriodEnd", pd.NA), errors="coerce")
-            if symbol and not pd.isna(period) and period.normalize() <= cutoff and (symbol, period.normalize()) not in index:
-                unmatched.append({"TckrSymb": symbol, "FinancialPeriodEnd": period.normalize().date().isoformat()})
+            pair = (symbol, period.normalize().date().isoformat()) if symbol and not pd.isna(period) else None
+            if (pair is not None and period.normalize() <= cutoff
+                    and (symbol, period.normalize()) not in index and pair not in seen_targeted_pairs):
+                unmatched.append({"TckrSymb": symbol, "FinancialPeriodEnd": pair[1]})
+                seen_targeted_pairs.add(pair)
+        if targeted_symbol_set is not None:
+            print(
+                f"[FUNDAMENTAL OFFICIAL TARGETED] scope=current_candidates "
+                f"symbols={len(targeted_symbol_set)} unmatched_pairs={len(unmatched)} "
+                f"segments={','.join(targeted_segments)} timeout={targeted_timeout}"
+            )
         if unmatched:
             try:
-                targeted = _fetch_targeted_nse_filings(cutoff.date().isoformat(), unmatched, diagnostics_path=TARGETED_LOOKUP_DIAGNOSTICS)
+                targeted = _fetch_targeted_nse_filings(
+                    cutoff.date().isoformat(), unmatched,
+                    diagnostics_path=TARGETED_LOOKUP_DIAGNOSTICS,
+                    segments=targeted_segments, request_timeout=targeted_timeout,
+                )
                 if targeted is not None and not targeted.empty:
                     filings = pd.concat([filings, targeted], ignore_index=True).drop_duplicates(
                         subset=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL"], keep="last"
