@@ -971,7 +971,17 @@ def collect_missing_fundamentals(
     # Failure is non-fatal: candidates remain and statuses stay UNVERIFIED.
     try:
         from fundamental_official_filings import apply_official_publication_dates
-        combined = apply_official_publication_dates(combined, cutoff_text or date.today().isoformat(), fetcher=filings_fetcher)
+        combined = apply_official_publication_dates(
+            combined,
+            cutoff_text or date.today().isoformat(),
+            fetcher=filings_fetcher,
+            # Only today's liquidity-qualified NSE Mainboard candidates need
+            # a symbol-specific fallback. Historical cache rows stay intact;
+            # they are rechecked when a symbol becomes a current candidate.
+            targeted_symbols=symbols,
+            targeted_segments=("equities",),
+            targeted_timeout=(5, 12),
+        )
     except Exception as exc:
         combined["PublicationDateStatus"] = combined.get("PublicationDateStatus", pd.Series("UNVERIFIED", index=combined.index)).fillna("UNVERIFIED")
         combined["OfficialFilingVerificationError"] = f"{type(exc).__name__}: {exc}"[:300]
