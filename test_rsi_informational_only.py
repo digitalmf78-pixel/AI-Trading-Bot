@@ -41,6 +41,6 @@ def test_telegram_observation_rows_preserve_stock_even_when_rsi_missing():
 
 def test_telegram_rsi_display_contains_observation_and_no_rejection_wording():
     import inspect
-    source = inspect.getsource(news_catalyst._format_observation_lines)
+    source = inspect.getsource(news_catalyst._observation_digest_lines)
     assert "RSI patterns: Retest" in source
     assert "informational only; no stock rejection" in source
