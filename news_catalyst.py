@@ -1370,8 +1370,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
 
     lines = [
         "",
-        f"📋 LIQUIDITY-PASSED FULL AUDIT • {len(rows)} stocks",
-        f"🟢 STRONG {tier_counts.get('STRONG', 0)} | 🟡 MEDIUM {tier_counts.get('MEDIUM', 0)} | 🔵 WEAK {tier_counts.get('LOW', 0)}",
+        f"📋 LIQUIDITY-PASSED FULL AUDIT • एकूण {len(rows)} stocks",
+        f"🟢 STRONG: {tier_counts.get('STRONG', 0)} | 🟡 MEDIUM: {tier_counts.get('MEDIUM', 0)} | 🔵 WEAK: {tier_counts.get('LOW', 0)}",
         f"Core Technical PASS: {len(core_pass)} | Mandatory confirmation PASS: {int(mandatory.eq('PASS').sum())} | R:R PASS: {int(rr.eq('PASS').sum())}",
         f"Risk Control PASS: {int(risk.eq('PASS').sum())} | Final WATCH: {int(final.isin(['WATCH', 'PASS']).sum())}",
         "खालील प्रत्येक stock साठी Delivery, RVOL, Liquidity, Fundamental, Technical, Sector, News, 3+1, R:R, Chase, Risk आणि Final status दिले आहेत.",
@@ -1422,6 +1422,13 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         eod_status = value(row, "EODWatchlistStatus")
         lines.append(f"• {symbol} | {tier} {turnover_text} | Delivery A:{a_short} B:{b_short} avg:{avg_delivery} | RVOL:{rvol}")
         lines.append(f"  Fundamental:{fund_status} score:{fund_score} | Technical:{technical} setup:{setup} | Trend:{trend} | EMA44:{ema_signal}")
+        rsi_value = number(row, "RSI14", "", 1)
+        rsi_zone = value(row, "RSIZone")
+        rsi_direction = value(row, "RSIDirection")
+        rsi_behaviour = value(row, "RSIBehaviour")
+        rsi_retest = value(row, "RSIRetestStatus", "NOT_EVALUATED")
+        rsi_divergence = value(row, "RSIDivergenceStatus", "NOT_EVALUATED")
+        lines.append(f"  RSI14:{rsi_value} zone:{rsi_zone} direction:{rsi_direction} behaviour:{rsi_behaviour} | RSI patterns: Retest {rsi_retest} | Divergence {rsi_divergence} (informational only; no stock rejection)")
         lines.append(f"  Sector:{sector_status} ({sector}) | News:{news_status} primary_verified:{news_verified} | 3+1:{confirmation}/{mandatory_status}")
         lines.append(f"  R:R:{rr_status} {rr_value} | Chase:{chase} | Risk:{risk_status} | FINAL:{eod_status}")
 
