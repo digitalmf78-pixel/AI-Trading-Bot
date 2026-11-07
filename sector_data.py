@@ -24,8 +24,8 @@ INPUT_DIR = Path("data") / "inputs"
 CACHE_DIR = Path("data") / "cache" / "sector_index_daily"
 CONSTITUENT_CACHE_DIR = Path("data") / "cache" / "sector_constituents"
 # Index constituent membership changes infrequently; reuse official CSVs for
-# 36 hours across EOD/premarket runs, then refresh from the official source.
-CONSTITUENT_CACHE_TTL_SECONDS = 36 * 60 * 60
+# 24 hours across EOD/premarket runs, then refresh from the official source.
+CONSTITUENT_CACHE_TTL_SECONDS = 24 * 60 * 60
 MAP_PATH = INPUT_DIR / "sector_map.csv"
 HISTORY_PATH = INPUT_DIR / "sector_history.csv"
 MAP_COLUMNS = ["TckrSymb", "Sector", "SectorIndexSymbol"]
