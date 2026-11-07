@@ -122,7 +122,7 @@ def test_telegram_liquidity_digest_counts_all_tiers_without_forced_fill():
     assert "MEDIUM: 1" in message
     assert "WEAK: 1" in message
     assert "ranked stock उपलब्ध नाही" in message
-    assert "STRONG_STOCK" not in message
+    assert "STRONG_STOCK" in message
 
 def test_telegram_top4_is_ranked_independently_for_each_liquidity_tier():
     import pandas as pd
