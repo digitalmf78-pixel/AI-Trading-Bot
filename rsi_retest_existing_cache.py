@@ -179,11 +179,12 @@ def _metrics(prefix: str, values: pd.Series, row: dict) -> None:
         pass
 
 
-def _summarize(name: str, signals: pd.DataFrame, delivery_passed: pd.DataFrame) -> dict:
+def _summarize(name: str, signals: pd.DataFrame, delivery_passed: pd.DataFrame, status_col: str) -> dict:
+    statuses = signals.get(status_col, pd.Series(dtype=str))
     row = {"Setup": name, "TechnicalSignals": int(len(signals)),
            "DeliveryQualifiedSignals": int(len(delivery_passed)),
-           "DeliveryRejectedSignals": int(len(signals) - len(delivery_passed) - int((signals.get("DeliveryCategoryAStatus", pd.Series(dtype=str)) == "WAIT_FOR_DATA").sum())),
-           "DeliveryWaitSignals": int((signals.get("DeliveryCategoryAStatus", pd.Series(dtype=str)) == "WAIT_FOR_DATA").sum()),
+           "DeliveryRejectedSignals": int(statuses.astype(str).str.startswith("REJECT").sum()),
+           "DeliveryWaitSignals": int((statuses == "WAIT_FOR_DATA").sum()),
            "FundamentalBacktestStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
            "PrimaryMetricsScope": "TECHNICAL_ONLY; delivery A/B qualification uses available candidate-specific reports in the 30-calendar-day window"}
     for horizon in FORWARD_SESSIONS:
@@ -276,7 +277,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             ("B_EVERY_SESSION_30D", "DeliveryCategoryBStatus", "PASS_EACH_DAY_GE_60_PERCENT"),
         ):
             qualified = raw[raw[status_col].eq(pass_status)].copy() if not raw.empty else raw
-            comparison.append(_summarize(f"{setup}_{category}", raw, qualified))
+            comparison.append(_summarize(f"{setup}_{category}", raw, qualified, status_col))
     comp = pd.DataFrame(comparison)
     comp["BacktestStatus"] = np.where(comp["TradesWith5DOutcome"].fillna(0).gt(0), "TECHNICAL_ONLY_PRELIMINARY", "WAIT_FOR_DATA")
     comp["RiskNote"] = "Primary returns are technical-only and may include EMA50 warm-up bars; A and B delivery-qualified metrics are separate. Minimum 5 candidate-specific valid reports in 30 calendar days. No point-in-time fundamentals, transaction costs, or slippage."
