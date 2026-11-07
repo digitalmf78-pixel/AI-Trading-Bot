@@ -240,9 +240,11 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
                 "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values)
                 else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
             )
+            # Legacy return status remains the strict Category B gate for
+            # older callers. The V8 pipeline reads A and B independently
+            # from the audit and unions them after the RVOL filter.
             overall = (
-                "PASS_A_OR_B" if category_a == "PASS_AVG_GE_60_PERCENT"
-                or category_b == "PASS_EACH_DAY_GE_60_PERCENT"
+                "PASS_GE_60_PERCENT" if category_b == "PASS_EACH_DAY_GE_60_PERCENT"
                 else "FILTERED_OUT_LT_60_PERCENT"
             )
         if window_stale:
@@ -289,7 +291,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
 
     metric_cols = [col for col in audit.columns if col not in candidates.columns]
     qualified_symbols = audit.loc[
-        audit["DeliveryFilterStatus"].isin(["PASS_A_OR_B", "PASS_GE_60_PERCENT"]),
+        audit["DeliveryFilterStatus"].eq("PASS_GE_60_PERCENT"),
         [symbol_col] + metric_cols,
     ].copy()
     output = candidates.merge(qualified_symbols, on=symbol_col, how="inner")
