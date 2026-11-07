@@ -44,3 +44,12 @@ def test_telegram_rsi_display_contains_observation_and_no_rejection_wording():
     source = inspect.getsource(news_catalyst._observation_digest_lines)
     assert "RSI patterns: Retest" in source
     assert "informational only; no stock rejection" in source
+
+
+def test_intraday_rsi_cannot_change_next_day_eligibility():
+    import inspect
+    import v8_layers_14_41
+    source = inspect.getsource(v8_layers_14_41.validate_next_day)
+    assert "50 <= rsi <= 75" not in source
+    assert '("intraday RSI", rsi)' not in source
+    assert '"RSIStatus": "INFORMATIONAL" if pd.notna(rsi) else "WAIT_FOR_DATA"' in source
