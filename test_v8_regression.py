@@ -181,25 +181,27 @@ def test_news_gate_preserves_category_a_only_candidates():
     assert selected["TckrSymb"].tolist() == ["ABC"]
 
 
-def test_delivery_categories_precede_independent_rvol_gates_in_scanner_source():
+def test_delivery_qualified_union_is_retained_and_rvol_only_classifies_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
 
-    # RVOL is calculated for the full Mainboard universe as a metric only.
+    # RVOL metrics are calculated for the Mainboard universe, but the threshold
+    # is not used to reject Delivery-qualified stocks before liquidity.
     rvol_metrics_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL METRICS (NO RVOL GATE YET)")
-    delivery_step = source.index("STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE")
-    category_a_gate = source.index("category_a_rvol = select_rvol_above_threshold(")
-    category_b_gate = source.index("category_b_rvol = select_rvol_above_threshold(")
+    delivery_step = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    rvol_classification = source.index("current = classify_rvol_for_delivery_candidates")
     liquidity_step = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     fundamental_step = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical_step = source.index("STEP 7: PRICE + VOLUME")
 
-    assert rvol_metrics_step < delivery_step < category_a_gate < category_b_gate < liquidity_step
+    assert rvol_metrics_step < delivery_step < rvol_classification < liquidity_step
     assert liquidity_step < fundamental_step < technical_step
     assert "def select_rvol_above_threshold" in source
     assert "minimum_rvol=1.5" in source
-    assert 'outputs/v8_delivery_category_a_rvol.csv' in source
-    assert 'outputs/v8_delivery_category_b_rvol.csv' in source
-    assert 'current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
+    assert "category_a_all" in source and "category_b_all" in source
+    assert "v8_delivery_qualified_all_rvol_classified.csv" in source
+    assert "v8_rvol_le_1_5_delivery_candidates.csv" in source
+    assert 'delivery_candidates["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
+    assert "No Delivery-qualified stock is rejected by RVOL." in source
     assert ".head(50)" not in source
 
 
