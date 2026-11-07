@@ -9,7 +9,7 @@ on:
       - ".github/workflows/rsi-cache-backtest.yml"
   push:
     branches:
-      - delivery-30d-priority-cache
+      - main
     paths:
       - ".github/workflows/rsi-cache-backtest.yml"
   workflow_dispatch:
@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Checkout PR branch
+      - name: Checkout main branch
         uses: actions/checkout@v5
 
-      - name: Restore existing main-branch NSE cache (read-only)
+      - name: Restore latest available main-branch NSE cache (read-only)
         id: nse-cache
         uses: actions/cache/restore@v5
         with:
@@ -38,7 +38,7 @@ jobs:
             data/cache/delivery/
           key: rsi-retest-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            nse-bhavcopy-Linux-main-42262116884
+            nse-bhavcopy-Linux-main-
 
       - name: Report restored cache inventory
         run: |
