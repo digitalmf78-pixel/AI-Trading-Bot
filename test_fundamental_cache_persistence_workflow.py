@@ -79,5 +79,6 @@ def test_workflow_commits_fundamental_cache_and_history_to_repository():
 def test_every_scan_sends_telegram_notifications():
     workflow = (ROOT / ".github/workflows/nse-test-scheduled.yml").read_text(encoding="utf-8")
     assert 'SEND_TELEGRAM: "true"' in workflow
-    assert "Notify Telegram when the NSE scan fails" in workflow
-    assert "steps.nse_scan.outcome == 'failure'" in workflow
+    assert "Notify Telegram when any NSE workflow step fails" in workflow
+    assert "if: ${{ failure() }}" in workflow
+    assert "steps.nse_scan.outcome == 'failure'" not in workflow
