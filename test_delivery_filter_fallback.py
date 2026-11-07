@@ -50,10 +50,11 @@ def test_delivery_audit_labels_actual_window_when_asof_report_missing(monkeypatc
     )
 
     row = audit.iloc[0]
-    assert qualified.empty  # Average passes, but the matrix requires every day >=60%.
+    assert qualified["TckrSymb"].tolist() == ["AAA"]  # Category A alone qualifies (A OR B).
     assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
-    assert row["DeliveryStatus"] == "FILTERED_OUT_LT_60_PERCENT"
+    assert row["DeliveryStatus"] == "PASS_GE_60_PERCENT"
+    assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
     assert row["DeliveryAsOfDate"] == "2026-10-23"
     assert bool(row["DeliveryAsOfReportAvailable"]) is False
     assert row["DeliveryWindowStartDate"] == "2026-10-16"
