@@ -47,8 +47,19 @@ jobs:
           echo "BHAVCOPY_FILE_COUNT=$(wc -l < /tmp/bhavcopy_files.txt)"
           echo "===== DELIVERY CACHE ====="
           find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | sort | tee /tmp/delivery_files.txt
-          echo "DELIVERY_FILE_COUNT=$(wc -l < /tmp/delivery_files.txt)"
+          BHAVCOPY_COUNT=$(wc -l < /tmp/bhavcopy_files.txt)
+          DELIVERY_COUNT=$(wc -l < /tmp/delivery_files.txt)
+          echo "BHAVCOPY_FILE_COUNT=$BHAVCOPY_COUNT"
+          echo "DELIVERY_FILE_COUNT=$DELIVERY_COUNT"
           echo "CACHE_RESTORED=${{ steps.nse-cache.outputs.cache-hit }}"
+          if [ "$BHAVCOPY_COUNT" -eq 0 ]; then
+            echo "::error::Bhavcopy cache is empty. Stop instead of reporting a false-success backtest."
+            exit 1
+          fi
+          if [ "$DELIVERY_COUNT" -eq 0 ]; then
+            echo "::error::Delivery cache is empty. Stop instead of reporting a false-success delivery backtest."
+            exit 1
+          fi
           echo "===== PYTHON VERSION ====="
           python --version
 
@@ -60,7 +71,7 @@ jobs:
       - name: Run RSI backtest unit tests
         run: python -m pytest -q test_rsi_retest_existing_cache.py
 
-      - name: Run historical RSI backtest from restored cache (no network)
+      - name: Run historical RSI backtest from restored cache (no network; cache inventory required)
         run: |
           set -e
           python -u rsi_retest_existing_cache.py
