@@ -42,3 +42,13 @@ The active 30-calendar-day NSE Delivery A/B screening rules agreed on 2026-11-07
 ## Current authoritative RSI rule addendum
 
 The RSI informational-only / no-stock-rejection policy agreed on 2026-11-07 is documented in [NSE_V8_RSI_INFORMATIONAL_ONLY_RULES_ADDENDUM_2026-11-07.md](NSE_V8_RSI_INFORMATIONAL_ONLY_RULES_ADDENDUM_2026-11-07.md). RSI is reported to Telegram but cannot affect stock eligibility or any existing non-RSI filter.
+
+
+## Delivery-first eligibility and RVOL classification (2026-11-07)
+
+- **Delivery A OR B is the eligibility gate.** A stock qualifies when its Category A 30-calendar-day average Delivery is >=60.00%, or when every valid Delivery session in that window is >=60.00%. The existing minimum valid-report and point-in-time rules remain unchanged.
+- **RVOL is calculated for the Main Board universe but its threshold is applied only as a classification after Delivery.** RVOL >1.5 is labelled `HIGH_RVOL_GT_1_5`; RVOL <=1.5 is labelled `LOW_RVOL_LE_1_5`; unavailable/invalid RVOL is labelled `WAIT_FOR_DATA`.
+- **No stock that passes Delivery A or B is rejected or dropped because RVOL is <=1.5 or missing.** All unique Delivery-qualified stocks proceed to the existing liquidity check. Downstream technical analysis may use the RVOL value as an observation/setup input, but the RVOL threshold itself is not a pre-liquidity rejection gate.
+- The EOD artifacts separately expose the complete Delivery A list, complete Delivery B list, complete A/B union with RVOL classification, high-RVOL candidates, low-RVOL Delivery candidates, and RVOL-WAIT candidates.
+- The strict numeric boundary remains unchanged: exactly 1.50 belongs to the low-RVOL group; only values strictly greater than 1.50 belong to the high-RVOL group.
+- The Master Specification is not modified by this addendum. No Delivery thresholds, liquidity thresholds, or unrelated downstream filters are changed.
