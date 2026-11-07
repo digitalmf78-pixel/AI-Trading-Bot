@@ -1151,7 +1151,9 @@ def _telegram_observation_rows(report: pd.DataFrame | None,
             "LiquidityFilterStatus", "LiquidityStatus", "LiquidityTier",
             "FundamentalScore", "Fundamental65PlusStatus", "FundamentalStatus",
             "FundamentalSource", "CoreTechnicalScreenStatus", "CandidateScreenStatus",
-            "SetupType", "RSI14", "EMA20", "EMA44", "EMA44Position", "TrendClassification",
+            "SetupType", "RSI14", "RSI14Previous", "RSIDirection", "RSIZone",
+            "RSIBehaviour", "RSIRetestStatus", "RSIDivergenceStatus",
+            "EMA20", "EMA44", "EMA44Position", "TrendClassification",
             "RVOL", "RelativeStrengthNifty", "SectorStrengthNifty", "SectorStrengthStatus",
             "RiskReward", "RiskRewardStatus", "NewsEvidenceStatus", "NewsPrimarySourceVerified",
             "EODWatchlistStatus", "DeliveryCategoryAStatus",
@@ -1380,7 +1382,12 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         technical = row.get("CoreTechnicalScreenStatus", row.get("CandidateScreenStatus", row.get("SetupType", "WAIT_FOR_DATA")))
         rsi = pd.to_numeric(pd.Series([row.get("RSI14")]), errors="coerce").iloc[0]
         ema20 = pd.to_numeric(pd.Series([row.get("EMA20")]), errors="coerce").iloc[0]
-        rsi_text = f"RSI {rsi:.1f}" if pd.notna(rsi) else "RSI WAIT"
+        rsi_text = f"RSI14 {rsi:.1f}" if pd.notna(rsi) else "RSI14 WAIT_FOR_DATA"
+        rsi_behaviour = str(row.get("RSIBehaviour", "WAIT_FOR_DATA"))
+        rsi_direction = str(row.get("RSIDirection", "WAIT_FOR_DATA"))
+        rsi_zone = str(row.get("RSIZone", "WAIT_FOR_DATA"))
+        rsi_retest = str(row.get("RSIRetestStatus", "NOT_EVALUATED"))
+        rsi_divergence = str(row.get("RSIDivergenceStatus", "NOT_EVALUATED"))
         ema44 = pd.to_numeric(pd.Series([row.get("EMA44")]), errors="coerce").iloc[0]
         trend = str(row.get("TrendClassification", "WAIT_FOR_DATA"))
         ema_text = f"EMA44 {ema44:.2f} • {trend}" if pd.notna(ema44) else "EMA44 WAIT_FOR_DATA"
@@ -1407,7 +1414,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         rs_sector = pd.to_numeric(pd.Series([row.get("SectorStrengthNifty")]), errors="coerce").iloc[0]
         rvol_value = pd.to_numeric(pd.Series([row.get("RVOL")]), errors="coerce").iloc[0]
         rr_value = pd.to_numeric(pd.Series([row.get("RiskReward")]), errors="coerce").iloc[0]
-        lines.append(f"   Technical {technical} | {rsi_text} | {ema_text}")
+        lines.append(f"   Technical {technical} | {rsi_text} • {rsi_zone} • {rsi_direction} • {rsi_behaviour} | {ema_text}")
+        lines.append(f"   RSI patterns: Retest {rsi_retest} | Divergence {rsi_divergence} (informational only; no stock rejection)")
         lines.append(f"   RS Nifty {rs_nifty:.2f}% | Sector RS {rs_sector:.2f}% | RVOL {rvol_value:.2f} | RR {rr_value:.2f}R")
         lines.append(f"   News {news_status} | Final {final}")
         lines.extend(_telegram_news_lines(news_data, symbol, limit=2))
