@@ -162,7 +162,8 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
                     for day, value in zip(dates, [60.0, 60.0, 59.99, 80.0, 90.0])]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert qualified.empty  # One daily value below 60 fails the matrix gate.
+        assert len(qualified) == 1  # Category A passes even though Category B fails.
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
@@ -652,7 +653,7 @@ if __name__ == "__main__":
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
         test_news_gate_preserves_category_a_only_candidates,
-        test_delivery_categories_precede_independent_rvol_gates_in_scanner_source,
+        test_delivery_qualified_union_is_retained_and_rvol_only_classifies_in_scanner_source,
         test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
         test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
         test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx,
