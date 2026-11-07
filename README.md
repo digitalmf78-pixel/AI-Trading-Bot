@@ -38,3 +38,7 @@ No changes to Master Specification, RVOL, Delivery A/B, liquidity thresholds, 30
 ## Current authoritative rule addendum
 
 The active 30-calendar-day NSE Delivery A/B screening rules agreed on 2026-11-07 are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). This addendum supplements the Master Specification; it does not replace or rewrite it.
+
+## Current authoritative RSI rule addendum
+
+The RSI informational-only / no-stock-rejection policy agreed on 2026-11-07 is documented in [NSE_V8_RSI_INFORMATIONAL_ONLY_RULES_ADDENDUM_2026-11-07.md](NSE_V8_RSI_INFORMATIONAL_ONLY_RULES_ADDENDUM_2026-11-07.md). RSI is reported to Telegram but cannot affect stock eligibility or any existing non-RSI filter.
