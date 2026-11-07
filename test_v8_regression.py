@@ -164,7 +164,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 0  # Average is below 60%; both categories fail.
         assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_LT_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_AVG_LT_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
