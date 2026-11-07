@@ -3,21 +3,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def test_delivery_precedes_rvol_gate_then_liquidity_fundamentals_and_technical():
+def test_delivery_pass_union_is_retained_and_rvol_only_classifies_before_liquidity():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    delivery = source.index("STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE")
-    rvol_gate_a = source.index("category_a_rvol = select_rvol_above_threshold")
-    rvol_gate_b = source.index("category_b_rvol = select_rvol_above_threshold")
+    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    rvol_classification = source.index("current = classify_rvol_for_delivery_candidates")
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     fundamental = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical = source.index("STEP 7: PRICE + VOLUME")
-    assert delivery < rvol_gate_a < rvol_gate_b < liquidity < fundamental < technical
-    assert 'v8_delivery_category_a_rvol.csv' in source
-    assert 'v8_delivery_category_b_rvol.csv' in source
-    assert 'A_AND_B' in source
-    assert 'current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
-    assert 'current["DeliveryStatus"] = "PASS"' in source
-    assert 'outputs/v8_rvol_gt_1_5_candidates.csv' in source
+    assert delivery < rvol_classification < liquidity < fundamental < technical
+    assert "category_a_all" in source and "category_b_all" in source
+    assert "A_AND_B" in source
+    assert 'delivery_candidates["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
+    assert 'delivery_candidates["DeliveryStatus"] = "PASS"' in source
+    assert "v8_delivery_qualified_all_rvol_classified.csv" in source
+    assert "v8_rvol_gt_1_5_candidates.csv" in source
+    assert "v8_rvol_le_1_5_delivery_candidates.csv" in source
+    assert "No Delivery-qualified stock is rejected by RVOL." in source
 
 
 
@@ -144,3 +145,26 @@ def test_technical_parameter_audit_shows_values_rules_and_statuses(tmp_path, mon
     assert (tmp_path / "outputs/v8_technical_parameter_audit.csv").exists()
     assert (tmp_path / "outputs/v8_technical_parameter_summary.csv").exists()
 
+
+
+
+def test_rvol_classification_retains_high_low_and_missing_delivery_candidates(tmp_path, monkeypatch):
+    import pandas as pd
+    import volume_gainer as scanner
+
+    monkeypatch.chdir(tmp_path)
+    frame = pd.DataFrame({
+        "TckrSymb": ["HIGH", "BOUNDARY", "LOW", "WAIT", "MISSING"],
+        "RVOL": [1.5001, 1.5, 0.82, 2.4, None],
+        "RVOLStatus": ["PASS", "PASS", "PASS", "WAIT_FOR_DATA", "PASS"],
+        "DeliveryFilterStatus": ["PASS_GE_60_PERCENT"] * 5,
+    })
+
+    classified = scanner.classify_rvol_for_delivery_candidates(frame, "2026-11-07", 1.5)
+
+    assert len(classified) == 5
+    assert classified.set_index("TckrSymb").loc["HIGH", "RVOLBand"] == "HIGH_RVOL_GT_1_5"
+    assert classified.set_index("TckrSymb").loc["BOUNDARY", "RVOLBand"] == "LOW_RVOL_LE_1_5"
+    assert classified.set_index("TckrSymb").loc["LOW", "RVOLBand"] == "LOW_RVOL_LE_1_5"
+    assert classified.set_index("TckrSymb").loc["WAIT", "RVOLBand"] == "WAIT_FOR_DATA"
+    assert classified.set_index("TckrSymb").loc["MISSING", "RVOLBand"] == "WAIT_FOR_DATA"
