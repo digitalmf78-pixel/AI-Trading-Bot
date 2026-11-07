@@ -961,7 +961,7 @@ def write_layer_status_summary(
         (27, "Opening price action", next_day_report, "OpeningPriceAction"),
         (28, "VWAP", next_day_report, "VWAPStatus"),
         (29, "Opening volume/RVOL", next_day_report, "OpeningRVOLStatus"),
-        (30, "Opening RSI", next_day_report, "RSIStatus"),
+        (30, "Opening RSI (informational only)", next_day_report, "RSIStatus"),
         (31, "Opening range", next_day_report, "OpeningHigh15m"),
         (32, "Nifty and sector confirmation", next_day_report, "IndexConfirmation"),
         (33, "Breakout confirmation", next_day_report, "BreakoutConfirmation"),
@@ -1155,7 +1155,7 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
         missing = []
         for label, value in [
             ("gap/previous close", gap_pct),
-            ("opening RVOL baseline", rvol), ("intraday RSI", rsi),
+            ("opening RVOL baseline", rvol),
             ("breakout level", level),
             ("Nifty bars", nifty_ok if not market.empty else None),
             ("sector bars", sector_ok if not sector.empty else None),
@@ -1173,7 +1173,6 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
         elif (
             price_action and pd.notna(vwap) and last_close > vwap
             and pd.notna(rvol) and rvol >= 1.2
-            and pd.notna(rsi) and 50 <= rsi <= 75
             and nifty_ok and sector_ok and breakout_ok
         ):
             status = "ENTRY_ELIGIBLE_REVIEW"
@@ -1191,7 +1190,7 @@ def validate_next_day(eod_result: pd.DataFrame, eod_date) -> pd.DataFrame:
             "VWAPStatus": "ABOVE_VWAP" if pd.notna(vwap) and last_close > vwap else "BELOW_VWAP" if pd.notna(vwap) else "WAIT_FOR_DATA",
             "OpeningRVOL": rvol, "RSI14Intraday": rsi,
             "OpeningRVOLStatus": "PASS" if pd.notna(rvol) and rvol >= 1.2 else "FAIL" if pd.notna(rvol) else "WAIT_FOR_DATA",
-            "RSIStatus": "PASS" if pd.notna(rsi) and 50 <= rsi <= 75 else "FAIL" if pd.notna(rsi) else "WAIT_FOR_DATA",
+            "RSIStatus": "INFORMATIONAL" if pd.notna(rsi) else "WAIT_FOR_DATA",
             "NiftyConfirmation": "WAIT_FOR_DATA" if market.empty else "PASS" if nifty_ok else "FAIL",
             "SectorConfirmation": "WAIT_FOR_DATA" if sector.empty else "PASS" if sector_ok else "FAIL",
             "IndexConfirmation": "WAIT_FOR_DATA" if market.empty or sector.empty else "PASS" if nifty_ok and sector_ok else "FAIL",
