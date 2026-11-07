@@ -1065,6 +1065,55 @@ def prepare_primary_shortlist(result, eod_date):
     return primary
 
 
+def classify_rvol_for_delivery_candidates(result, eod_date, minimum_rvol=1.5):
+    """Classify every Delivery-qualified stock by RVOL without rejecting low-RVOL rows.
+
+    Delivery is the eligibility gate. RVOL > threshold is the high-volume
+    observation group; RVOL <= threshold is retained as a separate group.
+    Missing/invalid RVOL remains WAIT_FOR_DATA but is also retained for audit
+    and downstream non-RVOL checks.
+    """
+    if result is None or result.empty:
+        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+
+    frame = result.copy()
+    frame["RVOL"] = pd.to_numeric(
+        frame.get("RVOL", pd.Series(index=frame.index, dtype=float)),
+        errors="coerce",
+    )
+    if "RVOLStatus" not in frame.columns:
+        frame["RVOLStatus"] = "WAIT_FOR_DATA"
+    frame["RVOLThreshold"] = float(minimum_rvol)
+
+    def _classify(row):
+        value = row.get("RVOL")
+        if str(row.get("RVOLStatus", "")).upper() != "PASS" or pd.isna(value):
+            return "WAIT_FOR_DATA"
+        return "HIGH_RVOL_GT_1_5" if float(value) > float(minimum_rvol) else "LOW_RVOL_LE_1_5"
+
+    frame["RVOLBand"] = frame.apply(_classify, axis=1)
+    frame["RVOLThresholdStatus"] = frame["RVOLBand"].map({
+        "HIGH_RVOL_GT_1_5": "PASS_RVOL_GT_1_5",
+        "LOW_RVOL_LE_1_5": "INFO_RVOL_LE_1_5",
+        "WAIT_FOR_DATA": "WAIT_FOR_DATA",
+    })
+    frame = frame.sort_values(
+        "RVOL", ascending=False, na_position="last", kind="mergesort"
+    ).reset_index(drop=True)
+    high_mask = frame["RVOLBand"].eq("HIGH_RVOL_GT_1_5")
+    frame["RVOLRank"] = pd.NA
+    frame.loc[high_mask, "RVOLRank"] = range(1, int(high_mask.sum()) + 1)
+    frame["RVOLRank"] = pd.to_numeric(frame["RVOLRank"], errors="coerce").astype("Int64")
+    print(
+        f"[RVOL CLASSIFICATION] Delivery-qualified={len(frame)}; "
+        f"high(> {minimum_rvol})={int(high_mask.sum())}; "
+        f"low(<= {minimum_rvol})={int(frame['RVOLBand'].eq('LOW_RVOL_LE_1_5').sum())}; "
+        f"wait={int(frame['RVOLBand'].eq('WAIT_FOR_DATA').sum())}. "
+        "No Delivery-qualified stock is rejected by RVOL."
+    )
+    return frame
+
+
 def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
     """Keep every valid Main Board candidate with RVOL strictly greater than 1.5.
 
@@ -3600,9 +3649,9 @@ def main():
     current = calculate_rvol(current, avg_volume)
 
     # --------------------------------------------------------
-    # STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE
+    # STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION (NO RVOL REJECTION)
     # --------------------------------------------------------
-    print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B...")
+    print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B; RVOL will classify only...")
     delivery_data_available = True
     category_a_rvol = current.iloc[0:0].copy()
     category_b_rvol = current.iloc[0:0].copy()
@@ -3670,49 +3719,60 @@ def main():
             )
             delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
 
-            # Category A and B are screened independently. B is mathematically
-            # a subset of A, but both category outputs and statuses remain distinct.
-            category_a = delivery_audit[
+            # Delivery is the eligibility gate. Keep the full A OR B union.
+            # RVOL only classifies the Delivery-qualified universe; it must not
+            # remove stocks at or below 1.5 or stocks whose RVOL is unavailable.
+            category_a_all = delivery_audit[
                 delivery_audit["DeliveryCategoryAStatus"].eq("PASS_AVG_GE_60_PERCENT")
             ].copy()
-            category_b = delivery_audit[
+            category_b_all = delivery_audit[
                 delivery_audit["DeliveryCategoryBStatus"].eq("PASS_EACH_DAY_GE_60_PERCENT")
             ].copy()
+            category_a_all["DeliveryCategory"] = "A"
+            category_b_all["DeliveryCategory"] = "B"
+            category_a_all.to_csv("outputs/v8_delivery_category_a_all.csv", index=False)
+            category_b_all.to_csv("outputs/v8_delivery_category_b_all.csv", index=False)
 
-            category_a_rvol = select_rvol_above_threshold(
-                category_a, eod_date, minimum_rvol=1.5
-            )
-            category_b_rvol = select_rvol_above_threshold(
-                category_b, eod_date, minimum_rvol=1.5
-            )
-            category_a_rvol["DeliveryCategory"] = "A"
-            category_b_rvol["DeliveryCategory"] = "B"
-            category_a_rvol.to_csv("outputs/v8_delivery_category_a_rvol.csv", index=False)
-            category_b_rvol.to_csv("outputs/v8_delivery_category_b_rvol.csv", index=False)
-
-            # Liquidity is calculated once per symbol after both independent
-            # category paths have completed RVOL. Preserve membership in both.
-            combined = pd.concat([category_a_rvol, category_b_rvol], ignore_index=True, sort=False)
+            # Build the unique A/B union before classifying RVOL. Preserve A/B
+            # membership and never use the RVOL threshold as an eligibility gate.
+            combined = pd.concat([category_a_all, category_b_all], ignore_index=True, sort=False)
             if not combined.empty:
                 membership = combined.groupby("TckrSymb")["DeliveryCategory"].agg(
                     lambda values: "A_AND_B" if set(values) >= {"A", "B"} else str(values.iloc[0])
                 )
-                current = combined.drop_duplicates("TckrSymb", keep="first").copy()
-                current["DeliveryCategory"] = current["TckrSymb"].map(membership)
-                current["DeliveryCategoryAStatus"] = current["DeliveryCategoryAStatus"].fillna("WAIT_FOR_DATA")
-                current["DeliveryCategoryBStatus"] = current["DeliveryCategoryBStatus"].fillna("WAIT_FOR_DATA")
-                # Existing downstream layers consume the generic Delivery PASS
-                # fields; an A-only candidate must therefore remain eligible too.
-                current["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"
-                current["DeliveryStatus"] = "PASS"
-                current = current.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort").reset_index(drop=True)
-                current["RVOLRank"] = range(1, len(current) + 1)
-                current.to_csv("outputs/v8_rvol_gt_1_5_candidates.csv", index=False)
+                delivery_candidates = combined.drop_duplicates("TckrSymb", keep="first").copy()
+                delivery_candidates["DeliveryCategory"] = delivery_candidates["TckrSymb"].map(membership)
+                delivery_candidates["DeliveryCategoryAStatus"] = delivery_candidates["DeliveryCategoryAStatus"].fillna("WAIT_FOR_DATA")
+                delivery_candidates["DeliveryCategoryBStatus"] = delivery_candidates["DeliveryCategoryBStatus"].fillna("WAIT_FOR_DATA")
+                delivery_candidates["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"
+                delivery_candidates["DeliveryStatus"] = "PASS"
+
+                current = classify_rvol_for_delivery_candidates(
+                    delivery_candidates, eod_date, minimum_rvol=1.5
+                )
+                current.to_csv("outputs/v8_delivery_qualified_all_rvol_classified.csv", index=False)
+                current[current["RVOLBand"].eq("HIGH_RVOL_GT_1_5")].to_csv(
+                    "outputs/v8_rvol_gt_1_5_candidates.csv", index=False
+                )
+                current[current["RVOLBand"].eq("LOW_RVOL_LE_1_5")].to_csv(
+                    "outputs/v8_rvol_le_1_5_delivery_candidates.csv", index=False
+                )
+                current[current["RVOLBand"].eq("WAIT_FOR_DATA")].to_csv(
+                    "outputs/v8_delivery_candidates_rvol_wait.csv", index=False
+                )
             else:
                 current = combined
-            print(f"[DELIVERY A] 30D valid-session average >=60%; RVOL >1.5 qualified={len(category_a_rvol)}")
-            print(f"[DELIVERY B] Every valid 30D session >=60%; RVOL >1.5 qualified={len(category_b_rvol)}")
-            print(f"[DELIVERY] Unique A/B members proceeding to liquidity={len(current)}")
+                current["RVOLBand"] = pd.Series(dtype="object")
+                current["RVOLThresholdStatus"] = pd.Series(dtype="object")
+
+            print(
+                f"[DELIVERY A] 30D average >=60%: {len(category_a_all)}; "
+                f"[DELIVERY B] every valid session >=60%: {len(category_b_all)}."
+            )
+            print(
+                f"[DELIVERY] Unique A/B-qualified stocks retained for liquidity={len(current)}; "
+                "RVOL is classification only, not a rejection gate."
+            )
         except Exception as exc:
             delivery_data_available = False
             print(f"[DELIVERY] WAIT_FOR_DATA: delivery categories could not be verified: {exc}")
@@ -3746,7 +3806,7 @@ def main():
     # --------------------------------------------------------
     # STEP 5: LIQUIDITY FIRST — FUNDAMENTALS ARE COLLECTED AFTER PASS
     # --------------------------------------------------------
-    print("\nSTEP 5: Delivery-passed stocks proceed directly to the liquidity check.")
+    print("\nSTEP 5: All Delivery A/B-passed stocks (all RVOL bands) proceed to liquidity.")
     # The previous fundamental hard gate could empty the candidate list before
     # liquidity was measured. Keep Delivery-passed candidates intact here.
     fundamental_audit = pd.DataFrame()
