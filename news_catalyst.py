@@ -1335,8 +1335,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
     """Send every liquidity-passed stock with all downstream filter confirmations."""
     rows = _telegram_observation_rows(report, result, limit=None)
     if rows.empty:
-        return ["", "🔎 Liquidity filter नंतर कोणताही verified stock उपलब्ध नाही.",
-                "Liquidity audit आणि WAIT_FOR_DATA reports तपासा."]
+        return ["", "🔎 Liquidity filter नंतर Telegram साठी stock उपलब्ध नाही.",
+                "Liquidity filter नंतर कोणताही verified stock उपलब्ध नाही. Liquidity audit आणि WAIT_FOR_DATA reports तपासा."]
 
     def value(row, column, default="WAIT_FOR_DATA"):
         raw = row.get(column, default)
