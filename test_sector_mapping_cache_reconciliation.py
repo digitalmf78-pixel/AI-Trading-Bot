@@ -70,6 +70,84 @@ class SectorMappingCacheReconciliationTests(unittest.TestCase):
         self.assertTrue(result.empty)
 
 
+    def test_official_constituent_cache_hit_avoids_network(self):
+        import json
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_cache_dir = sector_data.CONSTITUENT_CACHE_DIR
+            sector_data.CONSTITUENT_CACHE_DIR = Path(tmp)
+            try:
+                cache_path = Path(tmp) / "NIFTY_AUTO.csv"
+                cache_path.write_text("Symbol,Company Name\\nABC,ABC Limited\\nXYZ,XYZ Limited\\n", encoding="utf-8")
+                (Path(tmp) / "NIFTY_AUTO.json").write_text(json.dumps({
+                    "fetched_at_epoch": time.time(),
+                    "source_filename": "ind_niftyautolist.csv",
+                }), encoding="utf-8")
+
+                class NoNetworkSession:
+                    def get(self, *args, **kwargs):
+                        raise AssertionError("fresh official constituent cache should avoid network")
+
+                rows = sector_data._download_constituents(
+                    NoNetworkSession(), "Nifty Auto", ["ind_niftyautolist.csv"], "NIFTY AUTO"
+                )
+                self.assertEqual({row["TckrSymb"] for row in rows}, {"ABC", "XYZ"})
+            finally:
+                sector_data.CONSTITUENT_CACHE_DIR = original_cache_dir
+
+    def test_expired_official_constituent_cache_refreshes_from_source(self):
+        import json
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_cache_dir = sector_data.CONSTITUENT_CACHE_DIR
+            sector_data.CONSTITUENT_CACHE_DIR = Path(tmp)
+            try:
+                cache_path = Path(tmp) / "NIFTY_AUTO.csv"
+                cache_path.write_text("Symbol\\nOLD\\n", encoding="utf-8")
+                (Path(tmp) / "NIFTY_AUTO.json").write_text(json.dumps({
+                    "fetched_at_epoch": time.time() - sector_data.CONSTITUENT_CACHE_TTL_SECONDS - 1,
+                    "source_filename": "old.csv",
+                }), encoding="utf-8")
+
+                class Response:
+                    status_code = 200
+                    content = b"Symbol,Company Name\\nNEW,New Limited\\n"
+                class Session:
+                    def __init__(self):
+                        self.calls = []
+                    def get(self, url, **kwargs):
+                        self.calls.append(url)
+                        return Response()
+
+                session = Session()
+                rows = sector_data._download_constituents(
+                    session, "Nifty Auto", ["ind_niftyautolist.csv"], "NIFTY AUTO"
+                )
+                self.assertEqual(len(session.calls), 1)
+                self.assertEqual([row["TckrSymb"] for row in rows], ["NEW"])
+                self.assertIn("NEW", cache_path.read_text(encoding="utf-8"))
+            finally:
+                sector_data.CONSTITUENT_CACHE_DIR = original_cache_dir
+
+    def test_nse_session_warmup_runs_once_after_success(self):
+        class Response:
+            def __init__(self, status_code):
+                self.status_code = status_code
+        class Session:
+            def __init__(self):
+                self.calls = []
+            def get(self, url, **kwargs):
+                self.calls.append(url)
+                return Response(403 if len(self.calls) == 1 else 200)
+
+        session = Session()
+        sector_data._warm_nse_session(session)
+        sector_data._warm_nse_session(session)
+        self.assertEqual(len(session.calls), 2)
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
