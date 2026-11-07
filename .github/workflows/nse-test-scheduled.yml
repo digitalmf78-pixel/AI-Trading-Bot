@@ -39,6 +39,7 @@ jobs:
             data/bhavcopy/
             data/cache/delivery/
             data/cache/sector_index_daily/
+            data/cache/sector_constituents/
             data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv

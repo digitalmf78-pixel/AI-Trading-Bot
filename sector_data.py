@@ -22,6 +22,10 @@ import requests
 
 INPUT_DIR = Path("data") / "inputs"
 CACHE_DIR = Path("data") / "cache" / "sector_index_daily"
+CONSTITUENT_CACHE_DIR = Path("data") / "cache" / "sector_constituents"
+# Index constituent membership changes infrequently; reuse official CSVs for
+# 24 hours across EOD/premarket runs, then refresh from the official source.
+CONSTITUENT_CACHE_TTL_SECONDS = 24 * 60 * 60
 MAP_PATH = INPUT_DIR / "sector_map.csv"
 HISTORY_PATH = INPUT_DIR / "sector_history.csv"
 MAP_COLUMNS = ["TckrSymb", "Sector", "SectorIndexSymbol"]
@@ -109,8 +113,58 @@ def _archive_sector_coverage(frame: pd.DataFrame) -> set[str]:
     return found
 
 
+def _constituent_rows_from_content(content: bytes, sector: str, index_symbol: str, source_name: str):
+    """Parse an official constituent CSV and return rows plus a diagnostic reason."""
+    if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
+        return [], f"HTML/empty response for {source_name}"
+    try:
+        frame = pd.read_csv(BytesIO(content))
+    except Exception as exc:
+        return [], f"CSV parse error for {source_name}: {type(exc).__name__}: {exc}"
+    symbol_col = next((c for c in frame.columns if str(c).strip().casefold() in {"symbol", "ticker", "ticker symbol"}), None)
+    if symbol_col is None:
+        return [], f"no Symbol column in {source_name}: {list(frame.columns)}"
+    symbols = sorted({_clean_symbol(v) for v in frame[symbol_col].tolist()} - {""})
+    if not symbols:
+        return [], f"empty Symbol column in {source_name}"
+    return [
+        {"TckrSymb": symbol, "Sector": sector, "SectorIndexSymbol": index_symbol}
+        for symbol in symbols
+    ], ""
+
+
 def _download_constituents(session: requests.Session, sector: str, filenames: list[str], index_symbol: str) -> list[dict[str, str]]:
-    """Try official filename variants; reject HTML/error pages and malformed CSVs."""
+    """Use a short-lived official CSV cache; refresh expired data from NSE Indices."""
+    cache_key = re.sub(r"[^A-Z0-9]+", "_", sector.upper()).strip("_")
+    cache_path = CONSTITUENT_CACHE_DIR / f"{cache_key}.csv"
+    metadata_path = CONSTITUENT_CACHE_DIR / f"{cache_key}.json"
+    now = time.time()
+
+    if cache_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+            fetched_at = float(metadata.get("fetched_at_epoch", cache_path.stat().st_mtime))
+            age_seconds = max(0.0, now - fetched_at)
+            if age_seconds <= CONSTITUENT_CACHE_TTL_SECONDS:
+                source_name = str(metadata.get("source_filename") or cache_path.name)
+                cached_rows, cache_error = _constituent_rows_from_content(
+                    cache_path.read_bytes(), sector, index_symbol, source_name
+                )
+                if cached_rows:
+                    print(
+                        f"[SECTOR] Constituents CACHE_HIT: {sector} "
+                        f"({len(cached_rows)} symbols; age_hours={age_seconds / 3600:.1f})"
+                    )
+                    return cached_rows
+                print(f"[SECTOR] Constituents CACHE_INVALID: {sector}: {cache_error}")
+            else:
+                print(
+                    f"[SECTOR] Constituents CACHE_EXPIRED: {sector} "
+                    f"age_hours={age_seconds / 3600:.1f}; refreshing official CSV"
+                )
+        except Exception as exc:
+            print(f"[SECTOR] Constituents CACHE_READ_ERROR: {sector}: {type(exc).__name__}: {exc}")
+
     last_error = "no candidate filenames"
     for filename in filenames:
         url = f"https://www.niftyindices.com/IndexConstituent/{filename}"
@@ -120,22 +174,25 @@ def _download_constituents(session: requests.Session, sector: str, filenames: li
                 last_error = f"HTTP {response.status_code} for {filename}"
                 continue
             content = response.content or b""
-            if not content or b"<html" in content[:1500].lower() or b"<!doctype html" in content[:1500].lower():
-                last_error = f"HTML response for {filename}"
+            rows, parse_error = _constituent_rows_from_content(content, sector, index_symbol, filename)
+            if not rows:
+                last_error = parse_error
                 continue
-            frame = pd.read_csv(BytesIO(content))
-            symbol_col = next((c for c in frame.columns if str(c).strip().casefold() in {"symbol", "ticker", "ticker symbol"}), None)
-            if symbol_col is None:
-                last_error = f"no Symbol column in {filename}: {list(frame.columns)}"
-                continue
-            symbols = sorted({_clean_symbol(v) for v in frame[symbol_col].tolist()} - {""})
-            if not symbols:
-                last_error = f"empty Symbol column in {filename}"
-                continue
-            print(f"[SECTOR] Constituents OK: {sector} via {filename} ({len(symbols)} symbols)")
-            return [{"TckrSymb": symbol, "Sector": sector, "SectorIndexSymbol": index_symbol} for symbol in symbols]
+            try:
+                CONSTITUENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                temp_csv = cache_path.with_suffix(".csv.tmp")
+                temp_csv.write_bytes(content)
+                temp_csv.replace(cache_path)
+                metadata = {"fetched_at_epoch": now, "source_filename": filename, "source_url": url}
+                temp_json = metadata_path.with_suffix(".json.tmp")
+                temp_json.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
+                temp_json.replace(metadata_path)
+            except Exception as cache_exc:
+                print(f"[SECTOR] Constituents CACHE_WRITE_ERROR: {sector}: {type(cache_exc).__name__}: {cache_exc}")
+            print(f"[SECTOR] Constituents OK: {sector} via {filename} ({len(rows)} symbols)")
+            return rows
         except Exception as exc:
-            last_error = f"{filename}: {exc}"
+            last_error = f"{filename}: {type(exc).__name__}: {exc}"
     print(f"[SECTOR] Constituents unavailable for {sector}: {last_error}")
     return []
 
@@ -751,7 +808,9 @@ OFFICIAL_SECTOR_TO_TRACKED_INDEX = {
 
 
 def _warm_nse_session(session: requests.Session) -> None:
-    """Warm NSE's own browser session before using its JSON quote endpoint."""
+    """Warm each NSE session once before using its JSON quote endpoint."""
+    if getattr(session, "_v8_nse_session_warmed", False):
+        return
     for url in (
         "https://www.nseindia.com/",
         "https://www.nseindia.com/market-data/live-equity-market",
@@ -761,6 +820,10 @@ def _warm_nse_session(session: requests.Session) -> None:
             print(f"[SECTOR] NSE session warm-up: {url} -> HTTP {response.status_code}")
             if response.status_code == 200:
                 # One successful page response is sufficient to seed NSE cookies.
+                try:
+                    setattr(session, "_v8_nse_session_warmed", True)
+                except Exception:
+                    pass
                 break
         except Exception as exc:
             print(f"[SECTOR] NSE session warm-up failed for {url}: {exc}")
