@@ -88,3 +88,51 @@ def test_fewer_than_five_valid_reports_still_waits_for_data(monkeypatch, tmp_pat
     assert audit.iloc[0]["DeliveryCategoryAStatus"] == "WAIT_FOR_DATA"
     assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
 
+
+
+def test_30d_category_a_uses_average_of_all_valid_sessions_and_b_checks_each(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
+    dates = [date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 5),
+             date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)]
+    values = [50.0, 62.0, 62.0, 62.0, 62.0, 62.0]  # six-session mean is exactly 60
+    reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, values)]
+    _, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-08", sessions=reports)
+    row = audit.iloc[0]
+    assert row["DeliverySessions"] == 6
+    assert row["AvgDelivery30D"] == 60.0
+    assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
+    assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+
+
+def test_30d_candidate_with_fewer_than_five_symbol_sessions_waits(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
+    dates = [date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 5),
+             date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)]
+    reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates[:4], [61, 62, 63, 64])]
+    reports += [(dates[4], pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER"])),
+                (dates[5], pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER"]))]
+    _, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-08", sessions=reports)
+    assert audit.iloc[0]["DeliverySessions"] == 4
+    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "WAIT_FOR_DATA"
+    assert audit.iloc[0]["DeliveryCategoryBStatus"] == "WAIT_FOR_DATA"
+
+
+def test_collect_all_scans_complete_30d_window_and_returns_all_valid_reports(monkeypatch):
+    asof = date(2026, 10, 30)
+    valid_days = {asof - timedelta(days=offset) for offset in (0, 1, 2, 3, 4, 7, 8, 9)}
+    calls = []
+    def fake_read(_session, day):
+        calls.append(day)
+        return _frame() if day in valid_days else None
+    monkeypatch.setattr(delivery_filter, "_read_cached_or_download", fake_read)
+    reports = delivery_filter.get_delivery_sessions(
+        asof, required_sessions=5, max_calendar_days=30, collect_all=True
+    )
+    expected = [day for day in valid_days if day.weekday() < 5]
+    assert len(reports) == len(expected)
+    assert len(calls) > 5
+    assert len({day for day, _ in reports}) == len(reports)

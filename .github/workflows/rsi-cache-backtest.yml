@@ -1,0 +1,79 @@
+name: RSI Historical Cache Backtest
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+    paths:
+      - ".github/workflows/rsi-cache-backtest.yml"
+  push:
+    branches:
+      - delivery-30d-priority-cache
+    paths:
+      - ".github/workflows/rsi-cache-backtest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rsi-cache-backtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v5
+
+      - name: Restore existing main-branch NSE cache (read-only)
+        id: nse-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+          key: rsi-retest-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-Linux-main-42262116884
+
+      - name: Report restored cache inventory
+        run: |
+          echo "===== BHAVCOPY CACHE ====="
+          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | sort | tee /tmp/bhavcopy_files.txt
+          echo "BHAVCOPY_FILE_COUNT=$(wc -l < /tmp/bhavcopy_files.txt)"
+          echo "===== DELIVERY CACHE ====="
+          find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | sort | tee /tmp/delivery_files.txt
+          echo "DELIVERY_FILE_COUNT=$(wc -l < /tmp/delivery_files.txt)"
+          echo "CACHE_RESTORED=${{ steps.nse-cache.outputs.cache-hit }}"
+          echo "===== PYTHON VERSION ====="
+          python --version
+
+      - name: Install backtest dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pytest
+
+      - name: Run RSI backtest unit tests
+        run: python -m pytest -q test_rsi_retest_existing_cache.py
+
+      - name: Run historical RSI backtest from restored cache (no network)
+        run: |
+          set -e
+          python -u rsi_retest_existing_cache.py
+          echo "===== COMPARISON ====="
+          cat outputs/rsi_retest/rsi_retest_comparison.csv
+          echo "===== CACHE COVERAGE ====="
+          cat outputs/rsi_retest/cache_coverage.csv
+
+      - name: Upload backtest reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rsi-historical-backtest-${{ github.run_number }}
+          path: outputs/rsi_retest/
+          if-no-files-found: warn
+          retention-days: 14

@@ -72,7 +72,7 @@ def build_delivery_consistency_report(
     """Return candidates enriched with observational delivery consistency fields.
 
     Windows are the latest 5, 10 and 20 distinct valid NSE delivery reports on
-    or before EOD date. A/B are calculated independently for each window:
+    or before EOD date. Pipeline callers pass the shared 30-day fetch to avoid refetching. A/B are calculated independently for each window:
     A = average >= threshold; B = every day >= threshold. 20D tags use the
     number of daily observations >= threshold. Missing sessions fail closed.
     """

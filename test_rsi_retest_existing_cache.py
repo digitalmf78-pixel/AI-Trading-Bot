@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from rsi_retest_existing_cache import _read_price_cache, _read_delivery_cache, _rsi, _signals_for_symbol, run_backtest
+from rsi_retest_existing_cache import _read_price_cache, _read_delivery_cache, _delivery_status, _rsi, _signals_for_symbol, run_backtest
 
 class ExistingCacheRSITests(unittest.TestCase):
     def test_rsi_rising_price_reaches_100(self):
@@ -51,6 +51,44 @@ class ExistingCacheRSITests(unittest.TestCase):
             result = run_backtest(price, delivery, out)
             self.assertEqual(result["status"], "WAIT_FOR_DATA")
             self.assertTrue((out / "rsi_retest_comparison.csv").exists())
+
+    def test_30d_delivery_category_a_passes_category_b_fails(self):
+        signal_date = pd.Timestamp("2026-10-30")
+        by_date = {}
+        for day, value in zip(pd.date_range("2026-10-05", periods=6, freq="5D"), [50, 70, 70, 70, 70, 70]):
+            by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])
+        result = _delivery_status("ABC", signal_date, by_date)
+        self.assertEqual(result["DeliverySessions"], 6)
+        self.assertEqual(result["DeliveryCategoryAStatus"], "PASS_AVG_GE_60_PERCENT")
+        self.assertEqual(result["DeliveryCategoryBStatus"], "REJECT_AT_LEAST_ONE_DAY_LT_60_PERCENT")
+
+    def test_30d_delivery_category_b_passes_at_exactly_60(self):
+        signal_date = pd.Timestamp("2026-10-30")
+        by_date = {}
+        for day in pd.date_range("2026-10-05", periods=5, freq="5D"):
+            by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": 60.0}])
+        result = _delivery_status("ABC", signal_date, by_date)
+        self.assertEqual(result["DeliveryCategoryAStatus"], "PASS_AVG_GE_60_PERCENT")
+        self.assertEqual(result["DeliveryCategoryBStatus"], "PASS_EACH_DAY_GE_60_PERCENT")
+
+    def test_30d_delivery_fewer_than_five_valid_symbol_reports_waits(self):
+        signal_date = pd.Timestamp("2026-10-30")
+        by_date = {}
+        for day in pd.date_range("2026-10-05", periods=4, freq="5D"):
+            by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": 75.0}])
+        result = _delivery_status("ABC", signal_date, by_date)
+        self.assertEqual(result["DeliverySessions"], 4)
+        self.assertEqual(result["DeliveryCategoryAStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(result["DeliveryCategoryBStatus"], "WAIT_FOR_DATA")
+
+    def test_30d_delivery_excludes_reports_outside_window_and_after_signal(self):
+        signal_date = pd.Timestamp("2026-10-30")
+        by_date = {}
+        for day in [pd.Timestamp("2026-09-30"), *pd.date_range("2026-10-05", periods=4, freq="5D"), pd.Timestamp("2026-10-31")]:
+            by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": 75.0}])
+        result = _delivery_status("ABC", signal_date, by_date)
+        self.assertEqual(result["DeliverySessions"], 4)
+        self.assertEqual(result["DeliveryCategoryAStatus"], "WAIT_FOR_DATA")
 
 if __name__ == "__main__":
     unittest.main()

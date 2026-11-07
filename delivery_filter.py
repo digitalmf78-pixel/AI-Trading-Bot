@@ -89,24 +89,22 @@ def _read_cached_or_download(session: requests.Session, session_date: date) -> p
     return frame
 
 
-def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_days: int = 35,
-                          session: requests.Session | None = None) -> list[tuple[date, pd.DataFrame]]:
-    """Return latest distinct valid reports on or before ``asof_date``.
+def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_days: int = 30,
+                          session: requests.Session | None = None,
+                          collect_all: bool = False) -> list[tuple[date, pd.DataFrame]]:
+    """Return distinct valid NSE delivery reports within the calendar lookback.
 
-    A missing report for the as-of date is not by itself fatal: NSE's delivery
-    file may publish later than the price bhavcopy. In that case, continue
-    searching backwards and use the latest five valid distinct report dates.
-    The actual dates are retained in the output; older data is never relabelled.
-    If fewer than ``required_sessions`` valid reports are found, fail closed.
+    collect_all=True scans the complete lookback window and returns every
+    valid report. This lets 30D A/B classification and 5D/10D/20D analysis
+    share one download/cache pass. Legacy early-stop remains the default.
     """
     asof = _parse_date(asof_date)
     http = session or requests.Session()
     http.headers.update(HEADERS)
     found: list[tuple[date, pd.DataFrame]] = []
     seen: set[date] = set()
-    for offset in range(max_calendar_days + 1):
+    for offset in range(max_calendar_days):
         day = asof - timedelta(days=offset)
-        # Weekends are skipped; official report availability also handles exchange holidays.
         if day.weekday() >= 5:
             continue
         frame = _read_cached_or_download(http, day)
@@ -114,8 +112,7 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
             if offset == 0:
                 print(
                     f"[DELIVERY] As-of report {asof.isoformat()} is not available yet; "
-                    "searching backward for the latest five valid distinct delivery sessions. "
-                    "Older report dates will remain explicitly labelled."
+                    f"searching backward across {max_calendar_days} calendar days."
                 )
             continue
         if day in seen:
@@ -124,25 +121,30 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
         frame["REPORT_DATE"] = day.isoformat()
         found.append((day, frame))
         seen.add(day)
-        print(f"[DELIVERY] Accepted report {day}: {len(frame)} rows ({len(found)}/{required_sessions})")
-        if len(found) >= required_sessions:
-            return found
-    raise RuntimeError(
-        f"WAIT_FOR_DATA: only {len(found)}/{required_sessions} distinct delivery reports "
-        f"found by {asof.isoformat()} within {max_calendar_days} calendar days"
+        print(f"[DELIVERY] Accepted report {day}: {len(frame)} rows ({len(found)} valid sessions)")
+        if not collect_all and len(found) >= required_sessions:
+            break
+    if len(found) < required_sessions:
+        raise RuntimeError(
+            f"WAIT_FOR_DATA: only {len(found)}/{required_sessions} distinct delivery reports "
+            f"found by {asof.isoformat()} within {max_calendar_days} calendar days"
+        )
+    found.sort(key=lambda item: item[0])
+    print(
+        f"[DELIVERY CACHE] Window={max_calendar_days} calendar days; "
+        f"valid reports={len(found)}; mode={'complete-window' if collect_all else 'early-stop'}."
     )
-
-
+    return found
 def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str = "TckrSymb",
                           series_col: str = "SctySrs", minimum_average: float = MINIMUM_AVERAGE,
                           sessions: list[tuple[date, pd.DataFrame]] | None = None,
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Annotate both Delivery categories and return strict daily-gate pass rows.
+    """Classify Category A/B over all valid reports in the 30-calendar-day window.
 
-    Category A: average DELIV_PER across the latest five distinct valid sessions >= 60%.
-    Category B: each of those five sessions individually >= 60%.
-    Both require five valid session records. Missing data is WAIT_FOR_DATA.
-    Category B is the downstream gate required by the implementation matrix.
+    Category A: average Delivery % across each candidate's valid reports >=60%.
+    Category B: every one of that candidate's valid reports is >=60%.
+    Each candidate needs at least five valid distinct report dates; otherwise
+    both categories remain WAIT_FOR_DATA. Exactly 60.00% passes.
     """
     if candidates.empty:
         return candidates.copy(), pd.DataFrame()
@@ -150,13 +152,20 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         raise ValueError(f"Candidate symbol column missing: {symbol_col}")
 
     threshold = float(minimum_average)
+    asof = _parse_date(asof_date)
     try:
-        reports = sessions if sessions is not None else get_delivery_sessions(asof_date, 5, session=http_session)
-        if len({day for day, _ in reports}) < 5:
-            raise RuntimeError("WAIT_FOR_DATA: fewer than five distinct delivery sessions")
-        reports = sorted(reports, key=lambda item: item[0])[-5:]
-        if len({day for day, _ in reports}) != 5:
-            raise RuntimeError("WAIT_FOR_DATA: exactly five distinct delivery sessions required")
+        reports = sessions if sessions is not None else get_delivery_sessions(
+            asof, required_sessions=5, max_calendar_days=30,
+            session=http_session, collect_all=True,
+        )
+        reports = sorted(
+            {day: frame for day, frame in reports if day <= asof}.items(),
+            key=lambda item: item[0],
+        )
+        if len(reports) < 5:
+            raise RuntimeError(
+                f"WAIT_FOR_DATA: only {len(reports)}/5 distinct valid delivery sessions in 30 days"
+            )
     except RuntimeError as exc:
         if "WAIT_FOR_DATA" not in str(exc):
             raise
@@ -164,6 +173,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         audit = candidates.copy()
         audit["DeliverySessions"] = 0
         audit["DeliveryDailyPassCount"] = 0
+        audit["DeliveryMin30D"] = float("nan")
+        audit["AvgDelivery30D"] = float("nan")
         audit["DeliveryMin5D"] = float("nan")
         audit["AvgDelivery5D"] = float("nan")
         audit["LatestDeliveryPct"] = float("nan")
@@ -172,8 +183,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         audit["DeliveryStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryFilterStatus"] = "WAIT_FOR_DATA"
         AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-        audit.to_csv(AUDIT_DIR / f"delivery_dual_category_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv", index=False)
-        audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv", index=False)
+        audit.to_csv(AUDIT_DIR / f"delivery_dual_category_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
+        audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
         return candidates.iloc[0:0].copy(), audit
 
     pieces = []
@@ -187,50 +198,69 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
         frame = frame[frame["DELIV_PER"].between(0, 100, inclusive="both")]
         frame["REPORT_DATE"] = report_date.isoformat()
-        # Duplicates for a symbol/series/day are ambiguous and cannot qualify.
         duplicate_keys = frame.duplicated(["SYMBOL", "SERIES"], keep=False)
         if duplicate_keys.any():
             frame = frame.loc[~duplicate_keys].copy()
         pieces.append(frame)
 
-    all_delivery = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER", "REPORT_DATE"])
+    all_delivery = pd.concat(
+        pieces, ignore_index=True
+    ) if pieces else pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER", "REPORT_DATE"])
     candidate = candidates.copy()
     candidate["_SYMBOL_KEY"] = candidate[symbol_col].astype(str).str.strip().str.upper()
-    candidate["_SERIES_KEY"] = candidate[series_col].astype(str).str.strip().str.upper() if series_col in candidate.columns else "EQ"
+    candidate["_SERIES_KEY"] = (
+        candidate[series_col].astype(str).str.strip().str.upper()
+        if series_col in candidate.columns else "EQ"
+    )
     report_dates = [day.isoformat() for day, _ in reports]
     latest_valid_report_date = reports[-1][0].isoformat()
-    asof_report_available = _parse_date(asof_date).isoformat() in report_dates
-    report_age_days = (_parse_date(asof_date) - reports[-1][0]).days
+    asof_report_available = asof.isoformat() in report_dates
+    report_age_days = (asof - reports[-1][0]).days
     window_stale = report_age_days > MAX_REPORT_AGE_DAYS
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
-        matches = all_delivery[(all_delivery["SYMBOL"] == sym) & (all_delivery["SERIES"] == ser)]
+        matches = all_delivery[
+            (all_delivery["SYMBOL"] == sym) & (all_delivery["SERIES"] == ser)
+        ]
         by_date = {str(r["REPORT_DATE"]): float(r["DELIV_PER"]) for _, r in matches.iterrows()}
-        values = [by_date[d] for d in report_dates if d in by_date]
+        values = [by_date[day] for day in report_dates if day in by_date]
         count = len(values)
-        avg = float(sum(values) / 5) if count == 5 else float("nan")
+        avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
-        daily_min = min(values) if count == 5 else float("nan")
-        if count != 5:
-            category_a = category_b = "WAIT_FOR_DATA"
-            overall = "WAIT_FOR_DATA"
+        daily_min = min(values) if count >= 5 else float("nan")
+        if count < 5:
+            category_a = category_b = overall = "WAIT_FOR_DATA"
         else:
-            category_a = "PASS_AVG_GE_60_PERCENT" if avg >= threshold else "FILTERED_OUT_AVG_LT_60_PERCENT"
-            category_b = "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values) else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
-            overall = "PASS_GE_60_PERCENT" if category_b == "PASS_EACH_DAY_GE_60_PERCENT" else "FILTERED_OUT_LT_60_PERCENT"
+            category_a = (
+                "PASS_AVG_GE_60_PERCENT" if avg >= threshold
+                else "FILTERED_OUT_AVG_LT_60_PERCENT"
+            )
+            category_b = (
+                "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values)
+                else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+            )
+            # Legacy return status remains the strict Category B gate for
+            # older callers. The V8 pipeline reads A and B independently
+            # from the audit and unions them after the RVOL filter.
+            overall = (
+                "PASS_GE_60_PERCENT" if category_b == "PASS_EACH_DAY_GE_60_PERCENT"
+                else "FILTERED_OUT_LT_60_PERCENT"
+            )
         if window_stale:
             category_a = category_b = overall = "WAIT_FOR_DATA_STALE_REPORT"
+
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
             "DeliverySessions": count,
             "DeliveryDailyPassCount": daily_pass_count,
+            "DeliveryMin30D": daily_min,
+            "AvgDelivery30D": avg,
+            # Compatibility aliases now describe the complete 30-calendar-day window.
             "DeliveryMin5D": daily_min,
             "AvgDelivery5D": avg,
-            # This is the latest VALID delivery report in the selected window,
-            # not necessarily the price EOD as-of date when NSE has not published it yet.
             "LatestDeliveryPct": by_date.get(latest_valid_report_date, float("nan")),
-            "DeliveryAsOfDate": _parse_date(asof_date).isoformat(),
+            "DeliveryAsOfDate": asof.isoformat(),
             "DeliveryAsOfReportAvailable": asof_report_available,
             "DeliveryReportAgeDays": report_age_days,
             "DeliveryWindowStale": window_stale,
@@ -247,22 +277,23 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
 
     audit = pd.DataFrame(audits)
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-    audit_path = AUDIT_DIR / f"delivery_dual_category_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv"
+    audit_path = AUDIT_DIR / f"delivery_dual_category_audit_{asof.strftime('%Y%m%d')}.csv"
     audit.to_csv(audit_path, index=False)
-    # Category-specific standalone outputs make the two conditions easy to compare.
     category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"].copy()
     category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"].copy()
     category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_avg60.csv", index=False)
     category_b.to_csv(AUDIT_DIR / "v8_delivery_category_b_each_day60.csv", index=False)
-    # Compatibility report path used by earlier project dashboards.
-    audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{_parse_date(asof_date).strftime('%Y%m%d')}.csv", index=False)
-    print(f"[DELIVERY] Category A average >= {threshold:.2f}%: {len(category_a)}")
-    print(f"[DELIVERY] Category B every day >= {threshold:.2f}%: {len(category_b)}")
-    print(f"[DELIVERY] WAIT_FOR_DATA: {(audit['DeliveryStatus'] == 'WAIT_FOR_DATA').sum()}")
-    print(f"[DELIVERY] Dual-category audit saved: {audit_path}")
+    audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
+    print(f"[DELIVERY] 30D Category A average >= {threshold:.2f}%: {len(category_a)}")
+    print(f"[DELIVERY] 30D Category B every valid session >= {threshold:.2f}%: {len(category_b)}")
+    print(f"[DELIVERY] WAIT_FOR_DATA (<5 candidate sessions): {(audit['DeliveryStatus'].astype(str).str.startswith('WAIT_FOR_DATA')).sum()}")
+    print(f"[DELIVERY] 30D dual-category audit saved: {audit_path}")
 
     metric_cols = [col for col in audit.columns if col not in candidates.columns]
-    qualified_symbols = category_b[[symbol_col] + metric_cols].copy()
+    qualified_symbols = audit.loc[
+        audit["DeliveryFilterStatus"].eq("PASS_GE_60_PERCENT"),
+        [symbol_col] + metric_cols,
+    ].copy()
     output = candidates.merge(qualified_symbols, on=symbol_col, how="inner")
     return output, audit
 

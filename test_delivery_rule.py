@@ -21,3 +21,25 @@ def test_both_categories_pass_when_each_day_is_at_least_60():
 def test_missing_session_waits_or_fails_closed():
     assert not avg_category([61, 65, 70, 99])
     assert not daily_category([61, 65, 70, 99])
+
+
+def avg_category_30d(values):
+    return len(values) >= 5 and all(v is not None for v in values) and sum(values) / len(values) >= 60.0
+
+def daily_category_30d(values):
+    return len(values) >= 5 and all(v is not None and v >= 60.0 for v in values)
+
+def test_30d_categories_accept_more_than_five_valid_sessions():
+    values = [60.0, 61.0, 62.0, 63.0, 64.0, 65.0, 66.0]
+    assert avg_category_30d(values)
+    assert daily_category_30d(values)
+
+def test_30d_category_a_uses_average_of_all_valid_sessions():
+    values = [50.0, 62.0, 62.0, 62.0, 62.0, 62.0]
+    assert avg_category_30d(values)
+    assert not daily_category_30d(values)
+
+def test_30d_categories_wait_when_fewer_than_five_valid_sessions():
+    values = [65.0, 66.0, 67.0, 68.0]
+    assert not avg_category_30d(values)
+    assert not daily_category_30d(values)
