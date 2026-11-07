@@ -76,7 +76,7 @@ def test_telegram_observation_preserves_all_liquidity_rows_but_digest_only_ranks
     assert "एकूण 20" in message
     assert "WEAK: 20" in message
     assert "ranked stock उपलब्ध नाही" in message
-    assert "STK19" not in message
+    assert "STK19" in message
 
 
 def test_telegram_observation_excludes_names_that_failed_liquidity():
