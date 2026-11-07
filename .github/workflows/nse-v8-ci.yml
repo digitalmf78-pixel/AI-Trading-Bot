@@ -48,7 +48,7 @@ jobs:
           test_fundamental_metric_verification.py test_fii_dii_activity.py test_nse_xbrl_fetch.py
           test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py
           test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py
-          test_sanitize_public_artifacts.py
+          test_sanitize_public_artifacts.py test_rsi_informational_only.py
           test_news_catalyst_parser.py test_upcoming_corporate_events.py test_bottom_detection.py test_delivery_consistency.py
 
       - name: Run V8 regression script
