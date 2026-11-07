@@ -130,7 +130,9 @@ def test_delivery_average_category_passes_while_daily_category_fails():
         sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert qualified.empty  # Average alone is not enough for the matrix gate.
+        assert len(qualified) == 1  # Category A alone qualifies under the production A OR B union.
+        assert qualified.iloc[0]["TckrSymb"] == "ABC"
+        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
         assert audit.iloc[0]["AvgDelivery5D"] >= 60.0
