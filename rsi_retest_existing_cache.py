@@ -125,20 +125,30 @@ def _rsi(series: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
     return rsi
 
 
-def _delivery_status(symbol: str, signal_date: pd.Timestamp, delivery_by_date: dict[pd.Timestamp, pd.DataFrame]) -> tuple[str, int, float | None]:
-    dates = sorted(d for d in delivery_by_date if d <= signal_date)[-5:]
-    if len(dates) < 5:
-        return "WAIT_FOR_DATA", len(dates), None
+def _delivery_status(symbol: str, signal_date: pd.Timestamp, delivery_by_date: dict[pd.Timestamp, pd.DataFrame]) -> dict:
+    """Apply the live 30-calendar-day Delivery A/B rules using only reports known by signal date."""
+    start_date = signal_date.normalize() - pd.Timedelta(days=29)
+    dates = sorted(d for d in delivery_by_date if start_date <= d <= signal_date.normalize())
     values = []
+    used_dates = []
     for day in dates:
         frame = delivery_by_date[day]
         hit = frame.loc[frame["SYMBOL"].eq(symbol), "DELIV_PER"]
-        if hit.empty or pd.isna(hit.iloc[-1]):
-            return "WAIT_FOR_DATA", len(dates), None
-        values.append(float(hit.iloc[-1]))
-    if all(v >= MIN_DELIVERY_PCT for v in values):
-        return "PASS_GE_60_EACH_OF_5", 5, min(values)
-    return "REJECT_LT_60_IN_ANY_OF_5", 5, min(values)
+        if not hit.empty and pd.notna(hit.iloc[-1]):
+            values.append(float(hit.iloc[-1]))
+            used_dates.append(day)
+    count = len(values)
+    if count < 5:
+        return {"DeliveryCategoryAStatus": "WAIT_FOR_DATA", "DeliveryCategoryBStatus": "WAIT_FOR_DATA",
+                "DeliverySessions": count, "DeliveryAverage30D_Pct": float(np.mean(values)) if values else np.nan,
+                "DeliveryMinimum30D_Pct": float(min(values)) if values else np.nan}
+    avg = float(np.mean(values))
+    minimum = float(min(values))
+    return {
+        "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT" if avg >= MIN_DELIVERY_PCT else "REJECT_AVG_LT_60_PERCENT",
+        "DeliveryCategoryBStatus": "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= MIN_DELIVERY_PCT for v in values) else "REJECT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
+        "DeliverySessions": count, "DeliveryAverage30D_Pct": avg, "DeliveryMinimum30D_Pct": minimum,
+    }
 
 
 def _signals_for_symbol(frame: pd.DataFrame) -> pd.DataFrame:
@@ -171,11 +181,11 @@ def _metrics(prefix: str, values: pd.Series, row: dict) -> None:
 
 def _summarize(name: str, signals: pd.DataFrame, delivery_passed: pd.DataFrame) -> dict:
     row = {"Setup": name, "TechnicalSignals": int(len(signals)),
-           "DeliveryPassSignals": int(len(delivery_passed)),
-           "DeliveryRejectedSignals": int((signals.get("DeliveryStatus", pd.Series(dtype=str)) == "REJECT_LT_60_IN_ANY_OF_5").sum()),
-           "DeliveryWaitSignals": int((signals.get("DeliveryStatus", pd.Series(dtype=str)) == "WAIT_FOR_DATA").sum()),
+           "DeliveryQualifiedSignals": int(len(delivery_passed)),
+           "DeliveryRejectedSignals": int(len(signals) - len(delivery_passed) - int((signals.get("DeliveryCategoryAStatus", pd.Series(dtype=str)) == "WAIT_FOR_DATA").sum())),
+           "DeliveryWaitSignals": int((signals.get("DeliveryCategoryAStatus", pd.Series(dtype=str)) == "WAIT_FOR_DATA").sum()),
            "FundamentalBacktestStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
-           "PrimaryMetricsScope": "TECHNICAL_ONLY; historical delivery/fundamental gates may be unavailable"}
+           "PrimaryMetricsScope": "TECHNICAL_ONLY; delivery A/B qualification uses available candidate-specific reports in the 30-calendar-day window"}
     for horizon in FORWARD_SESSIONS:
         col = f"ForwardReturn{horizon}D_Pct"
         vals = pd.to_numeric(signals.get(col, pd.Series(dtype=float)), errors="coerce").dropna()
@@ -216,7 +226,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
     coverage.to_csv(output_dir / "cache_coverage.csv", index=False)
     pd.DataFrame({"Issue": bad_price_files + bad_delivery_files}).to_csv(output_dir / "cache_file_issues.csv", index=False)
     if prices.empty:
-        empty = pd.DataFrame(columns=["Date", "Symbol", "Setup", "Close", "EMA50", "RSI14", "DeliveryStatus"])
+        empty = pd.DataFrame(columns=["Date", "Symbol", "Setup", "Close", "EMA50", "RSI14", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"])
         empty.to_csv(output_dir / "rsi_retest_signals.csv", index=False)
         pd.DataFrame([{"Status": "WAIT_FOR_DATA", "Reason": "No valid cached daily EQ bhavcopy files found; network access intentionally disabled."}]).to_csv(output_dir / "rsi_retest_comparison.csv", index=False)
         empty.to_csv(output_dir / "rsi_retest_current_watchlist.csv", index=False)
@@ -233,13 +243,13 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             for idx in idxs:
                 row = f.loc[idx]
                 signal_date = pd.Timestamp(row["DATE"]).normalize()
-                dstatus, dcount, dmin = _delivery_status(symbol, signal_date, delivery_by_date)
+                delivery = _delivery_status(symbol, signal_date, delivery_by_date)
                 rec = {"Date": signal_date.date().isoformat(), "Symbol": symbol, "Setup": setup,
                        "Close": float(row["CLOSE"]), "EMA50": float(row["EMA50"]),
                        "EMA50Bars": int(row["EMA50Bars"]), "EMA50WarmupStatus": str(row["EMA50WarmupStatus"]),
                        "RSI14": float(row["RSI14"]),
                        "PreviousRSI14": float(f.loc[idx-1, "RSI14"]) if idx >= 1 and pd.notna(f.loc[idx-1, "RSI14"]) else np.nan,
-                       "DeliveryStatus": dstatus, "DeliverySessions": dcount, "MinimumDelivery5D_Pct": dmin,
+                       **delivery,
                        "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY"}
                 for horizon in FORWARD_SESSIONS:
                     future_idx = idx + horizon
@@ -255,18 +265,21 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 all_rows.append(rec)
     signals = pd.DataFrame(all_rows)
     if signals.empty:
-        signals = pd.DataFrame(columns=["Date", "Symbol", "Setup", "Close", "EMA50", "RSI14", "PreviousRSI14", "DeliveryStatus", "DeliverySessions", "MinimumDelivery5D_Pct", "FundamentalStatus", "ForwardReturn5D_Pct", "ForwardReturn10D_Pct"])
+        signals = pd.DataFrame(columns=["Date", "Symbol", "Setup", "Close", "EMA50", "RSI14", "PreviousRSI14", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus", "DeliverySessions", "DeliveryAverage30D_Pct", "DeliveryMinimum30D_Pct", "FundamentalStatus", "ForwardReturn5D_Pct", "ForwardReturn10D_Pct"])
     signals.to_csv(output_dir / "rsi_retest_signals.csv", index=False)
-    # Performance only uses signals that have confirmed delivery qualification. Signals with
-    # incomplete delivery history or rejected delivery are not counted as qualifying trades.
+    # Report Category A and Category B independently; the live pipeline retains both.
     comparison = []
     for setup in ("RSI30_RECOVERY", "RSI40_RETEST", "RSI50_RETEST"):
         raw = signals[signals["Setup"].eq(setup)].copy() if not signals.empty else signals.copy()
-        qualified = raw[raw["DeliveryStatus"].eq("PASS_GE_60_EACH_OF_5")].copy() if not raw.empty else raw
-        comparison.append(_summarize(setup, raw, qualified))
+        for category, status_col, pass_status in (
+            ("A_AVERAGE_30D", "DeliveryCategoryAStatus", "PASS_AVG_GE_60_PERCENT"),
+            ("B_EVERY_SESSION_30D", "DeliveryCategoryBStatus", "PASS_EACH_DAY_GE_60_PERCENT"),
+        ):
+            qualified = raw[raw[status_col].eq(pass_status)].copy() if not raw.empty else raw
+            comparison.append(_summarize(f"{setup}_{category}", raw, qualified))
     comp = pd.DataFrame(comparison)
     comp["BacktestStatus"] = np.where(comp["TradesWith5DOutcome"].fillna(0).gt(0), "TECHNICAL_ONLY_PRELIMINARY", "WAIT_FOR_DATA")
-    comp["RiskNote"] = "Primary returns are technical-only and may include EMA50 warm-up bars; delivery-qualified metrics are separate. No point-in-time fundamentals, transaction costs, or slippage. Do not use as production rule without a longer cache and validation."
+    comp["RiskNote"] = "Primary returns are technical-only and may include EMA50 warm-up bars; A and B delivery-qualified metrics are separate. Minimum 5 candidate-specific valid reports in 30 calendar days. No point-in-time fundamentals, transaction costs, or slippage."
     comp.to_csv(output_dir / "rsi_retest_comparison.csv", index=False)
     latest = prices["DATE"].max()
     current = signals[signals["Date"].eq(latest.date().isoformat())].copy() if not signals.empty else signals.copy()
