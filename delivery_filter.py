@@ -1,12 +1,15 @@
-"""NSE EOD five-session delivery filter and category audit.
+"""NSE EOD Delivery A/B classification and consistency audit.
 
-Category A passes when the five-session average Delivery % is >= 60.00%.
-The downstream gate passes only when each of those five sessions is >= 60.00%.
-The average-based category remains available for comparison and collection reports.
-Use the latest five distinct valid reports dated on or before the EOD as-of date.
-If the current day's report has not been published, skip that unavailable date,
-log it, and use prior valid reports; never relabel old data as current-day data.
-Fewer than five valid distinct reports means WAIT_FOR_DATA.
+The production V8 eligibility rule uses all valid distinct NSE Delivery reports
+inside the 30-calendar-day window ending on the EOD as-of date. Category A
+passes when the candidate's average across its valid reports is >=60.00%;
+Category B passes only when every valid report is >=60.00%. The production
+scanner retains the union (A OR B). Each candidate needs at least five valid
+distinct reports; fewer reports or stale/unavailable data means WAIT_FOR_DATA.
+
+RVOL is not an eligibility gate for Delivery-qualified stocks. The scanner
+classifies RVOL >1.5, RVOL <=1.5, and unavailable RVOL separately after
+Delivery; all A/B-qualified stocks remain available for the liquidity stage.
 """
 
 from __future__ import annotations
