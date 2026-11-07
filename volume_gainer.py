@@ -3,7 +3,7 @@ import io
 import zipfile
 import requests
 import pandas as pd
-from delivery_filter import apply_delivery_filter
+from delivery_filter import apply_delivery_filter, get_delivery_sessions
 from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
@@ -3551,7 +3551,7 @@ def main():
     # --------------------------------------------------------
     # STEP 4: CLASSIFY DELIVERY A/B BEFORE APPLYING THE RVOL GATE
     # --------------------------------------------------------
-    print("\\nSTEP 4: Classifying independent 5-session Delivery Categories A and B...")
+    print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B...")
     delivery_data_available = True
     category_a_rvol = current.iloc[0:0].copy()
     category_b_rvol = current.iloc[0:0].copy()
@@ -3562,16 +3562,22 @@ def main():
                 delivery_audit[col] = pd.Series(dtype="object")
     else:
         try:
+            # Fetch the full 30-calendar-day Delivery window once. A/B and
+            # 5D/10D/20D consistency reuse these same in-memory reports.
+            delivery_sessions = get_delivery_sessions(
+                eod_date, required_sessions=5, max_calendar_days=30,
+                session=session, collect_all=True,
+            )
             _, delivery_audit = apply_delivery_filter(
-                current, eod_date, symbol_col="TckrSymb", series_col="SctySrs", minimum_average=60.0
+                current, eod_date, symbol_col="TckrSymb", series_col="SctySrs",
+                minimum_average=60.0, sessions=delivery_sessions,
             )
             delivery_data_available = not delivery_audit.empty
 
-            # Independent observational tracker only. A 20-session history
-            # failure must never change or block the existing 5-session A/B gate.
+            # Consistency is observational and must reuse the shared Delivery fetch.
             try:
                 delivery_audit, _ = build_delivery_consistency_report(
-                    delivery_audit, eod_date, http_session=session, threshold=60.0
+                    delivery_audit, eod_date, sessions=delivery_sessions, threshold=60.0
                 )
             except Exception as consistency_exc:
                 consistency_columns = [
@@ -3653,8 +3659,8 @@ def main():
                 current.to_csv("outputs/v8_rvol_gt_1_5_candidates.csv", index=False)
             else:
                 current = combined
-            print(f"[DELIVERY A] Average of five sessions >=60%; RVOL >1.5 qualified={len(category_a_rvol)}")
-            print(f"[DELIVERY B] Every one of five sessions >=60%; RVOL >1.5 qualified={len(category_b_rvol)}")
+            print(f"[DELIVERY A] 30D valid-session average >=60%; RVOL >1.5 qualified={len(category_a_rvol)}")
+            print(f"[DELIVERY B] Every valid 30D session >=60%; RVOL >1.5 qualified={len(category_b_rvol)}")
             print(f"[DELIVERY] Unique A/B members proceeding to liquidity={len(current)}")
         except Exception as exc:
             delivery_data_available = False
