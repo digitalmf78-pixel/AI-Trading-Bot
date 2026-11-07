@@ -6,6 +6,13 @@ on:
       - '**.py'
       - '.github/workflows/**'
       - 'data/inputs/fundamental_thresholds.json'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.py'
+      - '.github/workflows/**'
+      - 'data/inputs/fundamental_thresholds.json'
 
 permissions:
   contents: read
