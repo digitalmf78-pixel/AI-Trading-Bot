@@ -1002,9 +1002,11 @@ def calculate_5d_volume(
 
 
 def prepare_primary_shortlist(result, eod_date):
-    """Keep candidates with complete volume history; delivery is the requested gate.
+    """Legacy volume-history diagnostic helper; not the production eligibility path.
 
-    Delivery Category B (each of five daily values >=60%) is applied after
+    Production eligibility is Delivery Category A OR B over the 30-day report
+    window. RVOL is classified after Delivery and does not reject <=1.5 rows.
+    This helper only labels history completeness for its callers.
     RVOL >1.5. Category A (five-session average >=60%) remains in audit reports.
     A 3-of-5 low-volume rule is NOT used as a filter. Five-session volume-pattern
     and prior-20-session baseline data are still validated for reliable analysis.
@@ -1059,7 +1061,7 @@ def prepare_primary_shortlist(result, eod_date):
     print(
         f"[PRIMARY SHORTLIST] Eligible with complete history={len(primary)}; "
         f"WAIT_FOR_DATA={int((~complete).sum())}. "
-        "Dual Delivery Categories are applied after RVOL > 1.5; Category B each day >=60% is the downstream gate. "
+        "Production flow applies Delivery A OR B first; RVOL is classification only and does not reject low-RVOL candidates. "
         f"Audit: {audit_path}"
     )
     return primary
@@ -3653,8 +3655,6 @@ def main():
     # --------------------------------------------------------
     print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B; RVOL will classify only...")
     delivery_data_available = True
-    category_a_rvol = current.iloc[0:0].copy()
-    category_b_rvol = current.iloc[0:0].copy()
     if current.empty:
         delivery_audit = current.copy()
         for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
