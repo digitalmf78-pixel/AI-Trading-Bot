@@ -79,7 +79,7 @@ class SectorMappingCacheReconciliationTests(unittest.TestCase):
             sector_data.CONSTITUENT_CACHE_DIR = Path(tmp)
             try:
                 cache_path = Path(tmp) / "NIFTY_AUTO.csv"
-                cache_path.write_text("Symbol,Company Name\\nABC,ABC Limited\\nXYZ,XYZ Limited\\n", encoding="utf-8")
+                cache_path.write_text("Symbol,Company Name\nABC,ABC Limited\nXYZ,XYZ Limited\n", encoding="utf-8")
                 (Path(tmp) / "NIFTY_AUTO.json").write_text(json.dumps({
                     "fetched_at_epoch": time.time(),
                     "source_filename": "ind_niftyautolist.csv",
@@ -105,7 +105,7 @@ class SectorMappingCacheReconciliationTests(unittest.TestCase):
             sector_data.CONSTITUENT_CACHE_DIR = Path(tmp)
             try:
                 cache_path = Path(tmp) / "NIFTY_AUTO.csv"
-                cache_path.write_text("Symbol\\nOLD\\n", encoding="utf-8")
+                cache_path.write_text("Symbol\nOLD\n", encoding="utf-8")
                 (Path(tmp) / "NIFTY_AUTO.json").write_text(json.dumps({
                     "fetched_at_epoch": time.time() - sector_data.CONSTITUENT_CACHE_TTL_SECONDS - 1,
                     "source_filename": "old.csv",
@@ -113,7 +113,7 @@ class SectorMappingCacheReconciliationTests(unittest.TestCase):
 
                 class Response:
                     status_code = 200
-                    content = b"Symbol,Company Name\\nNEW,New Limited\\n"
+                    content = b"Symbol,Company Name\nNEW,New Limited\n"
                 class Session:
                     def __init__(self):
                         self.calls = []
