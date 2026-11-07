@@ -1266,6 +1266,49 @@ def calculate_rsi(
     return rsi
 
 
+def classify_rsi_observation(current_rsi, previous_rsi):
+    """Return descriptive RSI zone/direction labels only; never an eligibility gate."""
+    current = pd.to_numeric(pd.Series([current_rsi]), errors="coerce").iloc[0]
+    previous = pd.to_numeric(pd.Series([previous_rsi]), errors="coerce").iloc[0]
+    if pd.isna(current):
+        return {
+            "RSIDirection": "WAIT_FOR_DATA",
+            "RSIZone": "WAIT_FOR_DATA",
+            "RSIBehaviour": "WAIT_FOR_DATA",
+            "RSIRetestStatus": "NOT_EVALUATED",
+            "RSIDivergenceStatus": "NOT_EVALUATED",
+        }
+    if current <= 30:
+        zone = "OVERSOLD"
+    elif current >= 70:
+        zone = "OVERBOUGHT"
+    else:
+        zone = "NEUTRAL"
+    if pd.isna(previous):
+        direction = "WAIT_FOR_DATA"
+    elif current - previous > 0.5:
+        direction = "RISING"
+    elif current - previous < -0.5:
+        direction = "FALLING"
+    else:
+        direction = "FLAT"
+    if zone == "OVERSOLD":
+        behaviour = "OVERSOLD_RECOVERY" if direction == "RISING" else "OVERSOLD_PRESSURE" if direction == "FALLING" else "OVERSOLD"
+    elif zone == "OVERBOUGHT":
+        behaviour = "OVERBOUGHT_COOLING" if direction == "FALLING" else "OVERBOUGHT_MOMENTUM" if direction == "RISING" else "OVERBOUGHT"
+    else:
+        behaviour = f"RSI_{direction}" if direction in {"RISING", "FALLING"} else "NEUTRAL"
+    return {
+        "RSIDirection": direction,
+        "RSIZone": zone,
+        "RSIBehaviour": behaviour,
+        # Retest/divergence are explicitly not asserted until their dedicated,
+        # validated detectors are implemented; they remain informational only.
+        "RSIRetestStatus": "NOT_EVALUATED",
+        "RSIDivergenceStatus": "NOT_EVALUATED",
+    }
+
+
 # ============================================================
 # ADX
 # ============================================================
@@ -1520,7 +1563,10 @@ def calculate_trend(result, historical):
             "EMA44ProximityStatus": "WAIT_FOR_DATA",
             "EMA44SignalStatus": "WAIT_FOR_DATA",
             "PriceChange5D": float("nan"),
-            "RSI14": float("nan"), "ADX14": float("nan"),
+            "RSI14": float("nan"), "RSI14Previous": float("nan"),
+            "RSIDirection": "WAIT_FOR_DATA", "RSIZone": "WAIT_FOR_DATA",
+            "RSIBehaviour": "WAIT_FOR_DATA", "RSIRetestStatus": "NOT_EVALUATED",
+            "RSIDivergenceStatus": "NOT_EVALUATED", "ADX14": float("nan"),
             "TrendClassification": "WAIT_FOR_DATA",
         }
         if hist is None or hist.empty:
@@ -1547,6 +1593,8 @@ def calculate_trend(result, historical):
         ema20 = float(last["EMA20"])
         ema44 = float(last["EMA44"])
         rsi = float(last["RSI14"]) if pd.notna(last["RSI14"]) else float("nan")
+        previous_rsi = float(hist.iloc[-2]["RSI14"]) if pd.notna(hist.iloc[-2]["RSI14"]) else float("nan")
+        rsi_observation = classify_rsi_observation(rsi, previous_rsi)
         adx = float(last["ADX14"]) if pd.notna(last["ADX14"]) else float("nan")
         distance = ((current_close - ema44) / ema44) * 100 if ema44 > 0 else float("nan")
         proximity = "NEAR_EMA44" if pd.notna(distance) and abs(distance) <= 3.0 else "NOT_NEAR_EMA44"
@@ -1605,6 +1653,8 @@ def calculate_trend(result, historical):
             "EMA44SignalStatus": signal,
             "PriceChange5D": price_change_5d,
             "RSI14": rsi,
+            "RSI14Previous": previous_rsi,
+            **rsi_observation,
             "ADX14": adx,
             "TrendClassification": trend,
         })
@@ -1612,7 +1662,8 @@ def calculate_trend(result, historical):
     trend_columns = [
         "TckrSymb", "EMA20", "EMA44", "EMA44DistancePct", "EMA44Trend",
         "EMA44Position", "EMA44ProximityStatus", "EMA44SignalStatus",
-        "PriceChange5D", "RSI14", "ADX14", "TrendClassification",
+        "PriceChange5D", "RSI14", "RSI14Previous", "RSIDirection", "RSIZone",
+        "RSIBehaviour", "RSIRetestStatus", "RSIDivergenceStatus", "ADX14", "TrendClassification",
     ]
     # Empty screened lists are valid (for example, when the mandatory delivery
     # gate is WAIT_FOR_DATA). Keep the merge key even when there are zero rows.
