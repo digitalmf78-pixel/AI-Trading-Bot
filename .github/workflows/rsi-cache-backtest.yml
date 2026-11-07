@@ -38,7 +38,7 @@ jobs:
             data/cache/delivery/
           key: rsi-retest-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            nse-bhavcopy-${{ runner.os }}-main-
+            nse-bhavcopy-Linux-main-42262116884
 
       - name: Report restored cache inventory
         run: |
