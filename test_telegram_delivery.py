@@ -42,3 +42,67 @@ def test_telegram_retries_failed_delivery(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda *_: None)
     news_catalyst.send_marathi_telegram(None, "2026-11-05", None, {}, "token", "chat")
     assert len(calls) == 2
+
+def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation_layers():
+    report = __import__("pandas").DataFrame([
+        {
+            "TckrSymb": "STRONG1", "LiquidityFilterStatus": "PASS", "LiquidityTier": "STRONG",
+            "AvgDailyTradedValue20D": 50000000, "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
+            "DeliveryCategoryBStatus": "FAIL_DAY", "AvgDelivery30D": 65.0, "RVOL": 2.1,
+            "FundamentalStatus": "COMPLETE", "FundamentalScore": 72.0,
+            "CoreTechnicalScreenStatus": "PASS", "SetupType": "Breakout",
+            "TrendClassification": "Bullish", "EMA44SignalStatus": "ABOVE_EMA44",
+        },
+        {
+            "TckrSymb": "MEDIUM1", "LiquidityFilterStatus": "PASS", "LiquidityTier": "MEDIUM",
+            "AvgDailyTradedValue20D": 30000000, "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
+            "DeliveryCategoryBStatus": "PASS_EACH_DAY_GE_60_PERCENT", "AvgDelivery30D": 68.0, "RVOL": 1.2,
+            "FundamentalStatus": "PARTIAL_DATA", "FundamentalScore": 51.0,
+            "CoreTechnicalScreenStatus": "REJECT", "SetupType": "No Clear Setup",
+            "TrendClassification": "Bearish", "EMA44SignalStatus": "BELOW_EMA44",
+        },
+        {
+            "TckrSymb": "LOW1", "LiquidityFilterStatus": "PASS", "LiquidityTier": "LOW",
+            "AvgDailyTradedValue20D": 16000000, "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
+            "DeliveryCategoryBStatus": "FAIL_DAY", "AvgDelivery30D": 61.0, "RVOL": 0.8,
+            "FundamentalStatus": "WAIT_FOR_DATA", "FundamentalScore": None,
+            "CoreTechnicalScreenStatus": "WAIT_FOR_DATA", "SetupType": "WAIT_FOR_DATA",
+            "TrendClassification": "WAIT_FOR_DATA", "EMA44SignalStatus": "WAIT_FOR_DATA",
+        },
+    ])
+    result = __import__("pandas").DataFrame([
+        {
+            "TckrSymb": "STRONG1", "Sector": "Nifty Bank", "SectorStrengthStatus": "PASS",
+            "NewsEvidenceStatus": "PRIMARY_CONFIRMED", "NewsPrimarySourceVerified": True,
+            "Confirmation3Plus1": True, "MandatoryConfirmationStatus": "PASS",
+            "RiskRewardStatus": "PASS", "RiskReward": 2.4, "ChaseStatus": "CLEAR",
+            "RiskControlStatus": "PASS", "EODWatchlistStatus": "WATCH",
+            "RiskControlReason": "RISK_LIMITS_PASSED",
+        },
+        {
+            "TckrSymb": "MEDIUM1", "Sector": "Nifty IT", "SectorStrengthStatus": "FAIL",
+            "NewsEvidenceStatus": "UNVERIFIED", "NewsPrimarySourceVerified": False,
+            "Confirmation3Plus1": False, "MandatoryConfirmationStatus": "FAIL",
+            "RiskRewardStatus": "FAIL", "RiskReward": 0.8, "ChaseStatus": "CHASE",
+            "RiskControlStatus": "REJECT", "EODWatchlistStatus": "SKIP",
+            "RiskControlReason": "STOP_DISTANCE_EXCEEDS_LIMIT",
+        },
+        {
+            "TckrSymb": "LOW1", "Sector": "Unknown", "SectorStrengthStatus": "WAIT_FOR_DATA",
+            "NewsEvidenceStatus": "NO_DATA", "NewsPrimarySourceVerified": False,
+            "Confirmation3Plus1": False, "MandatoryConfirmationStatus": "WAIT_FOR_DATA",
+            "RiskRewardStatus": "WAIT_FOR_DATA", "RiskReward": None, "ChaseStatus": "CLEAR",
+            "RiskControlStatus": "WAIT_FOR_DATA", "EODWatchlistStatus": "WAIT_FOR_DATA",
+            "RiskControlReason": "SECTOR_REQUIRED_FOR_CONCENTRATION_CHECK",
+        },
+    ])
+    lines = news_catalyst.build_marathi_digest(result, "2026-11-06", None, {}, observation_report=report)
+    digest = "\n".join(lines)
+    for symbol in ("STRONG1", "MEDIUM1", "LOW1"):
+        assert symbol in digest
+    for status in ("Technical:PASS", "Technical:REJECT", "Sector:FAIL", "PRIMARY_CONFIRMED",
+                   "MandatoryConfirmationStatus", "Risk:REJECT", "FINAL:WATCH",
+                   "FINAL:SKIP", "FINAL:WAIT_FOR_DATA"):
+        assert status in digest
+    assert "CORE TECHNICAL PASS: STRONG1" in digest
+
