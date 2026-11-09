@@ -632,6 +632,36 @@ def _eod_required_data_status(row):
     return "READY"
 
 
+def _validate_eod_window_frames(session_frames, eod_date):
+    """Validate 19 distinct prior sessions followed by the exact current EOD session.
+
+    The final frame is intentionally the current EOD frame. Earlier versions
+    incorrectly applied the prior-session-only date check to that final frame,
+    making every 20-session accumulation/distribution calculation WAIT_FOR_DATA.
+    """
+    expected_eod = pd.Timestamp(eod_date).date()
+    if len(session_frames) != 20:
+        return False, []
+
+    dates = []
+    for index, session_frame in enumerate(session_frames):
+        if session_frame is None or session_frame.empty or "Date" not in session_frame.columns:
+            return False, []
+        parsed = pd.to_datetime(session_frame["Date"], errors="coerce").dropna().dt.date.unique()
+        if len(parsed) != 1:
+            return False, []
+        session_date = parsed[0]
+        if index < 19 and session_date >= expected_eod:
+            return False, []
+        if index == 19 and session_date != expected_eod:
+            return False, []
+        dates.append(session_date)
+
+    if len(set(dates)) != 20 or dates != sorted(dates):
+        return False, []
+    return True, dates
+
+
 def run_eod_layers(
     result: pd.DataFrame,
     historical: list[pd.DataFrame],
@@ -698,19 +728,9 @@ def run_eod_layers(
     current_dated = current.copy()
     current_dated["Date"] = pd.Timestamp(eod_date)
     eod_session_frames = historical[-19:] + [current_dated]
-    eod_window_dates = []
-    eod_window_complete = len(eod_session_frames) == 20
-    for session_frame in eod_session_frames:
-        if session_frame is None or session_frame.empty or "Date" not in session_frame.columns:
-            eod_window_complete = False
-            break
-        parsed_dates = pd.to_datetime(session_frame["Date"], errors="coerce").dropna().dt.date.unique()
-        if len(parsed_dates) != 1 or parsed_dates[0] >= pd.Timestamp(eod_date).date():
-            eod_window_complete = False
-            break
-        eod_window_dates.append(parsed_dates[0])
-    if len(eod_window_dates) != 20 or len(set(eod_window_dates)) != 20:
-        eod_window_complete = False
+    eod_window_complete, eod_window_dates = _validate_eod_window_frames(
+        eod_session_frames, eod_date
+    )
 
     ad_history = pd.concat(eod_session_frames, ignore_index=True, sort=False)
     ad_history["Date"] = pd.to_datetime(ad_history["Date"], errors="coerce")
