@@ -1755,7 +1755,7 @@ def calculate_trend(result, historical):
             or len(hist) < 50
             or hist["ClsPric"].isna().any()
             or not {"HghPric", "LwPric"}.issubset(hist.columns)
-            or hist[["HghPric", "LwPric"]].tail(50).isna().any().any()
+            or hist[["HghPric", "LwPric"]].isna().any().any()
         ):
             trend_rows.append(missing)
             continue
