@@ -67,15 +67,16 @@ def _atr14(history):
 
 
 def _ema_window_observation(hist, market_dates, period):
-    dates = market_dates[-period:]
-    if len(dates) != period:
+    if len(market_dates) < period or len(hist) != len(market_dates):
         return {"status": "WAIT_FOR_DATA"}
-    part = hist[hist["Date"].dt.date.isin(dates)].copy().sort_values("Date")
-    if len(part) != period or "ClsPric" not in part.columns or part["ClsPric"].isna().any():
+    ordered = hist.sort_values("Date").copy()
+    if "ClsPric" not in ordered.columns or ordered["ClsPric"].isna().any():
         return {"status": "WAIT_FOR_DATA"}
-    close = pd.to_numeric(part["ClsPric"], errors="coerce")
+    close = pd.to_numeric(ordered["ClsPric"], errors="coerce")
     if close.isna().any():
         return {"status": "WAIT_FOR_DATA"}
+    # Calculate the EMA over the entire available point-in-time history,
+    # not merely the last N rows; N is the EMA span, not its seed window.
     ema_series = close.ewm(span=period, adjust=False, min_periods=period).mean()
     value = _num(ema_series.iloc[-1])
     current = _num(close.iloc[-1])
@@ -84,7 +85,6 @@ def _ema_window_observation(hist, market_dates, period):
     distance = (current / value - 1.0) * 100.0
     position = "ABOVE" if current > value else "BELOW" if current < value else "AT"
     return {"status": "COMPLETE", "value": value, "distance_pct": distance, "position": position}
-
 
 def _session_date(value):
     parsed = pd.to_datetime(value, errors="coerce")
