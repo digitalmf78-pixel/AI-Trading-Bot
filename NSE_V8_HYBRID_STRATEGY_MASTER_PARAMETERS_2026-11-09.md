@@ -406,3 +406,20 @@ Before taking action on this repository:
 - Pocket Pivot remains not implemented/classified because the exact formula, lookback and candle conditions remain unresolved. No guessed formula was added.
 
 **Validation:** GitHub Actions run `42591190596`, commit `c2b02df2f9b8431008f2257365164a68a4dae850`, completed SUCCESS: 291 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. Issuer Matching and RSS Parser workflow also completed SUCCESS.
+
+## 27. Pocket Pivot and repeated Support/Resistance audit (09-Nov-2026)
+
+### Pocket Pivot audit result
+- Repository search found no implemented Pocket Pivot detector, output status, or dedicated tests.
+- Existing RVOL, generic breakout volume expansion, CLV, and up/down-volume observations are not Pocket Pivot and must not be relabeled as such.
+- The only recorded concept remains an up-day volume comparison against the maximum volume of recent down-days. The lookback, eligible down-day definition, up-day candle/close conditions, same-day handling, zero/missing-volume behavior, corporate-action adjustment, and output semantics are not approved.
+- Decision: no Pocket Pivot code or signal added. This avoids silently introducing a guessed indicator or affecting existing gates.
+
+### Repeated Support/Resistance audit result
+- Existing `calculate_support_resistance` emits previous-day/week levels and rolling 20/50/100/200-session extrema, then selects a single nearest support/resistance candidate under the existing rules. It does not cluster nearby price levels into zones and does not count repeated zone tests.
+- Existing Potential Accumulation report already emits `PriceRange{20,50,100,200}DExactLowTouchCount` and `ExactHighTouchCount`. These count only exact equality to the absolute rolling-window extreme. They are raw observations, not tolerance-based zone tests; a one-tick-near touch is not counted.
+- Existing 3-left/3-right pivot highs/lows are separate confirmed pivot observations and are not interchangeable with repeated support/resistance zone tests.
+- Zone clustering tolerance, minimum separation between tests, wick-vs-close touch definition, rejection/hold definition, and minimum number of tests remain unresolved. No tolerance or repeated-test threshold was invented.
+- Decision: retain the existing exact-extreme counts and pivot observations as-is; no new S/R zone signal or gate added. A future zone module must be a separate, non-gating report until its measurement definitions are approved.
+
+**Audit conclusion:** Pocket Pivot is not implemented; repeated S/R zone tests are not implemented. Existing range-extreme counts and confirmed pivots are present but must not be described as zone-test confirmation. Existing scanner eligibility, ranking, breakout, risk, and entry behavior remain unchanged.
