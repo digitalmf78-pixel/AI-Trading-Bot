@@ -98,7 +98,11 @@ def _build_price_history(candidate, historical, asof, market_sessions):
     for raw in historical or []:
         if raw is None or raw.empty or "TckrSymb" not in raw.columns or "Date" not in raw.columns:
             continue
-        part = raw[raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)].copy()
+        raw_dates = pd.to_datetime(raw["Date"], errors="coerce")
+        part = raw[
+            raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)
+            & raw_dates.dt.date.lt(asof)
+        ].copy()
         if "SctySrs" in part.columns:
             part = part[part["SctySrs"].astype(str).str.strip().str.upper().eq(series)]
         if not part.empty:
@@ -113,7 +117,8 @@ def _build_price_history(candidate, historical, asof, market_sessions):
     history = history.dropna(subset=["Date"])
     history = history[history["Date"].dt.date <= asof]
     history = history.sort_values("Date", kind="mergesort")
-    history = history.groupby(["TckrSymb", "Date"], as_index=False, sort=False).last()
+    # Keep duplicate session rows visible so downstream completeness checks
+    # cannot turn an ambiguous source into one apparently valid daily candle.
     for col in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
         if col in history.columns:
             history[col] = pd.to_numeric(history[col], errors="coerce")
@@ -232,7 +237,12 @@ def build_potential_accumulation_report(
             "HigherLowStatus": "WAIT_FOR_DATA",
         }
         if not hist.empty:
-            pivot_history_complete = len(hist) == len(ordered_market_sessions)
+            hist_dates = hist["Date"].dt.date
+            pivot_history_complete = (
+                len(hist) == len(ordered_market_sessions)
+                and hist_dates.nunique() == len(ordered_market_sessions)
+                and set(hist_dates) == set(ordered_market_sessions)
+            )
             if pivot_history_complete and "LwPric" in hist.columns and "HghPric" in hist.columns and hist[["LwPric", "HghPric"]].notna().all().all():
                 row["PivotStructureStatus"] = "COMPLETE"
                 row["ATR14"] = _atr14(hist)
@@ -267,7 +277,12 @@ def build_potential_accumulation_report(
                     continue
                 window_dates = ordered_market_sessions[-window:]
                 part = hist[hist["Date"].dt.date.isin(window_dates)].copy()
-                if len(window_dates) != window or len(part) != window or part[["HghPric", "LwPric"]].isna().any().any():
+                if (
+                    len(window_dates) != window or len(part) != window
+                    or part["Date"].dt.date.nunique() != window
+                    or set(part["Date"].dt.date) != set(window_dates)
+                    or part[["HghPric", "LwPric"]].isna().any().any()
+                ):
                     row[f"{prefix}Status"] = "WAIT_FOR_DATA"
                     for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
                         row[f"{prefix}{suffix}"] = float("nan")
@@ -310,7 +325,12 @@ def build_potential_accumulation_report(
 
             recent_dates = ordered_market_sessions[-20:]
             recent = hist[hist["Date"].dt.date.isin(recent_dates)].copy().sort_values("Date")
-            if len(recent_dates) == 20 and len(recent) == 20 and recent["ClsPric"].notna().all():
+            if (
+                len(recent_dates) == 20 and len(recent) == 20
+                and recent["Date"].dt.date.nunique() == 20
+                and set(recent["Date"].dt.date) == set(recent_dates)
+                and recent["ClsPric"].notna().all()
+            ):
                 recent["CloseReturnPct"] = recent["ClsPric"].pct_change() * 100.0
             else:
                 recent = pd.DataFrame()
