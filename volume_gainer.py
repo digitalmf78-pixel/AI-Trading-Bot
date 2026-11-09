@@ -2250,6 +2250,9 @@ def calculate_support_resistance(result, historical):
     for column in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
         if column in all_history.columns:
             all_history[column] = pd.to_numeric(all_history[column], errors="coerce")
+            all_history[column] = all_history[column].replace(
+                [float("inf"), float("-inf")], float("nan")
+            )
     all_history = all_history.dropna(subset=["Date"])
     unique_dates = sorted({value.date() for value in all_history["Date"]})
     if not unique_dates:
@@ -2291,6 +2294,13 @@ def calculate_support_resistance(result, historical):
     rows = []
     for symbol in result["TckrSymb"]:
         stock = history_by_symbol.get(symbol)
+        if (
+            result["TckrSymb"].astype(str).str.strip().str.upper().eq(
+                str(symbol).strip().upper()
+            ).sum() != 1
+        ):
+            rows.append(wait_row(symbol))
+            continue
         if stock is None or stock.empty:
             rows.append(wait_row(symbol))
             continue
@@ -2312,7 +2322,18 @@ def calculate_support_resistance(result, historical):
             continue
         current = current_rows.iloc[0]
         current_close = safe_float(current.get("ClsPric"))
-        if not pd.notna(current_close) or current_close <= 0:
+        current_open = safe_float(current.get("OpnPric"))
+        current_high = safe_float(current.get("HghPric"))
+        current_low = safe_float(current.get("LwPric"))
+        current_candle_valid = (
+            all(pd.notna(value) and value > 0 for value in (
+                current_open, current_high, current_low, current_close
+            ))
+            and current_high >= max(current_open, current_close)
+            and current_low <= min(current_open, current_close)
+            and current_high >= current_low
+        )
+        if not current_candle_valid:
             rows.append(wait_row(symbol))
             continue
 
@@ -2326,6 +2347,10 @@ def calculate_support_resistance(result, historical):
             len(previous_day_rows) == 1
             and pd.notna(safe_float(previous_day_rows.iloc[0].get("HghPric")))
             and pd.notna(safe_float(previous_day_rows.iloc[0].get("LwPric")))
+            and safe_float(previous_day_rows.iloc[0].get("HghPric")) > 0
+            and safe_float(previous_day_rows.iloc[0].get("LwPric")) > 0
+            and safe_float(previous_day_rows.iloc[0].get("HghPric"))
+                >= safe_float(previous_day_rows.iloc[0].get("LwPric"))
         )
         if previous_day_ready:
             pdh = safe_float(previous_day_rows.iloc[0]["HghPric"])
@@ -2340,6 +2365,8 @@ def calculate_support_resistance(result, historical):
             not stock_previous_week.empty
             and stock_previous_week["Date"].dt.date.duplicated().sum() == 0
             and stock_previous_week[["HghPric", "LwPric"]].notna().all().all()
+            and (stock_previous_week[["HghPric", "LwPric"]] > 0).all().all()
+            and (stock_previous_week["HghPric"] >= stock_previous_week["LwPric"]).all()
         ):
             pwh = safe_float(stock_previous_week["HghPric"].max())
             pwl = safe_float(stock_previous_week["LwPric"].min())
@@ -2353,6 +2380,8 @@ def calculate_support_resistance(result, historical):
                 len(dates) == period and len(part) == period
                 and not part["Date"].dt.date.duplicated().any()
                 and part[["HghPric", "LwPric"]].notna().all().all()
+                and (part[["HghPric", "LwPric"]] > 0).all().all()
+                and (part["HghPric"] >= part["LwPric"]).all()
             )
             return part, complete
 
