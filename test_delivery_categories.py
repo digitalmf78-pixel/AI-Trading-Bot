@@ -5,7 +5,8 @@ from delivery_categories import apply_delivery_categories
 
 
 def _sessions(values_by_symbol):
-    days = [value.date() for value in pd.bdate_range("2026-10-16", periods=6)]
+    days = [date(2026, 10, 15), date(2026, 10, 16), date(2026, 10, 19),
+            date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23)]
     result = []
     for index, day in enumerate(days):
         rows = []
