@@ -1,41 +1,40 @@
-from datetime import date, timedelta
+from datetime import date
 import pandas as pd
 
 from delivery_categories import apply_delivery_categories
 
 
-def sessions(values_by_symbol):
+def _sessions(values_by_symbol):
+    days = [value.date() for value in pd.bdate_range("2026-10-16", periods=6)]
     result = []
-    days = [date(2026, 10, 16) + timedelta(days=i) for i in range(5)]
-    for idx, day in enumerate(days):
+    for index, day in enumerate(days):
         rows = []
         for symbol, values in values_by_symbol.items():
-            rows.append({"SYMBOL": symbol, "SERIES": "EQ", "DELIV_PER": values[idx]})
-        result.append((day, pd.DataFrame(rows)))
+            if values[index] is not None:
+                rows.append({"SYMBOL": symbol, "SERIES": "EQ", "DELIV_PER": values[index]})
+        result.append((day, pd.DataFrame(rows, columns=["SYMBOL", "SERIES", "DELIV_PER"])))
     return result
 
 
-def test_average_category_can_pass_when_one_day_is_below_60(tmp_path, monkeypatch):
+def test_30d_average_category_uses_all_six_valid_reports(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     qualified, audit = apply_delivery_categories(
-        candidates, "2026-10-20", sessions=sessions({"AAA": [55, 65, 58, 70, 62]})
+        candidates, "2026-10-23", sessions=_sessions({"AAA": [50, 62, 62, 62, 62, 62]})
     )
     assert len(qualified) == 1
+    assert audit.iloc[0]["DeliverySessions"] == 6
     assert audit.iloc[0]["CategoryAStatus"] == "PASS"
-    assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-    assert audit.iloc[0]["DeliveryStatus"] == "PASS"
     assert audit.iloc[0]["CategoryBStatus"] == "FAIL"
-    assert audit.iloc[0]["AvgDelivery5D"] >= 60
+    assert audit.iloc[0]["AvgDelivery30D"] == 60
     assert (tmp_path / "outputs/v8_delivery_category_a_avg60.csv").exists()
-    assert (tmp_path / "outputs/v8_delivery_category_b_each_day60.csv").exists()
 
 
-def test_both_categories_pass_when_every_day_is_at_least_60(tmp_path, monkeypatch):
+def test_category_b_requires_every_valid_report_at_or_above_60(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "BBB", "SctySrs": "EQ"}])
     qualified, audit = apply_delivery_categories(
-        candidates, "2026-10-20", sessions=sessions({"BBB": [60, 65, 61, 70, 63]})
+        candidates, "2026-10-23", sessions=_sessions({"BBB": [60, 65, 61, 70, 63, 62]})
     )
     assert len(qualified) == 1
     assert audit.iloc[0]["CategoryAStatus"] == "PASS"
@@ -46,19 +45,20 @@ def test_average_below_60_fails_both_categories(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "CCC", "SctySrs": "EQ"}])
     qualified, audit = apply_delivery_categories(
-        candidates, "2026-10-20", sessions=sessions({"CCC": [50, 55, 60, 62, 58]})
+        candidates, "2026-10-23", sessions=_sessions({"CCC": [50, 55, 60, 62, 58, 59]})
     )
     assert qualified.empty
     assert audit.iloc[0]["CategoryAStatus"] == "FAIL"
     assert audit.iloc[0]["CategoryBStatus"] == "FAIL"
 
 
-def test_missing_session_symbol_is_wait_for_data(tmp_path, monkeypatch):
+def test_candidate_with_fewer_than_five_valid_reports_waits(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "DDD", "SctySrs": "EQ"}])
-    supplied = sessions({"DDD": [60, 65, 61, 70, 63]})
-    supplied[2] = (supplied[2][0], pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER"]))
-    qualified, audit = apply_delivery_categories(candidates, "2026-10-20", sessions=supplied)
+    qualified, audit = apply_delivery_categories(
+        candidates, "2026-10-23",
+        sessions=_sessions({"DDD": [60, None, None, None, 63, 70]}),
+    )
     assert qualified.empty
     assert audit.iloc[0]["CategoryAStatus"] == "WAIT_FOR_DATA"
     assert audit.iloc[0]["CategoryBStatus"] == "WAIT_FOR_DATA"
