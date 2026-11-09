@@ -178,7 +178,7 @@ def test_rvol_classification_retains_high_low_and_missing_delivery_candidates(tm
 
 def test_accumulation_and_vcp_observations_run_before_liquidity_without_gating():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY — BUILD THE COMPLETE A OR B UNION FIRST.")
     rvol = source.index("current = classify_rvol_for_delivery_candidates")
     accumulation = source.index("accumulation_report = build_potential_accumulation_report")
     vcp = source.index("vcp_report = build_vcp_observation_report")
