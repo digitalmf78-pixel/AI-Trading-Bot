@@ -105,3 +105,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Early Potential Accumulation watchlist now preserves the unique Delivery A/B union with explicit WAIT_FOR_DATA if its optional evidence engine fails. Latest CI: 276 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Breakout/Pullback and Support/Resistance now fail closed on invalid OHLCV candles, malformed history windows, duplicate candidates and missing required price columns. No unapproved retest or Pocket Pivot thresholds were added. Latest CI: 284 unit/data-audit tests and 31 V8 regression tests passed.
+
+- Added a descriptive post-breakout retest observation report using existing V8 breakout definitions. It measures exact reference-level touches and post-breakout price/volume response without inventing a retest window or buffer; it is not an entry gate. Pocket Pivot remains pending exact approved formula. Latest CI: 291 unit/data-audit tests and 31 V8 regression tests passed.
