@@ -63,10 +63,63 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pandas pytest yfinance
 
+      - name: Audit restored official NSE Bhavcopy cache coverage
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta
+          from pathlib import Path
+          import pandas as pd
+          from nse_trading_calendar import CalendarCoverageError, is_trading_session
+          from volume_gainer import validate_bhavcopy_date
+
+          root = Path("data/bhavcopy")
+          files = sorted(root.glob("bhavcopy_????????.csv")) if root.exists() else []
+          parsed = {}
+          invalid = []
+          non_sessions = []
+          for path in files:
+              try:
+                  day = datetime.strptime(path.stem.removeprefix("bhavcopy_"), "%Y%m%d").date()
+                  if not is_trading_session(day):
+                      non_sessions.append((day.isoformat(), path.name))
+                      continue
+                  frame = pd.read_csv(path)
+                  validate_bhavcopy_date(frame, day, source=f"Cache audit {path}")
+                  parsed[day] = path
+              except CalendarCoverageError:
+                  raise
+              except Exception as exc:
+                  invalid.append((path.name, str(exc)))
+
+          print(f"BHAVCOPY_CACHE_FILES={len(files)}")
+          print(f"BHAVCOPY_CACHE_VALID_OFFICIAL_SESSION_FILES={len(parsed)}")
+          print(f"BHAVCOPY_CACHE_INVALID_FILES={len(invalid)}")
+          print(f"BHAVCOPY_CACHE_NON_SESSION_FILES={len(non_sessions)}")
+          if parsed:
+              latest = max(parsed)
+              oldest = min(parsed)
+              print(f"BHAVCOPY_CACHE_DATE_RANGE={oldest.isoformat()}..{latest.isoformat()}")
+              required = []
+              cursor = latest - timedelta(days=1)
+              while len(required) < 200 and (latest - cursor).days <= 320:
+                  if is_trading_session(cursor):
+                      required.append(cursor)
+                  cursor -= timedelta(days=1)
+              missing = [day.isoformat() for day in required if day not in parsed]
+              print(f"BHAVCOPY_PRIOR_SESSION_CACHE_COVERAGE={len(required)-len(missing)}/200")
+              print(f"BHAVCOPY_PRIOR_SESSION_MISSING={','.join(missing[:25]) if missing else 'NONE'}")
+          else:
+              print("BHAVCOPY_CACHE_STATUS=EMPTY; scanner will attempt official-session gap fill")
+          if invalid:
+              print("BHAVCOPY_CACHE_INVALID_SAMPLE=" + repr(invalid[:10]))
+          if non_sessions:
+              print("BHAVCOPY_CACHE_NON_SESSION_SAMPLE=" + repr(non_sessions[:10]))
+          PY
+
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
+          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py data/inputs/nse_trading_calendar.json delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -94,7 +147,7 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD / BHAVCOPY CACHE REUSE TESTS ====="
           python -m pytest -q test_main_board_filter.py test_bhavcopy_history_cache_reuse.py
