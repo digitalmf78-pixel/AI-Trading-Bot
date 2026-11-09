@@ -28,6 +28,7 @@ from delivery_filter import apply_delivery_filter, get_delivery_sessions
 from nse_trading_calendar import CalendarCoverageError, is_trading_session, official_session_reason
 from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
+from delivery_quantity_analysis import build_delivery_quantity_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3802,6 +3803,26 @@ def main():
                     "[DELIVERY CONSISTENCY] WAIT_FOR_DATA; existing 5D Delivery A/B "
                     f"pipeline continues unchanged: {type(consistency_exc).__name__}: {consistency_exc}"
                 )
+            # Delivery Quantity + price-response evidence is observational only.
+            # It must never change Delivery A/B membership or stop the liquidity path.
+            try:
+                delivery_audit, _ = build_delivery_quantity_report(
+                    delivery_audit, eod_date, sessions=delivery_sessions
+                )
+                print(
+                    "[DELIVERY QUANTITY] Observation report saved; "
+                    "quantity/price fields do not act as eligibility gates."
+                )
+            except Exception as quantity_exc:
+                delivery_audit["DeliveryQuantityStatus"] = "WAIT_FOR_DATA"
+                delivery_audit["DeliveryQuantityReason"] = (
+                    f"OBSERVATION_UNAVAILABLE:{type(quantity_exc).__name__}"
+                )
+                print(
+                    "[DELIVERY QUANTITY] WAIT_FOR_DATA; A/B pipeline continues unchanged: "
+                    f"{type(quantity_exc).__name__}: {quantity_exc}"
+                )
+
             if delivery_data_available and "DeliverySessions" in delivery_audit.columns:
                 session_counts = pd.to_numeric(delivery_audit["DeliverySessions"], errors="coerce")
                 delivery_data_available = bool(session_counts.ge(5).any())
