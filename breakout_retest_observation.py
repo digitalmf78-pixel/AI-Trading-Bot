@@ -1,8 +1,9 @@
 """Descriptive post-breakout retest observations.
 
 This module reuses the existing V8 breakout definitions solely to locate a
-historical breakout event. It does not introduce a retest time limit, price
-buffer, confirmation gate, ranking change, or trade signal.
+historical breakout event and observes the first 10 trading sessions after it.
+The horizon is descriptive only: no failure rule, price buffer, confirmation
+gate, ranking change, or trade signal is defined here.
 """
 from __future__ import annotations
 
@@ -11,9 +12,11 @@ import pandas as pd
 
 
 _REQUIRED = {"TckrSymb", "Date", "OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"}
+FORWARD_OBSERVATION_HORIZON_SESSIONS = 10
 _OUTPUT = [
     "TckrSymb", "RetestObservationStatus", "LastBreakoutDate",
-    "BreakoutReferenceLevel", "SessionsSinceBreakout",
+    "BreakoutReferenceLevel", "ForwardObservationHorizonSessions",
+    "ForwardSessionsObserved", "ForwardHorizonStatus", "SessionsSinceBreakout",
     "PostBreakoutLowestLow", "PostBreakoutHighestHigh", "PostBreakoutLastClose",
     "PostBreakoutLowestLowVsLevelPct", "PostBreakoutHighestHighVsLevelPct",
     "PostBreakoutClosesAboveLevelCount", "PostBreakoutClosesBelowLevelCount",
@@ -50,6 +53,9 @@ def _wait(symbol):
         "RetestObservationStatus": "WAIT_FOR_DATA",
         "LastBreakoutDate": None,
         "BreakoutReferenceLevel": float("nan"),
+        "ForwardObservationHorizonSessions": FORWARD_OBSERVATION_HORIZON_SESSIONS,
+        "ForwardSessionsObserved": float("nan"),
+        "ForwardHorizonStatus": "WAIT_FOR_DATA",
         "SessionsSinceBreakout": float("nan"),
         "PostBreakoutLowestLow": float("nan"),
         "PostBreakoutHighestHigh": float("nan"),
@@ -149,7 +155,13 @@ def build_breakout_retest_observation(candidates, historical):
             continue
 
         event_index, level, breakout_volume = event
-        post = rows[event_index + 1:]
+        available_post = rows[event_index + 1:]
+        post = available_post[:FORWARD_OBSERVATION_HORIZON_SESSIONS]
+        forward_status = (
+            "COMPLETE"
+            if len(post) == FORWARD_OBSERVATION_HORIZON_SESSIONS
+            else ("IN_PROGRESS" if post else "NOT_STARTED")
+        )
         touch_dates = [
             market_dates[event_index + 1 + j]
             for j, row in enumerate(post)
@@ -176,6 +188,9 @@ def build_breakout_retest_observation(candidates, historical):
             ),
             "LastBreakoutDate": market_dates[event_index].isoformat(),
             "BreakoutReferenceLevel": level,
+            "ForwardObservationHorizonSessions": FORWARD_OBSERVATION_HORIZON_SESSIONS,
+            "ForwardSessionsObserved": len(post),
+            "ForwardHorizonStatus": forward_status,
             "SessionsSinceBreakout": len(post),
             "PostBreakoutLowestLow": lowest_low,
             "PostBreakoutHighestHigh": highest_high,
