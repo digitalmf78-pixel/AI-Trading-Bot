@@ -252,3 +252,16 @@ Before taking action on this repository:
 **Validation:** GitHub Actions run `42585559322`, commit `6f27bd6b71be686fa9a158dc71498dea16cd963a`, completed SUCCESS: compile passed, 217 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. The report is still observational and not a BUY signal.
 
 **Next implementation:** fixed-range base measurements and repeated support/resistance zones require a documented, non-arbitrary definition. Until the open tolerance/base-duration decisions are approved, keep the raw range/extreme observations only and continue with VCP descriptive metrics without converting them into hard gates.
+
+## 15. Phase 6 progress — Early trend / EMA observations (09-Nov-2026)
+
+**Implemented on main:**
+- The pre-Liquidity Potential Accumulation report now computes independent EMA20, EMA44, EMA50 and EMA200 values for the unique Delivery A/B candidate union.
+- Includes each EMA's distance from current close, above/below/at position and a separate per-period data status.
+- EMA values are calculated over the full available point-in-time history, not only the final N rows. Each EMA requires complete candidate observations across the supplied market-session history; EMA200 remains WAIT_FOR_DATA until at least 200 complete sessions are available.
+- TrendObservationStatus distinguishes COMPLETE, PARTIAL_DATA and WAIT_FOR_DATA.
+- These are informational only. Below EMA200 does not reject Early Accumulation; no EMA20/44/50/200 condition was added as an eligibility, ranking or BUY gate. Existing production EMA44 logic is unchanged.
+
+**Validation:** GitHub Actions run `42585764820`, commit `6f1e98593857b8acbd7cee39a80f279281cc1229`, completed SUCCESS: compile passed, 218 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+**Still pending:** EMA trend interpretation thresholds/slopes are not defined as gates; no new trend gate is approved. VCP contraction sequence and fixed-range base definitions remain separate pending work.
