@@ -712,192 +712,93 @@ def fetch_nifty_index_history(
 
 @_perf_timed("nifty_index_history_cache_and_refresh")
 def load_nifty_index_history(latest_date):
+    """Load Nifty history without letting an unavailable context feed abort NSE EOD scanning.
 
-    print(
-        "\nSTEP 12: Loading Nifty 50 history "
-        "and checking cache..."
-    )
-
+    A valid >=50-bar cache may be used when the latest index close is not yet
+    published for the current EOD date. The returned frame is then explicitly
+    marked stale by diagnostics and market-regime consumers must return
+    WAIT_FOR_DATA unless it is aligned to the requested date.
+    """
+    print("\nSTEP 12: Loading Nifty 50 history and checking cache...")
     os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
-    cached = pd.DataFrame(
-        columns=["Date", "NiftyClose"]
-    )
-
+    cached = pd.DataFrame(columns=["Date", "NiftyClose"])
     if os.path.exists(NIFTY_HISTORY_CACHE):
-
         try:
-
-            cached = pd.read_csv(
-                NIFTY_HISTORY_CACHE
-            )
-
-            if (
-                "Date" in cached.columns
-                and "NiftyClose" in cached.columns
-            ):
-
-                cached["Date"] = pd.to_datetime(
-                    cached["Date"],
-                    errors="coerce"
-                )
-
-                cached["NiftyClose"] = pd.to_numeric(
-                    cached["NiftyClose"],
-                    errors="coerce"
-                )
-
-                cached = cached.dropna(
-                    subset=["Date", "NiftyClose"]
-                )
-
-                cached = (
-                    cached
-                    .drop_duplicates(
-                        subset=["Date"],
-                        keep="last"
-                    )
-                    .sort_values("Date")
-                    .reset_index(drop=True)
-                )
-
+            cached = pd.read_csv(NIFTY_HISTORY_CACHE)
+            if {"Date", "NiftyClose"}.issubset(cached.columns):
+                cached["Date"] = pd.to_datetime(cached["Date"], errors="coerce")
+                cached["NiftyClose"] = pd.to_numeric(cached["NiftyClose"], errors="coerce")
+                cached = (cached.dropna(subset=["Date", "NiftyClose"])
+                          .drop_duplicates(subset=["Date"], keep="last")
+                          .sort_values("Date").reset_index(drop=True))
             else:
+                cached = pd.DataFrame(columns=["Date", "NiftyClose"])
+        except Exception as exc:
+            print(f"[NIFTY][CACHE_READ_ERROR] {type(exc).__name__}: {exc}")
+            cached = pd.DataFrame(columns=["Date", "NiftyClose"])
 
-                cached = pd.DataFrame(
-                    columns=["Date", "NiftyClose"]
-                )
+    target = pd.Timestamp(latest_date).normalize()
+    cached_asof = cached[cached["Date"] <= target] if not cached.empty else cached
 
-        except Exception as e:
+    if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS and not cached_asof.empty and cached_asof["Date"].max() == target:
+        print(f"[NIFTY][CACHE_HIT] rows={len(cached_asof)} asof={target.date()}")
+        return cached_asof.tail(260).reset_index(drop=True)
 
+    fetch_start = (target - pd.Timedelta(days=NIFTY_HISTORY_LOOKBACK_DAYS)).date()
+    if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
+        last_date = cached_asof["Date"].max().date()
+        fetch_start = max(fetch_start, (pd.Timestamp(last_date) - pd.Timedelta(days=5)).date())
+
+    print(f"[NIFTY][REFRESH] fetching {fetch_start} to {target.date()}")
+    try:
+        downloaded = fetch_nifty_index_history(fetch_start, target.date())
+        if downloaded is None or downloaded.empty:
+            raise RuntimeError("index provider returned no usable closes")
+    except Exception as exc:
+        if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
+            last_date = cached_asof["Date"].max().date()
             print(
-                f"Nifty history cache read error: {e}"
+                f"[NIFTY][STALE_CACHE_FALLBACK] refresh failed "
+                f"({type(exc).__name__}: {exc}); using {len(cached_asof)} cached closes "
+                f"through {last_date}; market-context fields must be WAIT_FOR_DATA if not aligned."
             )
+            return cached_asof.tail(260).reset_index(drop=True)
+        raise RuntimeError(
+            f"Nifty index history unavailable and cache has only {len(cached_asof)} "
+            f"valid closes; at least {NIFTY_HISTORY_MIN_BARS} required. "
+            f"Cause: {type(exc).__name__}: {exc}"
+        ) from exc
 
-            cached = pd.DataFrame(
-                columns=["Date", "NiftyClose"]
-            )
+    combined = pd.concat([cached, downloaded], ignore_index=True)
+    combined["Date"] = pd.to_datetime(combined["Date"], errors="coerce")
+    combined["NiftyClose"] = pd.to_numeric(combined["NiftyClose"], errors="coerce")
+    combined = (combined.dropna(subset=["Date", "NiftyClose"])
+                .drop_duplicates(subset=["Date"], keep="last")
+                .sort_values("Date").tail(260).reset_index(drop=True))
 
-    target_date = pd.Timestamp(
-        latest_date
-    ).normalize()
+    # Only persist provider response when it actually contains the requested
+    # NSE EOD date. Never overwrite a usable cache with a stale/partial result.
+    aligned = combined[combined["Date"] <= target]
+    if not aligned.empty and aligned["Date"].max() == target and len(aligned) >= NIFTY_HISTORY_MIN_BARS:
+        combined.to_csv(NIFTY_HISTORY_CACHE, index=False, date_format="%Y-%m-%d")
+        print(f"[NIFTY][CACHE_UPDATED] rows={len(combined)} through={target.date()}")
+        return combined
 
-    cached_asof = cached[
-        cached["Date"] <= target_date
-    ]
-
-    cache_is_current = (
-        len(cached_asof) >= NIFTY_HISTORY_MIN_BARS
-        and not cached_asof.empty
-        and cached_asof["Date"].max() == target_date
-    )
-
-    if cache_is_current:
-
+    if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
+        last_date = cached_asof["Date"].max().date()
         print(
-            f"Nifty history cache hit: "
-            f"{NIFTY_HISTORY_CACHE} "
-            f"({len(cached_asof)} closes through {target_date.date()})"
+            f"[NIFTY][STALE_CACHE_FALLBACK] provider response lacks exact "
+            f"EOD date {target.date()}; preserving cache through {last_date}."
         )
+        return cached_asof.tail(260).reset_index(drop=True)
 
-        return cached
-
-    fetch_start = (
-        pd.Timestamp(latest_date)
-        - pd.Timedelta(days=NIFTY_HISTORY_LOOKBACK_DAYS)
-    ).date()
-
-    if not cached.empty and len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
-
-        last_cached_date = (
-            cached["Date"].max().date()
-        )
-
-        if last_cached_date < latest_date:
-            overlap_start = (
-                pd.Timestamp(last_cached_date)
-                - pd.Timedelta(days=5)
-            ).date()
-
-            fetch_start = max(
-                fetch_start,
-                overlap_start
-            )
-
-    print(
-        f"Downloading Nifty 50 daily history "
-        f"from {fetch_start} to {latest_date}..."
+    latest_download_date = aligned["Date"].max().date() if not aligned.empty else "NONE"
+    raise RuntimeError(
+        f"Nifty history has {len(aligned)} usable closes through {latest_download_date}; "
+        f"requested EOD date {target.date()} and need {NIFTY_HISTORY_MIN_BARS}. "
+        "No sufficient cache fallback exists."
     )
-
-    downloaded = fetch_nifty_index_history(
-        fetch_start,
-        latest_date
-    )
-
-    combined = pd.concat(
-        [cached, downloaded],
-        ignore_index=True
-    )
-
-    combined["Date"] = pd.to_datetime(
-        combined["Date"],
-        errors="coerce"
-    )
-
-    combined["NiftyClose"] = pd.to_numeric(
-        combined["NiftyClose"],
-        errors="coerce"
-    )
-
-    combined = combined.dropna(
-        subset=["Date", "NiftyClose"]
-    )
-
-    combined = (
-        combined
-        .drop_duplicates(
-            subset=["Date"],
-            keep="last"
-        )
-        .sort_values("Date")
-        .tail(260)
-        .reset_index(drop=True)
-    )
-
-    combined.to_csv(
-        NIFTY_HISTORY_CACHE,
-        index=False,
-        date_format="%Y-%m-%d"
-    )
-
-    aligned = combined[
-        combined["Date"] <= target_date
-    ]
-
-    if (
-        aligned.empty
-        or aligned["Date"].max() != target_date
-    ):
-
-        raise RuntimeError(
-            "Nifty history does not contain the latest NSE EOD date "
-            f"{target_date.date()}."
-        )
-
-    if len(aligned) < NIFTY_HISTORY_MIN_BARS:
-
-        raise RuntimeError(
-            f"At least {NIFTY_HISTORY_MIN_BARS} Nifty closes are required "
-            "to calculate the 20D return and market regime; "
-            f"found {len(aligned)}."
-        )
-
-    print(
-        f"Nifty history cached: "
-        f"{NIFTY_HISTORY_CACHE} "
-        f"({len(combined)} rows)"
-    )
-
-    return combined
 
 
 # ============================================================
@@ -2586,40 +2487,28 @@ def calculate_relative_strength_nifty(
         .reset_index(drop=True)
     )
 
-    if len(nifty) < 21:
-
-        raise RuntimeError(
-            "Insufficient Nifty history for 20D return calculation."
-        )
-
-    nifty_last = nifty.iloc[-1]
-
-    if (
-        pd.Timestamp(nifty_last["Date"]).normalize()
-        != pd.Timestamp(latest_date).normalize()
-    ):
-
-        raise RuntimeError(
-            "Nifty history date does not match latest NSE EOD date."
-        )
-
-    nifty_base_close = float(
-        nifty["NiftyClose"].iloc[-21]
+    nifty_return_20d = float("nan")
+    nifty_aligned = (
+        len(nifty) >= 21
+        and pd.Timestamp(nifty.iloc[-1]["Date"]).normalize()
+        == pd.Timestamp(latest_date).normalize()
     )
+    if nifty_aligned:
+        nifty_base_close = pd.to_numeric(
+            pd.Series([nifty["NiftyClose"].iloc[-21]]), errors="coerce"
+        ).iloc[0]
+        nifty_last_close = pd.to_numeric(
+            pd.Series([nifty["NiftyClose"].iloc[-1]]), errors="coerce"
+        ).iloc[0]
+        if pd.notna(nifty_base_close) and nifty_base_close > 0 and pd.notna(nifty_last_close):
+            nifty_return_20d = ((float(nifty_last_close) / float(nifty_base_close)) - 1) * 100
 
-    nifty_last_close = float(
-        nifty_last["NiftyClose"]
-    )
-
-    if nifty_base_close <= 0:
-
-        raise RuntimeError(
-            "Nifty 20D base close must be greater than zero."
+    if pd.isna(nifty_return_20d):
+        print(
+            "[NIFTY][RELATIVE_STRENGTH_WAIT_FOR_DATA] "
+            f"Need >=21 valid closes ending exactly on {pd.Timestamp(latest_date).date()}; "
+            "Nifty 20D return and per-stock relative strength will remain WAIT_FOR_DATA."
         )
-
-    nifty_return_20d = (
-        (nifty_last_close / nifty_base_close) - 1
-    ) * 100
 
     stock_returns = []
     nifty_returns = []
