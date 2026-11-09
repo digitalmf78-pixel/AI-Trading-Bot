@@ -275,6 +275,15 @@ def build_potential_accumulation_report(
             "TrendObservationStatus": "WAIT_FOR_DATA",
             "HigherLowStatus": "WAIT_FOR_DATA",
         }
+        for window in RANGE_WINDOWS:
+            prefix = f"PriceRange{window}D"
+            row.update({
+                f"{prefix}StartDate": "",
+                f"{prefix}EndDate": "",
+                f"{prefix}SessionCount": float("nan"),
+                f"{prefix}AverageDailyRangePct": float("nan"),
+                f"{prefix}LatestClosePositionPct": float("nan"),
+            })
         if not hist.empty:
             hist_dates = hist["Date"].dt.date
             pivot_history_complete = (
