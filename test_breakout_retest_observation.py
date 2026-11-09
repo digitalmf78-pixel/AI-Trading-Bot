@@ -89,3 +89,17 @@ def test_retest_module_is_integrated_after_existing_breakout_detection():
         "retest_observation = build_breakout_retest_observation("
     )
     assert "never changes selection or entry gates" in source
+
+
+def test_follow_through_reports_excursions_and_close_positions_without_classifying_failure():
+    row = build_breakout_retest_observation(
+        _candidate(), [_history(exact_touch=True)]
+    ).iloc[0]
+    assert row["PostBreakoutLowestLow"] == 104
+    assert row["PostBreakoutHighestHigh"] == 111
+    assert round(row["PostBreakoutLowestLowVsLevelPct"], 4) == round((104 - 105) / 105 * 100, 4)
+    assert round(row["PostBreakoutHighestHighVsLevelPct"], 4) == round((111 - 105) / 105 * 100, 4)
+    assert row["PostBreakoutClosesAboveLevelCount"] == 2
+    assert row["PostBreakoutClosesBelowLevelCount"] == 0
+    assert row["PostBreakoutClosesAtLevelCount"] == 0
+    assert row["RetestObservationStatus"] == "POST_BREAKOUT_PRICE_OBSERVATIONS_AVAILABLE"
