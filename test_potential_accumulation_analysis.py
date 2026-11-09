@@ -199,3 +199,33 @@ def test_duplicate_delivery_report_dates_do_not_inflate_five_session_evidence(tm
         [_history()], sessions, "2026-10-23"
     )
     assert report.iloc[0]["DeliveryEvidenceStatus"] == "WAIT_FOR_DATA"
+
+
+
+def test_atr_waits_when_a_required_close_is_missing_in_its_14_true_range_window(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "ClsPric"] = float("nan")
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["PivotStructureStatus"] == "COMPLETE"
+    assert pd.isna(row["ATR14"])
+    assert row["PivotLowSeparationStatus"] == "WAIT_FOR_DATA"
+
+
+def test_selling_pressure_volume_averages_wait_on_missing_or_negative_volume(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "TtlTradgVol"] = float("nan")
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["SellingPressureObservationStatus"] == "WAIT_FOR_DATA"
+    assert pd.isna(row["DownDayVolumeAverage20D"])
+    assert pd.isna(row["UpDayVolumeAverage20D"])
+    assert pd.isna(row["DownVsUpVolumeRatio20D"])
