@@ -3,8 +3,8 @@ import pandas as pd
 from breakout_retest_observation import build_breakout_retest_observation
 
 
-def _history(with_event=True, exact_touch=True):
-    dates = pd.bdate_range(end="2026-10-23", periods=53)
+def _history(with_event=True, exact_touch=True, periods=53):
+    dates = pd.bdate_range(end="2026-10-23", periods=periods)
     frame = pd.DataFrame({
         "TckrSymb": ["AAA"] * len(dates),
         "Date": dates,
@@ -43,6 +43,9 @@ def test_retest_observation_uses_existing_breakout_and_records_exact_level_touch
     assert row["LastBreakoutDate"] == history.loc[50, "Date"].date().isoformat()
     assert row["BreakoutReferenceLevel"] == 105
     assert row["SessionsSinceBreakout"] == 2
+    assert row["ForwardObservationHorizonSessions"] == 10
+    assert row["ForwardSessionsObserved"] == 2
+    assert row["ForwardHorizonStatus"] == "IN_PROGRESS"
     assert row["ExactLevelTouchObserved"] == True
     assert row["FirstExactLevelTouchDate"] == history.loc[51, "Date"].date().isoformat()
 
@@ -60,6 +63,7 @@ def test_no_historical_breakout_is_descriptive_not_a_failure_or_gate():
         _candidate(), [_history(with_event=False)]
     ).iloc[0]
     assert row["RetestObservationStatus"] == "NO_PRIOR_BREAKOUT_EVENT_OBSERVED_IN_AVAILABLE_CACHE"
+    assert row["ForwardHorizonStatus"] == "WAIT_FOR_DATA"
     assert row["ExactLevelTouchObserved"] == "NOT_OBSERVED"
 
 
@@ -103,3 +107,24 @@ def test_follow_through_reports_excursions_and_close_positions_without_classifyi
     assert row["PostBreakoutClosesBelowLevelCount"] == 0
     assert row["PostBreakoutClosesAtLevelCount"] == 0
     assert row["RetestObservationStatus"] == "POST_BREAKOUT_PRICE_OBSERVATIONS_AVAILABLE"
+
+
+def test_forward_observation_horizon_completes_after_exactly_ten_sessions():
+    row = build_breakout_retest_observation(
+        _candidate(), [_history(periods=61)]
+    ).iloc[0]
+    assert row["ForwardObservationHorizonSessions"] == 10
+    assert row["ForwardSessionsObserved"] == 10
+    assert row["ForwardHorizonStatus"] == "COMPLETE"
+    assert row["SessionsSinceBreakout"] == 10
+    assert row["PostBreakoutClosesBelowLevelCount"] == 10
+    assert row["RetestObservationStatus"] == "POST_BREAKOUT_PRICE_OBSERVATIONS_AVAILABLE"
+
+
+def test_forward_observation_metrics_ignore_sessions_after_approved_horizon():
+    row = build_breakout_retest_observation(
+        _candidate(), [_history(periods=65)]
+    ).iloc[0]
+    assert row["ForwardSessionsObserved"] == 10
+    assert row["ForwardHorizonStatus"] == "COMPLETE"
+    assert row["SessionsSinceBreakout"] == 10
