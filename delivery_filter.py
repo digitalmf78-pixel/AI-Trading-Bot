@@ -54,6 +54,26 @@ def _parse_date(value) -> date:
     return pd.Timestamp(value).date()
 
 
+def validate_delivery_report_date(frame: pd.DataFrame, expected_date: date, source: str = "Delivery report") -> pd.DataFrame:
+    """Reject a report whose internal DATE1 does not match its requested session."""
+    if frame is None or frame.empty:
+        raise ValueError(f"{source}: empty delivery report")
+    date_col = next((col for col in frame.columns if str(col).strip().upper() == "DATE1"), None)
+    if date_col is None:
+        raise ValueError(f"{source}: missing internal DATE1 session column")
+    parsed = pd.to_datetime(frame[date_col].astype(str).str.strip(), errors="coerce", dayfirst=True)
+    if parsed.isna().any():
+        raise ValueError(f"{source}: DATE1 contains blank or unparseable session values")
+    actual_dates = set(parsed.dt.date.tolist())
+    expected = _parse_date(expected_date)
+    if actual_dates != {expected}:
+        raise ValueError(
+            f"{source}: internal session date(s) {sorted(str(value) for value in actual_dates)} "
+            f"do not match requested {expected.isoformat()}"
+        )
+    return frame
+
+
 def _read_cached_or_download(session: requests.Session, session_date: date) -> pd.DataFrame | None:
     date_token = session_date.strftime("%d%m%Y")
     cache_path = CACHE_DIR / f"sec_bhavdata_full_{date_token}.csv"
@@ -63,6 +83,7 @@ def _read_cached_or_download(session: requests.Session, session_date: date) -> p
         try:
             frame = _normalise_columns(pd.read_csv(cache_path))
             if REQUIRED_COLUMNS.issubset(frame.columns) and not frame.empty:
+                validate_delivery_report_date(frame, session_date, source=f"Cache {cache_path}")
                 return frame
         except Exception:
             # A corrupt cache is not treated as valid data; attempt a fresh download.
@@ -89,6 +110,11 @@ def _read_cached_or_download(session: requests.Session, session_date: date) -> p
         return None
     if not REQUIRED_COLUMNS.issubset(frame.columns) or frame.empty:
         print(f"[DELIVERY] Required columns/data missing for {session_date}")
+        return None
+    try:
+        validate_delivery_report_date(frame, session_date, source=f"Downloaded {url}")
+    except ValueError as exc:
+        print(f"[DELIVERY] Rejecting mismatched report: {exc}")
         return None
     cache_path.write_bytes(content)
     return frame
