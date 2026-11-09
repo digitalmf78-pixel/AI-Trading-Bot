@@ -103,3 +103,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Accumulation ATR now requires complete OHLC input; selling-pressure volume averages require 20 valid non-negative volumes. Latest CI: 275 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Early Potential Accumulation watchlist now preserves the unique Delivery A/B union with explicit WAIT_FOR_DATA if its optional evidence engine fails. Latest CI: 276 unit/data-audit tests and 31 V8 regression tests passed.
+
+- Breakout/Pullback and Support/Resistance now fail closed on invalid OHLCV candles, malformed history windows, duplicate candidates and missing required price columns. No unapproved retest or Pocket Pivot thresholds were added. Latest CI: 284 unit/data-audit tests and 31 V8 regression tests passed.
