@@ -395,3 +395,14 @@ Before taking action on this repository:
 - No retest-window, false-breakout buffer or Pocket Pivot formula was invented. These remain pending user-approved definitions; no new breakout/entry gate was introduced.
 
 **Validation:** GitHub Actions run `42590228703`, commit `f1c189472894cf14cd151900b52288dde9c4b1c8`, completed SUCCESS: 284 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. Issuer Matching and RSS Parser workflow also completed SUCCESS.
+
+## 26. Post-breakout retest observation (09-Nov-2026)
+
+- Added `breakout_retest_observation.py` as a descriptive, non-gating analysis module. It locates the most recent historical breakout using the existing V8 definitions only: 20-session breakout (RVOL >=2.0 and CLV >0.75) or 50-session breakout (RVOL >=1.5 and CLV >0.75), with the existing price-above-prior-high condition.
+- Reports breakout date/reference level, sessions since breakout, post-breakout lowest low/latest close, close distance from the reference level, exact candle-range intersection with the reference level, first exact-touch date, and post-breakout average volume versus breakout-day volume.
+- "Exact touch" means the observed daily low <= reference level <= daily high. No percentage buffer, tolerance, retest-window length, or retest-confirmation signal has been assumed. A measured touch is an observation only, not a BUY/ENTRY signal.
+- Missing/duplicate symbol-session data or duplicate candidate identity returns WAIT_FOR_DATA. If no qualifying event is present in the available cache, status says only that no event was observed in that cache; it does not claim no breakout ever occurred.
+- The report is attached after the existing Breakout/Pullback calculation and cannot alter candidate eligibility, ranking, chase, risk control, or mandatory confirmation.
+- Pocket Pivot remains not implemented/classified because the exact formula, lookback and candle conditions remain unresolved. No guessed formula was added.
+
+**Validation:** GitHub Actions run `42591190596`, commit `c2b02df2f9b8431008f2257365164a68a4dae850`, completed SUCCESS: 291 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. Issuer Matching and RSS Parser workflow also completed SUCCESS.
