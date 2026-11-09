@@ -99,3 +99,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - RVOL baseline now requires exactly 20 distinct prior sessions per symbol; duplicate/missing rows and invalid current volume return WAIT_FOR_DATA. Strict >1.5 classification is preserved and never rejects Delivery A/B candidates. Latest CI: 264 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Delivery Quantity, Accumulation and VCP source history now fail closed on duplicate report dates/rows, invalid quantities, missing price sessions and duplicate EOD rows. Current EOD values are reconciled without hiding duplicates. Latest CI: 273 unit/data-audit tests and 31 V8 regression tests passed.
+
+- Accumulation ATR now requires complete OHLC input; selling-pressure volume averages require 20 valid non-negative volumes. Latest CI: 275 unit/data-audit tests and 31 V8 regression tests passed.
