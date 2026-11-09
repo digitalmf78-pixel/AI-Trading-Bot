@@ -471,4 +471,6 @@ Before taking action on this repository:
 - `ForwardObservationHorizonSessions=10`; `ForwardSessionsObserved` records 0–10 available post-event sessions; `ForwardHorizonStatus` is `NOT_STARTED`, `IN_PROGRESS`, or `COMPLETE` when a breakout event exists. Missing/invalid history remains `WAIT_FOR_DATA`; no event in available cache is not a failure classification.
 - The 10-session horizon does **not** define a false breakout. Failure buffer, close/hold failure condition, re-entry rule, and outcome classification remain unapproved. No false-breakout pass/fail label or scanner/entry gate has been added.
 - Existing breakout definitions, ranking, eligibility, risk controls and trade signals are unchanged.
-- Regression tests cover incomplete and completed horizons and ensure sessions after session 10 do not affect the report. CI validation is pending for this commit sequence.
+- Regression tests cover incomplete and completed horizons and ensure sessions after session 10 do not affect the report.
+
+**Validation:** GitHub Actions run `42594713767`, commit `a45a75e26be60786f3db9a3b4296fb13333bed2b`, completed SUCCESS: 300 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. Issuer Matching/RSS Parser workflow also completed SUCCESS.
