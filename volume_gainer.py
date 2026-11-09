@@ -2234,7 +2234,13 @@ def calculate_support_resistance(result, historical):
         return empty
 
     all_history, history_by_symbol = prepare_history_by_symbol(historical)
-    if all_history is None or all_history.empty or "Date" not in all_history.columns:
+    required_history_columns = {
+        "TckrSymb", "Date", "OpnPric", "HghPric", "LwPric", "ClsPric"
+    }
+    if (
+        all_history is None or all_history.empty
+        or not required_history_columns.issubset(all_history.columns)
+    ):
         rows = []
         for symbol in result["TckrSymb"].drop_duplicates():
             rows.append({
