@@ -101,21 +101,38 @@ def _build_price_history(candidate, historical, asof, market_sessions):
         raw_dates = pd.to_datetime(raw["Date"], errors="coerce")
         part = raw[
             raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)
-            & raw_dates.dt.date.lt(asof)
+            & raw_dates.dt.date.le(asof)
         ].copy()
         if "SctySrs" in part.columns:
             part = part[part["SctySrs"].astype(str).str.strip().str.upper().eq(series)]
         if not part.empty:
             frames.append(part)
+    history = (
+        pd.concat(frames, ignore_index=True, sort=False)
+        if frames else pd.DataFrame(columns=["TckrSymb", "SctySrs", "Date"])
+    )
+    history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
+    history = history.dropna(subset=["Date"])
+    history = history[history["Date"].dt.date <= asof]
     current = candidate.to_dict()
     current["TckrSymb"] = symbol
     current["SctySrs"] = series
     current["Date"] = pd.Timestamp(asof)
-    frames.append(pd.DataFrame([current]))
-    history = pd.concat(frames, ignore_index=True, sort=False)
-    history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
-    history = history.dropna(subset=["Date"])
-    history = history[history["Date"].dt.date <= asof]
+    existing_current = history[history["Date"].dt.date.eq(asof)]
+    if len(existing_current) == 1:
+        # Merge the current candidate's non-null values into the single EOD
+        # row already cached for this same session. This preserves full OHLC
+        # fields without creating a false duplicate current-session record.
+        base = existing_current.iloc[0].to_dict()
+        for key, value in current.items():
+            if value is not None and not pd.isna(value):
+                base[key] = value
+        history = history[~history.index.isin(existing_current.index)]
+        history = pd.concat([history, pd.DataFrame([base])], ignore_index=True, sort=False)
+    elif len(existing_current) == 0:
+        history = pd.concat([history, pd.DataFrame([current])], ignore_index=True, sort=False)
+    # If multiple cached rows already exist for the current session, keep all
+    # of them visible; downstream exact-date checks must report WAIT_FOR_DATA.
     history = history.sort_values("Date", kind="mergesort")
     # Keep duplicate session rows visible so downstream completeness checks
     # cannot turn an ambiguous source into one apparently valid daily candle.
