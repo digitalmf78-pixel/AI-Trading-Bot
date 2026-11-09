@@ -187,3 +187,18 @@ def test_accumulation_and_vcp_observations_run_before_liquidity_without_gating()
     assert "except Exception as vcp_exc" in early_block
     assert "current = accumulation_report" not in source
     assert "current = vcp_report" not in source
+
+
+
+def test_four_hybrid_watchlists_are_independent_and_stage_ordered():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    early_reports = source.index("write_early_hybrid_watchlists(\n            accumulation_report, vcp_report")
+    liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
+    run_layers = source.index("result = run_eod_layers(")
+    breakout_watchlist = source.index("write_breakout_ready_watchlist(result)")
+    entry_watchlist = source.index("write_confirmed_entry_watchlist(result)")
+    assert early_reports < liquidity < run_layers < breakout_watchlist < entry_watchlist
+    assert "current = accumulation_report" not in source
+    assert "current = vcp_report" not in source
+    assert "result = write_breakout_ready_watchlist" not in source
+    assert "result = write_confirmed_entry_watchlist" not in source
