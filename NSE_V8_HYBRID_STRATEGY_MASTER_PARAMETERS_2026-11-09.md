@@ -501,3 +501,22 @@ The production scanner must follow this exact sequence:
 - The complete retained A/B cohort reaches Liquidity; no Top-20/Top-50 cap is introduced.
 
 **Change control:** Delivery A/B thresholds/windows, 20-session RVOL baseline definition, Liquidity threshold, downstream technical gates, risk controls and original Master Specification remain unchanged.
+
+## 33. Runtime optimization: one-pass history indexing and sector retry circuit breaker (09-Nov-2026)
+
+### Accumulation and VCP history lookup
+- Previous runtime logs showed approximately 10m01s in Potential Accumulation and 8m42s in VCP for 757 Delivery A/B candidates. Both report builders repeatedly scanned the same 200 historical Bhavcopy DataFrames once per candidate.
+- Added a shared history_index.py helper. Each report now parses and indexes the historical rows once by normalized (symbol, security series), then retrieves the corresponding history for each candidate.
+- Current EOD candidate values are still merged into the unique same-date history row. Duplicate same-date rows are preserved; they are never collapsed to manufacture a complete window. Exact session membership, OHLCV validation, and all WAIT_FOR_DATA behavior remain in place.
+- Regression tests cover symbol/series separation, current-session merge, date cut-off, duplicate-row preservation, and sources without a series column.
+
+### Sector-history retry behavior
+- The Nifty Indices history endpoint was returning an HTML ReturnUrl landing page instead of JSON. The prior implementation retried and re-bootstrapped this same service-wide failure for each of the remaining tracked indices.
+- The fallback now recognizes the confirmed HTML ReturnUrl redirect, stops further index requests for that refresh, and retains existing official cached history only as historical context. Without an exact-date official close, SectorStrengthStatus remains WAIT_FOR_DATA; no value is synthesized.
+
+### Change control and validation
+- No universe, Delivery A/B, RVOL, Liquidity, fundamentals, scoring, accumulation/VCP observation thresholds, watchlist, or entry/risk rules changed.
+- Original Master Specification remains unchanged.
+- PR #33 merged by squash as commit 7bdec9511ec60d3728c98e55c873e4bd3e48b7a4.
+- Validation passed: NSE V8 Pull Request Checks (compile, all listed unit/data-audit tests, V8 regression suite, sector/news/index tests); Sector Mapping Cache Reconciliation; News Matching and Parser Tests.
+- Benchmark status: the next full scanner execution is required to measure the actual post-change runtime. No runtime reduction percentage is claimed until that run completes.
