@@ -166,10 +166,15 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             asof, required_sessions=5, max_calendar_days=30,
             session=http_session, collect_all=True,
         )
-        reports = sorted(
-            {day: frame for day, frame in reports if day <= asof}.items(),
-            key=lambda item: item[0],
-        )
+        verified_reports = {}
+        for day, frame in reports:
+            if day > asof:
+                continue
+            if not is_trading_session(day):
+                print(f"[DELIVERY] Rejecting report supplied for non-session date {day}")
+                continue
+            verified_reports[day] = frame
+        reports = sorted(verified_reports.items(), key=lambda item: item[0])
         if len(reports) < 5:
             raise RuntimeError(
                 f"WAIT_FOR_DATA: only {len(reports)}/5 distinct valid delivery sessions in 30 days"
