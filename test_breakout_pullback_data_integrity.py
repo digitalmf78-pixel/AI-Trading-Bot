@@ -119,3 +119,39 @@ def test_missing_market_session_is_not_replaced_by_an_older_symbol_row():
     assert row["VolumeBaseline20DStatus"] == "WAIT_FOR_DATA"
     assert row["BreakoutStatus"] == "WAIT_FOR_DATA"
     assert row["PullbackStatus"] == "WAIT_FOR_DATA"
+
+
+
+def test_negative_historical_volume_invalidates_breakout_volume_baseline():
+    history = _history(rows=51)
+    history.loc[history.index[-2], "TtlTradgVol"] = -1
+    row = calculate_breakout_pullback(_candidate(), [history]).iloc[0]
+    assert row["VolumeBaseline20DStatus"] == "WAIT_FOR_DATA"
+    assert row["BreakoutStatus"] == "WAIT_FOR_DATA"
+    assert row["PullbackStatus"] == "WAIT_FOR_DATA"
+
+
+def test_invalid_current_ohlc_candle_waits_instead_of_false_no_breakout():
+    history = _history(rows=51)
+    history.loc[history.index[-1], ["OpnPric", "HghPric", "LwPric", "ClsPric"]] = [
+        110, 105, 100, 104
+    ]
+    row = calculate_breakout_pullback(_candidate(), [history]).iloc[0]
+    assert row["BreakoutStatus"] == "WAIT_FOR_DATA"
+    assert row["PullbackStatus"] == "WAIT_FOR_DATA"
+    assert row["BreakoutDataStatus"] == "WAIT_FOR_DATA"
+
+
+def test_duplicate_candidate_symbol_does_not_multiply_breakout_merge_rows():
+    candidates = pd.concat([_candidate(), _candidate()], ignore_index=True)
+    result = calculate_breakout_pullback(candidates, [_history(rows=51)])
+    assert len(result) == 2
+    assert result["BreakoutStatus"].eq("WAIT_FOR_DATA").all()
+    assert result["PullbackStatus"].eq("WAIT_FOR_DATA").all()
+
+
+def test_invalid_historical_ohlc_invalidates_atr_observation():
+    history = _history(rows=51)
+    history.loc[history.index[-5], "HghPric"] = 1
+    row = calculate_breakout_pullback(_candidate(), [history]).iloc[0]
+    assert pd.isna(row["ATR14"])
