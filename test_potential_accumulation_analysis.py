@@ -158,3 +158,32 @@ def test_ema200_is_available_only_with_200_complete_asof_sessions(tmp_path, monk
     assert row["TrendObservationStatus"] == "COMPLETE"
     assert pd.notna(row["ObservedEMA200"])
     assert row["ObservedEMA200Position"] in {"ABOVE", "BELOW", "AT"}
+
+
+
+def test_duplicate_symbol_session_rows_are_not_collapsed_into_complete_windows(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    duplicate = history.iloc[[-5]].copy()
+    history = pd.concat([history, duplicate], ignore_index=True)
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["PriceRange20DStatus"] == "WAIT_FOR_DATA"
+    assert row["PivotStructureStatus"] == "WAIT_FOR_DATA"
+
+
+def test_missing_close_session_is_retained_and_not_backfilled_for_ema(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    missing_day = history.iloc[-5]["Date"]
+    history.loc[history["Date"] == missing_day, "ClsPric"] = float("nan")
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["ObservedEMA20Status"] == "WAIT_FOR_DATA"
+    assert row["ObservedEMA50Status"] == "WAIT_FOR_DATA"
