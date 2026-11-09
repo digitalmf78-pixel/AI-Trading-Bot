@@ -343,3 +343,14 @@ Before taking action on this repository:
 **Validation:** GitHub Actions run `42588010960`, commit `11b570cbc79834bbebbbf620d0faa7f89e584d36`, completed SUCCESS: compile passed, 257 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
 
 **No changes:** sector strength, news/catalyst evidence rules and mandatory 3+1 thresholds were not altered in this phase.
+
+## 21. RVOL baseline integrity audit (09-Nov-2026)
+
+**Implemented on main:**
+- `calculate_average_volume` now requires exactly 20 distinct prior EOD session frames. If Date is supplied, every frame must contain exactly one valid date and all 20 dates must be distinct. The current EOD session remains excluded.
+- Each symbol must have exactly one valid non-negative volume row in each of the 20 prior sessions. A missing row, duplicate symbol row, malformed volume or ambiguous series leaves fewer than 20 valid observations and AvgVolume20D becomes unavailable; no older session is substituted.
+- `calculate_rvol` always merges the authoritative baseline from the prior-20-session calculator, discarding stale/partial AvgVolume fields already present on the candidate frame. Invalid/negative current volume, zero/missing baseline or fewer than 20 observations return WAIT_FOR_DATA.
+- Classification remains strictly RVOL >1.5 = HIGH_RVOL_GT_1_5; exactly 1.5 and below = LOW_RVOL_LE_1_5. RVOL remains informational/classification only and never rejects a Delivery A/B candidate.
+- Date-less legacy callers retain the ordered session-list contract; the production NSE Bhavcopy frames carry Date and are validated.
+
+**Validation:** GitHub Actions run `42588260445`, commit `2a8445336cc786aa9b8fd4d76ad71c869088e0a0`, completed SUCCESS: 264 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
