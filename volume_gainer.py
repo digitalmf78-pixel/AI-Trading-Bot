@@ -30,6 +30,7 @@ from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
 from delivery_quantity_analysis import build_delivery_quantity_report
 from potential_accumulation_analysis import build_potential_accumulation_report
+from vcp_observation_analysis import build_vcp_observation_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3889,6 +3890,21 @@ def main():
                     print(
                         "[ACCUMULATION] WAIT_FOR_DATA; Delivery/Liquidity pipeline continues: "
                         f"{type(accumulation_exc).__name__}: {accumulation_exc}"
+                    )
+                # VCP measurements are descriptive only; no VCP status is
+                # used to filter or rank the Delivery A/B candidate union.
+                try:
+                    vcp_report = build_vcp_observation_report(
+                        current, historical, eod_date
+                    )
+                    print(
+                        "[VCP] Three-block range/volume observations saved for "
+                        f"{len(vcp_report)} candidates; no gating applied."
+                    )
+                except Exception as vcp_exc:
+                    print(
+                        "[VCP] WAIT_FOR_DATA; Delivery/Liquidity pipeline continues: "
+                        f"{type(vcp_exc).__name__}: {vcp_exc}"
                     )
                 current[current["RVOLBand"].eq("HIGH_RVOL_GT_1_5")].to_csv(
                     "outputs/v8_rvol_gt_1_5_candidates.csv", index=False
