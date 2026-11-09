@@ -117,3 +117,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Breakout follow-through reporting now includes post-event highest/lowest price excursions and counts of closes above/below/at the breakout reference. This is descriptive only; false-breakout horizon and failure definition remain unapproved. CI validation is pending.
 
 - The post-breakout observation report now uses the user-approved first 10 trading sessions after a qualifying breakout. It reports horizon progress/completion and measures only that fixed window; false-breakout failure/re-entry definitions remain unapproved, and no entry gate is added.
+
+- Ten-session breakout observation implementation validated successfully: 300 unit/data-audit tests + all 31 V8 regression tests passed; sector/news/official-index and issuer/RSS workflows passed. False-breakout failure and re-entry definitions remain pending approval.
