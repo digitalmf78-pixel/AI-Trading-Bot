@@ -354,3 +354,17 @@ Before taking action on this repository:
 - Date-less legacy callers retain the ordered session-list contract; the production NSE Bhavcopy frames carry Date and are validated.
 
 **Validation:** GitHub Actions run `42588260445`, commit `2a8445336cc786aa9b8fd4d76ad71c869088e0a0`, completed SUCCESS: 264 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 22. Delivery Quantity, Accumulation and VCP source-session integrity (09-Nov-2026)
+
+**Implemented and verified on main:**
+- Delivery Quantity 5/10/20-session observation now preserves duplicate report dates as an explicit WAIT_FOR_DATA condition; it no longer silently keeps the first frame for a repeated date.
+- Duplicate source rows for a symbol/series are detected before invalid quantity rows are excluded. A valid row plus an invalid duplicate can no longer become a false complete observation.
+- A single negative, non-numeric or missing Delivery Quantity returns WAIT_FOR_DATA with an explicit invalid-quantity reason. Duplicate candidate symbol rows are also marked ambiguous and retained for audit.
+- Potential Accumulation and VCP history builders no longer collapse duplicate symbol/session rows using groupby-last. Exact session count, unique-date count and exact expected-date membership are required for their price/VCP windows.
+- Missing Close rows are retained rather than dropped to backfill a shorter history; EMA and selling-pressure observations wait when required close data is incomplete.
+- Historical EOD rows on the as-of date are reconciled with the current candidate row: candidate non-null values override the single cached EOD row, while duplicate cached rows remain visible and fail closed. Future rows remain excluded.
+- Potential Accumulation Delivery observations count only distinct report dates; duplicate report dates cannot inflate the minimum five valid observations.
+- Existing delivery thresholds, RVOL classification, liquidity gates, VCP observational ratio, and all entry/confirmation rules remain unchanged.
+
+**Validation:** GitHub Actions run `42588867006`, commit `1617f4322538b6e9cd75f61e80e4c409ec345d23`, completed SUCCESS: 273 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. The separate news parser workflow also completed successfully.
