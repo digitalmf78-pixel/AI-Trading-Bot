@@ -31,6 +31,11 @@ from delivery_consistency import build_delivery_consistency_report
 from delivery_quantity_analysis import build_delivery_quantity_report
 from potential_accumulation_analysis import build_potential_accumulation_report
 from vcp_observation_analysis import build_vcp_observation_report
+from hybrid_watchlists import (
+    write_early_hybrid_watchlists,
+    write_breakout_ready_watchlist,
+    write_confirmed_entry_watchlist,
+)
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3336,6 +3341,8 @@ def main():
     # --------------------------------------------------------
     print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B; RVOL will classify only...")
     delivery_data_available = True
+    accumulation_report = pd.DataFrame()
+    vcp_report = pd.DataFrame()
     if current.empty:
         delivery_audit = current.copy()
         for col in ["DeliverySessions", "DeliveryDailyPassCount", "DeliveryMin5D", "AvgDelivery5D", "LatestDeliveryPct", "DeliveryStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus", "DeliveryCategoryBStatus"]:
@@ -3534,6 +3541,19 @@ def main():
         delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
     except Exception as tracker_exc:
         print(f"[DELIVERY TRACKER] WAIT_FOR_DATA: streak report could not be updated: {tracker_exc}")
+
+    # Four hybrid watchlists are independent reports. The first two are
+    # generated before Liquidity and never remove Delivery A/B candidates.
+    try:
+        early_watchlists = write_early_hybrid_watchlists(
+            accumulation_report, vcp_report
+        )
+        print(
+            "[HYBRID WATCHLISTS] Early Accumulation and Base/VCP reports saved; "
+            f"accumulation_rows={len(early_watchlists[0])}, base_rows={len(early_watchlists[1])}."
+        )
+    except Exception as watchlist_exc:
+        print(f"[HYBRID WATCHLISTS] Early outputs WAIT_FOR_DATA: {watchlist_exc}")
 
     # --------------------------------------------------------
     # --------------------------------------------------------
@@ -3775,6 +3795,15 @@ def main():
         nifty_history,
         eod_date,
     )
+
+    # Later-stage watchlists are independent copies; no output feeds back into
+    # result or changes the existing EOD selection gates.
+    try:
+        write_breakout_ready_watchlist(result)
+        write_confirmed_entry_watchlist(result)
+        print("[HYBRID WATCHLISTS] Breakout Ready and Confirmed Entry reports saved.")
+    except Exception as watchlist_exc:
+        print(f"[HYBRID WATCHLISTS] Later outputs WAIT_FOR_DATA: {watchlist_exc}")
 
     write_catalyst_top20_report(
         result,
