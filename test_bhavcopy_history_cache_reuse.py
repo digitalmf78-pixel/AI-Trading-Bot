@@ -6,6 +6,7 @@ import volume_gainer
 
 def _bhavcopy_row(symbol: str, volume: int = 1000) -> pd.DataFrame:
     return pd.DataFrame([{
+        "BizDt": "2026-11-05" if symbol in {"BBB", "CACHED"} else "2026-11-04",
         "TckrSymb": symbol,
         "OpnPric": 100,
         "HghPric": 105,
@@ -47,7 +48,9 @@ def test_collect_historical_days_downloads_only_when_cache_is_incomplete(tmp_pat
     def download_once(day):
         downloaded_dates.append(day.date())
         if day.date() == date(2026, 11, 4):
-            return _bhavcopy_row("FETCHED")
+            frame = _bhavcopy_row("FETCHED")
+            frame["BizDt"] = "2026-11-04"
+            return frame
         return None
 
     monkeypatch.setattr(volume_gainer, "download_bhavcopy", download_once)
