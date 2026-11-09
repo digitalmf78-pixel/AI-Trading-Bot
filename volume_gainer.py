@@ -2141,6 +2141,9 @@ def calculate_support_resistance(result, historical):
 
     all_history = all_history.copy()
     all_history["Date"] = pd.to_datetime(all_history["Date"], errors="coerce")
+    for column in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
+        if column in all_history.columns:
+            all_history[column] = pd.to_numeric(all_history[column], errors="coerce")
     all_history = all_history.dropna(subset=["Date"])
     unique_dates = sorted({value.date() for value in all_history["Date"]})
     if not unique_dates:
@@ -2190,6 +2193,9 @@ def calculate_support_resistance(result, historical):
         stock["Date"] = pd.to_datetime(stock["Date"], errors="coerce")
         stock = stock.dropna(subset=["Date"])
         stock = stock[stock["Date"].dt.date.isin(unique_dates)].sort_values("Date", kind="mergesort")
+        for column in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
+            if column in stock.columns:
+                stock[column] = pd.to_numeric(stock[column], errors="coerce")
         if stock["Date"].dt.date.duplicated().any():
             rows.append(wait_row(symbol))
             continue
