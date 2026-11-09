@@ -46,6 +46,7 @@ def test_report_keeps_candidate_and_emits_20d_50d_200d_range_observations(tmp_pa
     )
     row = report.iloc[0]
     assert row["TckrSymb"] == "AAA"
+    assert row["PriceHistoryStatus"] == "COMPLETE_20D"
     assert row["PriceRange20DStatus"] == "OBSERVATION_AVAILABLE"
     assert row["PriceRange50DStatus"] == "OBSERVATION_AVAILABLE"
     assert row["PriceRange200DStatus"] == "WAIT_FOR_DATA"
@@ -79,3 +80,36 @@ def test_insufficient_price_history_is_partial_not_a_rejection(tmp_path, monkeyp
     assert len(report) == 1
     assert report.iloc[0]["PriceHistoryStatus"] == "WAIT_FOR_DATA"
     assert report.iloc[0]["EvidenceStatus"] == "PARTIAL_DATA"
+
+
+
+def test_missing_symbol_row_in_a_market_session_waits_for_complete_price_window(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    full = _history()
+    missing_day = full.iloc[-5]["Date"]
+    symbol_history = full[full["Date"] != missing_day].copy()
+    market_calendar = full.copy()
+    market_calendar["TckrSymb"] = "OTHER"
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [symbol_history, market_calendar], _delivery_sessions(), "2026-10-23"
+    )
+    assert report.iloc[0]["PriceRange20DStatus"] == "WAIT_FOR_DATA"
+    assert report.iloc[0]["PriceHistoryStatus"] == "WAIT_FOR_DATA"
+    assert len(report) == 1
+
+
+def test_future_price_rows_are_excluded_from_asof_range(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    future = history.iloc[[-1]].copy()
+    future["Date"] = pd.Timestamp("2026-10-26")
+    future["HghPric"] = 999999
+    future["ClsPric"] = 999998
+    history = pd.concat([history, future], ignore_index=True)
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    assert report.iloc[0]["PriceRange20DHigh"] < 999999
+    assert report.iloc[0]["AsOfDate"] == "2026-10-23"
