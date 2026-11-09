@@ -311,7 +311,7 @@ def build_potential_accumulation_report(
                 prefix = f"PriceRange{window}D"
                 if len(hist) < window or "HghPric" not in hist.columns or "LwPric" not in hist.columns:
                     row[f"{prefix}Status"] = "WAIT_FOR_DATA"
-                    for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
+                    for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount", "StartDate", "EndDate", "SessionCount", "AverageDailyRangePct", "LatestClosePositionPct"):
                         row[f"{prefix}{suffix}"] = float("nan")
                     continue
                 window_dates = ordered_market_sessions[-window:]
@@ -320,7 +320,16 @@ def build_potential_accumulation_report(
                     len(window_dates) != window or len(part) != window
                     or part["Date"].dt.date.nunique() != window
                     or set(part["Date"].dt.date) != set(window_dates)
-                    or part[["HghPric", "LwPric"]].isna().any().any()
+                    or not {"HghPric", "LwPric", "ClsPric"}.issubset(part.columns)
+                    or part[["HghPric", "LwPric", "ClsPric"]].isna().any().any()
+                    or not part[["HghPric", "LwPric", "ClsPric"]].apply(
+                        lambda column: column.map(
+                            lambda value: math.isfinite(float(value)) and float(value) > 0
+                        )
+                    ).all().all()
+                    or (part["HghPric"] < part["LwPric"]).any()
+                    or (part["ClsPric"] < part["LwPric"]).any()
+                    or (part["ClsPric"] > part["HghPric"]).any()
                 ):
                     row[f"{prefix}Status"] = "WAIT_FOR_DATA"
                     for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
@@ -339,6 +348,17 @@ def build_potential_accumulation_report(
                 row[f"{prefix}SessionsSinceHigh"] = window - 1 - high_positions[-1]
                 row[f"{prefix}ExactLowTouchCount"] = len(low_positions)
                 row[f"{prefix}ExactHighTouchCount"] = len(high_positions)
+                row[f"{prefix}StartDate"] = part.iloc[0]["Date"].date().isoformat()
+                row[f"{prefix}EndDate"] = part.iloc[-1]["Date"].date().isoformat()
+                row[f"{prefix}SessionCount"] = len(part)
+                row[f"{prefix}AverageDailyRangePct"] = (
+                    ((part["HghPric"] - part["LwPric"]) / part["ClsPric"]) * 100.0
+                ).mean()
+                latest_close = _num(part.iloc[-1]["ClsPric"])
+                row[f"{prefix}LatestClosePositionPct"] = (
+                    (latest_close - range_low) / (range_high - range_low) * 100.0
+                    if range_high > range_low else float("nan")
+                )
 
             row["PriceHistoryStatus"] = (
                 "COMPLETE_20D" if row.get("PriceRange20DStatus") == "OBSERVATION_AVAILABLE"
