@@ -893,68 +893,102 @@ def load_nifty_index_history(latest_date):
 # ============================================================
 
 @_perf_timed("prior_20_session_average_volume")
-def calculate_average_volume(
-    historical
-):
-    """Calculate the baseline from exactly the previous 20 complete EOD sessions.
+def calculate_average_volume(historical):
+    """Calculate average volume from exactly 20 distinct prior EOD sessions.
 
-    The current EOD session is not included. A symbol needs a valid volume value
-    in all 20 sessions; otherwise its baseline is marked WAIT_FOR_DATA later.
+    The current EOD session is excluded. A symbol needs one valid non-negative
+    volume value in each of the 20 sessions; duplicates and missing rows wait.
     """
     print("\nSTEP 4: Calculating prior-20-session average volume...")
     recent = historical[-20:]
+    empty = pd.DataFrame(columns=["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"])
     if len(recent) < 20:
         print(f"[RVOL] WAIT_FOR_DATA: only {len(recent)}/20 prior sessions available")
-        return pd.DataFrame(columns=["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"])
+        return empty
+
+    date_flags = ["Date" in frame.columns for frame in recent]
+    if any(date_flags):
+        if not all(date_flags):
+            print("[RVOL] WAIT_FOR_DATA: mixed Date availability in prior-session frames")
+            return empty
+        session_dates = []
+        for frame in recent:
+            parsed_dates = pd.to_datetime(frame["Date"], errors="coerce").dropna().dt.date.unique()
+            if len(parsed_dates) != 1:
+                print("[RVOL] WAIT_FOR_DATA: a prior-session frame has invalid/multiple dates")
+                return empty
+            session_dates.append(parsed_dates[0])
+        if len(set(session_dates)) != 20:
+            print("[RVOL] WAIT_FOR_DATA: prior-session frames do not contain 20 distinct dates")
+            return empty
 
     frames = []
-    for df in recent:
-        if not {"TckrSymb", "TtlTradgVol"}.issubset(df.columns):
+    for frame in recent:
+        if not {"TckrSymb", "TtlTradgVol"}.issubset(frame.columns):
+            frames.append(pd.DataFrame(columns=["TckrSymb", "TtlTradgVol"]))
             continue
-        temp = df[["TckrSymb", "TtlTradgVol"]].copy()
+        temp = frame[["TckrSymb", "TtlTradgVol"]].copy()
+        temp["TckrSymb"] = temp["TckrSymb"].astype(str).str.strip().str.upper()
+        duplicate_symbols = set(
+            temp.loc[temp["TckrSymb"].duplicated(keep=False), "TckrSymb"].dropna()
+        )
+        if duplicate_symbols:
+            temp = temp[~temp["TckrSymb"].isin(duplicate_symbols)]
         temp["TtlTradgVol"] = pd.to_numeric(temp["TtlTradgVol"], errors="coerce")
         temp = temp.dropna(subset=["TckrSymb", "TtlTradgVol"])
-        temp = temp[temp["TtlTradgVol"] >= 0]
-        frames.append(temp.drop_duplicates("TckrSymb", keep="last"))
-
-    if not frames:
-        return pd.DataFrame(columns=["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"])
+        temp = temp[(temp["TtlTradgVol"] >= 0) & temp["TckrSymb"].ne("")]
+        frames.append(temp)
 
     all_volume = pd.concat(frames, ignore_index=True)
+    if all_volume.empty:
+        return empty
     summary = all_volume.groupby("TckrSymb")["TtlTradgVol"].agg(
         AvgVolume20D="mean", AvgVolumeSessions="count"
     ).reset_index()
-    # Keep incomplete rows for an explicit WAIT_FOR_DATA state; never infer PASS.
     summary.loc[summary["AvgVolumeSessions"] != 20, "AvgVolume20D"] = float("nan")
-    print(f"[RVOL] Baselines: {len(summary)} symbols; complete 20-session baselines: {(summary['AvgVolumeSessions'] == 20).sum()}")
+    print(
+        f"[RVOL] Baselines: {len(summary)} symbols; "
+        f"complete 20-session baselines: {(summary['AvgVolumeSessions'] == 20).sum()}"
+    )
     return summary
-
 
 # ============================================================
 # RVOL
 # ============================================================
 
 @_perf_timed("rvol_calculation")
-def calculate_rvol(
-    current,
-    avg_volume
-):
+def calculate_rvol(current, avg_volume):
     print("\nSTEP 6: Calculating RVOL for primary-shortlisted stocks...")
-    # The primary shortlist stage may already have attached the 20-session
-    # baseline before the 5-day filter. Avoid duplicate AvgVolume columns.
-    if {"AvgVolume20D", "AvgVolumeSessions"}.issubset(current.columns):
-        result = current.copy()
+    baseline_columns = ["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"]
+    if avg_volume is None or avg_volume.empty:
+        baseline = pd.DataFrame(columns=baseline_columns)
     else:
-        result = current.merge(avg_volume, on="TckrSymb", how="left")
-    if "AvgVolumeSessions" not in result.columns:
-        result["AvgVolumeSessions"] = 0
-    result["AvgVolumeSessions"] = pd.to_numeric(result["AvgVolumeSessions"], errors="coerce").fillna(0).astype(int)
-    result["RVOL"] = result["TtlTradgVol"] / result["AvgVolume20D"]
-    result["DailyVolumePct20D"] = result["RVOL"] * 100
-    result["RVOLStatus"] = result.apply(
-        lambda row: "PASS" if row["AvgVolumeSessions"] == 20 and pd.notna(row["AvgVolume20D"]) and row["AvgVolume20D"] > 0 and pd.notna(row["RVOL"]) else "WAIT_FOR_DATA",
-        axis=1,
+        baseline = avg_volume.reindex(columns=baseline_columns).copy()
+    # Always use the verified baseline from the prior-20-session calculator.
+    # Do not retain stale or partial AvgVolume columns already on current.
+    result = current.drop(
+        columns=["AvgVolume20D", "AvgVolumeSessions", "RVOL", "RVOLStatus"],
+        errors="ignore",
+    ).merge(baseline, on="TckrSymb", how="left")
+    result["AvgVolumeSessions"] = pd.to_numeric(
+        result["AvgVolumeSessions"], errors="coerce"
+    ).fillna(0).astype(int)
+    current_volume = pd.to_numeric(
+        result.get("TtlTradgVol", pd.Series(index=result.index, dtype=float)),
+        errors="coerce",
     )
+    average_volume = pd.to_numeric(result["AvgVolume20D"], errors="coerce")
+    result["RVOL"] = current_volume / average_volume
+    result["DailyVolumePct20D"] = result["RVOL"] * 100
+    valid_current_volume = current_volume.notna() & current_volume.ge(0)
+    result["RVOLStatus"] = (
+        (result["AvgVolumeSessions"] == 20)
+        & average_volume.notna()
+        & average_volume.gt(0)
+        & valid_current_volume
+        & result["RVOL"].notna()
+        & result["RVOL"].map(lambda value: pd.notna(value) and float("-inf") < float(value) < float("inf"))
+    ).map({True: "PASS", False: "WAIT_FOR_DATA"})
     print(f"[RVOL] Calculated: {(result['RVOLStatus'] == 'PASS').sum()}; WAIT_FOR_DATA: {(result['RVOLStatus'] == 'WAIT_FOR_DATA').sum()}")
     return result
 
