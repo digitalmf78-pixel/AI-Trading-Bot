@@ -368,3 +368,11 @@ Before taking action on this repository:
 - Existing delivery thresholds, RVOL classification, liquidity gates, VCP observational ratio, and all entry/confirmation rules remain unchanged.
 
 **Validation:** GitHub Actions run `42588867006`, commit `1617f4322538b6e9cd75f61e80e4c409ec345d23`, completed SUCCESS: 273 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. The separate news parser workflow also completed successfully.
+
+## 23. Accumulation ATR and selling-pressure completeness (09-Nov-2026)
+
+- ATR14 now requires all OHLC values across the 15-session input needed for 14 true ranges (14 ranges plus prior close). Missing/invalid values, non-positive prices or invalid high/low ordering produce unavailable ATR; the code no longer averages a partial set of true ranges.
+- 20-session selling-pressure volume averages and down-vs-up volume ratio now require all 20 non-negative daily volumes. If any volume is missing/invalid, the raw up/down day counts remain descriptive but volume averages and ratio are blank and status is WAIT_FOR_DATA.
+- No thresholds, rankings or eligibility gates were added.
+
+**Validation:** GitHub Actions run `42589041341`, commit `9ef17a40fd41699a833833034865459869f209dd`, completed SUCCESS: 275 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
