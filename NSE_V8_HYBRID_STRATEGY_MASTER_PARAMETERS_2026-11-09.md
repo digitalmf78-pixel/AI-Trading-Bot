@@ -330,3 +330,16 @@ Before taking action on this repository:
 - Corrected the misleading code comment: current fundamental collection is after Liquidity for the liquidity-qualified cohort; the all-Delivery-A/B boundary remains unresolved.
 
 **Validation:** GitHub Actions run `42587756338`, commit `e01af2e4053147fb370c72e0f1a701ced71839d6`, completed SUCCESS: compile passed, 253 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 20. Final EOD confirmation, accumulation and risk-control audit (09-Nov-2026)
+
+**Implemented data-integrity correction:**
+- The final EOD Accumulation/Distribution observation now requires exactly 20 distinct actual sessions for each symbol, with valid OHLCV on every session. Missing symbol rows, duplicate dates, malformed candles or invalid volume return WAIT_FOR_DATA; no skipping malformed rows to form a shorter average.
+- The final EOD ATR fallback now calculates only from a complete 20-session point-in-time window and uses its last 14 true ranges. It no longer manufactures an ATR from fewer than 14 available rows or silently skips invalid rows.
+- The final EOD 3+1 confirmation logic itself remains unchanged: three independent categories (PRICE_VOLUME, SECTOR, ACCUMULATION_DISTRIBUTION, CATALYST) plus a separately verified primary source. The primary-source requirement does not count as one of the three categories.
+- Portfolio risk controls were audited: account equity, per-trade risk, single-position cap, sector/total exposure, stop-distance cap, current positions and verified portfolio exposure are explicit configuration requirements. Missing or unverified settings return WAIT_FOR_DATA; no account size, exposure or default 2R target is invented.
+- Structural R:R still requires actual entry, structural stop and observed resistance; no synthetic target is substituted. Chase remains a separate final check.
+
+**Validation:** GitHub Actions run `42588010960`, commit `11b570cbc79834bbebbbf620d0faa7f89e584d36`, completed SUCCESS: compile passed, 257 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+**No changes:** sector strength, news/catalyst evidence rules and mandatory 3+1 thresholds were not altered in this phase.
