@@ -60,6 +60,7 @@ def test_missing_symbol_session_waits_without_reaching_back(tmp_path, monkeypatc
     assert len(report) == 1
     assert report.iloc[0]["VCPRangeObservationStatus"] == "WAIT_FOR_DATA"
     assert report.iloc[0]["VCPObservationStatus"] == "WAIT_FOR_DATA"
+    assert report.iloc[0]["VCPStatus"] == "WAIT_FOR_DATA"
 
 
 def test_future_history_rows_are_excluded(tmp_path, monkeypatch):
