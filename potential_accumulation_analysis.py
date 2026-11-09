@@ -11,6 +11,7 @@ from datetime import date
 import math
 from pathlib import Path
 import pandas as pd
+from history_index import build_price_history_index, candidate_price_history
 
 OUTPUT_DIR = Path("outputs")
 RANGE_WINDOWS = (20, 50, 100, 200)
@@ -220,22 +221,13 @@ def build_potential_accumulation_report(
     asof = _session_date(asof_date)
     if asof is None:
         raise ValueError(f"Invalid as-of date: {asof_date!r}")
-    market_sessions = set()
-    for raw in historical or []:
-        if raw is None or raw.empty or "Date" not in raw.columns:
-            continue
-        for value in pd.to_datetime(raw["Date"], errors="coerce").dropna():
-            day = value.date()
-            if day <= asof:
-                market_sessions.add(day)
-    market_sessions.add(asof)
-    ordered_market_sessions = sorted(market_sessions)
+    history_index, ordered_market_sessions = build_price_history_index(historical, asof)
 
     rows = []
     for _, candidate in candidates.drop_duplicates("TckrSymb", keep="first").iterrows():
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
-        hist, _ = _build_price_history(candidate, historical, asof, ordered_market_sessions)
+        hist, _ = (candidate_price_history(history_index, candidate, asof), ordered_market_sessions)
         row = {
             "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
             "DeliveryCategory": candidate.get("DeliveryCategory", "UNKNOWN"),
