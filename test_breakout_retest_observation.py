@@ -43,7 +43,7 @@ def test_retest_observation_uses_existing_breakout_and_records_exact_level_touch
     assert row["LastBreakoutDate"] == history.loc[50, "Date"].date().isoformat()
     assert row["BreakoutReferenceLevel"] == 105
     assert row["SessionsSinceBreakout"] == 2
-    assert row["ExactLevelTouchObserved"] is True
+    assert row["ExactLevelTouchObserved"] == True
     assert row["FirstExactLevelTouchDate"] == history.loc[51, "Date"].date().isoformat()
 
 
