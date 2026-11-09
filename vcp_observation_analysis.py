@@ -73,12 +73,13 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             if column in hist.columns:
                 hist[column] = pd.to_numeric(hist[column], errors="coerce")
 
-        aligned = hist[hist["Date"].dt.date.isin(ordered_dates)].copy().sort_values("Date")
+        window_dates = ordered_dates[-TOTAL_SESSIONS:]
+        aligned = hist[hist["Date"].dt.date.isin(window_dates)].copy().sort_values("Date")
         complete_window = (
-            len(ordered_dates) >= TOTAL_SESSIONS
-            and len(aligned.tail(TOTAL_SESSIONS)) == TOTAL_SESSIONS
+            len(window_dates) == TOTAL_SESSIONS
+            and len(aligned) == TOTAL_SESSIONS
             and {"HghPric", "LwPric", "ClsPric"}.issubset(aligned.columns)
-            and aligned.tail(TOTAL_SESSIONS)[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
+            and aligned[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
         )
         row = {
             "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
@@ -130,8 +131,8 @@ def build_vcp_observation_report(candidates, historical, asof_date):
 
             volume_complete = (
                 "TtlTradgVol" in aligned.columns
-                and aligned.tail(TOTAL_SESSIONS)["TtlTradgVol"].notna().all()
-                and (aligned.tail(TOTAL_SESSIONS)["TtlTradgVol"] >= 0).all()
+                and aligned["TtlTradgVol"].notna().all()
+                and (aligned["TtlTradgVol"] >= 0).all()
             )
             if volume_complete:
                 row["VCPVolumeObservationStatus"] = "COMPLETE"
