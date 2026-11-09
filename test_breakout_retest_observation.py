@@ -85,7 +85,7 @@ def test_retest_module_is_integrated_after_existing_breakout_detection():
     from pathlib import Path
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
     assert "from breakout_retest_observation import build_breakout_retest_observation" in source
-    assert source.index("calculate_breakout_pullback(") < source.index(
-        "build_breakout_retest_observation("
+    assert source.index("result = (\n        calculate_breakout_pullback(") < source.index(
+        "retest_observation = build_breakout_retest_observation("
     )
     assert "never changes selection or entry gates" in source
