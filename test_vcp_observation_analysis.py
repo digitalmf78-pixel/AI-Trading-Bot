@@ -164,3 +164,18 @@ def test_duplicate_candidate_identity_returns_wait_for_data_rows(tmp_path, monke
     assert len(report) == 2
     assert report["VCPObservationStatus"].eq("WAIT_FOR_DATA").all()
     assert report["VCPStatus"].eq("WAIT_FOR_DATA").all()
+
+
+def test_contraction_depth_and_joint_price_volume_relationship_are_reported(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    report = build_vcp_observation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                       "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}]),
+        [_history()], "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["RangeContractionDepth2vs1Pct"] > 0
+    assert row["RangeContractionDepth3vs2Pct"] > 0
+    assert row["PriceVolumeContractionRelationship"] == "PRICE_AND_VOLUME_BOTH_CONTRACTED"
+    assert row["VCPStatus"] == "NOT_CLASSIFIED"
+    assert row["FalseVCPOutcomeStatus"] == "NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON"
