@@ -11,14 +11,16 @@ def _history(symbol="AAA", periods=60):
     closes = [v + 2 for v in lows]
     volumes = [1000 + i * 10 for i in range(periods)]
     return pd.DataFrame({
-        "TckrSymb": symbol, "Date": dates, "OpnPric": closes - 1,
+        "TckrSymb": symbol, "Date": dates, "OpnPric": [value - 1 for value in closes],
         "HghPric": highs, "LwPric": lows, "ClsPric": closes,
         "TtlTradgVol": volumes,
     })
 
 
 def _delivery_sessions(count=6):
-    dates = [date(2026, 10, 15) + timedelta(days=i) for i in range(count)]
+    calendar = [date(2026, 10, 15), date(2026, 10, 16), date(2026, 10, 19),
+                date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23)]
+    dates = calendar[:count]
     sessions = []
     for i, day in enumerate(dates):
         pct = 60.0 if i % 2 == 0 else 55.0
