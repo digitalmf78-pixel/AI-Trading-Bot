@@ -76,3 +76,35 @@ def test_future_history_rows_are_excluded(tmp_path, monkeypatch):
         [history], "2026-10-23"
     )
     assert report.iloc[0]["RangeWidthBlock3Pct"] < 999999
+
+
+
+def test_duplicate_symbol_session_rows_wait_instead_of_last_row_wins(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    duplicate = history.iloc[[-5]].copy()
+    history = pd.concat([history, duplicate], ignore_index=True)
+    report = build_vcp_observation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                       "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}]),
+        [history], "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["VCPRangeObservationStatus"] == "WAIT_FOR_DATA"
+    assert row["VCPObservationStatus"] == "WAIT_FOR_DATA"
+    assert row["VCPStatus"] == "WAIT_FOR_DATA"
+
+
+def test_missing_volume_in_one_session_is_partial_not_a_full_vcp_observation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "TtlTradgVol"] = float("nan")
+    report = build_vcp_observation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                       "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}]),
+        [history], "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["VCPRangeObservationStatus"] == "COMPLETE"
+    assert row["VCPVolumeObservationStatus"] == "WAIT_FOR_DATA"
+    assert row["VCPObservationStatus"] == "PARTIAL_DATA"
