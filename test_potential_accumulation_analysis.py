@@ -122,7 +122,7 @@ def test_future_price_rows_are_excluded_from_asof_range(tmp_path, monkeypatch):
     future["ClsPric"] = 999998
     history = pd.concat([history, future], ignore_index=True)
     report = build_potential_accumulation_report(
-        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": float(history.iloc[-1]["ClsPric"])}]),
         [history], _delivery_sessions(), "2026-10-23"
     )
     assert report.iloc[0]["PriceRange20DHigh"] < 999999
