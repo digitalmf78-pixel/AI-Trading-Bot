@@ -187,6 +187,8 @@ def build_potential_accumulation_report(
             "HighDeliveryIntradayRangeAveragePct": float("nan"),
             "HighDeliveryUpDayCount": 0,
             "HighDeliveryDownDayCount": 0,
+            "HighDeliveryPriceResponseStatus": "WAIT_FOR_DATA",
+            "SellingPressureObservationStatus": "WAIT_FOR_DATA",
             "DownDayCount20D": float("nan"), "UpDayCount20D": float("nan"),
             "DownDayVolumeAverage20D": float("nan"),
             "UpDayVolumeAverage20D": float("nan"),
@@ -278,6 +280,11 @@ def build_potential_accumulation_report(
                 row["DownDayVolumeAverage20D"] = down_avg
                 row["UpDayVolumeAverage20D"] = up_avg
                 row["DownVsUpVolumeRatio20D"] = down_avg / up_avg if pd.notna(down_avg) and pd.notna(up_avg) and up_avg > 0 else float("nan")
+                row["SellingPressureObservationStatus"] = (
+                    "OBSERVATIONS_AVAILABLE"
+                    if "TtlTradgVol" in recent.columns and recent["TtlTradgVol"].notna().all()
+                    else "WAIT_FOR_DATA"
+                )
 
         delivery_rows = _delivery_observations(symbol, series, delivery_sessions, asof)
         if len(delivery_rows) >= 5:
@@ -293,6 +300,14 @@ def build_potential_accumulation_report(
             row["HighDeliveryIntradayRangeAveragePct"] = sum(ranges) / len(ranges) if ranges else float("nan")
             row["HighDeliveryUpDayCount"] = sum(item["CloseChangePct"] > 0 for item in high_delivery if math.isfinite(item["CloseChangePct"]))
             row["HighDeliveryDownDayCount"] = sum(item["CloseChangePct"] < 0 for item in high_delivery if math.isfinite(item["CloseChangePct"]))
+            if not high_delivery:
+                row["HighDeliveryPriceResponseStatus"] = "NO_HIGH_DELIVERY_SESSION"
+            elif abs_changes and ranges:
+                row["HighDeliveryPriceResponseStatus"] = "OBSERVATIONS_AVAILABLE"
+            elif abs_changes or ranges:
+                row["HighDeliveryPriceResponseStatus"] = "PARTIAL_DATA"
+            else:
+                row["HighDeliveryPriceResponseStatus"] = "WAIT_FOR_DATA"
         else:
             row["DeliveryEvidenceStatus"] = "WAIT_FOR_DATA"
         if row["PriceHistoryStatus"] == "COMPLETE_20D" and row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE":
