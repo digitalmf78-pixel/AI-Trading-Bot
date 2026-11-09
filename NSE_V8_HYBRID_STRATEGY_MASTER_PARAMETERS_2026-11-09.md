@@ -462,3 +462,13 @@ Before taking action on this repository:
 - No forward observation horizon, failure buffer, minimum close count, or retest deadline has been introduced. False-breakout classification remains NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON.
 - Existing 20D/50D breakout definitions and all selection, risk, ranking, and entry gates remain unchanged.
 - Added regression coverage for excursion and close-position observations. CI validation is pending for this commit sequence.
+
+
+## 31. Approved 10-session post-breakout observation horizon (09-Nov-2026)
+
+- User approved a forward observation horizon of 10 actual trading sessions after the latest qualifying historical breakout.
+- The report now evaluates only the first 10 post-breakout sessions for its post-event price/volume, reference-level touch, excursion, and close-position observations. Later sessions do not extend or overwrite this fixed observation window.
+- `ForwardObservationHorizonSessions=10`; `ForwardSessionsObserved` records 0–10 available post-event sessions; `ForwardHorizonStatus` is `NOT_STARTED`, `IN_PROGRESS`, or `COMPLETE` when a breakout event exists. Missing/invalid history remains `WAIT_FOR_DATA`; no event in available cache is not a failure classification.
+- The 10-session horizon does **not** define a false breakout. Failure buffer, close/hold failure condition, re-entry rule, and outcome classification remain unapproved. No false-breakout pass/fail label or scanner/entry gate has been added.
+- Existing breakout definitions, ranking, eligibility, risk controls and trade signals are unchanged.
+- Regression tests cover incomplete and completed horizons and ensure sessions after session 10 do not affect the report. CI validation is pending for this commit sequence.
