@@ -1171,8 +1171,21 @@ def classify_rvol_for_delivery_candidates(result, eod_date, minimum_rvol=1.5):
     Missing/invalid RVOL remains WAIT_FOR_DATA but is also retained for audit
     and downstream non-RVOL checks.
     """
-    if result is None or result.empty:
-        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
+    if result is None:
+        return pd.DataFrame(columns=[
+            "TckrSymb", "BreakoutStatus", "PullbackStatus", "SetupType",
+            "BreakoutDataStatus", "PullbackDataStatus",
+        ])
+    if result.empty:
+        empty = result.copy()
+        for column in (
+            "BreakoutStatus", "PullbackStatus", "SetupType",
+            "BreakoutDataStatus", "PullbackDataStatus",
+            "High20DDataStatus", "High50DDataStatus", "VolumeBaseline20DStatus",
+        ):
+            if column not in empty.columns:
+                empty[column] = pd.Series(dtype="object")
+        return empty
 
     frame = result.copy()
     frame["RVOL"] = pd.to_numeric(
