@@ -176,30 +176,33 @@ def build_potential_accumulation_report(
             "DownDayVolumeAverage20D": float("nan"),
             "UpDayVolumeAverage20D": float("nan"),
             "DownVsUpVolumeRatio20D": float("nan"),
-            "ConfirmedPivotLowCount": 0, "ConfirmedPivotHighCount": 0,
+            "PivotStructureStatus": "WAIT_FOR_DATA",
+            "ConfirmedPivotLowCount": float("nan"), "ConfirmedPivotHighCount": float("nan"),
             "LatestPivotLow": float("nan"), "PreviousPivotLow": float("nan"),
             "LatestPivotLowDate": "", "PreviousPivotLowDate": "",
             "HigherLowStatus": "WAIT_FOR_DATA",
         }
         if not hist.empty:
-            lows = hist["LwPric"].tolist() if "LwPric" in hist.columns else []
-            highs = hist["HghPric"].tolist() if "HghPric" in hist.columns else []
-            low_pivots = _pivots(lows) if len(lows) >= 7 else []
-            high_pivots = _pivots(highs, high=True) if len(highs) >= 7 else []
-            row["ConfirmedPivotLowCount"] = len(low_pivots)
-            row["ConfirmedPivotHighCount"] = len(high_pivots)
-            if low_pivots:
-                idx, value = low_pivots[-1]
-                row["LatestPivotLow"] = value
-                row["LatestPivotLowDate"] = hist.iloc[idx]["Date"].date().isoformat()
-            if len(low_pivots) >= 2:
-                idx, value = low_pivots[-2]
-                row["PreviousPivotLow"] = value
-                row["PreviousPivotLowDate"] = hist.iloc[idx]["Date"].date().isoformat()
-                row["HigherLowStatus"] = "HIGHER_LOW_OBSERVED" if low_pivots[-1][1] > value else "NO_HIGHER_LOW_OBSERVED"
-            elif len(low_pivots) == 1:
-                row["HigherLowStatus"] = "WAIT_FOR_SECOND_CONFIRMED_PIVOT"
-
+            pivot_history_complete = len(hist) == len(ordered_market_sessions)
+            if pivot_history_complete and "LwPric" in hist.columns and "HghPric" in hist.columns:
+                row["PivotStructureStatus"] = "COMPLETE"
+                lows = hist["LwPric"].tolist()
+                highs = hist["HghPric"].tolist()
+                low_pivots = _pivots(lows) if len(lows) >= 7 else []
+                high_pivots = _pivots(highs, high=True) if len(highs) >= 7 else []
+                row["ConfirmedPivotLowCount"] = len(low_pivots)
+                row["ConfirmedPivotHighCount"] = len(high_pivots)
+                if low_pivots:
+                    idx, value = low_pivots[-1]
+                    row["LatestPivotLow"] = value
+                    row["LatestPivotLowDate"] = hist.iloc[idx]["Date"].date().isoformat()
+                if len(low_pivots) >= 2:
+                    idx, value = low_pivots[-2]
+                    row["PreviousPivotLow"] = value
+                    row["PreviousPivotLowDate"] = hist.iloc[idx]["Date"].date().isoformat()
+                    row["HigherLowStatus"] = "HIGHER_LOW_OBSERVED" if low_pivots[-1][1] > value else "NO_HIGHER_LOW_OBSERVED"
+                elif len(low_pivots) == 1:
+                    row["HigherLowStatus"] = "WAIT_FOR_SECOND_CONFIRMED_PIVOT"
             for window in RANGE_WINDOWS:
                 prefix = f"PriceRange{window}D"
                 if len(hist) < window or "HghPric" not in hist.columns or "LwPric" not in hist.columns:
@@ -268,10 +271,12 @@ def build_potential_accumulation_report(
             row["HighDeliveryDownDayCount"] = sum(item["CloseChangePct"] < 0 for item in high_delivery if math.isfinite(item["CloseChangePct"]))
         else:
             row["DeliveryEvidenceStatus"] = "WAIT_FOR_DATA"
-        row["EvidenceStatus"] = (
-            "OBSERVATIONS_AVAILABLE" if row["PriceHistoryStatus"] == "COMPLETE_20D" and row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE"
-            else "PARTIAL_DATA"
-        )
+        if row["PriceHistoryStatus"] == "COMPLETE_20D" and row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE":
+            row["EvidenceStatus"] = "OBSERVATIONS_AVAILABLE"
+        elif row["PriceHistoryStatus"] == "WAIT_FOR_DATA" and row["DeliveryEvidenceStatus"] == "WAIT_FOR_DATA":
+            row["EvidenceStatus"] = "WAIT_FOR_DATA"
+        else:
+            row["EvidenceStatus"] = "PARTIAL_DATA"
         rows.append(row)
 
     report = pd.DataFrame(rows)
