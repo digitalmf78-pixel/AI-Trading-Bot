@@ -14,12 +14,13 @@ SPEC.loader.exec_module(sector_data)
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text="", content_type="text/html; charset=utf-8"):
+    def __init__(self, status_code=200, payload=None, text="", content_type="text/html; charset=utf-8", url=""):
         self.status_code = status_code
         self._payload = payload
         self.text = text
         self.content = text.encode("utf-8")
         self.headers = {"Content-Type": content_type}
+        self.url = url
 
     def json(self):
         if isinstance(self._payload, Exception):
@@ -102,6 +103,25 @@ class NiftyIndicesHistoryBootstrapTests(unittest.TestCase):
             )
         self.assertEqual(exact_count, 1)
         self.assertTrue(rows)
+
+    def test_returnurl_redirect_stops_retries_for_remaining_indices(self):
+        redirected = FakeResponse(
+            payload=ValueError("not JSON"),
+            text="<html>redirected landing page</html>",
+            url="https://www.niftyindices.com/?ReturnUrl=%2FBackpage.aspx%2FgetHistoricaldatatabletoString",
+        )
+        session = FakeSession([redirected])
+        with patch.object(sector_data.time, "sleep", return_value=None):
+            rows, exact_count = sector_data._history_from_niftyindices_api(
+                session, self.asof,
+                sectors_to_fetch={"Nifty Healthcare", "Nifty Auto"},
+            )
+
+        self.assertEqual(rows, [])
+        self.assertEqual(exact_count, 0)
+        # One bootstrap and one POST only: the known service-wide HTML redirect
+        # must not trigger per-index retries or requests for the remaining index.
+        self.assertEqual([call[0] for call in session.calls], ["GET", "POST"])
 
     def test_invalid_html_after_retry_stays_missing_not_synthetic(self):
         html = FakeResponse(payload=ValueError("not JSON"), text="<!DOCTYPE html><html>blocked</html>")
