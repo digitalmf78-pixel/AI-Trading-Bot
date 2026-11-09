@@ -453,3 +453,12 @@ Before taking action on this repository:
 - Complete measurements remain `VCPStatus=NOT_CLASSIFIED`; incomplete inputs remain `WAIT_FOR_DATA`. No scanner, ranking, or entry gate changed.
 
 **Validation:** GitHub Actions run `42593617448`, commit `4ba06fa097b71567bf83ed8c5e02745084a6f0a1`, completed SUCCESS: 297 unit/data-audit tests passed, all 31 V8 regression tests passed, sector/news/official-index tests passed. Issuer Matching/RSS Parser workflow also completed SUCCESS.
+
+
+## 30. Post-breakout follow-through observations (09-Nov-2026)
+
+- Extended the existing descriptive breakout/retest report with post-breakout highest high, lowest-low distance from the reference level, highest-high distance from the reference level, and counts of post-breakout closes above, below, and exactly at the reference level.
+- These fields describe the observed price path after the most recent breakout found in the available historical cache. They do not define success/failure, false breakout, retest confirmation, re-entry, or an entry signal.
+- No forward observation horizon, failure buffer, minimum close count, or retest deadline has been introduced. False-breakout classification remains NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON.
+- Existing 20D/50D breakout definitions and all selection, risk, ranking, and entry gates remain unchanged.
+- Added regression coverage for excursion and close-position observations. CI validation is pending for this commit sequence.
