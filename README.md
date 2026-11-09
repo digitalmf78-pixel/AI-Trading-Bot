@@ -16,7 +16,7 @@ Automated NSE EOD research and swing-trading analysis pipeline. The scanner prod
 - Form the complete de-duplicated A OR B union and preserve A_ONLY / B_ONLY / A_AND_B.
 - Calculate RVOL only for this union: >1.5 HIGH, <=1.5 LOW, invalid/missing WAIT_FOR_DATA. RVOL is classification only and never rejects a Delivery-qualified candidate.
 - All A/B candidates continue to the 20-session liquidity check; hard minimum average traded value ₹1.5 crore.
-- Current fundamental collection is after Liquidity. The decision to move it to the full Delivery A/B union remains open; no change is made by this README.
+- Approved sequence (confirmed 06-Nov-2026): the complete Delivery A OR B union, including HIGH/LOW/WAIT RVOL bands, proceeds to Liquidity; Fundamentals are collected for every Liquidity-qualified candidate. Fundamental scoring remains enrichment/priority context, not a rejection gate.
 
 ## Hybrid watchlists
 
@@ -103,7 +103,7 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Phase 5 VCP observations: three consecutive 20-session range/volume blocks and contraction/dry-up ratios now run before Liquidity on the Delivery A/B union. The <0.5x volume flag is observational only; VCP is not classified and does not gate candidates. Latest validation: 221 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Phase 7 integrity work: breakout/pullback, support/resistance and trend indicators now fail closed on missing or incomplete market sessions; original signal thresholds are unchanged. Liquidity duplicate rows/dates now WAIT_FOR_DATA. Latest CI: 239 unit/data-audit tests and 31 V8 regression tests passed.
-- Phase 3 audit: fundamental cache and dated snapshots are persisted in-repo by the scheduled workflow. Collection remains after Liquidity pending the recorded boundary decision; XBRL value verification remains a separate non-gating sidecar.
+- Phase 3 audit: fundamental cache and dated snapshots are persisted in-repo by the scheduled workflow. Collection occurs after Liquidity for every liquidity-qualified candidate, as confirmed on 06-Nov-2026; XBRL value verification remains a separate non-gating sidecar.
 
 - Four independent Hybrid watchlists are now emitted: Potential Accumulation and Base/VCP before Liquidity; Breakout Ready and Confirmed Entry after existing EOD gates. They are reporting-only and never feed back into candidate selection. Final EOD missing prerequisites now WAIT_FOR_DATA. Latest CI: 253 unit/data-audit tests and 31 V8 regression tests passed.
 
