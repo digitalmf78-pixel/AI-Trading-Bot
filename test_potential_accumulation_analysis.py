@@ -187,3 +187,15 @@ def test_missing_close_session_is_retained_and_not_backfilled_for_ema(tmp_path, 
     row = report.iloc[0]
     assert row["ObservedEMA20Status"] == "WAIT_FOR_DATA"
     assert row["ObservedEMA50Status"] == "WAIT_FOR_DATA"
+
+
+
+def test_duplicate_delivery_report_dates_do_not_inflate_five_session_evidence(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sessions = _delivery_sessions(count=5)
+    sessions.append((sessions[-1][0], sessions[-1][1].copy()))
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [_history()], sessions, "2026-10-23"
+    )
+    assert report.iloc[0]["DeliveryEvidenceStatus"] == "WAIT_FOR_DATA"
