@@ -172,7 +172,7 @@ def build_potential_accumulation_report(
             "HighDeliveryIntradayRangeAveragePct": float("nan"),
             "HighDeliveryUpDayCount": 0,
             "HighDeliveryDownDayCount": 0,
-            "DownDayCount20D": 0, "UpDayCount20D": 0,
+            "DownDayCount20D": float("nan"), "UpDayCount20D": float("nan"),
             "DownDayVolumeAverage20D": float("nan"),
             "UpDayVolumeAverage20D": float("nan"),
             "DownVsUpVolumeRatio20D": float("nan"),
@@ -199,11 +199,6 @@ def build_potential_accumulation_report(
                 row["HigherLowStatus"] = "HIGHER_LOW_OBSERVED" if low_pivots[-1][1] > value else "NO_HIGHER_LOW_OBSERVED"
             elif len(low_pivots) == 1:
                 row["HigherLowStatus"] = "WAIT_FOR_SECOND_CONFIRMED_PIVOT"
-
-            row["PriceHistoryStatus"] = (
-                "COMPLETE_20D" if row.get("PriceRange20DStatus") == "OBSERVATION_AVAILABLE"
-                else "WAIT_FOR_DATA"
-            )
 
             for window in RANGE_WINDOWS:
                 prefix = f"PriceRange{window}D"
@@ -232,6 +227,11 @@ def build_potential_accumulation_report(
                 row[f"{prefix}SessionsSinceHigh"] = window - 1 - high_positions[-1]
                 row[f"{prefix}ExactLowTouchCount"] = len(low_positions)
                 row[f"{prefix}ExactHighTouchCount"] = len(high_positions)
+
+            row["PriceHistoryStatus"] = (
+                "COMPLETE_20D" if row.get("PriceRange20DStatus") == "OBSERVATION_AVAILABLE"
+                else "WAIT_FOR_DATA"
+            )
 
             recent_dates = ordered_market_sessions[-20:]
             recent = hist[hist["Date"].dt.date.isin(recent_dates)].copy().sort_values("Date")
