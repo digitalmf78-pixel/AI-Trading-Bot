@@ -376,3 +376,11 @@ Before taking action on this repository:
 - No thresholds, rankings or eligibility gates were added.
 
 **Validation:** GitHub Actions run `42589041341`, commit `9ef17a40fd41699a833833034865459869f209dd`, completed SUCCESS: 275 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 24. Early watchlist resilience (09-Nov-2026)
+
+- If the optional Potential Accumulation evidence engine raises an exception, the scanner now writes a fallback early-watchlist source from the unique Delivery A/B union. Every such candidate remains present with `DeliveryEvidenceStatus=WAIT_FOR_DATA` and `EvidenceStatus=WAIT_FOR_DATA`.
+- This fallback does not mark accumulation as observed, does not affect liquidity or later gates, and prevents an evidence-module failure from silently emptying the early watchlist.
+- VCP failure remains separately visible as WAIT_FOR_DATA in the Base/VCP watchlist; it does not suppress Potential Accumulation candidates.
+
+**Validation:** GitHub Actions run `42589369637`, commit `e845b79d11f8011868463fcb46decd7b301581e3`, completed SUCCESS: 276 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
