@@ -22,8 +22,8 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-08-01", periods=60)
             original = self._cache(root, dates)
-            with patch.object(vg, "DATA_CACHE_DIR", str(root)), \\
-                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), \\
+            with patch.object(vg, "DATA_CACHE_DIR", str(root)), 
+                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), 
                  patch.object(vg, "fetch_nifty_index_history", side_effect=TimeoutError("provider down")):
                 result = vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
             self.assertEqual(len(result), 60)
@@ -40,8 +40,8 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             target = pd.Timestamp("2026-11-08")
             # Use a calendar date deliberately represented in provider data.
             downloaded = pd.DataFrame({"Date": [target], "NiftyClose": [24500.0]})
-            with patch.object(vg, "DATA_CACHE_DIR", str(root)), \\
-                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), \\
+            with patch.object(vg, "DATA_CACHE_DIR", str(root)), 
+                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), 
                  patch.object(vg, "fetch_nifty_index_history", return_value=downloaded):
                 result = vg.load_nifty_index_history(target)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
@@ -53,8 +53,8 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-10-01", periods=10)
             self._cache(root, dates)
-            with patch.object(vg, "DATA_CACHE_DIR", str(root)), \\
-                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), \\
+            with patch.object(vg, "DATA_CACHE_DIR", str(root)), 
+                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), 
                  patch.object(vg, "fetch_nifty_index_history", side_effect=TimeoutError("provider down")):
                 with self.assertRaisesRegex(RuntimeError, "only 10 valid closes"):
                     vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
