@@ -48,6 +48,14 @@ def _with_watchlist_status(frame, status_fn):
 
 def write_early_hybrid_watchlists(accumulation_report, vcp_report):
     """Write Accumulation and Base/VCP watchlists for every Delivery A/B name."""
+    if accumulation_report is None or accumulation_report.empty:
+        empty_accumulation = pd.DataFrame(columns=["TckrSymb", "AsOfDate", "WatchlistStatus", "WatchlistReason"])
+        empty_base = pd.DataFrame(columns=[
+            "TckrSymb", "AsOfDate", "VCPObservationStatus",
+            "ContractionTransitionsObserved", "WatchlistStatus", "WatchlistReason",
+        ])
+        return _write(empty_accumulation, ACCUMULATION_PATH), _write(empty_base, BASE_VCP_PATH)
+
     accumulation = _with_watchlist_status(
         accumulation_report,
         lambda row: (
@@ -61,8 +69,11 @@ def write_early_hybrid_watchlists(accumulation_report, vcp_report):
         base["VCPObservationStatus"] = "WAIT_FOR_DATA"
         base["ContractionTransitionsObserved"] = pd.NA
     else:
+        join_keys = ["TckrSymb"]
+        if "AsOfDate" in accumulation.columns and "AsOfDate" in vcp_report.columns:
+            join_keys.append("AsOfDate")
         base = accumulation.drop(columns=["WatchlistStatus", "WatchlistReason"], errors="ignore").merge(
-            vcp_report, on=["TckrSymb", "AsOfDate"], how="left", suffixes=("", "_VCP")
+            vcp_report, on=join_keys, how="left", suffixes=("", "_VCP")
         )
     base = _with_watchlist_status(
         base,
@@ -106,6 +117,11 @@ def write_confirmed_entry_watchlist(candidates):
         chase = str(row.get("ChaseStatus", "")).strip().upper()
         if chase in {"CHASE", "CHASED"}:
             return "CHASED", "EXISTING_CHASE_FILTER_MARKED_CHASE"
+        if str(row.get("EODWatchlistStatus", "")).upper() == "WAIT_FOR_DATA" or any(
+            str(row.get(column, "")).upper() == "WAIT_FOR_DATA"
+            for column in ("RiskControlStatus", "MandatoryConfirmationStatus", "RiskRewardStatus")
+        ):
+            return "WAIT_FOR_DATA", "FINAL_EOD_CONFIRMATION_DATA_INCOMPLETE"
         if (
             str(row.get("EODWatchlistStatus", "")).upper() == "WATCH"
             and str(row.get("RiskControlStatus", "")).upper() == "PASS"
