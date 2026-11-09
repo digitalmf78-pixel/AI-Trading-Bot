@@ -162,7 +162,11 @@ def write_market_activity(eod_date, record: dict | None = None,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([{column: record.get(column) for column in REPORT_COLUMNS}]).to_csv(output_path, index=False)
-    print(f"[FII/DII] status={record.get('DataStatus')} scope={DATA_SCOPE} report={output_path}")
+    print(
+        f"[FII/DII] requested_eod={record.get('RequestedEODDate', '')} "
+        f"data_date={record.get('DataDate', '')} status={record.get('DataStatus')} "
+        f"reason={record.get('Reason', '')} scope={DATA_SCOPE} report={output_path}"
+    )
     return record
 
 
