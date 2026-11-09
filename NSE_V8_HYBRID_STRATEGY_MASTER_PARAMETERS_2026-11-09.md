@@ -309,3 +309,24 @@ Before taking action on this repository:
 - FundamentalScore is informational only. The current score requires six numeric score metrics plus verified publication date, period end and metric-period alignment; the direct XBRL metric-value verification sidecar remains separately visible. Do not turn Strong Fundamental or score >=65 into an eligibility gate.
 
 **Open boundary decisions remain:** collect fundamentals for all Delivery A/B before Liquidity versus current Liquidity-first collection; and whether direct XBRL metric-value verification should become a score prerequisite or remain a non-gating evidence sidecar. No change made.
+
+## 19. Four independent Hybrid watchlists and final EOD data status (09-Nov-2026)
+
+**Implemented on main:**
+- Added `hybrid_watchlists.py` and its tests. Four separate CSV reports are now generated:
+  1. `outputs/v8_hybrid_potential_accumulation_watchlist.csv`
+  2. `outputs/v8_hybrid_base_vcp_watchlist.csv`
+  3. `outputs/v8_hybrid_breakout_ready_watchlist.csv`
+  4. `outputs/v8_hybrid_confirmed_entry_watchlist.csv`
+- Potential Accumulation and Base/VCP watchlists are written **before Liquidity** from the complete unique Delivery A OR B union. Later VCP, breakout, liquidity or risk statuses do not remove a candidate from the early accumulation watchlist.
+- Potential Accumulation status is ACCUMULATION_WATCH when Delivery quantity/price evidence is available; otherwise WAIT_FOR_DATA. No VCP or breakout prerequisite is applied.
+- Base/VCP uses an explicitly observational interim tag: BASE_FORMING when two successive range contractions are observed across the three 20-session blocks; NO_SETUP when complete data does not show that sequence; WAIT_FOR_DATA when inputs are incomplete. This is **not VCP_CONFIRMED**, not a BUY signal and not a pipeline gate. The final VCP contraction count/depth thresholds remain unresolved.
+- Breakout Ready is written after the existing final EOD layers. It reports BREAKOUT_CONFIRMED, PULLBACK_CONFIRMED, ENTRY_CANDIDATE, CHASED, WAIT_FOR_DATA or NO_SETUP using the existing breakout/pullback and chase outputs.
+- Confirmed Entry is ENTRY_CANDIDATE only when the existing final EOD status is WATCH and RiskControl, MandatoryConfirmation, RiskReward and Chase statuses all pass. This is not an order or auto-trade instruction.
+- All four outputs are independent copies. None is assigned back to the scanner's current/result candidate dataframe or used to change any gate.
+
+**Final EOD missing-data correction:**
+- Added a single prerequisite-data status check before the final WATCH decision. Missing CoreTechnical, Sector, Market Regime, Delivery, Accumulation/Distribution, News, Risk/Reward, Risk Control, Mandatory Confirmation, Chase, RVOL, V8Score, required values or high-RVOL VolumeReason now produce WAIT_FOR_DATA. An explicit CoreTechnical REJECT remains SKIP; valid failed gates remain SKIP. Missing fundamental fields remain informational and do not block this interim EOD review.
+- Corrected the misleading code comment: current fundamental collection is after Liquidity for the liquidity-qualified cohort; the all-Delivery-A/B boundary remains unresolved.
+
+**Validation:** GitHub Actions run `42587756338`, commit `e01af2e4053147fb370c72e0f1a701ced71839d6`, completed SUCCESS: compile passed, 253 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
