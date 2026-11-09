@@ -168,3 +168,22 @@ def test_rvol_classification_retains_high_low_and_missing_delivery_candidates(tm
     assert classified.set_index("TckrSymb").loc["LOW", "RVOLBand"] == "LOW_RVOL_LE_1_5"
     assert classified.set_index("TckrSymb").loc["WAIT", "RVOLBand"] == "WAIT_FOR_DATA"
     assert classified.set_index("TckrSymb").loc["MISSING", "RVOLBand"] == "WAIT_FOR_DATA"
+
+
+
+def test_accumulation_and_vcp_observations_run_before_liquidity_without_gating():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    rvol = source.index("current = classify_rvol_for_delivery_candidates")
+    accumulation = source.index("accumulation_report = build_potential_accumulation_report")
+    vcp = source.index("vcp_report = build_vcp_observation_report")
+    liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
+    assert delivery < rvol < accumulation < vcp < liquidity
+    early_block = source[accumulation:liquidity]
+    assert "current, historical, delivery_sessions, eod_date" in early_block
+    assert "current, historical, eod_date" in early_block
+    assert "no gating applied" in early_block
+    assert "except Exception as accumulation_exc" in early_block
+    assert "except Exception as vcp_exc" in early_block
+    assert "current = accumulation_report" not in source
+    assert "current = vcp_report" not in source
