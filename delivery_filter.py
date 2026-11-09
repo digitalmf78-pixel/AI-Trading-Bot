@@ -108,8 +108,11 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
     seen: set[date] = set()
     for offset in range(max_calendar_days):
         day = asof - timedelta(days=offset)
-        if day.weekday() >= 5:
-            continue
+        try:
+            if not is_trading_session(day):
+                continue
+        except CalendarCoverageError as exc:
+            raise RuntimeError(f"WAIT_FOR_DATA: {exc}") from exc
         frame = _read_cached_or_download(http, day)
         if frame is None:
             if offset == 0:
