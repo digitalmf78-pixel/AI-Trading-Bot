@@ -93,3 +93,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Phase 3 audit: fundamental cache and dated snapshots are persisted in-repo by the scheduled workflow. Collection remains after Liquidity pending the recorded boundary decision; XBRL value verification remains a separate non-gating sidecar.
 
 - Four independent Hybrid watchlists are now emitted: Potential Accumulation and Base/VCP before Liquidity; Breakout Ready and Confirmed Entry after existing EOD gates. They are reporting-only and never feed back into candidate selection. Final EOD missing prerequisites now WAIT_FOR_DATA. Latest CI: 253 unit/data-audit tests and 31 V8 regression tests passed.
+
+- Final EOD AD and ATR fallback now require complete 20-session data; mandatory 3+1 thresholds and portfolio risk controls were audited and preserved. Missing account/risk inputs remain WAIT_FOR_DATA. Latest CI: 257 unit/data-audit tests and 31 V8 regression tests passed.
