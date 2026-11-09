@@ -523,17 +523,24 @@ def _delivery_pct(row: pd.Series) -> float:
 
 
 def _accumulation_score(frame: pd.DataFrame) -> float:
-    if frame is None or len(frame) < 10:
+    # The V8 AD observation is a 20-session measure. Never calculate it from
+    # fewer valid rows or by silently skipping malformed sessions.
+    if frame is None or len(frame) != 20:
         return float("nan")
+    if "Date" in frame.columns:
+        dates = pd.to_datetime(frame["Date"], errors="coerce").dropna().dt.date
+        if len(dates) != 20 or dates.nunique() != 20:
+            return float("nan")
     values = []
-    for _, row in frame.tail(20).iterrows():
+    for _, row in frame.iterrows():
         high, low = _num(row.get("HghPric")), _num(row.get("LwPric"))
         close, volume = _num(row.get("ClsPric")), _num(row.get("TtlTradgVol"))
-        if pd.isna(high) or pd.isna(low) or pd.isna(close) or pd.isna(volume) or high <= low:
-            continue
+        if (
+            pd.isna(high) or pd.isna(low) or pd.isna(close) or pd.isna(volume)
+            or high <= low or volume < 0
+        ):
+            return float("nan")
         values.append((((2 * close) - high - low) / (high - low)) * volume)
-    if not values:
-        return float("nan")
     return sum(values) / max(sum(abs(value) for value in values), 1.0)
 
 
@@ -690,16 +697,41 @@ def run_eod_layers(
 
     current_dated = current.copy()
     current_dated["Date"] = pd.Timestamp(eod_date)
-    ad_history = pd.concat(
-        historical[-19:] + [current_dated],
-        ignore_index=True,
-    )
+    eod_session_frames = historical[-19:] + [current_dated]
+    eod_window_dates = []
+    eod_window_complete = len(eod_session_frames) == 20
+    for session_frame in eod_session_frames:
+        if session_frame is None or session_frame.empty or "Date" not in session_frame.columns:
+            eod_window_complete = False
+            break
+        parsed_dates = pd.to_datetime(session_frame["Date"], errors="coerce").dropna().dt.date.unique()
+        if len(parsed_dates) != 1:
+            eod_window_complete = False
+            break
+        eod_window_dates.append(parsed_dates[0])
+    if len(eod_window_dates) != 20 or len(set(eod_window_dates)) != 20:
+        eod_window_complete = False
+
+    ad_history = pd.concat(eod_session_frames, ignore_index=True, sort=False)
     ad_history["Date"] = pd.to_datetime(ad_history["Date"], errors="coerce")
+    for column in ("HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
+        if column in ad_history.columns:
+            ad_history[column] = pd.to_numeric(ad_history[column], errors="coerce")
     ad_history = ad_history.sort_values("Date")
-    ad_values = {
-        str(symbol): _accumulation_score(group)
-        for symbol, group in ad_history.groupby("TckrSymb")
-    }
+    ad_values = {}
+    ad_groups = {}
+    expected_eod_dates = set(eod_window_dates)
+    for symbol, group in ad_history.groupby("TckrSymb"):
+        group = group.sort_values("Date").copy()
+        ad_groups[str(symbol)] = group
+        group_dates = group["Date"].dt.date
+        complete_symbol_window = (
+            eod_window_complete
+            and len(group) == 20
+            and group_dates.nunique() == 20
+            and set(group_dates) == expected_eod_dates
+        )
+        ad_values[str(symbol)] = _accumulation_score(group) if complete_symbol_window else float("nan")
     output["AccumulationDistribution20D"] = output["TckrSymb"].astype(str).map(ad_values)
     output["AccumulationDistribution"] = output["AccumulationDistribution20D"].map(
         lambda value: "WAIT_FOR_DATA" if pd.isna(value) else "Accumulation" if value >= 0.20 else "Distribution" if value <= -0.20 else "Neutral"
@@ -770,26 +802,27 @@ def run_eod_layers(
 
     rr_values, rr_status, rr_targets, rr_stops, rr_sources, rr_reasons, chase_values = [], [], [], [], [], [], []
     rr_resistance_values, rr_resistance_sources = [], []
-    hist_by_symbol = {}
-    for frame in historical[-19:] + [current_dated]:
-        for symbol, group in frame.groupby("TckrSymb"):
-            hist_by_symbol.setdefault(str(symbol), []).append(group.iloc[-1])
     for _, row in output.iterrows():
         price = _num(row.get("ClsPric"))
         support = _num(row.get("SRSupport"))
         atr = _num(row.get("ATR14"))
         if pd.isna(atr) or atr <= 0:
-            records = hist_by_symbol.get(str(row.get("TckrSymb")), [])
-            ranges = []
-            prev_close = float("nan")
-            for record in records:
-                high, low, close = _num(record.get("HghPric")), _num(record.get("LwPric")), _num(record.get("ClsPric"))
-                if pd.isna(high) or pd.isna(low) or pd.isna(close):
-                    continue
-                tr = high - low if pd.isna(prev_close) else max(high - low, abs(high - prev_close), abs(low - prev_close))
-                ranges.append(tr)
-                prev_close = close
-            atr = sum(ranges[-14:]) / min(len(ranges[-14:]), 14) if ranges else float("nan")
+            records = ad_groups.get(str(row.get("TckrSymb")))
+            if (
+                eod_window_complete and records is not None and len(records) == 20
+                and records[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
+            ):
+                high = records["HghPric"]
+                low = records["LwPric"]
+                close = records["ClsPric"]
+                previous_close = close.shift(1)
+                true_range = pd.concat(
+                    [(high - low), (high - previous_close).abs(), (low - previous_close).abs()],
+                    axis=1,
+                ).max(axis=1)
+                atr = _num(true_range.tail(14).mean())
+            else:
+                atr = float("nan")
         stop_candidates = [value for value in [support, price - 1.5 * atr if pd.notna(atr) else float("nan")] if pd.notna(value) and pd.notna(price) and 0 < value < price]
         # Use the lower valid protective level. The nearest level can make the
         # stop artificially tight and inflate the displayed risk/reward ratio.
