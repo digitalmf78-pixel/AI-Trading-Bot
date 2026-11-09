@@ -49,6 +49,7 @@ jobs:
         run: >-
           python -m pytest -q
           test_main_board_filter.py test_delivery_rule.py test_delivery_filter_fallback.py
+          test_bhavcopy_date_integrity.py
           test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_telegram_delivery.py
           test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
           test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_audit_risk_fixes.py
