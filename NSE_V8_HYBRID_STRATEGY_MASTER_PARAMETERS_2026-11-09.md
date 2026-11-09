@@ -226,3 +226,29 @@ Before taking action on this repository:
 - Source schema check: NSE's official All Reports page lists the “Full Bhavcopy and Security Deliverable data” report; its displayed security table includes deliverable quantity, close, traded quantity and delivery percentage. The legacy CSV header uses `DELIV_QTY`, `CLOSE_PRICE`, `TTL_TRD_QNTY`, and `DELIV_PER`. The new analyzer supports these headers. 
 
 - Phase 2 status: **CODE + CI COMPLETE / LIVE DATA ARTIFACT CHECK PENDING**. Do not treat the quantity observations as a buy signal or alter any existing gate.
+
+## 14. Phase 4 progress — Potential Accumulation observations (09-Nov-2026)
+
+**Implemented on main:**
+- Added `potential_accumulation_analysis.py` and `test_potential_accumulation_analysis.py`.
+- The scanner runs it on the unique Delivery A OR B candidate union immediately after RVOL classification and **before Liquidity and all later technical/confirmation gates**.
+- This is a separate observation report; it never filters, ranks, scores, labels a stock as institutionally accumulated, or changes the main candidate dataframe.
+- Rolling price-range observations for 20/50/100/200 actual market sessions: high, low, range width %, sessions since the latest high/low and exact-equality high/low touch counts. These are **not yet a fixed-range base classification**.
+- Confirmed 3-left/3-right pivot high/low counts, latest/previous pivot low and Higher-Low observation. Pivot structure is WAIT_FOR_DATA unless the full available session history and OHLC rows are complete.
+- Raw separation between the last two confirmed pivot lows: absolute distance, percentage distance and ATR14 multiple. No Double Bottom pass/fail threshold is applied.
+- On sessions with Delivery % >=60.00%, reports count, total/average Delivery Quantity, average/median absolute close-to-previous-close change, average intraday range, up/down session counts and a separate price-response data status.
+- Last 20-session down-day/up-day counts, average volume on down/up days and down-vs-up volume ratio, with explicit missing-data status.
+- Uses point-in-time session alignment: future rows are excluded; candidate price windows require one valid symbol observation on every selected market session. Missing symbol rows or missing OHLC data produce WAIT_FOR_DATA rather than silently extending the window backward.
+- Output: `outputs/v8_potential_accumulation_observations_YYYYMMDD.csv`.
+
+**Not implemented yet / still pending:**
+- A fixed-range base start/end and base duration classification.
+- Support/resistance zone clustering tolerance and repeated *zone* test counts. Current exact-extreme touch counts are only raw observations, not clustered tests.
+- VCP contraction sequence and its user-approved thresholds.
+- EMA50/EMA200 observations.
+- Breakout/retest/Pocket Pivot logic and the four independent watchlist outputs.
+- No threshold was invented for pivot-low separation or a double-bottom classification.
+
+**Validation:** GitHub Actions run `42585559322`, commit `6f27bd6b71be686fa9a158dc71498dea16cd963a`, completed SUCCESS: compile passed, 217 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. The report is still observational and not a BUY signal.
+
+**Next implementation:** fixed-range base measurements and repeated support/resistance zones require a documented, non-arbitrary definition. Until the open tolerance/base-duration decisions are approved, keep the raw range/extreme observations only and continue with VCP descriptive metrics without converting them into hard gates.
