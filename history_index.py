@@ -28,7 +28,7 @@ def build_price_history_index(historical, asof):
         if "SctySrs" in part.columns:
             part["_HISTORY_SERIES"] = part["SctySrs"].astype(str).str.strip().str.upper()
         else:
-            part["_HISTORY_SERIES"] = "EQ"
+            part["_HISTORY_SERIES"] = "*"
         frames.append(part)
 
     market_dates.add(asof_day)
@@ -51,6 +51,8 @@ def candidate_price_history(history_index, candidate, asof):
     symbol = str(candidate.get("TckrSymb", "")).strip().upper()
     series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
     history = history_index.get((symbol, series))
+    if history is None:
+        history = history_index.get((symbol, "*"))
     if history is None:
         history = pd.DataFrame(columns=["TckrSymb", "SctySrs", "Date"])
     else:
