@@ -82,6 +82,34 @@ def refresh_official_etf_symbols() -> set[str]:
 
 
 # ============================================================
+# BHAVCOPY DATE INTEGRITY
+# ============================================================
+
+def validate_bhavcopy_date(df, expected_date, source="Bhavcopy"):
+    """Fail closed unless the file's own business date matches its cache/request date."""
+    if df is None or df.empty:
+        raise ValueError(f"{source}: empty Bhavcopy")
+    date_columns = ("BizDt", "TradDt", "TRADDT", "BUSINESS_DATE", "DATE")
+    date_col = next((c for c in date_columns if c in df.columns), None)
+    if date_col is None:
+        raise ValueError(
+            f"{source}: no recognized internal date column; "
+            f"available columns={list(df.columns)}"
+        )
+    parsed = pd.to_datetime(df[date_col], errors="coerce", dayfirst=False).dt.date
+    valid_dates = set(parsed.dropna().tolist())
+    expected = expected_date.date() if isinstance(expected_date, datetime) else expected_date
+    if not valid_dates:
+        raise ValueError(f"{source}: internal date column {date_col} has no valid dates")
+    if valid_dates != {expected}:
+        raise ValueError(
+            f"{source}: requested/cache date {expected} does not match "
+            f"internal date(s) {sorted(str(d) for d in valid_dates)}"
+        )
+    return df
+
+
+# ============================================================
 # NSE BHAVCOPY DOWNLOAD
 # ============================================================
 
@@ -122,14 +150,13 @@ def download_bhavcopy(date_obj):
         try:
 
             cached = pd.read_csv(cache_path)
+            validate_bhavcopy_date(cached, date_obj.date(), source=f"Cache {cache_path}")
 
             if len(cached) > 0:
-
                 print(
                     f"Bhavcopy cache hit: "
                     f"{date_obj.strftime('%Y-%m-%d')}"
                 )
-
                 return cached
 
         except Exception as e:
@@ -224,6 +251,8 @@ def download_bhavcopy(date_obj):
                 df = pd.read_csv(f)
 
         if len(df) > 0:
+            # Never persist a response under a date unless the CSV confirms it.
+            validate_bhavcopy_date(df, date_obj.date(), source=f"Downloaded {url}")
             df.to_csv(cache_path, index=False)
 
         print(
@@ -382,12 +411,16 @@ def get_latest_eod():
         )
 
         if df is not None and len(df) > 0:
+            try:
+                validate_bhavcopy_date(df, check_date, source="Latest EOD")
+            except ValueError as exc:
+                print(f"[BHAVCOPY] Rejecting mismatched EOD response: {exc}")
+                continue
 
             print(
                 f"Latest available EOD date: "
                 f"{check_date}"
             )
-
             return check_date, df
 
     raise RuntimeError(
@@ -427,7 +460,9 @@ def collect_historical_days(
 
     cached_files.sort(key=lambda item: item[0], reverse=True)
     historical_by_date = {}
-    cached_dates = {item[0] for item in cached_files}
+    # Only dates whose cache file passes content/date validation count as cached.
+    # Corrupt or misdated files remain eligible for a fresh download below.
+    cached_dates = set()
 
     # Fast path: consume already-restored CSVs without calling download_bhavcopy.
     for cache_date, cache_path in cached_files:
@@ -435,12 +470,14 @@ def collect_historical_days(
             break
         try:
             raw = pd.read_csv(cache_path)
+            validate_bhavcopy_date(raw, cache_date, source=f"Historical cache {cache_path}")
             if raw.empty:
                 continue
             clean = prepare_equity_data(raw)
             if not clean.empty:
                 clean["Date"] = pd.Timestamp(cache_date)
                 historical_by_date[cache_date] = clean
+                cached_dates.add(cache_date)
         except Exception as exc:
             print(f"[BHAVCOPY CACHE] Invalid cached file {os.path.basename(cache_path)}: {exc}")
 
@@ -462,10 +499,12 @@ def collect_historical_days(
             raw = download_bhavcopy(datetime.combine(current_date, datetime.min.time()))
             if raw is not None and not raw.empty:
                 try:
+                    validate_bhavcopy_date(raw, current_date, source="Downloaded historical Bhavcopy")
                     clean = prepare_equity_data(raw)
                     if not clean.empty:
                         clean["Date"] = pd.Timestamp(current_date)
                         historical_by_date[current_date] = clean
+                        cached_dates.add(current_date)
                         print(f"Accepted trading day: {current_date}")
                 except Exception as exc:
                     print(f"Historical data error for {current_date}: {exc}")
