@@ -96,3 +96,13 @@ def test_duplicate_symbol_session_is_wait_for_data():
     row = calculate_support_resistance(_candidate(), [history]).iloc[0]
     assert row["SRDataStatus"] == "WAIT_FOR_DATA"
     assert row["SR20DDataStatus"] == "WAIT_FOR_DATA"
+
+
+
+def test_missing_required_price_column_returns_wait_instead_of_raising():
+    history = _history(rows=21).drop(columns=["HghPric"])
+    result = calculate_support_resistance(_candidate(), [history])
+    row = result.iloc[0]
+    assert row["SRStatus"] == "WAIT_FOR_DATA"
+    assert row["SRDataStatus"] == "WAIT_FOR_DATA"
+    assert row["SR20DDataStatus"] == "WAIT_FOR_DATA"
