@@ -128,3 +128,27 @@ def test_forward_observation_metrics_ignore_sessions_after_approved_horizon():
     assert row["ForwardSessionsObserved"] == 10
     assert row["ForwardHorizonStatus"] == "COMPLETE"
     assert row["SessionsSinceBreakout"] == 10
+
+
+
+def test_isolated_50_session_breakout_uses_50d_reference_and_1_5_rvol_threshold():
+    history = _history()
+    # RVOL = 1.5: below the 20D threshold (2.0), but exactly at the
+    # existing 50D threshold. This isolates the 50-session definition.
+    history.loc[50, "TtlTradgVol"] = 1500
+    row = build_breakout_retest_observation(_candidate(), [history]).iloc[0]
+    assert row["LastBreakoutDate"] == history.loc[50, "Date"].date().isoformat()
+    assert row["BreakoutReferenceLevel"] == 105
+    assert row["BreakoutDayVolume"] == 1500
+
+
+def test_breakout_clv_equal_to_075_does_not_qualify():
+    history = _history()
+    # Close is above the prior high and RVOL is 2.5, but CLV is exactly
+    # 0.75; the approved rule is strictly greater than 0.75.
+    history.loc[50, ["OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"]] = [
+        108, 112, 107, 110.75, 2500
+    ]
+    row = build_breakout_retest_observation(_candidate(), [history]).iloc[0]
+    assert row["RetestObservationStatus"] == "NO_PRIOR_BREAKOUT_EVENT_OBSERVED_IN_AVAILABLE_CACHE"
+    assert row["ExactLevelTouchObserved"] == "NOT_OBSERVED"
