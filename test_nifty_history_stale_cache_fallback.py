@@ -17,19 +17,25 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
         frame.to_csv(path, index=False, date_format="%Y-%m-%d")
         return frame
 
+    def _patched_cache_and_provider(self, root, provider):
+        return (
+            patch.object(vg, "DATA_CACHE_DIR", str(root)),
+            patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")),
+            patch.object(vg, "fetch_nifty_index_history", **provider),
+        )
+
     def test_stale_but_sufficient_cache_survives_provider_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dates = pd.bdate_range("2026-08-01", periods=60)
             original = self._cache(root, dates)
-            with patch.object(vg, "DATA_CACHE_DIR", str(root)), 
-                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), 
-                 patch.object(vg, "fetch_nifty_index_history", side_effect=TimeoutError("provider down")):
+            p1, p2, p3 = self._patched_cache_and_provider(
+                root, {"side_effect": TimeoutError("provider down")}
+            )
+            with p1, p2, p3:
                 result = vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
             self.assertEqual(len(result), 60)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), dates.max().normalize())
-            # Stale cache is returned for analysis context only; callers that need
-            # exact-date market regime must independently validate alignment.
             self.assertEqual(len(pd.read_csv(root / "nifty50_index_history.csv")), len(original))
 
     def test_exact_date_refresh_replaces_stale_cache(self):
@@ -38,11 +44,11 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             dates = pd.bdate_range("2026-08-01", periods=60)
             self._cache(root, dates)
             target = pd.Timestamp("2026-11-08")
-            # Use a calendar date deliberately represented in provider data.
             downloaded = pd.DataFrame({"Date": [target], "NiftyClose": [24500.0]})
-            with patch.object(vg, "DATA_CACHE_DIR", str(root)), 
-                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), 
-                 patch.object(vg, "fetch_nifty_index_history", return_value=downloaded):
+            p1, p2, p3 = self._patched_cache_and_provider(
+                root, {"return_value": downloaded}
+            )
+            with p1, p2, p3:
                 result = vg.load_nifty_index_history(target)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
             cached = pd.read_csv(root / "nifty50_index_history.csv")
@@ -53,13 +59,12 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-10-01", periods=10)
             self._cache(root, dates)
-            with patch.object(vg, "DATA_CACHE_DIR", str(root)), 
-                 patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")), 
-                 patch.object(vg, "fetch_nifty_index_history", side_effect=TimeoutError("provider down")):
+            p1, p2, p3 = self._patched_cache_and_provider(
+                root, {"side_effect": TimeoutError("provider down")}
+            )
+            with p1, p2, p3:
                 with self.assertRaisesRegex(RuntimeError, "only 10 valid closes"):
                     vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
-
-
 
     def test_stale_nifty_history_marks_relative_strength_wait_instead_of_crashing(self):
         dates = pd.bdate_range("2026-09-01", periods=25)
