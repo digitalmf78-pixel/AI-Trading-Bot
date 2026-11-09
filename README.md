@@ -95,3 +95,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Four independent Hybrid watchlists are now emitted: Potential Accumulation and Base/VCP before Liquidity; Breakout Ready and Confirmed Entry after existing EOD gates. They are reporting-only and never feed back into candidate selection. Final EOD missing prerequisites now WAIT_FOR_DATA. Latest CI: 253 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Final EOD AD and ATR fallback now require complete 20-session data; mandatory 3+1 thresholds and portfolio risk controls were audited and preserved. Missing account/risk inputs remain WAIT_FOR_DATA. Latest CI: 257 unit/data-audit tests and 31 V8 regression tests passed.
+
+- RVOL baseline now requires exactly 20 distinct prior sessions per symbol; duplicate/missing rows and invalid current volume return WAIT_FOR_DATA. Strict >1.5 classification is preserved and never rejects Delivery A/B candidates. Latest CI: 264 unit/data-audit tests and 31 V8 regression tests passed.
