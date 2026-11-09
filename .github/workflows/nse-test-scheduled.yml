@@ -11,6 +11,13 @@ on:
         options:
           - EOD
           - PREMARKET
+  # Run one EOD validation when this workflow itself changes. Restricting the
+  # path prevents scanner/cache commits from recursively starting another scan.
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/nse-test-scheduled.yml"
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
