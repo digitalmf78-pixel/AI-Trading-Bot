@@ -67,7 +67,7 @@ def test_every_day_delivery_passes_downstream_gate(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
     candidates = pd.DataFrame([{"TckrSymb": "BBB", "SctySrs": "EQ"}])
-    dates = [date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    dates = [date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 15), date(2026, 10, 21), date(2026, 10, 22)]
     reports = [(day, _frame("BBB", (value,))) for day, value in zip(dates, [60, 65, 61, 70, 63])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     assert qualified["TckrSymb"].tolist() == ["BBB"]
@@ -96,8 +96,8 @@ def test_30d_category_a_uses_average_of_all_valid_sessions_and_b_checks_each(mon
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
-    dates = [date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 5),
-             date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)]
+    dates = [date(2026, 10, 1), date(2026, 10, 5), date(2026, 10, 6),
+             date(2026, 10, 7), date(2026, 10, 8), date(2026, 10, 9)]
     values = [50.0, 62.0, 62.0, 62.0, 62.0, 62.0]  # six-session mean is exactly 60
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, values)]
     _, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-08", sessions=reports)
@@ -112,8 +112,8 @@ def test_30d_candidate_with_fewer_than_five_symbol_sessions_waits(monkeypatch, t
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
-    dates = [date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 5),
-             date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)]
+    dates = [date(2026, 10, 1), date(2026, 10, 5), date(2026, 10, 6),
+             date(2026, 10, 7), date(2026, 10, 8), date(2026, 10, 9)]
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates[:4], [61, 62, 63, 64])]
     reports += [(dates[4], pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER"])),
                 (dates[5], pd.DataFrame(columns=["SYMBOL", "SERIES", "DELIV_PER"]))]
