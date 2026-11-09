@@ -14,8 +14,10 @@ _REQUIRED = {"TckrSymb", "Date", "OpnPric", "HghPric", "LwPric", "ClsPric", "Ttl
 _OUTPUT = [
     "TckrSymb", "RetestObservationStatus", "LastBreakoutDate",
     "BreakoutReferenceLevel", "SessionsSinceBreakout",
-    "PostBreakoutLowestLow", "PostBreakoutLastClose",
-    "PostBreakoutCloseVsLevelPct", "ExactLevelTouchObserved",
+    "PostBreakoutLowestLow", "PostBreakoutHighestHigh", "PostBreakoutLastClose",
+    "PostBreakoutLowestLowVsLevelPct", "PostBreakoutHighestHighVsLevelPct",
+    "PostBreakoutClosesAboveLevelCount", "PostBreakoutClosesBelowLevelCount",
+    "PostBreakoutClosesAtLevelCount", "PostBreakoutCloseVsLevelPct", "ExactLevelTouchObserved",
     "FirstExactLevelTouchDate", "BreakoutDayVolume",
     "PostBreakoutAverageVolume", "PostBreakoutVolumeVsBreakoutPct",
 ]
@@ -50,7 +52,13 @@ def _wait(symbol):
         "BreakoutReferenceLevel": float("nan"),
         "SessionsSinceBreakout": float("nan"),
         "PostBreakoutLowestLow": float("nan"),
+        "PostBreakoutHighestHigh": float("nan"),
         "PostBreakoutLastClose": float("nan"),
+        "PostBreakoutLowestLowVsLevelPct": float("nan"),
+        "PostBreakoutHighestHighVsLevelPct": float("nan"),
+        "PostBreakoutClosesAboveLevelCount": float("nan"),
+        "PostBreakoutClosesBelowLevelCount": float("nan"),
+        "PostBreakoutClosesAtLevelCount": float("nan"),
         "PostBreakoutCloseVsLevelPct": float("nan"),
         "ExactLevelTouchObserved": "WAIT_FOR_DATA",
         "FirstExactLevelTouchDate": None,
@@ -149,6 +157,11 @@ def build_breakout_retest_observation(candidates, historical):
         ]
         last_close = _number(post[-1]["ClsPric"]) if post else float("nan")
         lowest_low = min((_number(row["LwPric"]) for row in post), default=float("nan"))
+        highest_high = max((_number(row["HghPric"]) for row in post), default=float("nan"))
+        post_closes = [_number(row["ClsPric"]) for row in post]
+        closes_above = sum(value > level for value in post_closes)
+        closes_below = sum(value < level for value in post_closes)
+        closes_at = sum(value == level for value in post_closes)
         post_volumes = [_number(row["TtlTradgVol"]) for row in post]
         post_avg_volume = (
             sum(post_volumes) / len(post_volumes)
@@ -165,7 +178,19 @@ def build_breakout_retest_observation(candidates, historical):
             "BreakoutReferenceLevel": level,
             "SessionsSinceBreakout": len(post),
             "PostBreakoutLowestLow": lowest_low,
+            "PostBreakoutHighestHigh": highest_high,
             "PostBreakoutLastClose": last_close,
+            "PostBreakoutLowestLowVsLevelPct": (
+                (lowest_low - level) / level * 100.0
+                if post and level > 0 else float("nan")
+            ),
+            "PostBreakoutHighestHighVsLevelPct": (
+                (highest_high - level) / level * 100.0
+                if post and level > 0 else float("nan")
+            ),
+            "PostBreakoutClosesAboveLevelCount": closes_above if post else float("nan"),
+            "PostBreakoutClosesBelowLevelCount": closes_below if post else float("nan"),
+            "PostBreakoutClosesAtLevelCount": closes_at if post else float("nan"),
             "PostBreakoutCloseVsLevelPct": (
                 (last_close - level) / level * 100.0
                 if post and level > 0 else float("nan")
