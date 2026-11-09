@@ -1978,6 +1978,13 @@ def calculate_breakout_pullback(result, historical):
         for column in required:
             hist[column] = pd.to_numeric(hist[column], errors="coerce")
 
+        # Ambiguous candidate identity must not multiply rows in the final merge.
+        if result["TckrSymb"].astype(str).str.strip().str.upper().eq(
+            str(symbol).strip().upper()
+        ).sum() != 1:
+            rows.append(empty_row)
+            continue
+
         current_rows = hist[hist["Date"].dt.date.eq(asof_date)]
         if len(current_rows) != 1:
             rows.append(empty_row)
@@ -2003,8 +2010,21 @@ def calculate_breakout_pullback(result, historical):
 
         high20_ready = len(prior20_dates) == 20 and len(prior20) == 20 and high20_values.notna().all()
         low20_ready = len(prior20_dates) == 20 and len(prior20) == 20 and low20_values.notna().all()
-        volume20_ready = len(prior20_dates) == 20 and len(prior20) == 20 and volume20_values.notna().all()
-        high50_ready = len(prior50_dates) == 50 and len(prior50) == 50 and high50_values.notna().all()
+        volume20_ready = (
+            len(prior20_dates) == 20 and len(prior20) == 20
+            and volume20_values.notna().all()
+            and (volume20_values >= 0).all()
+        )
+        high50_ready = (
+            len(prior50_dates) == 50 and len(prior50) == 50
+            and high50_values.notna().all()
+            and (high50_values > 0).all()
+        )
+        high20_ready = bool(
+            high20_ready and (high20_values > 0).all()
+            and (low20_values > 0).all()
+            and (high20_values >= low20_values).all()
+        )
 
         high20 = float(high20_values.max()) if high20_ready else float("nan")
         high50 = float(high50_values.max()) if high50_ready else float("nan")
@@ -2024,15 +2044,29 @@ def calculate_breakout_pullback(result, historical):
             else float("nan")
         )
 
+        atr_ohlc = hist[["OpnPric", "HghPric", "LwPric", "ClsPric"]]
         atr_ready = (
             len(hist) == len(market_dates)
-            and hist[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
+            and atr_ohlc.notna().all().all()
+            and (atr_ohlc > 0).all().all()
+            and (hist["HghPric"] >= hist["LwPric"]).all()
+            and (hist["HghPric"] >= hist[["OpnPric", "ClsPric"]].max(axis=1)).all()
+            and (hist["LwPric"] <= hist[["OpnPric", "ClsPric"]].min(axis=1)).all()
         )
         atr_series = calculate_atr(hist, 14) if atr_ready else pd.Series(dtype="float64")
         atr = safe_float(atr_series.iloc[-1]) if len(atr_series) else float("nan")
 
+        current_candle_valid = (
+            all(pd.notna(value) and value > 0 for value in (
+                current_open, current_high, current_low, current_close
+            ))
+            and current_high >= current_low
+            and current_high >= max(current_open, current_close)
+            and current_low <= min(current_open, current_close)
+            and pd.notna(current_volume) and current_volume >= 0
+        )
         common_breakout_data_ready = (
-            pd.notna(current_close) and pd.notna(current_rvol)
+            current_candle_valid and pd.notna(current_rvol)
             and pd.notna(clv) and pd.notna(current_high) and pd.notna(current_low)
         )
         breakout20_ready = bool(high20_ready and common_breakout_data_ready)
