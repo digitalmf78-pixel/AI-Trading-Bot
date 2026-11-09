@@ -126,9 +126,20 @@ def _build_price_history(candidate, historical, asof, market_sessions):
 
 def _delivery_observations(symbol, series, sessions, asof):
     observations = []
+    by_day = {}
+    duplicate_dates = set()
     for raw_day, raw in sessions or []:
         day = _session_date(raw_day)
-        if day is None or day > asof or raw is None or raw.empty:
+        if day is None or day > asof:
+            continue
+        if day in by_day or day in duplicate_dates:
+            duplicate_dates.add(day)
+            by_day.pop(day, None)
+            continue
+        by_day[day] = raw
+    for day in sorted(by_day):
+        raw = by_day[day]
+        if raw is None or raw.empty:
             continue
         sym_col = _find_col(raw, ("SYMBOL", "TckrSymb"))
         ser_col = _find_col(raw, ("SERIES", "SctySrs"))
