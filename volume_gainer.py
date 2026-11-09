@@ -1700,6 +1700,13 @@ def calculate_trend(result, historical):
 
     trend_rows = []
     _, history_by_symbol = prepare_history_by_symbol(historical)
+    market_dates = set()
+    for raw in historical or []:
+        if raw is None or raw.empty or "Date" not in raw.columns:
+            continue
+        for value in pd.to_datetime(raw["Date"], errors="coerce").dropna():
+            market_dates.add(value.date())
+    asof_date = max(market_dates) if market_dates else None
 
     for _, candidate in result.iterrows():
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
@@ -1718,17 +1725,38 @@ def calculate_trend(result, historical):
             "RSIBehaviour": "WAIT_FOR_DATA", "RSIRetestStatus": "NOT_EVALUATED",
             "RSIDivergenceStatus": "NOT_EVALUATED", "ADX14": float("nan"),
             "TrendClassification": "WAIT_FOR_DATA",
+            "TrendDataStatus": "WAIT_FOR_DATA",
         }
-        if hist is None or hist.empty:
+        if hist is None or hist.empty or asof_date is None:
             trend_rows.append(missing)
             continue
 
-        hist = hist.copy().sort_values("Date", kind="mergesort").reset_index(drop=True)
+        hist = hist.copy()
+        hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
+        hist = hist.dropna(subset=["Date"])
+        hist = hist[hist["Date"].dt.date.isin(market_dates)].sort_values("Date", kind="mergesort")
+        if hist["Date"].dt.date.duplicated().any():
+            trend_rows.append(missing)
+            continue
         for column in ("ClsPric", "HghPric", "LwPric", "OpnPric", "TtlTradgVol"):
             if column in hist.columns:
                 hist[column] = pd.to_numeric(hist[column], errors="coerce")
-        hist = hist.dropna(subset=["ClsPric"]).reset_index(drop=True)
-        if len(hist) < 50:
+        symbol_dates = sorted({value.date() for value in hist["Date"]})
+        if not symbol_dates or symbol_dates[-1] != asof_date:
+            trend_rows.append(missing)
+            continue
+        expected_symbol_dates = [
+            day for day in sorted(market_dates)
+            if symbol_dates[0] <= day <= asof_date
+        ]
+        if (
+            len(expected_symbol_dates) < 50
+            or symbol_dates != expected_symbol_dates
+            or len(hist) < 50
+            or hist["ClsPric"].isna().any()
+            or not {"HghPric", "LwPric"}.issubset(hist.columns)
+            or hist[["HghPric", "LwPric"]].tail(50).isna().any().any()
+        ):
             trend_rows.append(missing)
             continue
 
@@ -1807,6 +1835,7 @@ def calculate_trend(result, historical):
             **rsi_observation,
             "ADX14": adx,
             "TrendClassification": trend,
+            "TrendDataStatus": "COMPLETE",
         })
 
     trend_columns = [
@@ -1814,6 +1843,7 @@ def calculate_trend(result, historical):
         "EMA44Position", "EMA44ProximityStatus", "EMA44SignalStatus",
         "PriceChange5D", "RSI14", "RSI14Previous", "RSIDirection", "RSIZone",
         "RSIBehaviour", "RSIRetestStatus", "RSIDivergenceStatus", "ADX14", "TrendClassification",
+        "TrendDataStatus",
     ]
     # Empty screened lists are valid (for example, when the mandatory delivery
     # gate is WAIT_FOR_DATA). Keep the merge key even when there are zero rows.
