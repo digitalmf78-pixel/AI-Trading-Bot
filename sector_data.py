@@ -489,6 +489,7 @@ def _history_from_niftyindices_api(
     rows: list[dict[str, Any]] = []
     exact_sectors: set[str] = set()
     wanted = set(sectors_to_fetch) if sectors_to_fetch is not None else {item[0] for item in SECTOR_INDICES}
+    service_unavailable = False
     for sector, _files, official_index_name, _symbol in SECTOR_INDICES:
         if sector not in wanted:
             continue
@@ -500,6 +501,7 @@ def _history_from_niftyindices_api(
         payload_body = {"cinfo": inner}
         try:
             response = None
+            endpoint_unavailable = False
             for attempt in (1, 2):
                 response = session.post(endpoint, data=json.dumps(payload_body), headers=headers, timeout=20)
                 content_type = response.headers.get("Content-Type", "(missing)") if hasattr(response, "headers") else "(missing)"
@@ -524,6 +526,12 @@ def _history_from_niftyindices_api(
                             f"redirects={redirect_chain!r} content_type={content_type!r} "
                             f"preview={body_preview!r} error={type(exc).__name__}"
                         )
+                        # A redirect of the JSON endpoint to the site's HTML
+                        # ReturnUrl landing page is a service-wide outage, not an
+                        # index-specific failure. Stop retrying all remaining indices.
+                        if "text/html" in content_type.lower() and "ReturnUrl=" in str(getattr(response, "url", "")):
+                            endpoint_unavailable = True
+                            break
                 else:
                     print(
                         f"[SECTOR][NIFTYINDICES] HTTP {response.status_code} "
@@ -536,6 +544,14 @@ def _history_from_niftyindices_api(
                     bootstrap_session("retry-" + official_index_name)
             else:
                 continue
+
+            if endpoint_unavailable:
+                service_unavailable = True
+                print(
+                    "[SECTOR][NIFTYINDICES] SERVICE_UNAVAILABLE: official JSON endpoint "
+                    "redirected to HTML ReturnUrl page; stopping remaining index retries."
+                )
+                break
 
             raw = payload.get("d") if isinstance(payload, dict) else None
             if isinstance(raw, str):
@@ -574,6 +590,8 @@ def _history_from_niftyindices_api(
             )
         except Exception as exc:
             print(f"[SECTOR][NIFTYINDICES] REQUEST_ERROR index={official_index_name}: {type(exc).__name__}: {exc}")
+        if service_unavailable:
+            break
         time.sleep(0.1)
 
     # Deduplicate exact date/index rows returned by the official service.
