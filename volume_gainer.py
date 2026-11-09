@@ -68,6 +68,8 @@ apply_liquidity_filter = _perf_timed("liquidity_filter_calculation")(apply_liqui
 collect_missing_fundamentals = _perf_timed("fundamental_data_collection")(collect_missing_fundamentals)
 collect_catalyst_news = _perf_timed("news_catalyst_collection")(collect_catalyst_news)
 refresh_sector_inputs = _perf_timed("sector_inputs_refresh")(refresh_sector_inputs)
+build_potential_accumulation_report = _perf_timed("potential_accumulation_analysis")(build_potential_accumulation_report)
+build_vcp_observation_report = _perf_timed("vcp_observation_analysis")(build_vcp_observation_report)
 
 # ============================================================
 # NSE V8 MODULE A
