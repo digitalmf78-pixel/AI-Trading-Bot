@@ -56,28 +56,33 @@ def _session_date(value):
     return None if pd.isna(parsed) else parsed.date()
 
 
-def _build_price_history(candidate, historical, asof):
+def _build_price_history(candidate, historical, asof, market_sessions):
     symbol = str(candidate.get("TckrSymb", "")).strip().upper()
+    series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
     frames = []
     for raw in historical or []:
         if raw is None or raw.empty or "TckrSymb" not in raw.columns or "Date" not in raw.columns:
             continue
         part = raw[raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)].copy()
+        if "SctySrs" in part.columns:
+            part = part[part["SctySrs"].astype(str).str.strip().str.upper().eq(series)]
         if not part.empty:
             frames.append(part)
     current = candidate.to_dict()
     current["TckrSymb"] = symbol
+    current["SctySrs"] = series
     current["Date"] = pd.Timestamp(asof)
     frames.append(pd.DataFrame([current]))
     history = pd.concat(frames, ignore_index=True, sort=False)
     history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
-    history = history.dropna(subset=["Date"]).sort_values("Date", kind="mergesort")
+    history = history.dropna(subset=["Date"])
+    history = history[history["Date"].dt.date <= asof]
+    history = history.sort_values("Date", kind="mergesort")
     history = history.drop_duplicates(["TckrSymb", "Date"], keep="last")
     for col in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
         if col in history.columns:
             history[col] = pd.to_numeric(history[col], errors="coerce")
-    return history.dropna(subset=["ClsPric"]).reset_index(drop=True)
-
+    return history.dropna(subset=["ClsPric"]).reset_index(drop=True), market_sessions
 
 def _delivery_observations(symbol, series, sessions, asof):
     observations = []
@@ -136,17 +141,28 @@ def build_potential_accumulation_report(
     asof = _session_date(asof_date)
     if asof is None:
         raise ValueError(f"Invalid as-of date: {asof_date!r}")
+    market_sessions = set()
+    for raw in historical or []:
+        if raw is None or raw.empty or "Date" not in raw.columns:
+            continue
+        for value in pd.to_datetime(raw["Date"], errors="coerce").dropna():
+            day = value.date()
+            if day <= asof:
+                market_sessions.add(day)
+    market_sessions.add(asof)
+    ordered_market_sessions = sorted(market_sessions)
+
     rows = []
     for _, candidate in candidates.drop_duplicates("TckrSymb", keep="first").iterrows():
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
-        hist = _build_price_history(candidate, historical, asof)
+        hist, _ = _build_price_history(candidate, historical, asof, ordered_market_sessions)
         row = {
             "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
             "DeliveryCategory": candidate.get("DeliveryCategory", "UNKNOWN"),
             "RVOLBand": candidate.get("RVOLBand", "WAIT_FOR_DATA"),
             "PriceHistorySessions": len(hist),
-            "PriceHistoryStatus": "COMPLETE_20D" if len(hist) >= 20 else "WAIT_FOR_DATA",
+            "PriceHistoryStatus": "WAIT_FOR_DATA",
             "DeliveryEvidenceStatus": "WAIT_FOR_DATA",
             "HighDeliverySessionCount": 0,
             "HighDeliveryQtyTotal": float("nan"),
@@ -184,6 +200,11 @@ def build_potential_accumulation_report(
             elif len(low_pivots) == 1:
                 row["HigherLowStatus"] = "WAIT_FOR_SECOND_CONFIRMED_PIVOT"
 
+            row["PriceHistoryStatus"] = (
+                "COMPLETE_20D" if row.get("PriceRange20DStatus") == "OBSERVATION_AVAILABLE"
+                else "WAIT_FOR_DATA"
+            )
+
             for window in RANGE_WINDOWS:
                 prefix = f"PriceRange{window}D"
                 if len(hist) < window or "HghPric" not in hist.columns or "LwPric" not in hist.columns:
@@ -191,7 +212,14 @@ def build_potential_accumulation_report(
                     for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
                         row[f"{prefix}{suffix}"] = float("nan")
                     continue
-                part = hist.tail(window)
+                window_dates = ordered_market_sessions[-window:]
+                part = hist[hist["Date"].dt.date.isin(window_dates)].copy()
+                if len(window_dates) != window or len(part) != window or part[["HghPric", "LwPric"]].isna().any().any():
+                    row[f"{prefix}Status"] = "WAIT_FOR_DATA"
+                    for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
+                        row[f"{prefix}{suffix}"] = float("nan")
+                    continue
+                part = part.sort_values("Date")
                 range_high = _num(part["HghPric"].max())
                 range_low = _num(part["LwPric"].min())
                 high_positions = [i for i, v in enumerate(part["HghPric"].tolist()) if _num(v) == range_high]
@@ -205,19 +233,24 @@ def build_potential_accumulation_report(
                 row[f"{prefix}ExactLowTouchCount"] = len(low_positions)
                 row[f"{prefix}ExactHighTouchCount"] = len(high_positions)
 
-            recent = hist.tail(20).copy()
-            recent["CloseReturnPct"] = recent["ClsPric"].pct_change() * 100.0
+            recent_dates = ordered_market_sessions[-20:]
+            recent = hist[hist["Date"].dt.date.isin(recent_dates)].copy().sort_values("Date")
+            if len(recent_dates) == 20 and len(recent) == 20 and recent["ClsPric"].notna().all():
+                recent["CloseReturnPct"] = recent["ClsPric"].pct_change() * 100.0
+            else:
+                recent = pd.DataFrame()
             if "TtlTradgVol" in recent.columns:
                 recent["TtlTradgVol"] = pd.to_numeric(recent["TtlTradgVol"], errors="coerce")
-            down = recent[recent["CloseReturnPct"] < 0]
-            up = recent[recent["CloseReturnPct"] > 0]
-            down_avg = down["TtlTradgVol"].mean() if "TtlTradgVol" in down.columns else float("nan")
-            up_avg = up["TtlTradgVol"].mean() if "TtlTradgVol" in up.columns else float("nan")
-            row["DownDayCount20D"] = len(down)
-            row["UpDayCount20D"] = len(up)
-            row["DownDayVolumeAverage20D"] = down_avg
-            row["UpDayVolumeAverage20D"] = up_avg
-            row["DownVsUpVolumeRatio20D"] = down_avg / up_avg if pd.notna(down_avg) and pd.notna(up_avg) and up_avg > 0 else float("nan")
+            if not recent.empty:
+                down = recent[recent["CloseReturnPct"] < 0]
+                up = recent[recent["CloseReturnPct"] > 0]
+                down_avg = down["TtlTradgVol"].mean() if "TtlTradgVol" in down.columns else float("nan")
+                up_avg = up["TtlTradgVol"].mean() if "TtlTradgVol" in up.columns else float("nan")
+                row["DownDayCount20D"] = len(down)
+                row["UpDayCount20D"] = len(up)
+                row["DownDayVolumeAverage20D"] = down_avg
+                row["UpDayVolumeAverage20D"] = up_avg
+                row["DownVsUpVolumeRatio20D"] = down_avg / up_avg if pd.notna(down_avg) and pd.notna(up_avg) and up_avg > 0 else float("nan")
 
         delivery_rows = _delivery_observations(symbol, series, delivery_sessions, asof)
         if len(delivery_rows) >= 5:
