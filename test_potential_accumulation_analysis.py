@@ -47,6 +47,9 @@ def test_report_keeps_candidate_and_emits_20d_50d_200d_range_observations(tmp_pa
     row = report.iloc[0]
     assert row["TckrSymb"] == "AAA"
     assert row["PriceHistoryStatus"] == "COMPLETE_20D"
+    assert row["PivotStructureStatus"] == "COMPLETE"
+    assert row["PivotLowSeparationStatus"] == "OBSERVATION_AVAILABLE"
+    assert pd.notna(row["PivotLowSeparationATR"])
     assert row["PriceRange20DStatus"] == "OBSERVATION_AVAILABLE"
     assert row["PriceRange50DStatus"] == "OBSERVATION_AVAILABLE"
     assert row["PriceRange200DStatus"] == "WAIT_FOR_DATA"
@@ -96,6 +99,7 @@ def test_missing_symbol_row_in_a_market_session_waits_for_complete_price_window(
     )
     assert report.iloc[0]["PriceRange20DStatus"] == "WAIT_FOR_DATA"
     assert report.iloc[0]["PriceHistoryStatus"] == "WAIT_FOR_DATA"
+    assert report.iloc[0]["PivotStructureStatus"] == "WAIT_FOR_DATA"
     assert len(report) == 1
 
 
