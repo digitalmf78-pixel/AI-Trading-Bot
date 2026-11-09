@@ -3506,9 +3506,20 @@ def main():
                         f"{len(accumulation_report)} Delivery A/B candidates; no gating applied."
                     )
                 except Exception as accumulation_exc:
+                    # Preserve every unique Delivery A/B candidate in the
+                    # early watchlist even if the optional evidence engine
+                    # fails. The fallback is explicitly WAIT_FOR_DATA.
+                    accumulation_report = current.drop_duplicates(
+                        "TckrSymb", keep="first"
+                    ).copy()
+                    accumulation_report["AsOfDate"] = pd.Timestamp(eod_date).date().isoformat()
+                    accumulation_report["DeliveryEvidenceStatus"] = "WAIT_FOR_DATA"
+                    accumulation_report["EvidenceStatus"] = "WAIT_FOR_DATA"
+                    accumulation_report["DeliveryQuantityStatus"] = "WAIT_FOR_DATA"
                     print(
-                        "[ACCUMULATION] WAIT_FOR_DATA; Delivery/Liquidity pipeline continues: "
-                        f"{type(accumulation_exc).__name__}: {accumulation_exc}"
+                        "[ACCUMULATION] WAIT_FOR_DATA; preserved "
+                        f"{len(accumulation_report)} Delivery A/B candidates for early watchlist; "
+                        f"Delivery/Liquidity pipeline continues: {type(accumulation_exc).__name__}: {accumulation_exc}"
                     )
                 # VCP measurements are descriptive only; no VCP status is
                 # used to filter or rank the Delivery A/B candidate union.
