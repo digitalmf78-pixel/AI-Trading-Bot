@@ -1,6 +1,27 @@
 import os
 import io
 import zipfile
+import time
+from functools import wraps
+
+# Lightweight runtime telemetry. Emits machine-readable stage timings to Actions logs.
+def _perf_timed(stage_name):
+    def decorate(func):
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            started = time.perf_counter()
+            outcome = "ok"
+            try:
+                return func(*args, **kwargs)
+            except Exception:
+                outcome = "error"
+                raise
+            finally:
+                elapsed = time.perf_counter() - started
+                print(f"[PERF] stage={stage_name} elapsed_seconds={elapsed:.3f} outcome={outcome}")
+        return wrapped
+    return decorate
+
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter, get_delivery_sessions
@@ -278,6 +299,7 @@ def download_bhavcopy(date_obj):
 # CLEAN EQUITY DATA
 # ============================================================
 
+@_perf_timed("prepare_equity_data")
 def prepare_equity_data(df, etf_symbols=None):
 
     required = [
@@ -386,6 +408,7 @@ def prepare_equity_data(df, etf_symbols=None):
 # FIND LATEST EOD
 # ============================================================
 
+@_perf_timed("latest_eod_download_and_validation")
 def get_latest_eod():
 
     print(
@@ -432,6 +455,7 @@ def get_latest_eod():
 # HISTORICAL DATA
 # ============================================================
 
+@_perf_timed("bhavcopy_history_cache_load_and_gap_fill")
 def collect_historical_days(
     latest_date,
     days=HISTORY_DAYS,
@@ -640,6 +664,7 @@ def fetch_nifty_index_history(
     return history
 
 
+@_perf_timed("nifty_index_history_cache_and_refresh")
 def load_nifty_index_history(latest_date):
 
     print(
@@ -833,6 +858,7 @@ def load_nifty_index_history(latest_date):
 # 20D AVERAGE VOLUME
 # ============================================================
 
+@_perf_timed("prior_20_session_average_volume")
 def calculate_average_volume(
     historical
 ):
@@ -874,6 +900,7 @@ def calculate_average_volume(
 # RVOL
 # ============================================================
 
+@_perf_timed("rvol_calculation")
 def calculate_rvol(
     current,
     avg_volume
@@ -902,6 +929,7 @@ def calculate_rvol(
 # 5D VOLUME
 # ============================================================
 
+@_perf_timed("five_day_volume_metrics")
 def calculate_5d_volume(
     result,
     historical
@@ -1191,6 +1219,7 @@ def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
 # PRICE + VOLUME
 # ============================================================
 
+@_perf_timed("price_volume_relationship")
 def calculate_price_volume_relationship(
     result
 ):
@@ -1253,6 +1282,7 @@ def calculate_price_volume_relationship(
 # CLV
 # ============================================================
 
+@_perf_timed("clv_calculation")
 def calculate_clv(result):
 
     print(
@@ -1629,6 +1659,7 @@ def _classify_ema44_trend(close_value, ema44_value):
         return "Bearish (Close < EMA44)"
     return "NEUTRAL (Close = EMA44)"
 
+@_perf_timed("trend_ema_rsi_adx")
 def calculate_trend(result, historical):
     """Calculate EMA20/EMA44 and descriptive EMA44 states for screened candidates only.
 
@@ -1767,6 +1798,7 @@ def calculate_trend(result, historical):
 # BREAKOUT / PULLBACK
 # ============================================================
 
+@_perf_timed("breakout_pullback")
 def calculate_breakout_pullback(
     result,
     historical
@@ -2215,6 +2247,7 @@ def calculate_breakout_pullback(
 # STEP 11 / SUPPORT & RESISTANCE
 # ============================================================
 
+@_perf_timed("support_resistance")
 def calculate_support_resistance(
     result,
     historical
@@ -2750,6 +2783,7 @@ def calculate_support_resistance(
 # RELATIVE STRENGTH VS NIFTY
 # ============================================================
 
+@_perf_timed("relative_strength_vs_nifty")
 def calculate_relative_strength_nifty(
     result,
     historical,
@@ -3602,6 +3636,7 @@ def send_telegram(
 # MAIN
 # ============================================================
 
+@_perf_timed("total_scanner_runtime")
 def main():
 
     print(
