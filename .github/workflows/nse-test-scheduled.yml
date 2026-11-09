@@ -342,8 +342,12 @@ jobs:
           echo "===== EOD WATCHLIST PREVIEW ====="
           if [ -f outputs/v8_eod_watchlist.csv ]; then head -6 outputs/v8_eod_watchlist.csv; else echo "EOD watchlist not found"; fi
           echo "===== FUNDAMENTAL COLLECTION REPORTS ====="
-          for f in outputs/v8_fundamental_provider_diagnostics.csv outputs/v8_fundamental_report.csv outputs/v8_delivery_a_fundamentals.csv outputs/v8_delivery_b_fundamentals.csv outputs/v8_delivery_ab_combined_fundamentals.csv outputs/v8_fundamental_complete_data.csv outputs/v8_fundamental_partial_data.csv outputs/v8_fundamental_missing_data.csv outputs/v8_fundamental_shortlist_all.csv outputs/v8_fundamental_shortlist_pass.csv; do
-            if [ -f "$f" ]; then echo "===== $f (rows excluding header) ====="; python -c "import pandas as pd,sys; p=sys.argv[1]; d=pd.read_csv(p); print('rows=',len(d)); print(d.head(3).to_string(index=False))" "$f"; else echo "MISSING REPORT: $f"; fi
+          # Only inspect reports that the current Liquidity-first production path emits.
+          # Delivery-A/B-specific fundamentals and standalone shortlist exports are not
+          # production outputs while the collection-boundary decision remains open.
+          echo "NOTE: per-A/B fundamental exports and standalone shortlist files are not expected in the current production path."
+          for f in outputs/v8_fundamental_provider_diagnostics.csv outputs/v8_fundamental_report.csv outputs/v8_fundamental_metric_verification.csv outputs/v8_liquidity_technical_fundamental_report.csv outputs/v8_official_financial_results_filings.csv outputs/v8_fii_dii_market_activity.csv; do
+            if [ -f "$f" ]; then echo "===== $f (rows excluding header) ====="; python -c "import pandas as pd,sys; p=sys.argv[1]; d=pd.read_csv(p); print('rows=',len(d)); print(d.head(3).to_string(index=False))" "$f"; else echo "EXPECTED REPORT NOT PRODUCED: $f"; fi
           done
           echo "===== SECTOR / DATA REPORTS ====="
           if [ -d data/reports ]; then
