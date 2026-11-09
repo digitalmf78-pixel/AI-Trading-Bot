@@ -1828,448 +1828,235 @@ def calculate_trend(result, historical):
 # ============================================================
 
 @_perf_timed("breakout_pullback")
-def calculate_breakout_pullback(
-    result,
-    historical
-):
+def calculate_breakout_pullback(result, historical):
+    print("\nSTEP 10: Breakout / Pullback Detection...")
 
-    print(
-        "\nSTEP 10: Breakout / "
-        "Pullback Detection..."
-    )
+    if result is None or result.empty:
+        return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
 
+    _, history_by_symbol = prepare_history_by_symbol(historical)
     rows = []
 
-    _, history_by_symbol = prepare_history_by_symbol(
-        historical
-    )
+    def safe_float(value):
+        try:
+            number = float(value)
+            return number if pd.notna(number) and number not in (float("inf"), float("-inf")) else float("nan")
+        except (TypeError, ValueError):
+            return float("nan")
 
     for symbol in result["TckrSymb"]:
-
+        candidate_rows = result[result["TckrSymb"] == symbol]
+        candidate = candidate_rows.iloc[0] if not candidate_rows.empty else pd.Series(dtype="object")
         hist = history_by_symbol.get(symbol)
 
-        if hist is None or hist.empty:
+        empty_row = {
+            "TckrSymb": symbol,
+            "RecentSwingHigh": float("nan"),
+            "RecentSwingLow": float("nan"),
+            "High20D": float("nan"),
+            "High50D": float("nan"),
+            "ATR14": float("nan"),
+            "BreakoutStatus": "WAIT_FOR_DATA",
+            "PullbackStatus": "WAIT_FOR_DATA",
+            "SetupType": "WAIT_FOR_DATA",
+            "CorrectionFromHighPct": float("nan"),
+            "SetupRVOL": float("nan"),
+            "High20DDataStatus": "WAIT_FOR_DATA",
+            "High50DDataStatus": "WAIT_FOR_DATA",
+            "VolumeBaseline20DStatus": "WAIT_FOR_DATA",
+            "BreakoutDataStatus": "WAIT_FOR_DATA",
+            "PullbackDataStatus": "WAIT_FOR_DATA",
+        }
 
-            rows.append({
-                "TckrSymb": symbol,
-                "RecentSwingHigh":
-                    float("nan"),
-                "RecentSwingLow":
-                    float("nan"),
-                "High20D":
-                    float("nan"),
-                "High50D":
-                    float("nan"),
-                "ATR14":
-                    float("nan"),
-                "BreakoutStatus":
-                    "Insufficient Data",
-                "PullbackStatus":
-                    "Insufficient Data",
-                "SetupType":
-                    "Insufficient Data",
-            })
-
+        # Twenty complete prior sessions plus the current session are needed
+        # for the existing 20D breakout and volume-baseline rules.
+        if hist is None or hist.empty or len(hist) < 21:
+            rows.append(empty_row)
             continue
 
-        hist = hist.copy()
-
-        if len(hist) < 20:
-
-            rows.append({
-                "TckrSymb": symbol,
-                "RecentSwingHigh":
-                    float("nan"),
-                "RecentSwingLow":
-                    float("nan"),
-                "High20D":
-                    float("nan"),
-                "High50D":
-                    float("nan"),
-                "ATR14":
-                    float("nan"),
-                "BreakoutStatus":
-                    "Insufficient Data",
-                "PullbackStatus":
-                    "Insufficient Data",
-                "SetupType":
-                    "Insufficient Data",
-            })
-
+        hist = hist.copy().sort_values("Date", kind="mergesort").reset_index(drop=True)
+        required = {"OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"}
+        if not required.issubset(hist.columns):
+            rows.append(empty_row)
             continue
 
-        hist["ATR14"] = calculate_atr(
-            hist,
-            14
+        for column in required:
+            hist[column] = pd.to_numeric(hist[column], errors="coerce")
+
+        current = hist.iloc[-1]
+        previous = hist.iloc[:-1]
+        prior20 = previous.tail(20)
+        prior50 = previous.tail(50)
+
+        current_close = safe_float(current["ClsPric"])
+        current_open = safe_float(current["OpnPric"])
+        current_high = safe_float(current["HghPric"])
+        current_low = safe_float(current["LwPric"])
+        current_volume = safe_float(current["TtlTradgVol"])
+        previous_close = safe_float(previous.iloc[-1]["ClsPric"]) if not previous.empty else float("nan")
+
+        high20_values = pd.to_numeric(prior20["HghPric"], errors="coerce")
+        low20_values = pd.to_numeric(prior20["LwPric"], errors="coerce")
+        volume20_values = pd.to_numeric(prior20["TtlTradgVol"], errors="coerce")
+        high50_values = pd.to_numeric(prior50["HghPric"], errors="coerce")
+
+        high20_ready = len(prior20) == 20 and high20_values.notna().all()
+        low20_ready = len(prior20) == 20 and low20_values.notna().all()
+        volume20_ready = len(prior20) == 20 and volume20_values.notna().all()
+        high50_ready = len(prior50) == 50 and high50_values.notna().all()
+
+        high20 = float(high20_values.max()) if high20_ready else float("nan")
+        high50 = float(high50_values.max()) if high50_ready else float("nan")
+        recent_swing_low = float(low20_values.min()) if low20_ready else float("nan")
+        previous_avg_volume = float(volume20_values.mean()) if volume20_ready else float("nan")
+
+        volume_baseline_ready = (
+            pd.notna(previous_avg_volume) and previous_avg_volume > 0
+            and pd.notna(current_volume) and current_volume >= 0
+        )
+        current_rvol = current_volume / previous_avg_volume if volume_baseline_ready else float("nan")
+
+        candle_range = current_high - current_low if pd.notna(current_high) and pd.notna(current_low) else float("nan")
+        clv = (
+            (current_close - current_low) / candle_range
+            if pd.notna(candle_range) and candle_range > 0 and pd.notna(current_close)
+            else float("nan")
         )
 
-        current_close = float(
-            hist["ClsPric"].iloc[-1]
+        atr_series = calculate_atr(hist, 14)
+        atr = safe_float(atr_series.iloc[-1]) if len(atr_series) else float("nan")
+
+        common_breakout_data_ready = (
+            pd.notna(current_close) and pd.notna(current_rvol)
+            and pd.notna(clv) and pd.notna(current_high) and pd.notna(current_low)
         )
+        breakout20_ready = bool(high20_ready and common_breakout_data_ready)
+        breakout50_ready = bool(high50_ready and common_breakout_data_ready)
 
-        current_open = float(
-            hist["OpnPric"].iloc[-1]
-        ) if "OpnPric" in hist.columns and pd.notna(hist["OpnPric"].iloc[-1]) else float("nan")
-
-        previous_close = float(
-            hist["ClsPric"].iloc[-2]
-        ) if len(hist) >= 2 and pd.notna(hist["ClsPric"].iloc[-2]) else float("nan")
-
-        current_high = float(
-            hist["HghPric"].iloc[-1]
-        )
-
-        current_low = float(
-            hist["LwPric"].iloc[-1]
-        )
-
-        current_volume = float(
-            hist["TtlTradgVol"].iloc[-1]
-        )
-
-        previous = hist.iloc[:-1].copy()
-
-        high20 = float(
-            previous["HghPric"]
-            .tail(20)
-            .max()
-        )
-
-        high50 = float(
-            previous["HghPric"]
-            .tail(50)
-            .max()
-        )
-
-        recent_swing_high = high20
-
-        recent_swing_low = float(
-            previous["LwPric"]
-            .tail(20)
-            .min()
-        )
-
-        atr = float(
-            hist["ATR14"].iloc[-1]
-        )
-
-        previous_avg_volume = float(
-            previous["TtlTradgVol"]
-            .tail(20)
-            .mean()
-        )
-
-        if previous_avg_volume > 0:
-
-            current_rvol = (
-                current_volume
-                / previous_avg_volume
-            )
-
+        if breakout20_ready and breakout50_ready:
+            breakout_data_status = "COMPLETE"
+        elif breakout20_ready or breakout50_ready:
+            breakout_data_status = "PARTIAL_DATA"
         else:
+            breakout_data_status = "WAIT_FOR_DATA"
 
-            current_rvol = 0.0
-
-        candle_range = (
-            current_high
-            - current_low
-        )
-
-        if candle_range > 0:
-
-            clv = (
-                current_close
-                - current_low
-            ) / candle_range
-
-        else:
-
-            clv = 0.5
-
-        # ----------------------------
-        # BREAKOUT
-        # ----------------------------
-        # Master V8 rule: a confirmed breakout requires a strong closing candle
-        # (CLV strictly greater than 0.75), not merely a close in the upper half.
         breakout = False
+        breakout_status = "WAIT_FOR_DATA"
+        if breakout20_ready or breakout50_ready:
+            # Preserve the existing V8 breakout thresholds exactly.
+            if breakout20_ready and current_close > high20 and current_rvol >= 2.0 and clv > 0.75:
+                breakout = True
+            elif breakout50_ready and current_close > high50 and current_rvol >= 1.5 and clv > 0.75:
+                breakout = True
 
-        if (
-            current_close > high20
-            and current_rvol >= 2.0
-            and clv > 0.75
-        ):
+            if (
+                breakout20_ready and breakout50_ready
+                and current_close > high20 and current_close > high50
+                and current_rvol >= 2.0 and clv > 0.75
+            ):
+                breakout_status = "Strong Breakout"
+            elif breakout:
+                breakout_status = "Breakout"
+            elif breakout20_ready and current_close >= high20 * 0.98 and current_rvol >= 1.2:
+                breakout_status = "Near Breakout"
+            else:
+                breakout_status = "No Breakout"
 
-            breakout = True
+        ema20_value = safe_float(candidate.get("EMA20"))
+        ema44_value = safe_float(candidate.get("EMA44"))
+        trend_text = str(candidate.get("TrendClassification", "WAIT_FOR_DATA"))
+        low_volume_days = safe_float(candidate.get("LowVolumeDays5D"))
 
-        elif (
-            current_close > high50
-            and current_rvol >= 1.5
-            and clv > 0.75
-        ):
-
-            breakout = True
-
-        if (
-            current_close > high20
-            and current_close > high50
-            and current_rvol >= 2.0
-            and clv > 0.75
-        ):
-
-            breakout_status = (
-                "Strong Breakout"
-            )
-
-        elif breakout:
-
-            breakout_status = "Breakout"
-
-        elif (
-            current_close
-            >= high20 * 0.98
-            and current_rvol >= 1.2
-        ):
-
-            breakout_status = (
-                "Near Breakout"
-            )
-
-        else:
-
-            breakout_status = (
-                "No Breakout"
-            )
-
-        # ----------------------------
-        # PULLBACK
-        # ----------------------------
-
-        ema20 = result.loc[
-            result["TckrSymb"] == symbol,
-            "EMA20"
-        ]
-
-        ema44 = result.loc[
-            result["TckrSymb"] == symbol,
-            "EMA44"
-        ]
-
-        trend_value = result.loc[
-            result["TckrSymb"] == symbol,
-            "TrendClassification"
-        ]
-
-        ema20_value = (
-            float(ema20.iloc[0])
-            if len(ema20) > 0
-            and pd.notna(ema20.iloc[0])
+        correction_from_high = (
+            (high20 - current_close) / high20 * 100.0
+            if high20_ready and high20 > 0 and pd.notna(current_close)
             else float("nan")
         )
-
-        ema44_value = (
-            float(ema44.iloc[0])
-            if len(ema44) > 0
-            and pd.notna(ema44.iloc[0])
-            else float("nan")
+        pullback_inputs_ready = (
+            common_breakout_data_ready
+            and pd.notna(current_open) and pd.notna(previous_close)
+            and pd.notna(correction_from_high)
+            and (pd.notna(ema20_value) or pd.notna(ema44_value))
+            and pd.notna(low_volume_days)
+            and trend_text not in ("WAIT_FOR_DATA", "Insufficient Data", "nan", "")
         )
 
-        trend_text = (
-            str(trend_value.iloc[0])
-            if len(trend_value) > 0
-            else "Insufficient Data"
+        near_ema20 = (
+            pd.notna(ema20_value) and ema20_value > 0
+            and abs(current_close - ema20_value) / ema20_value <= 0.03
         )
-
-        lookback_high = float(
-            previous["HghPric"]
-            .tail(20)
-            .max()
+        near_ema44 = (
+            pd.notna(ema44_value) and ema44_value > 0
+            and abs(current_close - ema44_value) / ema44_value <= 0.03
         )
-
-        correction_from_high = 0.0
-
-        if lookback_high > 0:
-
-            correction_from_high = (
-                (
-                    lookback_high
-                    - current_close
-                )
-                / lookback_high
-            ) * 100
-
-        near_ema20 = False
-        near_ema44 = False
-
-        if pd.notna(ema20_value):
-
-            near_ema20 = (
-                abs(
-                    current_close
-                    - ema20_value
-                )
-                / ema20_value
-                <= 0.03
-            )
-
-        if pd.notna(ema44_value):
-
-            near_ema44 = (
-                abs(
-                    current_close
-                    - ema44_value
-                )
-                / ema44_value
-                <= 0.03
-            )
-
-        controlled_pullback = (
-            1.0
-            <= correction_from_high
-            <= 15.0
-        )
-
-        # Explicit bullish reversal candle confirmation for a pullback:
-        # current close > open, current close > previous close, and CLV > 0.50.
+        controlled_pullback = 1.0 <= correction_from_high <= 15.0 if pd.notna(correction_from_high) else False
         bullish_reversal_candle = (
-            pd.notna(current_open)
-            and pd.notna(previous_close)
-            and current_close > current_open
-            and current_close > previous_close
-            and clv > 0.50
+            pd.notna(current_open) and pd.notna(previous_close) and pd.notna(clv)
+            and current_close > current_open and current_close > previous_close and clv > 0.50
         )
 
-        low_volume_days = result.loc[
-            result["TckrSymb"] == symbol,
-            "LowVolumeDays5D"
-        ]
-
-        low_days = (
-            int(
-                low_volume_days.iloc[0]
-            )
-            if len(low_volume_days) > 0
-            and pd.notna(
-                low_volume_days.iloc[0]
-            )
-            else 0
-        )
-
-        pullback_structure = (
-            ("Bullish" in trend_text)
-            and controlled_pullback
-            and (near_ema20 or near_ema44)
-            and current_rvol <= 1.5
-        )
-
-        # A confirmed pullback needs both volume contraction (>=3 of 5 days
-        # below the 20-session average) and a bullish reversal candle.
-        if pullback_structure and low_days >= 3 and bullish_reversal_candle:
-            pullback_status = "Strong Pullback"
-
-        elif (
-            controlled_pullback
-            and (near_ema20 or near_ema44)
-        ):
-            # Keep incomplete structures informational; never treat them as confirmed.
-            pullback_status = "Possible Pullback"
-
+        if not pullback_inputs_ready:
+            pullback_status = "WAIT_FOR_DATA"
+            pullback_data_status = "WAIT_FOR_DATA"
         else:
-
-            pullback_status = (
-                "No Pullback"
+            pullback_data_status = "COMPLETE"
+            pullback_structure = (
+                ("Bullish" in trend_text)
+                and controlled_pullback
+                and (near_ema20 or near_ema44)
+                and current_rvol <= 1.5
             )
+            # Preserve the existing 3-of-5 low-volume and bullish-candle rule.
+            if pullback_structure and int(low_volume_days) >= 3 and bullish_reversal_candle:
+                pullback_status = "Strong Pullback"
+            elif controlled_pullback and (near_ema20 or near_ema44):
+                pullback_status = "Possible Pullback"
+            else:
+                pullback_status = "No Pullback"
 
-        if (
-            breakout_status
-            == "Strong Breakout"
-        ):
-
+        if breakout_status in ("Strong Breakout", "Breakout"):
             setup_type = "Breakout"
-
-        elif (
-            breakout_status
-            == "Breakout"
-        ):
-
-            setup_type = "Breakout"
-
-        elif (
-            pullback_status
-            == "Strong Pullback"
-        ):
-
+        elif pullback_status == "Strong Pullback":
             setup_type = "Pullback"
-
-        elif (
-            pullback_status
-            == "Pullback"
-        ):
-
-            setup_type = "Pullback"
-
-        elif (
-            breakout_status
-            == "Near Breakout"
-        ):
-
+        elif breakout_status == "Near Breakout":
             setup_type = "Pre-Breakout"
-
-        elif (
-            pullback_status
-            == "Possible Pullback"
-        ):
-
-            setup_type = (
-                "Possible Pullback"
-            )
-
+        elif pullback_status == "Possible Pullback":
+            setup_type = "Possible Pullback"
+        elif breakout_status == "WAIT_FOR_DATA" or pullback_status == "WAIT_FOR_DATA":
+            setup_type = "WAIT_FOR_DATA"
         else:
-
-            setup_type = (
-                "No Clear Setup"
-            )
+            setup_type = "No Clear Setup"
 
         rows.append({
             "TckrSymb": symbol,
-            "RecentSwingHigh":
-                recent_swing_high,
-            "RecentSwingLow":
-                recent_swing_low,
+            "RecentSwingHigh": high20,
+            "RecentSwingLow": recent_swing_low,
             "High20D": high20,
             "High50D": high50,
             "ATR14": atr,
-            "BreakoutStatus":
-                breakout_status,
-            "PullbackStatus":
-                pullback_status,
-            "SetupType":
-                setup_type,
-            "CorrectionFromHighPct":
-                correction_from_high,
-            "SetupRVOL":
-                current_rvol,
+            "BreakoutStatus": breakout_status,
+            "PullbackStatus": pullback_status,
+            "SetupType": setup_type,
+            "CorrectionFromHighPct": correction_from_high,
+            "SetupRVOL": current_rvol,
+            "High20DDataStatus": "COMPLETE" if high20_ready else "WAIT_FOR_DATA",
+            "High50DDataStatus": "COMPLETE" if high50_ready else "WAIT_FOR_DATA",
+            "VolumeBaseline20DStatus": "COMPLETE" if volume_baseline_ready else "WAIT_FOR_DATA",
+            "BreakoutDataStatus": breakout_data_status,
+            "PullbackDataStatus": pullback_data_status,
         })
 
     setup_columns = [
         "TckrSymb", "RecentSwingHigh", "RecentSwingLow", "High20D", "High50D",
         "ATR14", "BreakoutStatus", "PullbackStatus", "SetupType",
-        "CorrectionFromHighPct", "SetupRVOL",
+        "CorrectionFromHighPct", "SetupRVOL", "High20DDataStatus",
+        "High50DDataStatus", "VolumeBaseline20DStatus",
+        "BreakoutDataStatus", "PullbackDataStatus",
     ]
-    # Preserve the merge key when there are no delivery-qualified candidates.
     setup_df = pd.DataFrame(rows, columns=setup_columns)
+    return result.merge(setup_df, on="TckrSymb", how="left")
 
-    result = result.merge(
-        setup_df,
-        on="TckrSymb",
-        how="left"
-    )
 
-    print(
-        "Breakout / Pullback "
-        "calculation completed."
-    )
-
-    return result
 
 
 # ============================================================
