@@ -202,3 +202,15 @@ def test_four_hybrid_watchlists_are_independent_and_stage_ordered():
     assert "current = vcp_report" not in source
     assert "result = write_breakout_ready_watchlist" not in source
     assert "result = write_confirmed_entry_watchlist" not in source
+
+
+
+def test_accumulation_engine_failure_keeps_delivery_ab_candidates_for_wait_watchlist():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    marker = "except Exception as accumulation_exc:"
+    start = source.index(marker)
+    end = source.index("# VCP measurements", start)
+    fallback = source[start:end]
+    assert 'accumulation_report = current.drop_duplicates("TckrSymb", keep="first").copy()' in fallback
+    assert 'accumulation_report["DeliveryEvidenceStatus"] = "WAIT_FOR_DATA"' in fallback
+    assert 'accumulation_report["EvidenceStatus"] = "WAIT_FOR_DATA"' in fallback
