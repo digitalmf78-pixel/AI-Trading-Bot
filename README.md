@@ -1,30 +1,34 @@
-# NSE V8 — Legacy Fundamental Cache Basis Migration (2026-10-30)
+# NSE Swing Trading Bot V8.0
 
-## Purpose
-Safely mark old fundamental-cache rows that predate `MetricCalculationBasis` tracking.
+Automated NSE EOD research and swing-trading analysis pipeline. The scanner produces candidate lists, evidence reports, watchlists, and risk/confirmation status; it does not place orders.
 
-## Behavior
-- Missing/blank `MetricCalculationBasis` becomes `LEGACY_CACHE_BASIS_UNKNOWN`.
-- Adds an explanatory `QuarterlyAlignmentReason` when that field is also blank.
-- Preserves all existing metric values, source fields, filing metadata, and historical `MetricPeriodAlignmentStatus`.
-- Does not infer quarterly or annual basis from `FinancialPeriodEnd`, publication date, or a legacy alignment flag.
-- Does not convert unknown records into verified quarterly TTM records.
-- New records continue to receive the basis assigned by the provider fetch logic.
+## Project source-of-truth hierarchy
 
-## Files
-- `fundamental_data_provider.py`
-- `test_fundamental_data_provider.py`
+1. **Master Specification:** [Pasted text(20261009-143842).txt](Pasted%20text%2820261009-143842%29.txt), including its dated authoritative update at the top. The historical specification body is retained below that update.
+2. **Current working parameters and implementation register:** [NSE V8 Hybrid Strategy Master Parameters](NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md). This records current approved parameters, code status, unresolved decisions, and validation evidence; it supplements but does not replace the Master Specification.
+3. **README:** navigation and concise operational status only.
 
-## Validation performed locally
-- Fundamental provider tests: 8 passed.
-- Fundamental alignment/filter/fail-closed/official-filing/cache-persistence tests: 40 passed.
-- Python compile check: passed.
+## Current production selection order
 
-## Important limitations
-This is a local patch only; it has not been pushed to GitHub and has not been run against live NSE/Yahoo endpoints. It does not independently verify official filings or recalculate legacy financial metrics. Unknown legacy basis remains unknown until refreshed from a source that supplies a traceable calculation basis.
+- Eligible NSE Mainboard universe (Largecap, Midcap, Smallcap; existing SME/ETF/MF exclusions).
+- Prior 20 complete sessions are loaded to prepare the average-volume baseline.
+- Delivery Category A and B are calculated independently over the full 30-calendar-day window; minimum five distinct valid reports; A average >=60.00%, B every valid report >=60.00%.
+- Form the complete de-duplicated A OR B union and preserve A_ONLY / B_ONLY / A_AND_B.
+- Calculate RVOL only for this union: >1.5 HIGH, <=1.5 LOW, invalid/missing WAIT_FOR_DATA. RVOL is classification only and never rejects a Delivery-qualified candidate.
+- All A/B candidates continue to the 20-session liquidity check; hard minimum average traded value ₹1.5 crore.
+- Current fundamental collection is after Liquidity. The decision to move it to the full Delivery A/B union remains open; no change is made by this README.
 
-No changes to Master Specification, RVOL, Delivery A/B, liquidity thresholds, 30-day refresh interval, or downstream trading filters.
+## Hybrid watchlists
 
+Four independent reports are maintained: Potential Accumulation, Base/VCP Forming, Breakout Ready, and Confirmed Entry. Early-stage watchlists are observational and are not BUY signals. Unapproved VCP, Pocket Pivot, retest, or false-breakout thresholds must not be invented.
+
+## Latest audited run
+
+GitHub Actions run [42615488413](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42615488413) completed successfully. It reported 758 unique Delivery A/B candidates (A=758, B=102), RVOL HIGH=105, LOW=610, WAIT=43, and Liquidity PASS=54 (27 strong, 20 medium, 7 low). These are scanner counts, not trade recommendations.
+
+The run had 23/23 official sector-index closes, while 5 of 54 stock-sector mappings remained WAIT_FOR_DATA. FII/DII aggregate feed returned 2026-11-08 for requested EOD 2026-11-09; the exact-date check correctly kept it WAIT_FOR_DATA. The same run exposed an Accumulation/Distribution window-validation bug; PR #34 fixes the current-EOD date check and adds regression tests. The fix is CI-validated but awaits the next live scanner run for end-to-end confirmation.
+
+---
 
 ## Free-source fundamentals policy
 
