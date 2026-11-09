@@ -51,6 +51,21 @@ def _pivots(values, left=3, right=3, high=False):
     return points
 
 
+def _atr14(history):
+    if len(history) < 15 or not {"HghPric", "LwPric", "ClsPric"}.issubset(history.columns):
+        return float("nan")
+    high = pd.to_numeric(history["HghPric"], errors="coerce")
+    low = pd.to_numeric(history["LwPric"], errors="coerce")
+    close = pd.to_numeric(history["ClsPric"], errors="coerce")
+    previous = close.shift(1)
+    true_range = pd.concat(
+        [(high - low), (high - previous).abs(), (low - previous).abs()],
+        axis=1,
+    ).max(axis=1)
+    value = true_range.tail(14).mean()
+    return _num(value)
+
+
 def _session_date(value):
     parsed = pd.to_datetime(value, errors="coerce")
     return None if pd.isna(parsed) else parsed.date()
@@ -180,12 +195,16 @@ def build_potential_accumulation_report(
             "ConfirmedPivotLowCount": float("nan"), "ConfirmedPivotHighCount": float("nan"),
             "LatestPivotLow": float("nan"), "PreviousPivotLow": float("nan"),
             "LatestPivotLowDate": "", "PreviousPivotLowDate": "",
+            "ATR14": float("nan"), "PivotLowSeparationAbs": float("nan"),
+            "PivotLowSeparationPct": float("nan"), "PivotLowSeparationATR": float("nan"),
+            "PivotLowSeparationStatus": "WAIT_FOR_DATA",
             "HigherLowStatus": "WAIT_FOR_DATA",
         }
         if not hist.empty:
             pivot_history_complete = len(hist) == len(ordered_market_sessions)
             if pivot_history_complete and "LwPric" in hist.columns and "HghPric" in hist.columns and hist[["LwPric", "HghPric"]].notna().all().all():
                 row["PivotStructureStatus"] = "COMPLETE"
+                row["ATR14"] = _atr14(hist)
                 lows = hist["LwPric"].tolist()
                 highs = hist["HghPric"].tolist()
                 low_pivots = _pivots(lows) if len(lows) >= 7 else []
@@ -200,6 +219,11 @@ def build_potential_accumulation_report(
                     idx, value = low_pivots[-2]
                     row["PreviousPivotLow"] = value
                     row["PreviousPivotLowDate"] = hist.iloc[idx]["Date"].date().isoformat()
+                    separation = abs(low_pivots[-1][1] - value)
+                    row["PivotLowSeparationAbs"] = separation
+                    row["PivotLowSeparationPct"] = separation / value * 100.0 if value > 0 else float("nan")
+                    row["PivotLowSeparationATR"] = separation / row["ATR14"] if pd.notna(row["ATR14"]) and row["ATR14"] > 0 else float("nan")
+                    row["PivotLowSeparationStatus"] = "OBSERVATION_AVAILABLE" if pd.notna(row["PivotLowSeparationATR"]) else "WAIT_FOR_DATA"
                     row["HigherLowStatus"] = "HIGHER_LOW_OBSERVED" if low_pivots[-1][1] > value else "NO_HIGHER_LOW_OBSERVED"
                 elif len(low_pivots) == 1:
                     row["HigherLowStatus"] = "WAIT_FOR_SECOND_CONFIRMED_PIVOT"
