@@ -101,7 +101,7 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             "VolumeRatioBlock3vs2": float("nan"),
             "VolumeDryUpRatio3vs2": float("nan"),
             "VolumeDryUpFlag": "WAIT_FOR_DATA",
-            "VCPStatus": "NOT_CLASSIFIED",
+            "VCPStatus": "WAIT_FOR_DATA",
         }
         if complete_window:
             row["VCPRangeObservationStatus"] = "COMPLETE"
@@ -150,8 +150,10 @@ def build_vcp_observation_report(candidates, historical, asof_date):
                 )
             if row["VCPRangeObservationStatus"] == "COMPLETE" and row["VCPVolumeObservationStatus"] == "COMPLETE":
                 row["VCPObservationStatus"] = "COMPLETE"
+                row["VCPStatus"] = "NOT_CLASSIFIED"
             else:
                 row["VCPObservationStatus"] = "PARTIAL_DATA"
+                row["VCPStatus"] = "WAIT_FOR_DATA"
         rows.append(row)
 
     report = pd.DataFrame(rows)
