@@ -139,10 +139,11 @@ def build_delivery_quantity_report(
             prefix = f"DeliveryQty{window}D"
             window_days = ordered_days[-window:]
             values = [all_values.get(day) for day in window_days]
+            duplicate_in_window = any(day.isoformat() in duplicate_dates for day in window_days)
             complete = (
                 len(window_days) == window
                 and all(value is not None for value in values)
-                and not duplicate_dates
+                and not duplicate_in_window
                 and not any(day in schema_errors for day in window_days)
             )
             record[f"{prefix}Sessions"] = sum(value is not None for value in values)
@@ -150,7 +151,7 @@ def build_delivery_quantity_report(
             if not complete:
                 record[f"{prefix}Reason"] = (
                     "AMBIGUOUS_DUPLICATE_SYMBOL_SERIES"
-                    if duplicate_dates else
+                    if duplicate_in_window else
                     "DELIVERY_QUANTITY_SCHEMA_MISSING"
                     if any(day in schema_errors for day in window_days) else
                     "INSUFFICIENT_OR_MISSING_SYMBOL_SESSION_DATA"
