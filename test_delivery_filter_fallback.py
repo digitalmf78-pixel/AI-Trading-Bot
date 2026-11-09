@@ -133,7 +133,7 @@ def test_collect_all_scans_complete_30d_window_and_returns_all_valid_reports(mon
     reports = delivery_filter.get_delivery_sessions(
         asof, required_sessions=5, max_calendar_days=30, collect_all=True
     )
-    expected = [day for day in valid_days if day.weekday() < 5]
+    expected = [day for day in valid_days if is_trading_session(day)]
     assert len(reports) == len(expected)
     assert len(calls) > 5
     assert len({day for day, _ in reports}) == len(reports)
