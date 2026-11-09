@@ -56,15 +56,39 @@ def apply_liquidity_filter(
     schema_complete = len(recent) == required_sessions and all(
         symbol_col in frame.columns and value_col in frame.columns for frame in recent
     )
+    # If session dates are supplied, verify that the 20 frames represent 20
+    # distinct dates. Date-less legacy callers retain the documented ordered
+    # session-list contract.
+    date_flags = ["Date" in frame.columns for frame in recent]
+    if schema_complete and any(date_flags):
+        if not all(date_flags):
+            schema_complete = False
+        else:
+            session_dates = []
+            for frame in recent:
+                parsed_dates = pd.to_datetime(frame["Date"], errors="coerce").dropna().dt.date.unique()
+                if len(parsed_dates) != 1:
+                    schema_complete = False
+                    break
+                session_dates.append(parsed_dates[0])
+            if len(set(session_dates)) != required_sessions:
+                schema_complete = False
+
     session_maps: list[dict[str, float]] = []
     if schema_complete:
         for frame in recent:
             temp = frame[[symbol_col, value_col]].copy()
             temp[symbol_col] = temp[symbol_col].astype(str).str.strip().str.upper()
+            duplicate_symbols = set(
+                temp.loc[temp[symbol_col].duplicated(keep=False), symbol_col].dropna()
+            )
+            # Ambiguous duplicate symbol rows must become missing data, not an
+            # arbitrary keep-last selection that could pass the liquidity gate.
+            if duplicate_symbols:
+                temp = temp[~temp[symbol_col].isin(duplicate_symbols)]
             temp[value_col] = pd.to_numeric(temp[value_col], errors="coerce")
             temp = temp.dropna(subset=[symbol_col, value_col])
             temp = temp[temp[value_col] >= 0]
-            temp = temp.drop_duplicates(subset=[symbol_col], keep="last")
             session_maps.append(dict(zip(temp[symbol_col], temp[value_col].astype(float))))
 
     rows: list[dict] = []
