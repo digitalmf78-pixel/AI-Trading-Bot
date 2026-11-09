@@ -55,6 +55,11 @@ def test_report_keeps_candidate_and_emits_20d_50d_200d_range_observations(tmp_pa
     assert pd.notna(row["PivotLowSeparationATR"])
     assert row["PriceRange20DStatus"] == "OBSERVATION_AVAILABLE"
     assert row["PriceRange50DStatus"] == "OBSERVATION_AVAILABLE"
+    assert row["PriceRange20DStartDate"] < row["PriceRange20DEndDate"]
+    assert row["PriceRange20DEndDate"] == "2026-10-23"
+    assert row["PriceRange20DSessionCount"] == 20
+    assert pd.notna(row["PriceRange20DAverageDailyRangePct"])
+    assert 0 <= row["PriceRange20DLatestClosePositionPct"] <= 100
     assert row["PriceRange200DStatus"] == "WAIT_FOR_DATA"
     assert row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE"
     assert row["HighDeliverySessionCount"] == 3
@@ -229,3 +234,16 @@ def test_selling_pressure_volume_averages_wait_on_missing_or_negative_volume(tmp
     assert pd.isna(row["DownDayVolumeAverage20D"])
     assert pd.isna(row["UpDayVolumeAverage20D"])
     assert pd.isna(row["DownVsUpVolumeRatio20D"])
+
+
+def test_rolling_range_observation_waits_for_invalid_price_or_candle_structure(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-4], "HghPric"] = float("inf")
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["PriceRange20DStatus"] == "WAIT_FOR_DATA"
+    assert pd.isna(row["PriceRange20DSessionCount"])
