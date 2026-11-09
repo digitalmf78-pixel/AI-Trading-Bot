@@ -281,3 +281,31 @@ Before taking action on this repository:
 **Still pending:** fixed-range base start/end/duration, contraction count/depth thresholds, and the final VCP_CONFIRMED/VCP_FORMING/NO_VCP classification. These observations are not a BUY signal and are not an entry gate.
 
 **Validation:** GitHub Actions run `42586036668`, commit `c3885e40cb66b1a5fa5a4afaa31f076bc299f5a4`, completed SUCCESS: compile passed, 221 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 17. Phase 7 progress — Existing trend, breakout, support/resistance and liquidity data integrity (09-Nov-2026)
+
+**Implemented on main without changing existing signal thresholds:**
+- Breakout and Pullback now use exact prior market-session windows. 20D resistance and volume baselines require 20 complete prior sessions; 50D resistance requires 50 complete prior sessions. A missing symbol session is not replaced by an older row.
+- Zero/missing 20D volume baseline no longer becomes synthetic RVOL=0. A flat/invalid candle no longer receives synthetic CLV=0.5. Missing prerequisites produce WAIT_FOR_DATA.
+- Existing breakout thresholds remain unchanged: 20D breakout RVOL >=2.0 and CLV >0.75; 50D breakout RVOL >=1.5 and CLV >0.75; Near Breakout remains within the existing 2% 20D resistance proximity and RVOL >=1.2.
+- Existing Pullback thresholds remain unchanged: 1–15% correction, within 3% of EMA20/EMA44, RVOL <=1.5, at least 3 low-volume days and bullish reversal candle. Missing inputs now return WAIT_FOR_DATA rather than a misleading no-setup/pullback status.
+- Support/Resistance now validates exact prior 20/50/100/200 market-session windows and previous-day data. Missing symbol sessions are not backfilled; explicit SR window/data statuses are emitted. Existing 2% near-resistance, 3% near-support and entry-zone calculations are unchanged.
+- Trend EMA20/EMA44, RSI and ADX calculations now require complete point-in-time symbol history from the symbol's first available session through the current EOD and a complete latest 50-session OHLC window. Missing/current-session gaps return WAIT_FOR_DATA. Existing EMA44 trend interpretation is unchanged.
+- Liquidity continues to use 20 prior session frames and the existing ₹1.5 crore minimum / ₹2 crore and ₹5 crore tiers. Duplicate symbol rows in a session are now ambiguous WAIT_FOR_DATA; when Date is supplied, duplicate or mixed/invalid session dates also produce WAIT_FOR_DATA. Date-less legacy callers retain the documented ordered-session-list contract.
+- Empty candidate frames preserve the expected output schema.
+
+**Still pending:** post-breakout retest window, false-breakout buffer, Pocket Pivot formula/lookback/candle conditions, support/resistance zone clustering tolerance and four independent watchlist outputs. No new entry gate was introduced.
+
+**Validation:** GitHub Actions run `42587194568`, commit `cfb3260bdfb78f5ba91e8ebe569d6373a37797e4`, completed SUCCESS: 239 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 18. Phase 3 audit — Liquidity and Fundamental cache boundary (09-Nov-2026)
+
+**Current code verified:**
+- Liquidity is a hard gate using 20 prior sessions of NSE Bhavcopy TtlTrfVal; average daily traded value >=₹1.5 crore passes. Tiers remain LOW ₹1.5–<₹2 crore, MEDIUM ₹2–<₹5 crore and STRONG >=₹5 crore.
+- Fundamental collection is currently called **after Liquidity** and receives the liquidity-qualified candidate frame. This is the existing implementation; whether collection should instead cover the entire Delivery A/B union before Liquidity remains an unresolved boundary decision. Do not change until explicitly resolved.
+- Fundamental collection never removes candidate rows. Manual metric values remain authoritative; provider failures and missing metrics remain visible as MISSING_DATA/PARTIAL_DATA/WAIT statuses.
+- The current metrics cache is `data/inputs/fundamental_metrics.csv`; dated snapshots are written under `data/cache/fundamental_history/`. The scheduled GitHub workflow stages and commits the current cache and dated history snapshots into the repository.
+- Yahoo Finance via yfinance is a secondary provider; official NSE filing metadata supplies publication-date verification and period-alignment statuses. Direct XBRL metric-value verification is run as a separate audit sidecar using hash-verified official XML evidence; it is not currently a candidate gate and is not merged into the FundamentalScore calculation.
+- FundamentalScore is informational only. The current score requires six numeric score metrics plus verified publication date, period end and metric-period alignment; the direct XBRL metric-value verification sidecar remains separately visible. Do not turn Strong Fundamental or score >=65 into an eligibility gate.
+
+**Open boundary decisions remain:** collect fundamentals for all Delivery A/B before Liquidity versus current Liquidity-first collection; and whether direct XBRL metric-value verification should become a score prerequisite or remain a non-gating evidence sidecar. No change made.
