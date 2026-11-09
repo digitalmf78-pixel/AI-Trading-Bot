@@ -31,6 +31,7 @@ from delivery_consistency import build_delivery_consistency_report
 from delivery_quantity_analysis import build_delivery_quantity_report
 from potential_accumulation_analysis import build_potential_accumulation_report
 from vcp_observation_analysis import build_vcp_observation_report
+from breakout_retest_observation import build_breakout_retest_observation
 from hybrid_watchlists import (
     write_early_hybrid_watchlists,
     write_breakout_ready_watchlist,
@@ -3822,6 +3823,19 @@ def main():
             analysis_history
         )
     )
+
+    # Descriptive retest observation only; never changes selection or entry gates.
+    try:
+        retest_observation = build_breakout_retest_observation(result, analysis_history)
+        if len(retest_observation) == len(result):
+            for column in retest_observation.columns:
+                if column != "TckrSymb":
+                    result[column] = retest_observation[column].to_numpy()
+    except Exception as retest_exc:
+        result["RetestObservationStatus"] = "WAIT_FOR_DATA"
+        result["ExactLevelTouchObserved"] = "WAIT_FOR_DATA"
+        print("[BREAKOUT_RETEST] WAIT_FOR_DATA; existing pipeline continues: " + str(retest_exc))
+
     # LowVolumeDays5D may remain as descriptive data only. It is not a selection
     # condition; the mandatory rule is Delivery >=60% on EACH of five sessions.
     if "LowVolumeDays5D" in result.columns:
