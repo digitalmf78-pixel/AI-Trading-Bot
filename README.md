@@ -88,3 +88,6 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Phase 6 Early Trend observations: EMA20/44/50/200 values, distance and position now appear in the pre-Liquidity accumulation observation report. They are informational only and do not reject stocks below EMA200. Latest validation: 218 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Phase 5 VCP observations: three consecutive 20-session range/volume blocks and contraction/dry-up ratios now run before Liquidity on the Delivery A/B union. The <0.5x volume flag is observational only; VCP is not classified and does not gate candidates. Latest validation: 221 unit/data-audit tests and 31 V8 regression tests passed.
+
+- Phase 7 integrity work: breakout/pullback, support/resistance and trend indicators now fail closed on missing or incomplete market sessions; original signal thresholds are unchanged. Liquidity duplicate rows/dates now WAIT_FOR_DATA. Latest CI: 239 unit/data-audit tests and 31 V8 regression tests passed.
+- Phase 3 audit: fundamental cache and dated snapshots are persisted in-repo by the scheduled workflow. Collection remains after Liquidity pending the recorded boundary decision; XBRL value verification remains a separate non-gating sidecar.
