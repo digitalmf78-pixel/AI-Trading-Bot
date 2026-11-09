@@ -33,3 +33,15 @@ def test_validate_bhavcopy_date_fails_closed_without_date_column():
 def test_validate_bhavcopy_date_rejects_empty_file():
     with pytest.raises(ValueError, match="empty Bhavcopy"):
         validate_bhavcopy_date(pd.DataFrame(), pd.Timestamp("2026-11-06").date())
+
+
+@pytest.mark.parametrize("weekend", ["2026-11-07", "2026-11-08"])
+def test_weekend_dates_are_not_trading_candidates(weekend):
+    from volume_gainer import is_weekday_trading_candidate
+    assert is_weekday_trading_candidate(pd.Timestamp(weekend).date()) is False
+
+
+@pytest.mark.parametrize("weekday", ["2026-11-06", "2026-11-09"])
+def test_weekdays_remain_trading_date_candidates(weekday):
+    from volume_gainer import is_weekday_trading_candidate
+    assert is_weekday_trading_candidate(pd.Timestamp(weekday).date()) is True
