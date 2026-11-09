@@ -84,14 +84,26 @@ def build_delivery_quantity_report(
         raise ValueError(f"Invalid as-of date: {asof_date!r}")
 
     by_day: dict[date, pd.DataFrame] = {}
+    duplicate_session_dates: set[date] = set()
     for raw_day, raw in sessions:
         day = _date(raw_day)
-        if day is None or day > asof or day in by_day or raw is None or raw.empty:
+        if day is None or day > asof:
             continue
-        by_day[day] = raw.copy()
-    ordered_days = sorted(by_day)
+        if day in by_day or day in duplicate_session_dates:
+            duplicate_session_dates.add(day)
+            by_day.pop(day, None)
+            continue
+        if raw is None or raw.empty:
+            # Keep an explicit empty session: it is a real missing-data day,
+            # not permission to silently shorten the lookback window.
+            by_day[day] = pd.DataFrame()
+        else:
+            by_day[day] = raw.copy()
+    ordered_days = sorted(set(by_day) | duplicate_session_dates)
     report_frames: dict[date, pd.DataFrame] = {}
-    schema_errors: dict[date, str] = {}
+    schema_errors: dict[date, str] = {
+        day: "DUPLICATE_DELIVERY_REPORT_DATE" for day in duplicate_session_dates
+    }
     for day in ordered_days:
         raw = by_day[day]
         sym_col = _column(raw, ALIASES["symbol"])
@@ -112,7 +124,8 @@ def build_delivery_quantity_report(
             "CLOSE_PRICE": pd.to_numeric(raw[close_col], errors="coerce") if close_col else float("nan"),
         })
         data = data[data["SYMBOL"].ne("") & data["SYMBOL"].str.lower().ne("nan")]
-        data = data[data["DELIVERY_QTY"].ge(0)]
+        # Preserve invalid-quantity rows for duplicate detection. Filtering
+        # them first could turn two ambiguous source rows into one apparent pass.
         report_frames[day] = data
 
     audit_rows = []
@@ -124,7 +137,13 @@ def build_delivery_quantity_report(
         record = candidate.to_dict()
         all_values: dict[date, dict] = {}
         duplicate_dates: list[str] = []
+        invalid_quantity_dates: list[str] = []
+        candidate_is_duplicated = (
+            frame["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol).sum() > 1
+        )
         for day in ordered_days:
+            if day in duplicate_session_dates:
+                continue
             data = report_frames.get(day)
             if data is None:
                 continue
@@ -133,7 +152,12 @@ def build_delivery_quantity_report(
                 duplicate_dates.append(day.isoformat())
                 continue
             if len(match) == 1:
-                all_values[day] = match.iloc[0].to_dict()
+                value = match.iloc[0].to_dict()
+                quantity = value.get("DELIVERY_QTY")
+                if pd.isna(quantity) or not math.isfinite(float(quantity)) or float(quantity) < 0:
+                    invalid_quantity_dates.append(day.isoformat())
+                    continue
+                all_values[day] = value
 
         for window in WINDOWS:
             prefix = f"DeliveryQty{window}D"
@@ -144,14 +168,20 @@ def build_delivery_quantity_report(
                 len(window_days) == window
                 and all(value is not None for value in values)
                 and not duplicate_in_window
+                and not candidate_is_duplicated
                 and not any(day in schema_errors for day in window_days)
+                and not any(day.isoformat() in invalid_quantity_dates for day in window_days)
             )
             record[f"{prefix}Sessions"] = sum(value is not None for value in values)
             record[f"{prefix}Status"] = "COMPLETE" if complete else "WAIT_FOR_DATA"
             if not complete:
                 record[f"{prefix}Reason"] = (
                     "AMBIGUOUS_DUPLICATE_SYMBOL_SERIES"
-                    if duplicate_in_window else
+                    if duplicate_in_window or candidate_is_duplicated else
+                    "DUPLICATE_DELIVERY_REPORT_DATE"
+                    if any(day in duplicate_session_dates for day in window_days) else
+                    "INVALID_DELIVERY_QUANTITY"
+                    if any(day.isoformat() in invalid_quantity_dates for day in window_days) else
                     "DELIVERY_QUANTITY_SCHEMA_MISSING"
                     if any(day in schema_errors for day in window_days) else
                     "INSUFFICIENT_OR_MISSING_SYMBOL_SESSION_DATA"
