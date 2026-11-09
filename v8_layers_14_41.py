@@ -591,6 +591,40 @@ def _score_row(row: pd.Series) -> tuple[int, int]:
     return score, available
 
 
+def _eod_required_data_status(row):
+    """Return READY, WAIT_FOR_DATA or REJECT for final EOD prerequisite data."""
+    core_status = str(row.get("CoreTechnicalScreenStatus", "")).strip().upper()
+    if core_status == "REJECT":
+        return "REJECT"
+
+    def missing(value):
+        if value is None or pd.isna(value):
+            return True
+        return str(value).strip().upper() in {"", "WAIT_FOR_DATA", "NAN", "NONE"}
+
+    required_statuses = (
+        "CoreTechnicalScreenStatus", "SectorStrengthStatus", "MarketRegimeStatus",
+        "DeliveryStatus", "AccumulationDistributionStatus", "NewsStatus",
+        "RiskRewardStatus", "RiskControlStatus", "MandatoryConfirmationStatus",
+        "ChaseStatus",
+    )
+    required_values = (
+        "MarketRegime", "DeliveryFilterStatus", "AccumulationDistribution", "SetupType",
+    )
+    if any(missing(row.get(column)) for column in required_statuses + required_values):
+        return "WAIT_FOR_DATA"
+
+    score_coverage = _num(row.get("V8ScoreCoveragePct"))
+    rvol = _num(row.get("RVOL"))
+    score = _num(row.get("V8Score"))
+    if pd.isna(score_coverage) or score_coverage < 100 or pd.isna(rvol) or pd.isna(score):
+        return "WAIT_FOR_DATA"
+
+    if rvol >= 1.5 and missing(row.get("VolumeReason")):
+        return "WAIT_FOR_DATA"
+    return "READY"
+
+
 def run_eod_layers(
     result: pd.DataFrame,
     historical: list[pd.DataFrame],
@@ -811,22 +845,15 @@ def run_eod_layers(
     watch_statuses = []
     for _, row in output.iterrows():
         score_coverage = _num(row.get("V8ScoreCoveragePct"))
-        # Fundamental data is collected for every Delivery-A/B stock, but the
-        # strong-fundamental shortlist is deliberately deferred to a later stage.
-        # Missing fundamental fields must not block this interim technical/risk
-        # review; their completeness and provisional score remain visible in reports.
-        required_data = [
-            row.get("SectorStrengthStatus"), row.get("MarketRegimeStatus"),
-            row.get("DeliveryStatus"), row.get("AccumulationDistributionStatus"),
-            row.get("NewsStatus"), row.get("RiskRewardStatus"),
-            row.get("RiskControlStatus", "WAIT_FOR_DATA"),
-        ]
-        # A failed core technical screen is a decisive rejection. Do not let
-        # unrelated missing downstream data mask it as WAIT_FOR_DATA.
-        if str(row.get("CoreTechnicalScreenStatus", "")).strip().upper() == "REJECT":
+        # Fundamental completeness is informational here; the collection
+        # boundary remains the current liquidity-qualified cohort. Missing
+        # fundamental fields do not block interim technical/risk review.
+        data_status = _eod_required_data_status(row)
+        # A failed core technical screen is a decisive rejection.
+        if data_status == "REJECT":
             watch_statuses.append("SKIP")
             continue
-        if "WAIT_FOR_DATA" in required_data or pd.isna(score_coverage) or score_coverage < 100:
+        if data_status == "WAIT_FOR_DATA":
             watch_statuses.append("WAIT_FOR_DATA")
             continue
         rvol = _num(row.get("RVOL"))
