@@ -711,7 +711,6 @@ def fetch_nifty_index_history(
 
 
 @_perf_timed("nifty_index_history_cache_and_refresh")
-@_perf_timed("nifty_index_history_cache_and_refresh")
 def load_nifty_index_history(latest_date):
     """Load Nifty history without letting an unavailable context feed abort NSE EOD scanning.
 
@@ -2488,40 +2487,28 @@ def calculate_relative_strength_nifty(
         .reset_index(drop=True)
     )
 
-    if len(nifty) < 21:
-
-        raise RuntimeError(
-            "Insufficient Nifty history for 20D return calculation."
-        )
-
-    nifty_last = nifty.iloc[-1]
-
-    if (
-        pd.Timestamp(nifty_last["Date"]).normalize()
-        != pd.Timestamp(latest_date).normalize()
-    ):
-
-        raise RuntimeError(
-            "Nifty history date does not match latest NSE EOD date."
-        )
-
-    nifty_base_close = float(
-        nifty["NiftyClose"].iloc[-21]
+    nifty_return_20d = float("nan")
+    nifty_aligned = (
+        len(nifty) >= 21
+        and pd.Timestamp(nifty.iloc[-1]["Date"]).normalize()
+        == pd.Timestamp(latest_date).normalize()
     )
+    if nifty_aligned:
+        nifty_base_close = pd.to_numeric(
+            pd.Series([nifty["NiftyClose"].iloc[-21]]), errors="coerce"
+        ).iloc[0]
+        nifty_last_close = pd.to_numeric(
+            pd.Series([nifty["NiftyClose"].iloc[-1]]), errors="coerce"
+        ).iloc[0]
+        if pd.notna(nifty_base_close) and nifty_base_close > 0 and pd.notna(nifty_last_close):
+            nifty_return_20d = ((float(nifty_last_close) / float(nifty_base_close)) - 1) * 100
 
-    nifty_last_close = float(
-        nifty_last["NiftyClose"]
-    )
-
-    if nifty_base_close <= 0:
-
-        raise RuntimeError(
-            "Nifty 20D base close must be greater than zero."
+    if pd.isna(nifty_return_20d):
+        print(
+            "[NIFTY][RELATIVE_STRENGTH_WAIT_FOR_DATA] "
+            f"Need >=21 valid closes ending exactly on {pd.Timestamp(latest_date).date()}; "
+            "Nifty 20D return and per-stock relative strength will remain WAIT_FOR_DATA."
         )
-
-    nifty_return_20d = (
-        (nifty_last_close / nifty_base_close) - 1
-    ) * 100
 
     stock_returns = []
     nifty_returns = []
