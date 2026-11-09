@@ -81,3 +81,6 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Delivery report integrity: the internal NSE report date is checked against the requested session before cached/downloaded data is accepted.
 
 - Phase 2 Delivery Quantity observations: code integrated and validated by GitHub Actions (211 unit/data-audit tests + 31 V8 regression tests passed). Live NSE artifact/header verification remains a follow-up; missing data fails closed and never affects Delivery A/B eligibility.
+
+
+- Phase 4 Potential Accumulation observations: a separate report now runs on the full Delivery A/B union before Liquidity. It records rolling price ranges, pivot/Higher-Low observations, Delivery >=60% price response and down/up-day volume context. It does not filter or score candidates. GitHub Actions validated 217 unit/data-audit tests and 31 V8 regression tests. Fixed-range base/VCP thresholds and watchlists remain pending.
