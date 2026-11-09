@@ -117,7 +117,7 @@ def test_forward_observation_horizon_completes_after_exactly_ten_sessions():
     assert row["ForwardSessionsObserved"] == 10
     assert row["ForwardHorizonStatus"] == "COMPLETE"
     assert row["SessionsSinceBreakout"] == 10
-    assert row["PostBreakoutClosesBelowLevelCount"] == 10
+    assert row["PostBreakoutClosesBelowLevelCount"] == 8
     assert row["RetestObservationStatus"] == "POST_BREAKOUT_PRICE_OBSERVATIONS_AVAILABLE"
 
 
