@@ -227,7 +227,7 @@ def build_potential_accumulation_report(
     for _, candidate in candidates.drop_duplicates("TckrSymb", keep="first").iterrows():
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
-        hist, _ = (candidate_price_history(history_index, candidate, asof), ordered_market_sessions)
+        hist = candidate_price_history(history_index, candidate, asof)
         row = {
             "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
             "DeliveryCategory": candidate.get("DeliveryCategory", "UNKNOWN"),
