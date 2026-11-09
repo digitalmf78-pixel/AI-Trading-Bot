@@ -436,3 +436,20 @@ Before taking action on this repository:
 - No thresholds, contraction definitions, output classifications, scanner eligibility, ranking, or entry gates were changed.
 
 **Validation:** GitHub Actions run `42592790581`, commit `5766258ac59aa8019a20ea28633337a744c1af83`, completed SUCCESS: 295 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 29. Rolling base-range and VCP contraction-depth observations (09-Nov-2026)
+
+### Rolling price-range / base-context measurements
+- Existing rolling 20/50/100/200-session price-range observations now also include exact window start date, end date, session count, average daily intraday range as a percentage of close, and latest close position within the observed high-low range (0-100%).
+- These are explicitly **rolling range observations**, not a fixed-range base start/end determination. The window endpoints are mechanical lookback boundaries, not detected base boundaries.
+- Each window still requires exact actual market-session membership and valid finite positive High/Low/Close candles with Low <= Close <= High. Invalid or incomplete windows remain WAIT_FOR_DATA.
+- No fixed-base width/duration acceptance threshold, base classification, or eligibility gate was introduced.
+
+### VCP contraction depth and price-volume relationship
+- Added contraction depth for block 2 vs block 1 and block 3 vs block 2, calculated as `(1 - later_block_width / earlier_block_width) * 100`. Positive means narrower range; negative means range expansion. This is descriptive, not a pass threshold.
+- Added `PriceVolumeContractionRelationship` to distinguish whether both sequential price-range widths and both sequential block-average volumes contract, whether only price or volume contracts, or neither shows a two-step contraction.
+- Existing <0.5x latest/prior block volume dry-up marker remains informational only.
+- Added `FalseVCPOutcomeStatus=NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON`. A false-VCP outcome cannot be reliably identified from the same 60-session formation window alone; the forward evaluation horizon, breakout event definition, failure/re-entry rule and outcome measurement window have not been approved. No false-VCP pass/fail classifier was invented.
+- Complete measurements remain `VCPStatus=NOT_CLASSIFIED`; incomplete inputs remain `WAIT_FOR_DATA`. No scanner, ranking, or entry gate changed.
+
+**Validation:** GitHub Actions run `42593617448`, commit `4ba06fa097b71567bf83ed8c5e02745084a6f0a1`, completed SUCCESS: 297 unit/data-audit tests passed, all 31 V8 regression tests passed, sector/news/official-index tests passed. Issuer Matching/RSS Parser workflow also completed SUCCESS.
