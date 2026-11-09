@@ -1926,6 +1926,7 @@ def calculate_breakout_pullback(result, historical):
     asof_date = max(market_dates) if market_dates else None
     prior_market_dates = sorted(day for day in market_dates if asof_date is not None and day < asof_date)
     rows = []
+    seen_candidate_symbols = set()
 
     def safe_float(value):
         try:
@@ -1935,7 +1936,13 @@ def calculate_breakout_pullback(result, historical):
             return float("nan")
 
     for symbol in result["TckrSymb"]:
-        candidate_rows = result[result["TckrSymb"] == symbol]
+        symbol_key = str(symbol).strip().upper()
+        if symbol_key in seen_candidate_symbols:
+            continue
+        seen_candidate_symbols.add(symbol_key)
+        candidate_rows = result[
+            result["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol_key)
+        ]
         candidate = candidate_rows.iloc[0] if not candidate_rows.empty else pd.Series(dtype="object")
         hist = history_by_symbol.get(symbol)
 
@@ -2292,7 +2299,12 @@ def calculate_support_resistance(result, historical):
         }
 
     rows = []
+    seen_candidate_symbols = set()
     for symbol in result["TckrSymb"]:
+        symbol_key = str(symbol).strip().upper()
+        if symbol_key in seen_candidate_symbols:
+            continue
+        seen_candidate_symbols.add(symbol_key)
         stock = history_by_symbol.get(symbol)
         if (
             result["TckrSymb"].astype(str).str.strip().str.upper().eq(
