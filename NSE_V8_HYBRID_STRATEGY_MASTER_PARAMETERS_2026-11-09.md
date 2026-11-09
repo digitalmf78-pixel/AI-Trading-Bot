@@ -423,3 +423,16 @@ Before taking action on this repository:
 - Decision: retain the existing exact-extreme counts and pivot observations as-is; no new S/R zone signal or gate added. A future zone module must be a separate, non-gating report until its measurement definitions are approved.
 
 **Audit conclusion:** Pocket Pivot is not implemented; repeated S/R zone tests are not implemented. Existing range-extreme counts and confirmed pivots are present but must not be described as zone-test confirmation. Existing scanner eligibility, ranking, breakout, risk, and entry behavior remain unchanged.
+
+## 28. Base/VCP data-integrity audit (09-Nov-2026)
+
+- The existing VCP observation engine measures three consecutive 20-session blocks (60 actual market sessions), each block's high/low range width, two sequential width ratios, number of contraction transitions, average volume per block, consecutive volume ratios, and latest-block/prior-block volume dry-up.
+- The `<0.5x` latest/prior block volume dry-up marker remains descriptive only. It is not a filter, score, or confirmation.
+- The interim watchlist label `BASE_FORMING` is emitted only when the existing three-block observation has two successive range contractions. It explicitly carries `NOT_VCP_CONFIRMED`. It is not a fixed-range base definition, a final VCP classification, a Buy signal, or a scanner gate.
+- Complete price/volume observations intentionally retain `VCPStatus=NOT_CLASSIFIED`; incomplete inputs retain `WAIT_FOR_DATA`. No VCP_CONFIRMED or VCP_FORMING classification is currently emitted.
+- Audit found a data-integrity gap: numeric infinity values could pass non-null checks, structurally invalid high/low/close candles could enter range widths, and duplicate candidate symbols were silently reduced to the first row.
+- Corrected the observation engine: all 60 high/low/close values must be finite and positive; High >= Low and Low <= Close <= High for every session; volume must be finite and non-negative. Duplicate candidate identities now return WAIT_FOR_DATA rather than silently selecting the first candidate. Existing duplicate symbol/session and exact-session checks remain.
+- Added regression tests for infinite prices, malformed candle structure, infinite volume, and duplicate candidates.
+- No thresholds, contraction definitions, output classifications, scanner eligibility, ranking, or entry gates were changed.
+
+**Validation:** GitHub Actions run `42592790581`, commit `5766258ac59aa8019a20ea28633337a744c1af83`, completed SUCCESS: 295 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
