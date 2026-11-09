@@ -20,6 +20,8 @@ from typing import Any
 import pandas as pd
 import requests
 
+from nse_trading_calendar import CalendarCoverageError, is_trading_session
+
 INPUT_DIR = Path("data") / "inputs"
 CACHE_DIR = Path("data") / "cache" / "sector_index_daily"
 CONSTITUENT_CACHE_DIR = Path("data") / "cache" / "sector_constituents"
@@ -331,11 +333,14 @@ def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> 
     })
     collected: dict[tuple[str, str], float] = {}
     exact_sectors: set[str] = set()
-    # 45 weekdays gives a buffer for holidays and should exceed the required 21 closes.
+    # Search the official NSE equity-session calendar, including special sessions.
     for offset in range(0, 64):
         day = asof - pd.Timedelta(days=offset)
-        if day.weekday() >= 5:
-            continue
+        try:
+            if not is_trading_session(day.date()):
+                continue
+        except CalendarCoverageError as exc:
+            raise RuntimeError(f"WAIT_FOR_DATA: {exc}") from exc
         frame = _download_daily_index_file(session, day)
         if not frame.empty:
             cols = {str(c).strip().casefold(): c for c in frame.columns}
