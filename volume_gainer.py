@@ -42,6 +42,17 @@ import sector_data
 from main_board_filter import apply_official_main_board_filter
 from bottom_detection import write_bottom_detection_report
 from sector_data import refresh_sector_inputs
+
+# Time the major network/data stages that were previously hidden inside the
+# total scanner runtime. These wrappers do not change inputs, outputs, or rules.
+get_delivery_sessions = _perf_timed("delivery_reports_fetch")(get_delivery_sessions)
+apply_delivery_filter = _perf_timed("delivery_filter_calculation")(apply_delivery_filter)
+build_delivery_consistency_report = _perf_timed("delivery_consistency_report")(build_delivery_consistency_report)
+update_delivery_scan_streak = _perf_timed("delivery_streak_tracker")(update_delivery_scan_streak)
+apply_liquidity_filter = _perf_timed("liquidity_filter_calculation")(apply_liquidity_filter)
+collect_missing_fundamentals = _perf_timed("fundamental_data_collection")(collect_missing_fundamentals)
+collect_catalyst_news = _perf_timed("news_catalyst_collection")(collect_catalyst_news)
+refresh_sector_inputs = _perf_timed("sector_inputs_refresh")(refresh_sector_inputs)
 from news_catalyst import (
     collect_catalyst_news,
     send_marathi_telegram,
@@ -404,6 +415,12 @@ def prepare_equity_data(df, etf_symbols=None):
     return data
 
 
+def is_weekday_trading_candidate(value):
+    """Reject Saturday/Sunday before requesting a Bhavcopy; holidays still fail closed via NSE availability."""
+    day = value.date() if isinstance(value, datetime) else value
+    return day.weekday() < 5
+
+
 # ============================================================
 # FIND LATEST EOD
 # ============================================================
@@ -421,6 +438,10 @@ def get_latest_eod():
     for i in range(10):
 
         check_date = today - timedelta(days=i)
+
+        if not is_weekday_trading_candidate(check_date):
+            print(f"[BHAVCOPY] Skipping non-trading weekend date: {check_date}")
+            continue
 
         print(
             f"Trying date: {check_date}"
