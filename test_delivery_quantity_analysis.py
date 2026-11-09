@@ -98,4 +98,4 @@ def test_quantity_zero_is_valid_and_change_percentage_is_nan_when_start_is_zero(
         pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}]), "2026-10-20", _reports(values)
     )
     assert enriched.iloc[0]["DeliveryQty5DFirst"] == 0
-    assert pd.notna(enriched.iloc[0]["DeliveryQty5DChangePct"])
+    assert pd.isna(enriched.iloc[0]["DeliveryQty5DChangePct"])
