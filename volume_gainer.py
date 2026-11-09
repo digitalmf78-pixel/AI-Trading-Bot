@@ -29,6 +29,7 @@ from nse_trading_calendar import CalendarCoverageError, is_trading_session, offi
 from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
 from delivery_quantity_analysis import build_delivery_quantity_report
+from potential_accumulation_analysis import build_potential_accumulation_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
 from fundamental_filter import apply_fundamental_filter, create_fundamental_templates
 from fundamental_data_provider import collect_missing_fundamentals
@@ -3872,6 +3873,23 @@ def main():
                     delivery_candidates, eod_date, minimum_rvol=1.5
                 )
                 current.to_csv("outputs/v8_delivery_qualified_all_rvol_classified.csv", index=False)
+
+                # Early-stage accumulation observations run on the full unique
+                # Delivery A/B union before Liquidity and later technical gates.
+                # This report is independent and never changes candidate membership.
+                try:
+                    accumulation_report = build_potential_accumulation_report(
+                        current, historical, delivery_sessions, eod_date
+                    )
+                    print(
+                        "[ACCUMULATION] Independent observations saved for "
+                        f"{len(accumulation_report)} Delivery A/B candidates; no gating applied."
+                    )
+                except Exception as accumulation_exc:
+                    print(
+                        "[ACCUMULATION] WAIT_FOR_DATA; Delivery/Liquidity pipeline continues: "
+                        f"{type(accumulation_exc).__name__}: {accumulation_exc}"
+                    )
                 current[current["RVOLBand"].eq("HIGH_RVOL_GT_1_5")].to_csv(
                     "outputs/v8_rvol_gt_1_5_candidates.csv", index=False
                 )
