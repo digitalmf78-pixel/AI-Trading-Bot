@@ -100,7 +100,7 @@ def test_30d_category_a_uses_average_of_all_valid_sessions_and_b_checks_each(mon
              date(2026, 10, 7), date(2026, 10, 8), date(2026, 10, 9)]
     values = [50.0, 62.0, 62.0, 62.0, 62.0, 62.0]  # six-session mean is exactly 60
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, values)]
-    _, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-08", sessions=reports)
+    _, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-09", sessions=reports)
     row = audit.iloc[0]
     assert row["DeliverySessions"] == 6
     assert row["AvgDelivery30D"] == 60.0
