@@ -203,3 +203,21 @@ Before taking action on this repository:
 4. Use the confirmed rules above without asking the user to repeat them.
 5. Ask only when an explicitly pending decision blocks a specific implementation choice.
 6. Update this register and README whenever the user approves a new parameter or a phase changes status. Keep confirmed rules separate from pending proposals.
+
+## 13. Phase 2 progress — Delivery Quantity evidence (09-Nov-2026)
+
+**Implemented on main (observational only):**
+- Added `delivery_quantity_analysis.py` and `test_delivery_quantity_analysis.py`.
+- Integrated the observation builder into the main EOD scanner using the already-fetched 30-calendar-day NSE Delivery report set. It does not perform extra report downloads.
+- Captures 5/10/20 report-session Delivery Quantity totals, averages, first/last values, percentage change and per-session OLS slope.
+- Where the source report also contains them, captures Delivery % average, traded-volume average, closing-price first/last/change/range and dated per-session raw observations.
+- Missing quantity columns, missing candidate rows, duplicate symbol/series rows, insufficient sessions or future dates are handled as `WAIT_FOR_DATA` / excluded from the as-of window. The candidate row is retained in the audit.
+- No accumulation score, buyer identity, PASS gate, rejection threshold or ranking change was introduced. These fields are evidence for the next Accumulation phase only.
+- Output: `outputs/v8_delivery_quantity_observations_YYYYMMDD.csv`.
+
+**Compatibility hygiene:**
+- The legacy `delivery_categories.py` adapter previously implemented a separate five-session-only rule. It has been aligned to the authoritative 30-calendar-day A/B rule to prevent accidental use of stale semantics. Its tests now cover six valid reports, A-only, A+B, below-threshold and fewer-than-five candidate observations.
+
+**Validation status:** GitHub Actions validation is pending after these commits. Do not mark this phase complete until the relevant CI run is inspected. A live NSE report schema check is also still required to confirm the current delivery-quantity header in the downloaded archive; missing headers remain WAIT_FOR_DATA and do not affect eligibility.
+
+**Next:** inspect CI and actual workflow artifact/header evidence; then add dedicated tests against the real report schema. Proceed to price-stability/base metrics only after confirming the actual raw fields and without introducing unapproved thresholds.
