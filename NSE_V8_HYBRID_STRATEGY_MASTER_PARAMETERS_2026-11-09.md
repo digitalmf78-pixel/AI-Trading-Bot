@@ -265,3 +265,19 @@ Before taking action on this repository:
 **Validation:** GitHub Actions run `42585764820`, commit `6f1e98593857b8acbd7cee39a80f279281cc1229`, completed SUCCESS: compile passed, 218 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
 
 **Still pending:** EMA trend interpretation thresholds/slopes are not defined as gates; no new trend gate is approved. VCP contraction sequence and fixed-range base definitions remain separate pending work.
+
+## 16. Phase 5 progress — VCP contraction observations (09-Nov-2026)
+
+**Implemented on main:**
+- Added `vcp_observation_analysis.py` and `test_vcp_observation_analysis.py`.
+- The scanner runs the report on the unique Delivery A OR B candidate union after the other early observations and **before Liquidity**. It does not change candidate membership or rank.
+- Measures three consecutive 20-session blocks (60 actual market sessions): each block's high/low range width %, ratios between consecutive block widths, and number of observed contraction transitions.
+- Records average traded volume for each block, consecutive block volume ratios and the latest-block/prior-block volume dry-up ratio.
+- The existing <0.5x volume dry-up marker is **observational only**; it is not a filter or score.
+- The exact latest 60 market sessions are aligned per symbol. A missing symbol session, missing OHLCV field or insufficient history produces WAIT_FOR_DATA; it never reaches backward to substitute an older session. Future rows are excluded.
+- Complete measurements remain `VCPStatus=NOT_CLASSIFIED` because the final VCP classification thresholds are not yet approved. Incomplete measurements remain `VCPStatus=WAIT_FOR_DATA`. No `VCP_CONFIRMED` or `VCP_FORMING` label is emitted yet.
+- Output: `outputs/v8_vcp_contraction_observations_YYYYMMDD.csv`.
+
+**Still pending:** fixed-range base start/end/duration, contraction count/depth thresholds, and the final VCP_CONFIRMED/VCP_FORMING/NO_VCP classification. These observations are not a BUY signal and are not an entry gate.
+
+**Validation:** GitHub Actions run `42586036668`, commit `c3885e40cb66b1a5fa5a4afaa31f076bc299f5a4`, completed SUCCESS: compile passed, 221 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
