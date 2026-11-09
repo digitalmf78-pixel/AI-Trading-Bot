@@ -23,6 +23,8 @@ from typing import Iterable
 import pandas as pd
 import requests
 
+from nse_trading_calendar import CalendarCoverageError, is_trading_session
+
 BASE_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv"
 CACHE_DIR = Path("data/cache/delivery")
 AUDIT_DIR = Path("data/reports")
@@ -108,8 +110,11 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
     seen: set[date] = set()
     for offset in range(max_calendar_days):
         day = asof - timedelta(days=offset)
-        if day.weekday() >= 5:
-            continue
+        try:
+            if not is_trading_session(day):
+                continue
+        except CalendarCoverageError as exc:
+            raise RuntimeError(f"WAIT_FOR_DATA: {exc}") from exc
         frame = _read_cached_or_download(http, day)
         if frame is None:
             if offset == 0:
@@ -161,10 +166,15 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             asof, required_sessions=5, max_calendar_days=30,
             session=http_session, collect_all=True,
         )
-        reports = sorted(
-            {day: frame for day, frame in reports if day <= asof}.items(),
-            key=lambda item: item[0],
-        )
+        verified_reports = {}
+        for day, frame in reports:
+            if day > asof:
+                continue
+            if not is_trading_session(day):
+                print(f"[DELIVERY] Rejecting report supplied for non-session date {day}")
+                continue
+            verified_reports[day] = frame
+        reports = sorted(verified_reports.items(), key=lambda item: item[0])
         if len(reports) < 5:
             raise RuntimeError(
                 f"WAIT_FOR_DATA: only {len(reports)}/5 distinct valid delivery sessions in 30 days"

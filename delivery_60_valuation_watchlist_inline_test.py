@@ -12,6 +12,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from delivery_filter import get_delivery_sessions
+from nse_trading_calendar import is_trading_session
 from valuation_parsing import parse_positive_number, extract_stock_pe, classify_relative_pe
 
 OUTPUT = Path("delivery_60_valuation_watchlist.csv")
@@ -151,7 +152,7 @@ asof = today_ist
 last_error = None
 for offset in range(MAX_ASOF_LOOKBACK_DAYS + 1):
     candidate_date = today_ist - timedelta(days=offset)
-    if candidate_date.weekday() >= 5:
+    if not is_trading_session(candidate_date):
         continue
     try:
         sessions = get_delivery_sessions(candidate_date, required_sessions=REQUIRED_SESSIONS)

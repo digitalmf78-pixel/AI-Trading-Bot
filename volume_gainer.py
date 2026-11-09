@@ -25,6 +25,7 @@ def _perf_timed(stage_name):
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter, get_delivery_sessions
+from nse_trading_calendar import CalendarCoverageError, is_trading_session, official_session_reason
 from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
 from liquidity_filter import apply_liquidity_filter, MINIMUM_AVG_DAILY_TRADED_VALUE_INR
@@ -127,6 +128,14 @@ def validate_bhavcopy_date(df, expected_date, source="Bhavcopy"):
             f"{source}: requested/cache date {expected} does not match "
             f"internal date(s) {sorted(str(d) for d in valid_dates)}"
         )
+    try:
+        if not is_trading_session(expected):
+            raise ValueError(
+                f"{source}: {expected} is not an official NSE equity trading session "
+                f"({official_session_reason(expected)})"
+            )
+    except CalendarCoverageError as exc:
+        raise ValueError(f"{source}: {exc}") from exc
     return df
 
 
@@ -422,6 +431,13 @@ def get_latest_eod():
 
         check_date = today - timedelta(days=i)
 
+        try:
+            if not is_trading_session(check_date):
+                print(f"[NSE CALENDAR] Skip {check_date}: {official_session_reason(check_date)}")
+                continue
+        except CalendarCoverageError as exc:
+            raise RuntimeError(f"WAIT_FOR_DATA: {exc}") from exc
+
         print(
             f"Trying date: {check_date}"
         )
@@ -480,7 +496,13 @@ def collect_historical_days(
         except ValueError:
             continue
         if cache_date < latest_date:
-            cached_files.append((cache_date, os.path.join(DATA_CACHE_DIR, filename)))
+            try:
+                if is_trading_session(cache_date):
+                    cached_files.append((cache_date, os.path.join(DATA_CACHE_DIR, filename)))
+                else:
+                    print(f"[BHAVCOPY CACHE] Ignoring non-session cache date {cache_date}: {official_session_reason(cache_date)}")
+            except CalendarCoverageError as exc:
+                raise RuntimeError(f"WAIT_FOR_DATA: {exc}") from exc
 
     cached_files.sort(key=lambda item: item[0], reverse=True)
     historical_by_date = {}
@@ -510,12 +532,16 @@ def collect_historical_days(
         f"from {len(cached_files)} dated cache files."
     )
 
-    # Only if the restored cache is incomplete, request missing weekdays.
+    # Only if the restored cache is incomplete, request missing official NSE sessions.
     current_date = latest_date - timedelta(days=1)
     attempted_days = 0
     while len(historical_by_date) < days and attempted_days < max_calendar_days:
         attempted_days += 1
-        if current_date.weekday() < 5 and current_date not in cached_dates:
+        try:
+            session_is_open = is_trading_session(current_date)
+        except CalendarCoverageError as exc:
+            raise RuntimeError(f"WAIT_FOR_DATA: {exc}") from exc
+        if session_is_open and current_date not in cached_dates:
             print(
                 f"[BHAVCOPY CACHE] Missing session candidate {current_date} | "
                 f"have {len(historical_by_date)}/{days}; fetching once."
