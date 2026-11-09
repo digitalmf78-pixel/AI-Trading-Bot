@@ -59,19 +59,33 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             raw_dates = pd.to_datetime(raw["Date"], errors="coerce")
             part = raw[
                 raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)
-                & raw_dates.dt.date.lt(asof)
+                & raw_dates.dt.date.le(asof)
             ].copy()
             if "SctySrs" in part.columns:
                 part = part[part["SctySrs"].astype(str).str.strip().str.upper().eq(series)]
             if not part.empty:
                 frames.append(part)
-        current = candidate.to_dict()
-        current.update({"TckrSymb": symbol, "SctySrs": series, "Date": pd.Timestamp(asof)})
-        frames.append(pd.DataFrame([current]))
-        hist = pd.concat(frames, ignore_index=True, sort=False)
+        hist = (
+            pd.concat(frames, ignore_index=True, sort=False)
+            if frames else pd.DataFrame(columns=["TckrSymb", "SctySrs", "Date"])
+        )
         hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
         hist = hist.dropna(subset=["Date"])
-        hist = hist[hist["Date"].dt.date <= asof].sort_values("Date", kind="mergesort")
+        hist = hist[hist["Date"].dt.date <= asof]
+        current = candidate.to_dict()
+        current.update({"TckrSymb": symbol, "SctySrs": series, "Date": pd.Timestamp(asof)})
+        existing_current = hist[hist["Date"].dt.date.eq(asof)]
+        if len(existing_current) == 1:
+            base = existing_current.iloc[0].to_dict()
+            for key, value in current.items():
+                if value is not None and not pd.isna(value):
+                    base[key] = value
+            hist = hist[~hist.index.isin(existing_current.index)]
+            hist = pd.concat([hist, pd.DataFrame([base])], ignore_index=True, sort=False)
+        elif len(existing_current) == 0:
+            hist = pd.concat([hist, pd.DataFrame([current])], ignore_index=True, sort=False)
+        # Preserve multiple cached rows for this date as an ambiguous session.
+        hist = hist.sort_values("Date", kind="mergesort")
         # Do not collapse duplicate symbol/session rows: they are ambiguous
         # source data and must fail the exact-window completeness check.
         for column in ("HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
