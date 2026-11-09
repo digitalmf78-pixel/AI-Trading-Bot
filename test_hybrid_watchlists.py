@@ -70,5 +70,15 @@ def test_confirmed_entry_requires_existing_final_eod_passes(tmp_path, monkeypatc
     ])
     output = write_confirmed_entry_watchlist(candidates).set_index("TckrSymb")
     assert output.loc["AAA", "WatchlistStatus"] == "ENTRY_CANDIDATE"
-    assert output.loc["BBB", "WatchlistStatus"] == "NO_SETUP"
+    assert output.loc["BBB", "WatchlistStatus"] == "WAIT_FOR_DATA"
     assert output.loc["CCC", "WatchlistStatus"] == "WAIT_FOR_DATA"
+
+
+
+def test_empty_early_reports_still_write_all_watchlist_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    accumulation, base = write_early_hybrid_watchlists(pd.DataFrame(), pd.DataFrame())
+    assert accumulation.empty
+    assert base.empty
+    assert (tmp_path / "outputs/v8_hybrid_potential_accumulation_watchlist.csv").exists()
+    assert (tmp_path / "outputs/v8_hybrid_base_vcp_watchlist.csv").exists()
