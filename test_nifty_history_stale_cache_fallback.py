@@ -60,5 +60,26 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
                     vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
 
 
+
+    def test_stale_nifty_history_marks_relative_strength_wait_instead_of_crashing(self):
+        dates = pd.bdate_range("2026-09-01", periods=25)
+        historical = [pd.DataFrame({
+            "Date": dates,
+            "TckrSymb": ["TEST"] * len(dates),
+            "ClsPric": [100.0 + i for i in range(len(dates))],
+        })]
+        current = pd.DataFrame([{"TckrSymb": "TEST", "ClsPric": 125.0}])
+        stale_nifty = pd.DataFrame({
+            "Date": pd.bdate_range("2026-08-01", periods=60),
+            "NiftyClose": [22000.0 + i for i in range(60)],
+        })
+        result = vg.calculate_relative_strength_nifty(
+            current, historical, stale_nifty, pd.Timestamp("2026-11-08")
+        )
+        self.assertTrue(pd.isna(result.loc[0, "NiftyReturn20D"]))
+        self.assertTrue(pd.isna(result.loc[0, "RelativeStrengthNifty"]))
+        self.assertEqual(result.loc[0, "RSNiftyClassification"], "Insufficient Data")
+
+
 if __name__ == "__main__":
     unittest.main()
