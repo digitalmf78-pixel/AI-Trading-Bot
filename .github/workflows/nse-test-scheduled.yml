@@ -11,7 +11,7 @@ on:
         options:
           - EOD
           - PREMARKET
-  # Run one EOD validation when this workflow itself changes. Restricting the
+  # Run one EOD validation when this workflow itself changes (including an explicit post-merge EOD verification). Restricting the
   # path prevents scanner/cache commits from recursively starting another scan.
   push:
     branches:
