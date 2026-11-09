@@ -184,7 +184,7 @@ def build_potential_accumulation_report(
         }
         if not hist.empty:
             pivot_history_complete = len(hist) == len(ordered_market_sessions)
-            if pivot_history_complete and "LwPric" in hist.columns and "HghPric" in hist.columns:
+            if pivot_history_complete and "LwPric" in hist.columns and "HghPric" in hist.columns and hist[["LwPric", "HghPric"]].notna().all().all():
                 row["PivotStructureStatus"] = "COMPLETE"
                 lows = hist["LwPric"].tolist()
                 highs = hist["HghPric"].tolist()
