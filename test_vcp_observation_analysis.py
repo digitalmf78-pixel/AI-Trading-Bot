@@ -108,3 +108,59 @@ def test_missing_volume_in_one_session_is_partial_not_a_full_vcp_observation(tmp
     assert row["VCPRangeObservationStatus"] == "COMPLETE"
     assert row["VCPVolumeObservationStatus"] == "WAIT_FOR_DATA"
     assert row["VCPObservationStatus"] == "PARTIAL_DATA"
+
+
+def test_non_finite_price_observation_waits_instead_of_marking_vcp_complete(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-4], "HghPric"] = float("inf")
+    report = build_vcp_observation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                       "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}]),
+        [history], "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["VCPRangeObservationStatus"] == "WAIT_FOR_DATA"
+    assert row["VCPObservationStatus"] == "WAIT_FOR_DATA"
+    assert row["VCPStatus"] == "WAIT_FOR_DATA"
+
+
+def test_structurally_invalid_ohlc_candle_waits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-4], "ClsPric"] = 999
+    report = build_vcp_observation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                       "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}]),
+        [history], "2026-10-23"
+    )
+    assert report.iloc[0]["VCPRangeObservationStatus"] == "WAIT_FOR_DATA"
+    assert report.iloc[0]["VCPStatus"] == "WAIT_FOR_DATA"
+
+
+def test_infinite_volume_is_not_accepted_as_complete_vcp_volume_data(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-4], "TtlTradgVol"] = float("inf")
+    report = build_vcp_observation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                       "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}]),
+        [history], "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["VCPRangeObservationStatus"] == "COMPLETE"
+    assert row["VCPVolumeObservationStatus"] == "WAIT_FOR_DATA"
+    assert row["VCPObservationStatus"] == "PARTIAL_DATA"
+    assert row["VCPStatus"] == "WAIT_FOR_DATA"
+
+
+def test_duplicate_candidate_identity_returns_wait_for_data_rows(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    candidate = {"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 110,
+                 "HghPric": 112, "LwPric": 108, "TtlTradgVol": 300}
+    report = build_vcp_observation_report(
+        pd.DataFrame([candidate, candidate]), [_history()], "2026-10-23"
+    )
+    assert len(report) == 2
+    assert report["VCPObservationStatus"].eq("WAIT_FOR_DATA").all()
+    assert report["VCPStatus"].eq("WAIT_FOR_DATA").all()
