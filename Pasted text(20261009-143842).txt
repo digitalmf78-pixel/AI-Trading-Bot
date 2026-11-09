@@ -1,0 +1,1458 @@
+# AUTHORITATIVE PROJECT UPDATE — 09 NOVEMBER 2026
+
+## Change-control notice
+
+This update records the subsequently approved production rules and hybrid-strategy clarifications. It supersedes any older, conflicting wording in the original sections below. The original V8.0 specification is retained for traceability; do not interpret superseded examples or thresholds as active production rules. The current implementation must also be checked against the latest code and the persistent working register `NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md`.
+
+### A. Universe and historical data — current rule
+
+1. Use eligible NSE Mainboard Largecap, Midcap and Smallcap securities.
+2. Exclude SME securities, ETFs and Mutual Funds.
+3. Reuse the available approximately 200 complete, distinct NSE trading-session Bhavcopy history/cache. Do not redownload valid cached sessions unnecessarily.
+4. Use the official NSE trading calendar, including notified special sessions. Missing or invalid data for an expected session is `WAIT_FOR_DATA`.
+5. No Top-20 or Top-50 shortlist cap is permitted.
+6. The old `Price > ₹50` example is not an active hard rejection rule unless separately approved and documented after backtesting.
+
+### B. Authoritative Delivery A/B screening rule
+
+1. The Delivery window is the 30 calendar days ending on and including the EOD as-of date.
+2. Count only valid, distinct NSE Delivery report dates not later than the as-of date. Require at least five valid distinct reports; otherwise return `WAIT_FOR_DATA`.
+3. Category A passes when the arithmetic average Delivery Percentage across all valid reports in that window is `>=60.00%`. Exactly 60.00% passes.
+4. Category B passes only when every valid report in the same window is `>=60.00%`. Exactly 60.00% passes.
+5. Evaluate A and B independently. The eligible cohort is the full `A OR B` union. Preserve `A_ONLY`, `B_ONLY` and `A_AND_B` membership and de-duplicate by symbol.
+6. Existing 5D/10D/20D Delivery consistency observations do not replace or alter the 30-calendar-day A/B eligibility rule.
+7. A requested separate five-session delivery-only YAML, if used, remains a separate artifact and must contain only its explicitly requested five-session Delivery condition; it must not be confused with the production 30-calendar-day A/B pipeline.
+
+### C. Authoritative execution order — Delivery before RVOL
+
+1. Load and validate the latest NSE EOD Bhavcopy; build the eligible Mainboard universe.
+2. Reuse prior 20 complete, distinct trading sessions and prepare the per-symbol average-volume baseline only. Do not calculate RVOL for the entire Mainboard universe at this point.
+3. Apply Delivery A and B independently, then build the complete de-duplicated A OR B union.
+4. Only after that union exists, calculate each candidate's RVOL as current EOD traded volume divided by the average volume of the previous 20 complete sessions. Exclude the current session from the baseline. Require exactly 20 valid prior sessions; do not silently substitute older sessions for missing/duplicate/invalid sessions.
+5. Classify `RVOL > 1.5` as `HIGH_RVOL_GT_1_5`; classify `RVOL <= 1.5` as `LOW_RVOL_LE_1_5`; missing/invalid inputs are `WAIT_FOR_DATA`.
+6. RVOL is an informational classification, not an eligibility rejection gate. Every A/B candidate — HIGH, LOW or WAIT_FOR_DATA — continues to the existing Liquidity stage. No Top-20/Top-50 RVOL cap.
+7. Preserve RVOL and the verified 20-session baseline downstream; do not recalculate RVOL for the full universe or a later cohort.
+
+### D. Liquidity — current approved threshold
+
+1. The existing hard minimum is 20-session average daily traded value `>=₹1.5 crore`.
+2. Descriptive tiers: STRONG `>=₹5 crore/day`; MEDIUM `>=₹2 crore and <₹5 crore/day`; LOW `>=₹1.5 crore and <₹2 crore/day`.
+3. ₹5 crore is not the hard minimum. The older ₹2 crore hard-gate wording is superseded. Do not raise the ₹1.5 crore hard minimum without explicit approval.
+4. A below-₹1.5 crore shadow list is not an active production path; it remains a pending decision.
+
+### E. Fundamentals and cache — current handling
+
+1. Fundamental metrics enrich classification, priority and risk context; they are not an early rejection gate.
+2. Do not apply a Strong Fundamental gate before collection. Missing metrics remain visible with explicit statuses; do not silently drop candidates because a metric is missing.
+3. Persist the Fundamental Cache inside this GitHub repository, reuse it across runs and retain historical snapshots and official-verification status. Do not commit credentials or secrets.
+4. Official filing verification must match exact symbol, exact period-end and valid publication/as-of timing. Unresolved values remain unverified / `WAIT_FOR_DATA`; never infer missing dates or substitute a different period.
+5. The current code collects fundamentals after Liquidity. Whether to move collection before Liquidity and collect every A/B candidate is a pending decision; do not change this boundary until explicitly approved.
+6. A provider returning data (`DATA_FOUND`) is not proof that the report is complete or officially verified.
+
+### F. RSI, Delivery Quantity and accumulation evidence
+
+1. RSI is informational only. It must not reject a stock, reduce its eligibility or apply a score penalty.
+2. Delivery Quantity, Delivery Percentage and total traded volume must be interpreted together. High Delivery Percentage alone does not prove accumulation or identify the buyer.
+3. Use the label `Potential Accumulation Evidence`; do not claim `Institutional Accumulation Confirmed` from NSE Delivery data.
+4. Delivery Quantity trend, price response/stability, selling-pressure context, base-range measurements and support/resistance observations are evidence/reporting fields unless a separate approved gate explicitly says otherwise.
+5. Preserve raw values, source dates, calculation windows, duplicate/missing-data reasons and `WAIT_FOR_DATA` statuses.
+
+### G. Hybrid observations and watchlists
+
+Maintain four independent outputs:
+1. `Potential Accumulation`
+2. `Base / VCP Forming`
+3. `Breakout Ready`
+4. `Confirmed Entry`
+
+Potential Accumulation and Base/VCP observations must not be removed merely because a later breakout/entry confirmation is absent. Early-stage watchlists are not BUY signals and must not bypass existing V8 confirmation or risk controls.
+
+Observe fixed-range base high/low/width/duration, repeated support/resistance behavior, Higher Low / Double Bottom, contraction depth, range narrowing, volume dry-up, EMA20/EMA44/EMA50/EMA200 context, breakout follow-through and post-breakout retest quality. The current three-block VCP/rolling-window measurements and 10-trading-session post-breakout follow-through report are descriptive observations only unless a threshold is explicitly approved.
+
+Do not invent or hard-code pending values for VCP contraction count/depth, base width/duration, Pocket Pivot formula/lookback/candle conditions, false-breakout buffer, retest window, or support/resistance zone tolerance. Pocket Pivot remains unapproved until its exact formula is decided. A volume dry-up ratio below 0.5x may be displayed as an observational flag only; it is not a rejection gate.
+
+EMA20/EMA44/EMA50/EMA200 values and distances are observations. Do not automatically reject an early accumulation candidate merely because price is below EMA44, EMA50 or EMA200. Do not change the existing EMA44 production gate without explicit approval.
+
+### H. Preserve later V8 confirmations and risk controls
+
+Keep the existing Sector Strength, verified News/Catalyst, mandatory 3+1 confirmation, structural stop-loss, minimum 2R risk/reward, Chase filter, Risk Control and position-sizing logic. Do not weaken or remove these rules while implementing earlier hybrid observations. Missing required evidence remains `WAIT_FOR_DATA`.
+
+Calculate risk/reward from real, verified structural levels. Never synthesize a target or default 2R value when a verified resistance/target level is unavailable. Market-wide FII/DII flow is contextual and does not prove stock-specific institutional buying.
+
+### I. Runtime optimization record — 09 November 2026
+
+PR #33 was merged to `main` as commit `7bdec9511ec60d3728c98e55c873e4bd3e48b7a4` (subsequent documentation commits may follow). Potential Accumulation and VCP now build and reuse a one-pass symbol/series index over historical Bhavcopy rows. Duplicate same-date rows remain preserved and missing/incomplete data continues to fail closed. Sector-history retrieval stops retrying all remaining indices after a confirmed service-wide HTML `ReturnUrl` redirect; without an exact-date official close the sector status remains `WAIT_FOR_DATA`. CI passed, including 309 unit/data-audit tests and 31 V8 regression tests, plus sector/cache and news-parser workflows. The actual full-scanner runtime benchmark remains pending the next completed scanner run; do not claim a measured speed-up percentage before that run.
+
+### J. Supersession map for older text below
+
+The following older wording/examples remain in the historical body but are not active where they conflict with this update:
+- Five-session-only production Delivery A/B → superseded by the 30-calendar-day window with at least five valid distinct reports.
+- RVOL calculated before Delivery or used as a hard rejection gate → superseded by Delivery A/B union first; RVOL is classification-only and all A/B candidates continue to Liquidity.
+- Top-20/Top-50 ranking caps → not permitted.
+- ₹2 crore as the hard Liquidity minimum → superseded by ₹1.5 crore; ₹2–5 crore is the MEDIUM tier.
+- RSI as a possible rejection/score input → informational only.
+- Any fixed VCP/Pocket Pivot/retest/false-breakout thresholds not explicitly approved → pending, not hard filters.
+- Any missing-data assumption or synthetic PASS/target → prohibited; use `WAIT_FOR_DATA`.
+
+---
+
+# NSE SWING TRADING SYSTEM V8.0
+
+## MASTER ALGORITHM / SOURCE OF TRUTH
+
+### Objective
+
+NSE मधून high-probability swing trading opportunities शोधणे, NSE Bhavcopy उपलब्ध झाल्यानंतर EOD analysis करणे, पुढील trading day सकाळी live market confirmation घेणे, आणि entry घेतल्यानंतर position ची daily monitoring करून HOLD / TRAIL / EXIT निर्णय घेणे.
+
+---
+
+# 1. SYSTEM ARCHITECTURE
+
+System तीन independent पण connected modules मध्ये असेल:
+
+### MODULE A — EOD SWING SCANNER
+
+NSE Bhavcopy उपलब्ध झाल्यानंतर चालेल.
+
+### MODULE B — NEXT-DAY ENTRY VALIDATOR
+
+पुढील trading day सकाळी shortlist पुन्हा तपासेल.
+
+### MODULE C — OPEN POSITION MONITOR
+
+Entry घेतलेल्या प्रत्येक stock ला रोज monitor करेल.
+
+---
+
+# 2. IMPORTANT TIMING RULE
+
+### EOD scan 4:00 PM ला fixed करू नये.
+
+Market close झाल्यानंतर:
+
+1. NSE Bhavcopy उपलब्ध होण्याची वाट पाहावी.
+2. Bhavcopy मधील finalized EOD data वापरावा.
+3. त्यानंतर EOD Swing Scanner चालवावा.
+
+### Flow:
+
+NSE Market Close
+→ Bhavcopy Available
+→ EOD Data Load
+→ Volume Gainer Scan
+→ Complete V8 Analysis
+→ EOD Watchlist
+
+---
+
+# 3. MODULE A — EOD SWING SCANNER
+
+## STEP 1 — NSE STOCK UNIVERSE
+
+NSE मधील eligible/liquid stocks घ्यायचे.
+
+Basic filters:
+
+* Extremely illiquid stocks avoid
+* Very low-volume stocks avoid
+* Adequate trading history
+* Adequate average volume
+* Abnormally problematic securities avoid
+* Price filter लागू करता येईल
+
+Suggested basic filter:
+
+Price > ₹50
+
+हा threshold future backtesting मध्ये optimize करता येईल.
+
+---
+
+# 4. STEP 2 — PRIMARY SCREENING: VOLUME GAINER METHOD
+
+IMPORTANT:
+
+## VOLUME GAINER METHOD MUST NOT BE REMOVED.
+
+ही system ची पहिली screening layer असेल.
+
+Bhavcopy मधून unusual/high-volume stocks शोधायचे.
+
+Flow:
+
+NSE Bhavcopy
+→ Volume Gainers
+→ Shortlist
+→ Detailed V8 analysis
+
+Volume Gainer हा FINAL BUY signal नाही.
+
+तो फक्त:
+
+### "हा stock पुढे तपासण्यासारखा आहे"
+
+असा signal आहे.
+
+---
+
+# 5. STEP 3 — REQUIRED EOD DATA
+
+प्रत्येक shortlisted stock साठी collect करायचे:
+
+* Open
+* High
+* Low
+* Close
+* Previous Close
+* % Change
+* Volume
+* 20-Day Average Volume
+* 5-Day Volume
+* 20-Day High
+* 50-Day High
+* Recent Swing High
+* Recent Swing Low
+* EMA20
+* EMA50
+* EMA200
+* RSI
+* ATR
+* ADX
+* MACD, if available
+* Delivery %, if reliable data available
+* Sector
+* Nifty performance
+* Sector performance
+
+---
+
+# 6. STEP 4 — 5-DAY VOLUME ANALYSIS
+
+मागील 5 trading days चा volume individually तपासायचा.
+
+प्रत्येक दिवसासाठी:
+
+Daily Volume % of 20D Average
+
+Formula:
+
+Daily Volume / 20D Average Volume × 100
+
+---
+
+# 7. 60% LOW-VOLUME RULE
+
+विशेषतः accumulation / pullback setup साठी:
+
+मागील 5 trading days पैकी:
+
+### कमीतकमी 3 दिवस
+
+Volume < 20D Average Volume
+
+असावा.
+
+म्हणजे:
+
+### Low Volume Days >= 60%
+
+उदाहरण:
+
+Day 1 = 55%
+Day 2 = 48%
+Day 3 = 72%
+Day 4 = 52%
+Day 5 = 185%
+
+Low-volume days = 3
+
+3/5 = 60%
+
+Condition PASS.
+
+---
+
+# 8. VOLUME CONTRACTION → EXPANSION
+
+हा pattern विशेष महत्त्वाचा:
+
+5-Day Volume Contraction
+→
+Current Day Volume Expansion
+→
+Price Confirmation
+
+Current RVOL:
+
+Today's Volume / 20D Average Volume
+
+Interpretation:
+
+RVOL < 1.0 = Weak
+1.0–1.5 = Normal
+1.5–2.0 = Good
+2.0–3.0 = Strong
+
+> 3.0 = Exceptional
+
+Strong setup साठी current RVOL preferably >=1.5.
+
+Breakout साठी preferably >=2.0.
+
+---
+
+# 9. IMPORTANT: 60% RULE UNIVERSAL HARD FILTER नाही
+
+हा rule मुख्यतः:
+
+* Accumulation
+* Pullback
+* Volume contraction
+* Pre-breakout
+
+setups साठी वापरायचा.
+
+Breakout stock मध्ये आधीपासून strong volume expansion असू शकतो.
+
+म्हणून 60% rule मुळे genuine breakout automatically reject करू नये.
+
+---
+
+# 10. STEP 5 — PRICE + VOLUME RELATIONSHIP
+
+Classify:
+
+### A. Price UP + Volume UP
+
+Strong bullish confirmation.
+
+### B. Price UP + Volume DOWN
+
+Weak rally / caution.
+
+### C. Price DOWN + Volume UP
+
+Selling pressure / distribution warning.
+
+### D. Price DOWN + Volume DOWN
+
+Normal pullback possible.
+
+### E. Price FLAT + Volume UP
+
+Possible accumulation / event candidate.
+
+Volume वाढला म्हणजे automatic BUY नाही.
+
+---
+
+# 11. STEP 6 — CANDLE QUALITY
+
+Calculate:
+
+CLV = (Close - Low) / (High - Low)
+
+Classification:
+
+> 0.75 = Strong close
+
+0.50–0.75 = Good
+
+0.25–0.50 = Weak
+
+<0.25 = Very weak
+
+Bullish setup साठी strong closing candle ला preference.
+
+---
+
+# 12. STEP 7 — TREND ENGINE
+
+Primary trend conditions:
+
+Close > EMA20
+
+EMA20 > EMA50
+
+EMA50 > EMA200
+
+Additional indicators:
+
+* RSI
+* ADX
+* ATR
+* MACD
+
+Indicators एकत्र वापरायचे; प्रत्येक indicator स्वतंत्र BUY signal समजायचा नाही.
+
+---
+
+# 13. STEP 8 — TWO PRIMARY SETUPS
+
+System ने दोन मुख्य setups शोधायचे:
+
+## SETUP A — BREAKOUT
+
+Conditions:
+
+Strong trend
++
+Near resistance
++
+Resistance breakout
++
+Volume expansion
++
+Strong closing candle
+
+Classification:
+
+BREAKOUT
+
+---
+
+## SETUP B — PULLBACK
+
+Conditions:
+
+Strong trend
+→ Recent high
+→ Controlled correction
+→ EMA20 / EMA50 / support
+→ Volume contraction
+→ Bullish reversal candle
+
+Classification:
+
+PULLBACK
+
+---
+
+# 14. STEP 9 — SUPPORT / RESISTANCE
+
+Calculate:
+
+* Previous Day High
+* Previous Day Low
+* Previous Week High
+* Previous Week Low
+* 20-Day High
+* 50-Day High
+* Recent Swing High
+* Recent Swing Low
+* EMA20
+* EMA50
+
+Use these to determine:
+
+* Entry Zone
+* Support
+* Resistance
+* Breakout Level
+* Stop Loss
+
+---
+
+# 15. STEP 10 — BREAKOUT DISTANCE / CHASE FILTER
+
+Example:
+
+Resistance = ₹500
+Close = ₹502
+
+Healthy breakout candidate.
+
+But:
+
+Resistance = ₹500
+Close = ₹535
+
+Stock is extended.
+
+Therefore:
+
+### DO NOT CHASE
+
+Status:
+
+WAIT FOR PULLBACK
+
+High score alone cannot override extreme chase risk.
+
+---
+
+# 16. STEP 11 — RELATIVE STRENGTH
+
+Compare stock against:
+
+1. Nifty
+2. Its sector
+
+Formula:
+
+Stock Return - Nifty Return
+
+and
+
+Stock Return - Sector Return
+
+Positive relative strength = additional confirmation.
+
+---
+
+# 17. STEP 12 — SECTOR STRENGTH
+
+Classify sector:
+
+* Strong
+* Neutral
+* Weak
+
+Strong stock + strong sector = additional confirmation.
+
+Strong stock in weak sector can still qualify, but risk should be considered.
+
+---
+
+# 18. STEP 13 — MARKET REGIME
+
+Determine overall market regime using Nifty / Bank Nifty and market structure.
+
+Classification:
+
+### BULLISH
+
+Normal swing candidates allowed.
+
+### NEUTRAL
+
+Only stronger setups.
+
+### BEARISH
+
+Very selective long entries / avoid aggressive longs.
+
+---
+
+# 19. STEP 14 — DELIVERY DATA
+
+If reliable delivery data is available:
+
+Price ↑
++
+Volume ↑
++
+Delivery ↑
+
+= stronger accumulation confirmation.
+
+Delivery data unavailable:
+
+Do NOT automatically reject the stock.
+
+---
+
+# 20. STEP 15 — VOLUME REASON ENGINE
+
+Whenever unusual volume is detected, system must answer:
+
+# WHY DID VOLUME INCREASE?
+
+Possible reasons:
+
+1. Company news
+2. NSE announcement
+3. Company filing
+4. Quarterly result
+5. Order win
+6. Order loss
+7. Acquisition
+8. Merger
+9. Regulatory approval
+10. Regulatory action
+11. Corporate action
+12. Bulk deal
+13. Block deal
+14. Sector-wide event
+15. Technical breakout
+16. Accumulation
+17. Distribution
+18. Market-wide event
+19. Unknown
+
+The system must not assume that high volume is bullish.
+
+---
+
+# 21. ACCUMULATION VS DISTRIBUTION
+
+### ACCUMULATION CANDIDATE
+
+Possible characteristics:
+
+Price stable / rising
++
+Volume contraction
++
+Strong support
++
+Current volume expansion
++
+Strong close
++
+Delivery supportive
++
+Sector/market supportive
+
+---
+
+### DISTRIBUTION CANDIDATE
+
+Possible characteristics:
+
+Price weakening
++
+High volume
++
+Weak close
++
+Support breakdown
++
+Selling pressure
++
+Weak sector
+
+Distribution = warning / NO ENTRY.
+
+---
+
+# 22. STEP 16 — NEWS / CATALYST ENGINE
+
+Search for:
+
+* Company announcement
+* NSE announcement
+* Exchange filing
+* Results
+* Order wins
+* Order losses
+* Management changes
+* Regulatory developments
+* Credit rating changes
+* Corporate actions
+* Major business developments
+* Important sector news
+
+News classification:
+
+### BULLISH
+
+### NEUTRAL
+
+### BEARISH
+
+### CRITICAL
+
+Primary/reliable source preferred.
+
+---
+
+# 23. 3 + 1 CONFIRMATION RULE
+
+THIS IS A MANDATORY FINAL GATE.
+
+A stock should have:
+
+# AT LEAST 3 INDEPENDENT CONFIRMATIONS
+
+Examples:
+
+1. Price + Volume
+2. Technical structure
+3. Sector / Relative Strength
+4. Delivery
+5. Market structure
+6. Catalyst
+
+PLUS:
+
+# 1 VERIFIED RELIABLE / PRIMARY SOURCE
+
+Examples:
+
+* NSE filing
+* Company announcement
+* Official result
+* Regulatory filing
+* Exchange disclosure
+
+---
+
+# 24. SAME NEWS DOES NOT COUNT MULTIPLE TIMES
+
+Example:
+
+Economic Times
++
+Moneycontrol
++
+Business Standard
++
+CNBC
+
+All reporting the same company announcement
+
+=
+
+### ONE NEWS/CATALYST CONFIRMATION
+
+Not four.
+
+---
+
+# 25. 3+1 FAILURE RULE
+
+If fewer than 3 independent confirmations exist:
+
+### WATCHLIST / NO ENTRY
+
+Even if technical score is high.
+
+3+1 confirmation is above the normal scoring system.
+
+---
+
+# 26. STEP 17 — SCORING SYSTEM
+
+Total = 100 points.
+
+Price Action = 15
+Volume / RVOL = 15
+Trend = 10
+Breakout / Pullback Structure = 15
+Candle Quality = 10
+Relative Strength = 10
+Sector Strength = 5
+Market Regime = 5
+Delivery = 5
+Catalyst = 5
+
+TOTAL = 100
+
+---
+
+# 27. SCORE CLASSIFICATION
+
+85–100 = A+ Setup
+
+75–84 = BUY Candidate
+
+65–74 = WATCHLIST
+
+<65 = NO ENTRY
+
+IMPORTANT:
+
+High score does NOT override 3+1 failure.
+
+---
+
+# 28. STEP 18 — RISK / REWARD
+
+For every valid candidate calculate:
+
+* Entry
+* Stop Loss
+* Target 1
+* Target 2
+* Risk
+* Reward
+* R:R
+
+Preferred:
+
+### R:R >= 1:2
+
+If risk/reward is poor, reject or downgrade.
+
+---
+
+# 29. STEP 19 — STOP LOSS
+
+Do NOT use only fixed 2% SL.
+
+Use:
+
+* ATR
+* Support
+* Swing Low
+* Market structure
+
+Stop loss should be logical and volatility-adjusted.
+
+---
+
+# 30. FINAL EOD DECISIONS
+
+Possible output:
+
+### BUY CANDIDATE
+
+All major conditions passed.
+
+### WATCHLIST
+
+Good setup but trigger/confirmation incomplete.
+
+### WAIT FOR PULLBACK
+
+Good stock but currently too extended.
+
+### NO ENTRY
+
+Conditions failed.
+
+---
+
+# 31. EOD OUTPUT FORMAT
+
+For every selected stock:
+
+Stock
+Setup Type
+Score
+Price
+% Change
+Volume
+RVOL
+5D Volume Pattern
+Low Volume Days %
+CLV
+Trend
+Breakout/Pullback
+Support
+Resistance
+Relative Strength
+Sector Strength
+Market Regime
+Delivery
+Volume Reason
+Accumulation/Distribution
+News
+3+1 Confirmation
+Entry
+Stop Loss
+Target 1
+Target 2
+R:R
+Chase Risk
+Final Decision
+
+---
+
+# 32. MODULE B — NEXT-DAY ENTRY VALIDATOR
+
+EOD shortlist is NOT automatically an entry.
+
+Next trading day morning, re-check the shortlist.
+
+---
+
+# 33. OVERNIGHT NEWS CHECK
+
+Check:
+
+* Company news
+* NSE announcements
+* Exchange filings
+* Results
+* Regulatory developments
+* Sector news
+* Global events affecting the stock/sector
+
+If material negative news appears:
+
+### RE-EVALUATE
+
+Do not blindly enter.
+
+---
+
+# 34. OPENING GAP ANALYSIS
+
+Classify:
+
+* Gap Up
+* Gap Down
+* Flat
+
+Very large gap-up:
+
+### DO NOT CHASE
+
+Wait for suitable price action / pullback.
+
+Large gap-down:
+
+Re-evaluate thesis before entry.
+
+---
+
+# 35. 9:15–9:30 AM RE-CHECK
+
+Check:
+
+* Opening price
+* Price action
+* Volume
+* Relative volume
+* VWAP
+* RSI
+* Opening range
+* Sector strength
+* Nifty strength
+* Breakout level
+* Support/resistance
+
+---
+
+# 36. FINAL ENTRY CONDITION
+
+Example:
+
+EOD Breakout
++
+Opening above breakout
++
+VWAP support
++
+Volume confirmation
++
+Sector supportive
++
+No negative material news
+
+=
+
+### FINAL ENTRY CANDIDATE
+
+If breakout fails:
+
+### CANCEL TRADE
+
+---
+
+# 37. MODULE C — OPEN POSITION MONITOR
+
+After entry, system stops behaving like a stock finder.
+
+Its job becomes:
+
+# IS THE ORIGINAL TRADE THESIS STILL VALID?
+
+---
+
+# 38. DAILY POSITION DATA
+
+For every open position check:
+
+* Entry price
+* Current price
+* P&L
+* Daily change
+* Volume
+* RVOL
+* 5D volume
+* Selling pressure
+* Delivery
+* Support
+* Resistance
+* EMA20
+* EMA50
+* Sector
+* Nifty
+* Market regime
+* News
+* NSE announcements
+* Results
+* Corporate actions
+
+---
+
+# 39. SELLING PRESSURE ENGINE
+
+### HEALTHY
+
+Price stable/up
++
+Volume normal
++
+Support holding
+
+→ HOLD
+
+---
+
+### WARNING
+
+Price down
++
+Volume increasing
+
+→ CAUTION
+
+---
+
+### STRONG WARNING
+
+Price down strongly
++
+Volume very high
++
+Support broken
+
+→ EXIT / PROTECT CAPITAL
+
+---
+
+# 40. DAILY NEWS MONITOR
+
+After entry, continuously check relevant:
+
+* NSE announcements
+* Company announcements
+* Results
+* Order wins/losses
+* Management changes
+* Regulatory action
+* Credit rating
+* Corporate actions
+* Major sector developments
+
+Classify:
+
+BULLISH
+NEUTRAL
+BEARISH
+CRITICAL
+
+---
+
+# 41. THESIS MONITOR
+
+At entry, save the original reason.
+
+Example:
+
+ENTRY THESIS:
+
+Breakout
++
+Strong volume
++
+Strong sector
++
+Positive catalyst
+
+Every day compare current condition against original thesis.
+
+Status:
+
+### VALID
+
+### PARTIALLY VALID
+
+### INVALID
+
+---
+
+# 42. POSITION DECISION ENGINE
+
+## HOLD
+
+Conditions remain healthy:
+
+Trend strong
++
+Support intact
++
+Volume healthy
++
+No material negative news
++
+Original thesis valid
+
+---
+
+## CAUTION
+
+One or more conditions weaken:
+
+Momentum weakening
+OR
+Selling pressure increasing
+OR
+Sector weakening
+OR
+Volume behaviour changing
+
+---
+
+## REDUCE / TRAIL
+
+Profit exists and thesis is partially weakening.
+
+Consider partial profit / tighter trailing stop.
+
+---
+
+## EXIT
+
+Any major thesis invalidation:
+
+* Key support broken on strong volume
+* Breakout failure
+* Strong distribution
+* Major negative catalyst
+* Material adverse company announcement
+* Risk-management trigger
+* Original trade thesis invalidated
+
+---
+
+# 43. TARGET MANAGEMENT
+
+If target is reached:
+
+### TARGET HIT
+
+Then decide:
+
+* Partial profit booking
+* Full exit
+* Trail remaining position
+
+depending on trend and setup.
+
+Target is NOT the only exit condition.
+
+---
+
+# 44. TRAILING STOP
+
+Possible progression:
+
+Initial SL
+→ Break-even
+→ Swing-low based SL
+→ EMA20/ATR based trailing
+
+Use market structure rather than arbitrary fixed percentage.
+
+---
+
+# 45. COMPLETE SYSTEM FLOW
+
+NSE MARKET CLOSE
+↓
+NSE BHAVCOPY AVAILABLE
+↓
+NSE UNIVERSE
+↓
+VOLUME GAINER SCREEN
+↓
+5-DAY VOLUME ANALYSIS
+↓
+≥60% LOW-VOLUME DAYS CHECK
+↓
+CURRENT RVOL
+↓
+PRICE + VOLUME RELATIONSHIP
+↓
+CANDLE QUALITY / CLV
+↓
+TREND
+↓
+BREAKOUT / PULLBACK
+↓
+SUPPORT / RESISTANCE
+↓
+RELATIVE STRENGTH
+↓
+SECTOR STRENGTH
+↓
+MARKET REGIME
+↓
+DELIVERY
+↓
+VOLUME REASON
+↓
+ACCUMULATION / DISTRIBUTION
+↓
+NEWS / CATALYST
+↓
+3 + 1 CONFIRMATION
+↓
+SCORE 0–100
+↓
+RISK / REWARD
+↓
+CHASE FILTER
+↓
+EOD WATCHLIST
+↓
+OVERNIGHT NEWS
+↓
+NEXT MORNING
+↓
+GAP CHECK
+↓
+VWAP
+↓
+VOLUME
+↓
+RSI
+↓
+OPENING PRICE ACTION
+↓
+SECTOR + NIFTY
+↓
+FINAL ENTRY
+↓
+POSITION MONITOR
+↓
+DAILY VOLUME
+↓
+SELLING PRESSURE
+↓
+NEWS / NSE ANNOUNCEMENTS
+↓
+RESULTS
+↓
+CORPORATE EVENTS
+↓
+THESIS VALIDATION
+↓
+HOLD / CAUTION / TRAIL / EXIT
+
+---
+
+# 46. MOST IMPORTANT RULES
+
+### RULE 1
+
+Volume Gainer method MUST remain.
+
+### RULE 2
+
+Volume Gainer is a SCREENING method, not a final BUY signal.
+
+### RULE 3
+
+EOD scan should run after NSE Bhavcopy becomes available, not at a fixed 4:00 PM.
+
+### RULE 4
+
+5-day volume behaviour must be checked.
+
+### RULE 5
+
+For accumulation/pullback setups, at least 60% of the previous 5 days should preferably have volume below the 20D average.
+
+### RULE 6
+
+Volume expansion must be interpreted with price action.
+
+### RULE 7
+
+Always determine WHY volume increased.
+
+### RULE 8
+
+High volume alone is never a BUY signal.
+
+### RULE 9
+
+3+1 confirmation is mandatory.
+
+### RULE 10
+
+Same news from multiple websites counts as one confirmation.
+
+### RULE 11
+
+Score alone cannot create an entry.
+
+### RULE 12
+
+R:R should preferably be >=1:2.
+
+### RULE 13
+
+Do not chase excessively extended stocks.
+
+### RULE 14
+
+EOD candidate must be re-confirmed next morning.
+
+### RULE 15
+
+Opening gap, VWAP, volume and price action must be checked before final entry.
+
+### RULE 16
+
+After entry, monitor the original thesis every trading day.
+
+### RULE 17
+
+Negative material news can invalidate a technically strong setup.
+
+### RULE 18
+
+Target is not the only exit condition.
+
+### RULE 19
+
+Capital protection and thesis invalidation take priority over waiting for target.
+
+### RULE 20
+
+No trade is better than a low-quality trade.
+
+---
+
+# 47. PERFORMANCE / PROBABILITY TARGET
+
+Do NOT assume a fixed success rate before backtesting.
+
+The system must be evaluated using historical NSE data.
+
+Important metrics:
+
+* Win Rate
+* Average Win in R
+* Average Loss in R
+* Profit Factor
+* Expectancy
+* Maximum Drawdown
+* Number of Trades
+* Consecutive Losses
+* Year-wise performance
+* Bull-market performance
+* Bear-market performance
+* Sideways-market performance
+* Breakout performance
+* Pullback performance
+* Volume-gainer-only performance
+* Full V8 performance
+
+---
+
+# 48. INITIAL RESEARCH BENCHMARK
+
+Before actual backtesting, use this only as a design benchmark:
+
+Win Rate target:
+40–55%
+
+Average Win:
+
+> =2R preferred
+
+Average Loss:
+~1R or lower
+
+Profit Factor:
+
+> 1.3
+> Ideally >1.5
+
+Expectancy:
+
+> +0.20R/trade
+
+Drawdown:
+Must remain controlled.
+
+These are NOT guaranteed results.
+
+---
+
+# 49. IMPORTANT MATHEMATICAL PRINCIPLE
+
+A strategy does not need a 60%+ win rate to be profitable.
+
+Example:
+
+Win Rate = 45%
+
+Average Winner = +2R
+
+Average Loser = -1R
+
+Expectancy:
+
+0.45 × 2R - 0.55 × 1R
+
+= +0.35R per trade
+
+Therefore:
+
+# EXPECTANCY > WIN RATE
+
+is the primary objective.
+
+---
+
+# 50. BACKTEST REQUIREMENT
+
+Before trusting the system with real capital:
+
+Use historical NSE data and test:
+
+1. Volume Gainer strategy alone
+2. Volume Gainer + 5D Volume
+3. * Price/Volume
+4. * Technical filters
+5. * Sector/Relative Strength
+6. * News/Catalyst
+7. * 3+1 confirmation
+8. * R:R filter
+9. * Morning validation
+10. Full V8 system
+
+Then compare which layer actually improves performance.
+
+---
+
+# FINAL PRINCIPLE
+
+The system should NOT ask:
+
+"Which stock went up the most?"
+
+It should ask:
+
+"Which stock has unusual volume, WHY the volume increased, whether that activity is accumulation or distribution, whether price structure is favourable, whether sector/market support the move, whether a reliable catalyst exists, whether 3+1 confirmation is satisfied, whether the risk/reward is favourable, and whether tomorrow's market confirms the thesis?"
+
+Only then:
+
+# FINAL ENTRY
+
+And after entry:
+
+"Is my original thesis still valid?"
+
+If YES → HOLD / TRAIL
+
+If weakening → CAUTION
+
+If invalidated → EXIT
+
+This is the complete NSE Swing Trading System V8.0 specification.
+
+---
+
+## MAINTENANCE NOTE — 09 NOVEMBER 2026
+
+This file now carries the current approved amendments at the top. When a later decision is approved, update the dated authoritative amendment section and the companion working register/README together. Keep unresolved items labelled PENDING; do not silently promote them to production gates. The original V8.0 sections below this amendment are retained as historical baseline text.
