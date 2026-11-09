@@ -78,7 +78,7 @@ def _build_price_history(candidate, historical, asof, market_sessions):
     history = history.dropna(subset=["Date"])
     history = history[history["Date"].dt.date <= asof]
     history = history.sort_values("Date", kind="mergesort")
-    history = history.drop_duplicates(["TckrSymb", "Date"], keep="last")
+    history = history.groupby(["TckrSymb", "Date"], as_index=False, sort=False).last()
     for col in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
         if col in history.columns:
             history[col] = pd.to_numeric(history[col], errors="coerce")
