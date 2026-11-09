@@ -54,15 +54,26 @@ def _pivots(values, left=3, right=3, high=False):
 def _atr14(history):
     if len(history) < 15 or not {"HghPric", "LwPric", "ClsPric"}.issubset(history.columns):
         return float("nan")
-    high = pd.to_numeric(history["HghPric"], errors="coerce")
-    low = pd.to_numeric(history["LwPric"], errors="coerce")
-    close = pd.to_numeric(history["ClsPric"], errors="coerce")
-    previous = close.shift(1)
+    recent = history.tail(15).copy()
+    for column in ("HghPric", "LwPric", "ClsPric"):
+        recent[column] = pd.to_numeric(recent[column], errors="coerce")
+    if recent[["HghPric", "LwPric", "ClsPric"]].isna().any().any():
+        return float("nan")
+    if (
+        (recent["HghPric"] < recent["LwPric"]).any()
+        or (recent[["HghPric", "LwPric", "ClsPric"]] <= 0).any().any()
+    ):
+        return float("nan")
+    previous = recent["ClsPric"].shift(1)
     true_range = pd.concat(
-        [(high - low), (high - previous).abs(), (low - previous).abs()],
+        [
+            recent["HghPric"] - recent["LwPric"],
+            (recent["HghPric"] - previous).abs(),
+            (recent["LwPric"] - previous).abs(),
+        ],
         axis=1,
     ).max(axis=1)
-    value = true_range.tail(14).mean()
+    value = true_range.iloc[1:].mean()
     return _num(value)
 
 
@@ -367,18 +378,29 @@ def build_potential_accumulation_report(
             if not recent.empty:
                 down = recent[recent["CloseReturnPct"] < 0]
                 up = recent[recent["CloseReturnPct"] > 0]
-                down_avg = down["TtlTradgVol"].mean() if "TtlTradgVol" in down.columns else float("nan")
-                up_avg = up["TtlTradgVol"].mean() if "TtlTradgVol" in up.columns else float("nan")
                 row["DownDayCount20D"] = len(down)
                 row["UpDayCount20D"] = len(up)
-                row["DownDayVolumeAverage20D"] = down_avg
-                row["UpDayVolumeAverage20D"] = up_avg
-                row["DownVsUpVolumeRatio20D"] = down_avg / up_avg if pd.notna(down_avg) and pd.notna(up_avg) and up_avg > 0 else float("nan")
-                row["SellingPressureObservationStatus"] = (
-                    "OBSERVATIONS_AVAILABLE"
-                    if "TtlTradgVol" in recent.columns and recent["TtlTradgVol"].notna().all()
-                    else "WAIT_FOR_DATA"
+                volume_complete = (
+                    "TtlTradgVol" in recent.columns
+                    and recent["TtlTradgVol"].notna().all()
+                    and (recent["TtlTradgVol"] >= 0).all()
                 )
+                if volume_complete:
+                    down_avg = down["TtlTradgVol"].mean()
+                    up_avg = up["TtlTradgVol"].mean()
+                    row["DownDayVolumeAverage20D"] = down_avg
+                    row["UpDayVolumeAverage20D"] = up_avg
+                    row["DownVsUpVolumeRatio20D"] = (
+                        down_avg / up_avg
+                        if pd.notna(down_avg) and pd.notna(up_avg) and up_avg > 0
+                        else float("nan")
+                    )
+                    row["SellingPressureObservationStatus"] = "OBSERVATIONS_AVAILABLE"
+                else:
+                    row["DownDayVolumeAverage20D"] = float("nan")
+                    row["UpDayVolumeAverage20D"] = float("nan")
+                    row["DownVsUpVolumeRatio20D"] = float("nan")
+                    row["SellingPressureObservationStatus"] = "WAIT_FOR_DATA"
 
         delivery_rows = _delivery_observations(symbol, series, delivery_sessions, asof)
         if len(delivery_rows) >= 5:
