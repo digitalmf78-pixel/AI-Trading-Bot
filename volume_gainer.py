@@ -1977,6 +1977,9 @@ def calculate_breakout_pullback(result, historical):
             continue
         for column in required:
             hist[column] = pd.to_numeric(hist[column], errors="coerce")
+            hist[column] = hist[column].replace(
+                [float("inf"), float("-inf")], float("nan")
+            )
 
         # Ambiguous candidate identity must not multiply rows in the final merge.
         if result["TckrSymb"].astype(str).str.strip().str.upper().eq(
