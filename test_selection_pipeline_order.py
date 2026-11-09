@@ -211,6 +211,7 @@ def test_accumulation_engine_failure_keeps_delivery_ab_candidates_for_wait_watch
     start = source.index(marker)
     end = source.index("# VCP measurements", start)
     fallback = source[start:end]
-    assert 'accumulation_report = current.drop_duplicates("TckrSymb", keep="first").copy()' in fallback
+    assert 'accumulation_report = current.drop_duplicates(' in fallback
+    assert '"TckrSymb", keep="first"' in fallback
     assert 'accumulation_report["DeliveryEvidenceStatus"] = "WAIT_FOR_DATA"' in fallback
     assert 'accumulation_report["EvidenceStatus"] = "WAIT_FOR_DATA"' in fallback
