@@ -705,7 +705,7 @@ def run_eod_layers(
             eod_window_complete = False
             break
         parsed_dates = pd.to_datetime(session_frame["Date"], errors="coerce").dropna().dt.date.unique()
-        if len(parsed_dates) != 1:
+        if len(parsed_dates) != 1 or parsed_dates[0] >= pd.Timestamp(eod_date).date():
             eod_window_complete = False
             break
         eod_window_dates.append(parsed_dates[0])
@@ -810,6 +810,7 @@ def run_eod_layers(
             records = ad_groups.get(str(row.get("TckrSymb")))
             if (
                 eod_window_complete and records is not None and len(records) == 20
+                and {"HghPric", "LwPric", "ClsPric"}.issubset(records.columns)
                 and records[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
             ):
                 high = records["HghPric"]
