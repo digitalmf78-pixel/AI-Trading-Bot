@@ -47,6 +47,9 @@ def test_report_keeps_candidate_and_emits_20d_50d_200d_range_observations(tmp_pa
     row = report.iloc[0]
     assert row["TckrSymb"] == "AAA"
     assert row["PriceHistoryStatus"] == "COMPLETE_20D"
+    assert row["ObservedEMA50Status"] == "COMPLETE"
+    assert row["ObservedEMA200Status"] == "WAIT_FOR_DATA"
+    assert row["TrendObservationStatus"] == "PARTIAL_DATA"
     assert row["PivotStructureStatus"] == "COMPLETE"
     assert row["PivotLowSeparationStatus"] == "OBSERVATION_AVAILABLE"
     assert pd.notna(row["PivotLowSeparationATR"])
@@ -136,3 +139,22 @@ def test_delivery_percent_without_price_fields_does_not_claim_price_response(tmp
     assert row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE"
     assert row["HighDeliveryPriceResponseStatus"] == "WAIT_FOR_DATA"
     assert pd.isna(row["HighDeliveryPriceChangeAbsAveragePct"])
+
+
+
+def test_ema200_is_available_only_with_200_complete_asof_sessions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history(periods=200)
+    history["Date"] = pd.bdate_range(end="2026-10-22", periods=200)
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["ObservedEMA20Status"] == "COMPLETE"
+    assert row["ObservedEMA44Status"] == "COMPLETE"
+    assert row["ObservedEMA50Status"] == "COMPLETE"
+    assert row["ObservedEMA200Status"] == "COMPLETE"
+    assert row["TrendObservationStatus"] == "COMPLETE"
+    assert pd.notna(row["ObservedEMA200"])
+    assert row["ObservedEMA200Position"] in {"ABOVE", "BELOW", "AT"}
