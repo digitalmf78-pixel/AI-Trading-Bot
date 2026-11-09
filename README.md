@@ -115,3 +115,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Base/VCP observations enhanced: rolling 20/50/100/200-session windows now include start/end dates, exact session count, average daily range and latest-close position; VCP reports contraction depth and whether price and volume contract together. These remain descriptive, not fixed-base/VCP classifications. False-VCP outcomes remain unevaluated until a forward horizon/failure definition is approved. Latest CI: 297 unit/data-audit tests + 31 V8 regression tests passed.
 
 - Breakout follow-through reporting now includes post-event highest/lowest price excursions and counts of closes above/below/at the breakout reference. This is descriptive only; false-breakout horizon and failure definition remain unapproved. CI validation is pending.
+
+- The post-breakout observation report now uses the user-approved first 10 trading sessions after a qualifying breakout. It reports horizon progress/completion and measures only that fixed window; false-breakout failure/re-entry definitions remain unapproved, and no entry gate is added.
