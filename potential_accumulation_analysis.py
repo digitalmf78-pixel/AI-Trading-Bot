@@ -122,7 +122,7 @@ def _build_price_history(candidate, historical, asof, market_sessions):
     for col in ("OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
         if col in history.columns:
             history[col] = pd.to_numeric(history[col], errors="coerce")
-    return history.dropna(subset=["ClsPric"]).reset_index(drop=True), market_sessions
+    return history.reset_index(drop=True), market_sessions
 
 def _delivery_observations(symbol, series, sessions, asof):
     observations = []
