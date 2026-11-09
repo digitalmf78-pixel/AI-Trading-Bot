@@ -101,3 +101,5 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Delivery Quantity, Accumulation and VCP source history now fail closed on duplicate report dates/rows, invalid quantities, missing price sessions and duplicate EOD rows. Current EOD values are reconciled without hiding duplicates. Latest CI: 273 unit/data-audit tests and 31 V8 regression tests passed.
 
 - Accumulation ATR now requires complete OHLC input; selling-pressure volume averages require 20 valid non-negative volumes. Latest CI: 275 unit/data-audit tests and 31 V8 regression tests passed.
+
+- Early Potential Accumulation watchlist now preserves the unique Delivery A/B union with explicit WAIT_FOR_DATA if its optional evidence engine fails. Latest CI: 276 unit/data-audit tests and 31 V8 regression tests passed.
