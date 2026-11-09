@@ -37,3 +37,29 @@ def test_missing_traded_value_column_is_wait_for_data_not_pass():
     qualified, audit = apply_liquidity_filter(candidates, history)
     assert qualified.empty
     assert audit.iloc[0]["LiquidityStatus"] == "WAIT_FOR_DATA"
+
+
+
+def test_duplicate_symbol_rows_in_a_session_are_wait_not_keep_last_pass():
+    candidates = pd.DataFrame([{"TckrSymb": "ABC"}])
+    history = history_for(60_000_000)
+    history[7] = pd.DataFrame([
+        {"TckrSymb": "ABC", "TtlTrfVal": 60_000_000},
+        {"TckrSymb": "ABC", "TtlTrfVal": 1},
+    ])
+    qualified, audit = apply_liquidity_filter(candidates, history)
+    assert qualified.empty
+    assert audit.iloc[0]["LiquidityStatus"] == "WAIT_FOR_DATA"
+
+
+def test_duplicate_explicit_session_dates_are_wait_not_twenty_sessions():
+    candidates = pd.DataFrame([{"TckrSymb": "ABC"}])
+    history = [
+        pd.DataFrame([{"TckrSymb": "ABC", "TtlTrfVal": 60_000_000,
+                       "Date": pd.Timestamp("2026-10-01") + pd.Timedelta(days=i)}])
+        for i in range(20)
+    ]
+    history[19]["Date"] = history[18]["Date"]
+    qualified, audit = apply_liquidity_filter(candidates, history)
+    assert qualified.empty
+    assert audit.iloc[0]["LiquidityStatus"] == "WAIT_FOR_DATA"
