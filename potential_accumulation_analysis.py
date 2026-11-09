@@ -66,6 +66,26 @@ def _atr14(history):
     return _num(value)
 
 
+def _ema_window_observation(hist, market_dates, period):
+    dates = market_dates[-period:]
+    if len(dates) != period:
+        return {"status": "WAIT_FOR_DATA"}
+    part = hist[hist["Date"].dt.date.isin(dates)].copy().sort_values("Date")
+    if len(part) != period or "ClsPric" not in part.columns or part["ClsPric"].isna().any():
+        return {"status": "WAIT_FOR_DATA"}
+    close = pd.to_numeric(part["ClsPric"], errors="coerce")
+    if close.isna().any():
+        return {"status": "WAIT_FOR_DATA"}
+    ema_series = close.ewm(span=period, adjust=False, min_periods=period).mean()
+    value = _num(ema_series.iloc[-1])
+    current = _num(close.iloc[-1])
+    if not math.isfinite(value) or value <= 0 or not math.isfinite(current):
+        return {"status": "WAIT_FOR_DATA"}
+    distance = (current / value - 1.0) * 100.0
+    position = "ABOVE" if current > value else "BELOW" if current < value else "AT"
+    return {"status": "COMPLETE", "value": value, "distance_pct": distance, "position": position}
+
+
 def _session_date(value):
     parsed = pd.to_datetime(value, errors="coerce")
     return None if pd.isna(parsed) else parsed.date()
@@ -200,6 +220,15 @@ def build_potential_accumulation_report(
             "ATR14": float("nan"), "PivotLowSeparationAbs": float("nan"),
             "PivotLowSeparationPct": float("nan"), "PivotLowSeparationATR": float("nan"),
             "PivotLowSeparationStatus": "WAIT_FOR_DATA",
+            "ObservedEMA20": float("nan"), "ObservedEMA44": float("nan"),
+            "ObservedEMA50": float("nan"), "ObservedEMA200": float("nan"),
+            "ObservedEMA20DistancePct": float("nan"), "ObservedEMA44DistancePct": float("nan"),
+            "ObservedEMA50DistancePct": float("nan"), "ObservedEMA200DistancePct": float("nan"),
+            "ObservedEMA20Position": "WAIT_FOR_DATA", "ObservedEMA44Position": "WAIT_FOR_DATA",
+            "ObservedEMA50Position": "WAIT_FOR_DATA", "ObservedEMA200Position": "WAIT_FOR_DATA",
+            "ObservedEMA20Status": "WAIT_FOR_DATA", "ObservedEMA44Status": "WAIT_FOR_DATA",
+            "ObservedEMA50Status": "WAIT_FOR_DATA", "ObservedEMA200Status": "WAIT_FOR_DATA",
+            "TrendObservationStatus": "WAIT_FOR_DATA",
             "HigherLowStatus": "WAIT_FOR_DATA",
         }
         if not hist.empty:
@@ -261,6 +290,23 @@ def build_potential_accumulation_report(
                 "COMPLETE_20D" if row.get("PriceRange20DStatus") == "OBSERVATION_AVAILABLE"
                 else "WAIT_FOR_DATA"
             )
+
+            ema_statuses = []
+            for period in (20, 44, 50, 200):
+                obs = _ema_window_observation(hist, ordered_market_sessions, period)
+                prefix = f"ObservedEMA{period}"
+                row[f"{prefix}Status"] = obs["status"]
+                ema_statuses.append(obs["status"])
+                if obs["status"] == "COMPLETE":
+                    row[prefix] = obs["value"]
+                    row[f"{prefix}DistancePct"] = obs["distance_pct"]
+                    row[f"{prefix}Position"] = obs["position"]
+            if all(status == "COMPLETE" for status in ema_statuses):
+                row["TrendObservationStatus"] = "COMPLETE"
+            elif any(status == "COMPLETE" for status in ema_statuses):
+                row["TrendObservationStatus"] = "PARTIAL_DATA"
+            else:
+                row["TrendObservationStatus"] = "WAIT_FOR_DATA"
 
             recent_dates = ordered_market_sessions[-20:]
             recent = hist[hist["Date"].dt.date.isin(recent_dates)].copy().sort_values("Date")
