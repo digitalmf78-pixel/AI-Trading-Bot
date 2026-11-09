@@ -2100,536 +2100,255 @@ def calculate_breakout_pullback(result, historical):
 # ============================================================
 
 @_perf_timed("support_resistance")
-def calculate_support_resistance(
-    result,
-    historical
-):
-
-    print(
-        "\nSTEP 11: Support / "
-        "Resistance Detection..."
-    )
-
-    sr_columns = [
-        "PDH", "PDL", "PWH", "PWL", "SR20DHigh", "SR50DHigh",
-        "SR100DHigh", "SR200DHigh",
-        "SRSwingHigh", "SRSwingLow", "SRSupport", "SRResistance", "BreakoutLevel",
-        "EntryZoneLow", "EntryZoneHigh", "SRStatus",
-    ]
-    if result is None or result.empty:
-        # No screened candidates means there is no need to index historical dates.
-        # Keep the output schema stable so downstream V8 layers can report WAIT_FOR_DATA.
-        result = result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
-        for column in sr_columns:
-            if column not in result.columns:
-                result[column] = pd.Series(dtype="object")
-        return result
-
-    rows = []
-
-    # --------------------------------------------------------
-    # Build chronological history
-    # --------------------------------------------------------
-
-    all_history, history_by_symbol = prepare_history_by_symbol(
-        historical
-    )
-
-    # --------------------------------------------------------
-    # Previous trading day
-    # --------------------------------------------------------
-
-    unique_dates = sorted(
-        all_history["Date"].unique()
-    )
-
-    previous_date = None
-
-    if len(unique_dates) >= 2:
-        previous_date = unique_dates[-1]
-
-    # --------------------------------------------------------
-    # Previous calendar week
-    # --------------------------------------------------------
-
-    latest_date = pd.Timestamp(
-        unique_dates[-1]
-    )
-
-    current_week = (
-        latest_date
-        - pd.Timedelta(
-            days=latest_date.weekday()
-        )
-    ).normalize()
-
-    previous_week_start = (
-        current_week
-        - pd.Timedelta(days=7)
-    )
-
-    previous_week_end = (
-        current_week
-        - pd.Timedelta(days=1)
-    )
-
-    previous_week_data = all_history[
-        (
-            all_history["Date"]
-            >= previous_week_start
-        )
-        &
-        (
-            all_history["Date"]
-            <= previous_week_end
-        )
-    ]
-
-    previous_week_by_symbol = {
-        symbol: frame
-        for symbol, frame in previous_week_data.groupby(
-            "TckrSymb",
-            sort=False,
-        )
-    }
-
-    # --------------------------------------------------------
-    # Per stock
-    # --------------------------------------------------------
-
-    for symbol in result["TckrSymb"]:
-
-        stock = history_by_symbol.get(symbol)
-
-        if stock is None or len(stock) < 2:
-
-            rows.append({
-                "TckrSymb": symbol,
-                "PDH": float("nan"),
-                "PDL": float("nan"),
-                "PWH": float("nan"),
-                "PWL": float("nan"),
-                "SR20DHigh": float("nan"),
-                "SR50DHigh": float("nan"),
-                "SR100DHigh": float("nan"),
-                "SR200DHigh": float("nan"),
-                "SRSwingHigh": float("nan"),
-                "SRSwingLow": float("nan"),
-                "SRSupport": float("nan"),
-                "SRResistance": float("nan"),
-                "BreakoutLevel": float("nan"),
-                "EntryZoneLow": float("nan"),
-                "EntryZoneHigh": float("nan"),
-                "SRStatus": "Insufficient Data",
-            })
-
-            continue
-
-        current = stock.iloc[-1]
-
-        current_close = float(
-            current["ClsPric"]
-        )
-
-        # ----------------------------------------------------
-        # Previous Day High / Low
-        # ----------------------------------------------------
-
-        previous_rows = stock.iloc[:-1]
-
-        previous_day = (
-            previous_rows.iloc[-1]
-        )
-
-        pdh = float(
-            previous_day["HghPric"]
-        )
-
-        pdl = float(
-            previous_day["LwPric"]
-        )
-
-        # ----------------------------------------------------
-        # Previous Week High / Low
-        # ----------------------------------------------------
-
-        stock_previous_week = previous_week_by_symbol.get(
-            symbol
-        )
-
-        if stock_previous_week is not None and len(stock_previous_week) > 0:
-
-            pwh = float(
-                stock_previous_week[
-                    "HghPric"
-                ].max()
-            )
-
-            pwl = float(
-                stock_previous_week[
-                    "LwPric"
-                ].min()
-            )
-
-        else:
-
-            pwh = float("nan")
-            pwl = float("nan")
-
-        # ----------------------------------------------------
-        # 20D / 50D High
-        # ----------------------------------------------------
-
-        previous_20 = (
-            previous_rows.tail(20)
-        )
-
-        previous_50 = (
-            previous_rows.tail(50)
-        )
-
-        high20 = float(
-            previous_20[
-                "HghPric"
-            ].max()
-        )
-
-        low20 = float(
-            previous_20[
-                "LwPric"
-            ].min()
-        )
-
-        high50 = float(
-            previous_50[
-                "HghPric"
-            ].max()
-        )
-
-        low50 = float(
-            previous_50[
-                "LwPric"
-            ].min()
-        )
-
-        # Long-horizon resistance is only published when the full lookback
-        # exists. A partial 100D/200D window must not be mislabeled as complete.
-        high100 = (
-            float(previous_rows.tail(100)["HghPric"].max())
-            if len(previous_rows) >= 100 else float("nan")
-        )
-        high200 = (
-            float(previous_rows.tail(200)["HghPric"].max())
-            if len(previous_rows) >= 200 else float("nan")
-        )
-
-        # ----------------------------------------------------
-        # Recent Swing High / Low
-        # ----------------------------------------------------
-
-        swing_high = float(
-            previous_rows
-            .tail(20)[
-                "HghPric"
-            ]
-            .max()
-        )
-
-        swing_low = float(
-            previous_rows
-            .tail(20)[
-                "LwPric"
-            ]
-            .min()
-        )
-
-        # ----------------------------------------------------
-        # EMA20 / EMA44 from existing result
-        # ----------------------------------------------------
-
-        row_match = result[
-            result["TckrSymb"]
-            == symbol
-        ]
-
-        if len(row_match) > 0:
-
-            ema20 = row_match[
-                "EMA20"
-            ].iloc[0]
-
-            ema44 = row_match[
-                "EMA44"
-            ].iloc[0]
-
-        else:
-
-            ema20 = float("nan")
-            ema44 = float("nan")
-
-        # ----------------------------------------------------
-        # SUPPORT CANDIDATES
-        # ----------------------------------------------------
-
-        support_candidates = [
-            pdl,
-            pwl,
-            low20,
-            low50,
-            swing_low,
-        ]
-
-        if pd.notna(ema20):
-            support_candidates.append(
-                float(ema20)
-            )
-
-        if pd.notna(ema44):
-            support_candidates.append(
-                float(ema44)
-            )
-
-        support_candidates = [
-            x
-            for x in support_candidates
-            if pd.notna(x)
-            and x > 0
-            and x <= current_close
-        ]
-
-        # Nearest support below price
-        if support_candidates:
-
-            support = max(
-                support_candidates
-            )
-
-        else:
-
-            support = float("nan")
-
-        # ----------------------------------------------------
-        # RESISTANCE CANDIDATES
-        # ----------------------------------------------------
-
-        resistance_candidates = [
-            pdh,
-            pwh,
-            high20,
-            high50,
-            swing_high,
-        ]
-
-        resistance_candidates = [
-            x
-            for x in resistance_candidates
-            if pd.notna(x)
-            and x > 0
-            and x >= current_close
-        ]
-
-        # Nearest resistance above price
-        if resistance_candidates:
-
-            resistance = min(
-                resistance_candidates
-            )
-
-        else:
-
-            resistance = float("nan")
-
-        # ----------------------------------------------------
-        # If current price is already above all
-        # resistance levels, use strongest level.
-        # ----------------------------------------------------
-
-        if pd.isna(resistance):
-
-            fallback_resistance = [
-                pdh,
-                pwh,
-                high20,
-                high50,
-                swing_high,
-            ]
-
-            fallback_resistance = [
-                x
-                for x in fallback_resistance
-                if pd.notna(x)
-                and x > 0
-            ]
-
-            if fallback_resistance:
-
-                resistance = max(
-                    fallback_resistance
-                )
-
-        # ----------------------------------------------------
-        # Breakout Level
-        # ----------------------------------------------------
-
-        breakout_level = resistance
-
-        # ----------------------------------------------------
-        # Entry Zone
-        #
-        # For a bullish setup:
-        # Entry zone is around resistance/support.
-        #
-        # We do NOT create a BUY signal here.
-        # This is only price-structure information.
-        # ----------------------------------------------------
-
-        if pd.notna(resistance):
-
-            if (
-                current_close
-                <= resistance
-            ):
-
-                entry_zone_low = (
-                    resistance * 0.995
-                )
-
-                entry_zone_high = (
-                    resistance * 1.005
-                )
-
-            else:
-
-                # Already above resistance.
-                # Keep zone around breakout level.
-                entry_zone_low = (
-                    resistance
-                )
-
-                entry_zone_high = (
-                    resistance * 1.01
-                )
-
-        else:
-
-            entry_zone_low = (
-                support
-                if pd.notna(support)
-                else float("nan")
-            )
-
-            entry_zone_high = (
-                support
-                if pd.notna(support)
-                else float("nan")
-            )
-
-        # ----------------------------------------------------
-        # S/R STATUS
-        # ----------------------------------------------------
-
-        if (
-            pd.notna(resistance)
-            and current_close > resistance
-        ):
-
-            sr_status = (
-                "Above Resistance"
-            )
-
-        elif (
-            pd.notna(resistance)
-            and resistance > 0
-            and (
-                (
-                    resistance
-                    - current_close
-                )
-                / resistance
-            ) <= 0.02
-        ):
-
-            sr_status = (
-                "Near Resistance"
-            )
-
-        elif (
-            pd.notna(support)
-            and support > 0
-            and (
-                (
-                    current_close
-                    - support
-                )
-                / current_close
-            ) <= 0.03
-        ):
-
-            sr_status = (
-                "Near Support"
-            )
-
-        else:
-
-            sr_status = (
-                "Between Support/Resistance"
-            )
-
-        rows.append({
-            "TckrSymb": symbol,
-
-            "PDH": pdh,
-            "PDL": pdl,
-
-            "PWH": pwh,
-            "PWL": pwl,
-
-            "SR20DHigh": high20,
-            "SR50DHigh": high50,
-            "SR100DHigh": high100,
-            "SR200DHigh": high200,
-
-            "SRSwingHigh": swing_high,
-            "SRSwingLow": swing_low,
-
-            "SRSupport": support,
-            "SRResistance": resistance,
-
-            "BreakoutLevel":
-                breakout_level,
-
-            "EntryZoneLow":
-                entry_zone_low,
-
-            "EntryZoneHigh":
-                entry_zone_high,
-
-            "SRStatus":
-                sr_status,
-        })
+def calculate_support_resistance(result, historical):
+    print("\nSTEP 11: Support / Resistance Detection...")
 
     sr_columns = [
         "TckrSymb", "PDH", "PDL", "PWH", "PWL", "SR20DHigh", "SR50DHigh",
-        "SR100DHigh", "SR200DHigh",
-        "SRSwingHigh", "SRSwingLow", "SRSupport", "SRResistance", "BreakoutLevel",
-        "EntryZoneLow", "EntryZoneHigh", "SRStatus",
+        "SR100DHigh", "SR200DHigh", "SRSwingHigh", "SRSwingLow",
+        "SRSupport", "SRResistance", "BreakoutLevel", "EntryZoneLow",
+        "EntryZoneHigh", "SRStatus", "SRDataStatus",
+        "SR20DDataStatus", "SR50DDataStatus", "SR100DDataStatus",
+        "SR200DDataStatus", "PreviousDayDataStatus",
     ]
-    # Preserve the merge key when there are no delivery-qualified candidates.
+    if result is None:
+        return pd.DataFrame(columns=sr_columns)
+    if result.empty:
+        empty = result.copy()
+        for column in sr_columns:
+            if column not in empty.columns:
+                empty[column] = pd.Series(dtype="object")
+        return empty
+
+    all_history, history_by_symbol = prepare_history_by_symbol(historical)
+    if all_history is None or all_history.empty or "Date" not in all_history.columns:
+        rows = []
+        for symbol in result["TckrSymb"]:
+            rows.append({
+                "TckrSymb": symbol, "PDH": float("nan"), "PDL": float("nan"),
+                "PWH": float("nan"), "PWL": float("nan"), "SR20DHigh": float("nan"),
+                "SR50DHigh": float("nan"), "SR100DHigh": float("nan"),
+                "SR200DHigh": float("nan"), "SRSwingHigh": float("nan"),
+                "SRSwingLow": float("nan"), "SRSupport": float("nan"),
+                "SRResistance": float("nan"), "BreakoutLevel": float("nan"),
+                "EntryZoneLow": float("nan"), "EntryZoneHigh": float("nan"),
+                "SRStatus": "WAIT_FOR_DATA", "SRDataStatus": "WAIT_FOR_DATA",
+                "SR20DDataStatus": "WAIT_FOR_DATA", "SR50DDataStatus": "WAIT_FOR_DATA",
+                "SR100DDataStatus": "WAIT_FOR_DATA", "SR200DDataStatus": "WAIT_FOR_DATA",
+                "PreviousDayDataStatus": "WAIT_FOR_DATA",
+            })
+        return result.merge(pd.DataFrame(rows, columns=sr_columns), on="TckrSymb", how="left")
+
+    all_history = all_history.copy()
+    all_history["Date"] = pd.to_datetime(all_history["Date"], errors="coerce")
+    all_history = all_history.dropna(subset=["Date"])
+    unique_dates = sorted({value.date() for value in all_history["Date"]})
+    if not unique_dates:
+        return result.copy()
+
+    latest_date = unique_dates[-1]
+    prior_dates = [day for day in unique_dates if day < latest_date]
+    latest_ts = pd.Timestamp(latest_date)
+    current_week = (latest_ts - pd.Timedelta(days=latest_ts.weekday())).normalize()
+    previous_week_start = (current_week - pd.Timedelta(days=7)).normalize()
+    previous_week_end = (current_week - pd.Timedelta(days=1)).normalize()
+    previous_week_data = all_history[
+        (all_history["Date"] >= previous_week_start)
+        & (all_history["Date"] <= previous_week_end)
+    ]
+
+    def safe_float(value):
+        try:
+            number = float(value)
+            return number if pd.notna(number) and number not in (float("inf"), float("-inf")) else float("nan")
+        except (TypeError, ValueError):
+            return float("nan")
+
+    def wait_row(symbol):
+        return {
+            "TckrSymb": symbol, "PDH": float("nan"), "PDL": float("nan"),
+            "PWH": float("nan"), "PWL": float("nan"), "SR20DHigh": float("nan"),
+            "SR50DHigh": float("nan"), "SR100DHigh": float("nan"),
+            "SR200DHigh": float("nan"), "SRSwingHigh": float("nan"),
+            "SRSwingLow": float("nan"), "SRSupport": float("nan"),
+            "SRResistance": float("nan"), "BreakoutLevel": float("nan"),
+            "EntryZoneLow": float("nan"), "EntryZoneHigh": float("nan"),
+            "SRStatus": "WAIT_FOR_DATA", "SRDataStatus": "WAIT_FOR_DATA",
+            "SR20DDataStatus": "WAIT_FOR_DATA", "SR50DDataStatus": "WAIT_FOR_DATA",
+            "SR100DDataStatus": "WAIT_FOR_DATA", "SR200DDataStatus": "WAIT_FOR_DATA",
+            "PreviousDayDataStatus": "WAIT_FOR_DATA",
+        }
+
+    rows = []
+    for symbol in result["TckrSymb"]:
+        stock = history_by_symbol.get(symbol)
+        if stock is None or stock.empty:
+            rows.append(wait_row(symbol))
+            continue
+
+        stock = stock.copy()
+        stock["Date"] = pd.to_datetime(stock["Date"], errors="coerce")
+        stock = stock.dropna(subset=["Date"])
+        stock = stock[stock["Date"].dt.date.isin(unique_dates)].sort_values("Date", kind="mergesort")
+        if stock["Date"].dt.date.duplicated().any():
+            rows.append(wait_row(symbol))
+            continue
+
+        current_rows = stock[stock["Date"].dt.date.eq(latest_date)]
+        if len(current_rows) != 1:
+            rows.append(wait_row(symbol))
+            continue
+        current = current_rows.iloc[0]
+        current_close = safe_float(current.get("ClsPric"))
+        if not pd.notna(current_close) or current_close <= 0:
+            rows.append(wait_row(symbol))
+            continue
+
+        previous_rows = stock[stock["Date"].dt.date.lt(latest_date)].copy()
+        previous_date = prior_dates[-1] if prior_dates else None
+        previous_day_rows = (
+            previous_rows[previous_rows["Date"].dt.date.eq(previous_date)]
+            if previous_date is not None else previous_rows.iloc[0:0]
+        )
+        previous_day_ready = (
+            len(previous_day_rows) == 1
+            and pd.notna(safe_float(previous_day_rows.iloc[0].get("HghPric")))
+            and pd.notna(safe_float(previous_day_rows.iloc[0].get("LwPric")))
+        )
+        if previous_day_ready:
+            pdh = safe_float(previous_day_rows.iloc[0]["HghPric"])
+            pdl = safe_float(previous_day_rows.iloc[0]["LwPric"])
+        else:
+            pdh = pdl = float("nan")
+
+        stock_previous_week = previous_week_data[
+            previous_week_data["TckrSymb"].astype(str).str.strip().str.upper().eq(str(symbol).strip().upper())
+        ]
+        if (
+            not stock_previous_week.empty
+            and stock_previous_week["Date"].dt.date.duplicated().sum() == 0
+            and stock_previous_week[["HghPric", "LwPric"]].notna().all().all()
+        ):
+            pwh = safe_float(stock_previous_week["HghPric"].max())
+            pwl = safe_float(stock_previous_week["LwPric"].min())
+        else:
+            pwh = pwl = float("nan")
+
+        def exact_window(period):
+            dates = prior_dates[-period:]
+            part = previous_rows[previous_rows["Date"].dt.date.isin(dates)].sort_values("Date")
+            complete = (
+                len(dates) == period and len(part) == period
+                and not part["Date"].dt.date.duplicated().any()
+                and part[["HghPric", "LwPric"]].notna().all().all()
+            )
+            return part, complete
+
+        prior20, ready20 = exact_window(20)
+        prior50, ready50 = exact_window(50)
+        prior100, ready100 = exact_window(100)
+        prior200, ready200 = exact_window(200)
+
+        high20 = safe_float(prior20["HghPric"].max()) if ready20 else float("nan")
+        low20 = safe_float(prior20["LwPric"].min()) if ready20 else float("nan")
+        high50 = safe_float(prior50["HghPric"].max()) if ready50 else float("nan")
+        low50 = safe_float(prior50["LwPric"].min()) if ready50 else float("nan")
+        high100 = safe_float(prior100["HghPric"].max()) if ready100 else float("nan")
+        high200 = safe_float(prior200["HghPric"].max()) if ready200 else float("nan")
+        swing_high = high20
+        swing_low = low20
+
+        row_match = result[result["TckrSymb"] == symbol]
+        ema20 = safe_float(row_match["EMA20"].iloc[0]) if len(row_match) and "EMA20" in row_match.columns else float("nan")
+        ema44 = safe_float(row_match["EMA44"].iloc[0]) if len(row_match) and "EMA44" in row_match.columns else float("nan")
+
+        support_candidates = [pdl, pwl, low20, low50, swing_low]
+        if pd.notna(ema20) and ema20 > 0:
+            support_candidates.append(ema20)
+        if pd.notna(ema44) and ema44 > 0:
+            support_candidates.append(ema44)
+        support_candidates = [
+            value for value in support_candidates
+            if pd.notna(value) and value > 0 and value <= current_close
+        ]
+        support = max(support_candidates) if support_candidates else float("nan")
+
+        resistance_candidates = [pdh, pwh, high20, high50, swing_high]
+        resistance_candidates = [
+            value for value in resistance_candidates
+            if pd.notna(value) and value > 0 and value >= current_close
+        ]
+        resistance = min(resistance_candidates) if resistance_candidates else float("nan")
+        if pd.isna(resistance):
+            fallback = [
+                value for value in [pdh, pwh, high20, high50, swing_high]
+                if pd.notna(value) and value > 0
+            ]
+            if fallback:
+                resistance = max(fallback)
+
+        breakout_level = resistance
+        if pd.notna(resistance):
+            if current_close <= resistance:
+                entry_zone_low = resistance * 0.995
+                entry_zone_high = resistance * 1.005
+            else:
+                entry_zone_low = resistance
+                entry_zone_high = resistance * 1.01
+        else:
+            entry_zone_low = support if pd.notna(support) else float("nan")
+            entry_zone_high = support if pd.notna(support) else float("nan")
+
+        # Preserve the existing 2% resistance / 3% support proximity rules.
+        if pd.isna(support) and pd.isna(resistance):
+            sr_status = "WAIT_FOR_DATA"
+        elif pd.notna(resistance) and current_close > resistance:
+            sr_status = "Above Resistance"
+        elif (
+            pd.notna(resistance) and resistance > 0
+            and (resistance - current_close) / resistance <= 0.02
+        ):
+            sr_status = "Near Resistance"
+        elif (
+            pd.notna(support) and support > 0
+            and (current_close - support) / current_close <= 0.03
+        ):
+            sr_status = "Near Support"
+        else:
+            sr_status = "Between Support/Resistance"
+
+        window_statuses = [ready20, ready50, ready100, ready200]
+        any_level = any([
+            previous_day_ready, pd.notna(pwh), ready20, ready50, ready100, ready200,
+            pd.notna(ema20), pd.notna(ema44),
+        ])
+        sr_data_status = (
+            "COMPLETE" if all(window_statuses) and previous_day_ready
+            else "PARTIAL_DATA" if any_level
+            else "WAIT_FOR_DATA"
+        )
+
+        rows.append({
+            "TckrSymb": symbol,
+            "PDH": pdh, "PDL": pdl, "PWH": pwh, "PWL": pwl,
+            "SR20DHigh": high20, "SR50DHigh": high50,
+            "SR100DHigh": high100, "SR200DHigh": high200,
+            "SRSwingHigh": swing_high, "SRSwingLow": swing_low,
+            "SRSupport": support, "SRResistance": resistance,
+            "BreakoutLevel": breakout_level,
+            "EntryZoneLow": entry_zone_low, "EntryZoneHigh": entry_zone_high,
+            "SRStatus": sr_status, "SRDataStatus": sr_data_status,
+            "SR20DDataStatus": "COMPLETE" if ready20 else "WAIT_FOR_DATA",
+            "SR50DDataStatus": "COMPLETE" if ready50 else "WAIT_FOR_DATA",
+            "SR100DDataStatus": "COMPLETE" if ready100 else "WAIT_FOR_DATA",
+            "SR200DDataStatus": "COMPLETE" if ready200 else "WAIT_FOR_DATA",
+            "PreviousDayDataStatus": "COMPLETE" if previous_day_ready else "WAIT_FOR_DATA",
+        })
+
     sr_df = pd.DataFrame(rows, columns=sr_columns)
-
-    result = result.merge(
-        sr_df,
-        on="TckrSymb",
-        how="left"
-    )
-
-    print(
-        "Support / Resistance "
-        "calculation completed."
-    )
-
+    result = result.merge(sr_df, on="TckrSymb", how="left")
+    print("Support / Resistance calculation completed.")
     return result
-
 
 # ============================================================
 # RELATIVE STRENGTH VS NIFTY
