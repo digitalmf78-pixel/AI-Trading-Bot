@@ -103,3 +103,19 @@ def test_existing_strong_pullback_thresholds_are_preserved():
     row = result.iloc[0]
     assert row["PullbackStatus"] == "Strong Pullback"
     assert row["SetupType"] == "Pullback"
+
+
+
+def test_missing_market_session_is_not_replaced_by_an_older_symbol_row():
+    full = _history(rows=51)
+    missing_date = full.iloc[-5]["Date"]
+    symbol_history = full[full["Date"] != missing_date].copy()
+    market_calendar_row = full[full["Date"] == missing_date].copy()
+    market_calendar_row["TckrSymb"] = "OTHER"
+    combined = pd.concat([symbol_history, market_calendar_row], ignore_index=True)
+    result = calculate_breakout_pullback(_candidate(), [combined])
+    row = result.iloc[0]
+    assert row["High20DDataStatus"] == "WAIT_FOR_DATA"
+    assert row["VolumeBaseline20DStatus"] == "WAIT_FOR_DATA"
+    assert row["BreakoutStatus"] == "WAIT_FOR_DATA"
+    assert row["PullbackStatus"] == "WAIT_FOR_DATA"
