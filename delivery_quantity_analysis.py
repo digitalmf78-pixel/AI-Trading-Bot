@@ -105,6 +105,8 @@ def build_delivery_quantity_report(
         day: "DUPLICATE_DELIVERY_REPORT_DATE" for day in duplicate_session_dates
     }
     for day in ordered_days:
+        if day in duplicate_session_dates:
+            continue
         raw = by_day[day]
         sym_col = _column(raw, ALIASES["symbol"])
         ser_col = _column(raw, ALIASES["series"])
