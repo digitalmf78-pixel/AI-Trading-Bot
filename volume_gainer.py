@@ -1835,6 +1835,14 @@ def calculate_breakout_pullback(result, historical):
         return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
 
     _, history_by_symbol = prepare_history_by_symbol(historical)
+    market_dates = set()
+    for raw in historical or []:
+        if raw is None or raw.empty or "Date" not in raw.columns:
+            continue
+        for value in pd.to_datetime(raw["Date"], errors="coerce").dropna():
+            market_dates.add(value.date())
+    asof_date = max(market_dates) if market_dates else None
+    prior_market_dates = sorted(day for day in market_dates if asof_date is not None and day < asof_date)
     rows = []
 
     def safe_float(value):
@@ -1870,40 +1878,51 @@ def calculate_breakout_pullback(result, historical):
 
         # Twenty complete prior sessions plus the current session are needed
         # for the existing 20D breakout and volume-baseline rules.
-        if hist is None or hist.empty or len(hist) < 21:
+        if hist is None or hist.empty or asof_date is None:
             rows.append(empty_row)
             continue
 
-        hist = hist.copy().sort_values("Date", kind="mergesort").reset_index(drop=True)
+        hist = hist.copy()
         required = {"OpnPric", "HghPric", "LwPric", "ClsPric", "TtlTradgVol"}
-        if not required.issubset(hist.columns):
+        if not required.issubset(hist.columns) or "Date" not in hist.columns:
             rows.append(empty_row)
             continue
-
+        hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
+        hist = hist.dropna(subset=["Date"])
+        hist = hist[hist["Date"].dt.date.isin(market_dates)].sort_values("Date", kind="mergesort")
+        if hist["Date"].dt.date.duplicated().any():
+            rows.append(empty_row)
+            continue
         for column in required:
             hist[column] = pd.to_numeric(hist[column], errors="coerce")
 
-        current = hist.iloc[-1]
-        previous = hist.iloc[:-1]
-        prior20 = previous.tail(20)
-        prior50 = previous.tail(50)
+        current_rows = hist[hist["Date"].dt.date.eq(asof_date)]
+        if len(current_rows) != 1:
+            rows.append(empty_row)
+            continue
+        current = current_rows.iloc[0]
+        previous = hist[hist["Date"].dt.date.lt(asof_date)].copy()
+        prior20_dates = prior_market_dates[-20:]
+        prior50_dates = prior_market_dates[-50:]
+        prior20 = previous[previous["Date"].dt.date.isin(prior20_dates)].sort_values("Date")
+        prior50 = previous[previous["Date"].dt.date.isin(prior50_dates)].sort_values("Date")
 
         current_close = safe_float(current["ClsPric"])
         current_open = safe_float(current["OpnPric"])
         current_high = safe_float(current["HghPric"])
         current_low = safe_float(current["LwPric"])
         current_volume = safe_float(current["TtlTradgVol"])
-        previous_close = safe_float(previous.iloc[-1]["ClsPric"]) if not previous.empty else float("nan")
+        previous_close = safe_float(prior20.iloc[-1]["ClsPric"]) if len(prior20) == 20 else float("nan")
 
         high20_values = pd.to_numeric(prior20["HghPric"], errors="coerce")
         low20_values = pd.to_numeric(prior20["LwPric"], errors="coerce")
         volume20_values = pd.to_numeric(prior20["TtlTradgVol"], errors="coerce")
         high50_values = pd.to_numeric(prior50["HghPric"], errors="coerce")
 
-        high20_ready = len(prior20) == 20 and high20_values.notna().all()
-        low20_ready = len(prior20) == 20 and low20_values.notna().all()
-        volume20_ready = len(prior20) == 20 and volume20_values.notna().all()
-        high50_ready = len(prior50) == 50 and high50_values.notna().all()
+        high20_ready = len(prior20_dates) == 20 and len(prior20) == 20 and high20_values.notna().all()
+        low20_ready = len(prior20_dates) == 20 and len(prior20) == 20 and low20_values.notna().all()
+        volume20_ready = len(prior20_dates) == 20 and len(prior20) == 20 and volume20_values.notna().all()
+        high50_ready = len(prior50_dates) == 50 and len(prior50) == 50 and high50_values.notna().all()
 
         high20 = float(high20_values.max()) if high20_ready else float("nan")
         high50 = float(high50_values.max()) if high50_ready else float("nan")
@@ -1923,7 +1942,11 @@ def calculate_breakout_pullback(result, historical):
             else float("nan")
         )
 
-        atr_series = calculate_atr(hist, 14)
+        atr_ready = (
+            len(hist) == len(market_dates)
+            and hist[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
+        )
+        atr_series = calculate_atr(hist, 14) if atr_ready else pd.Series(dtype="float64")
         atr = safe_float(atr_series.iloc[-1]) if len(atr_series) else float("nan")
 
         common_breakout_data_ready = (
