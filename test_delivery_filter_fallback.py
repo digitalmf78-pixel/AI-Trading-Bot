@@ -3,6 +3,7 @@ from datetime import date, timedelta
 import pandas as pd
 
 import delivery_filter
+from nse_trading_calendar import is_trading_session
 
 
 def _frame(symbol="AAA", values=(65.0,)):
