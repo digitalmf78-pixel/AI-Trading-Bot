@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import pandas as pd
+from history_index import build_price_history_index, candidate_price_history
 
 OUTPUT_DIR = Path("outputs")
 BLOCK_SESSIONS = 20
@@ -38,15 +39,7 @@ def build_vcp_observation_report(candidates, historical, asof_date):
     if asof is None:
         raise ValueError(f"Invalid as-of date: {asof_date!r}")
 
-    market_dates = set()
-    for raw in historical or []:
-        if raw is None or raw.empty or "Date" not in raw.columns:
-            continue
-        for value in pd.to_datetime(raw["Date"], errors="coerce").dropna():
-            if value.date() <= asof:
-                market_dates.add(value.date())
-    market_dates.add(asof)
-    ordered_dates = sorted(market_dates)
+    history_index, ordered_dates = build_price_history_index(historical, asof)
 
     rows = []
     candidate_symbols = candidates["TckrSymb"].astype(str).str.strip().str.upper()
@@ -77,46 +70,7 @@ def build_vcp_observation_report(candidates, historical, asof_date):
                 "VCPStatus": "WAIT_FOR_DATA",
             })
             continue
-        series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
-        frames = []
-        for raw in historical or []:
-            if raw is None or raw.empty or "TckrSymb" not in raw.columns or "Date" not in raw.columns:
-                continue
-            raw_dates = pd.to_datetime(raw["Date"], errors="coerce")
-            part = raw[
-                raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)
-                & raw_dates.dt.date.le(asof)
-            ].copy()
-            if "SctySrs" in part.columns:
-                part = part[part["SctySrs"].astype(str).str.strip().str.upper().eq(series)]
-            if not part.empty:
-                frames.append(part)
-        hist = (
-            pd.concat(frames, ignore_index=True, sort=False)
-            if frames else pd.DataFrame(columns=["TckrSymb", "SctySrs", "Date"])
-        )
-        hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
-        hist = hist.dropna(subset=["Date"])
-        hist = hist[hist["Date"].dt.date <= asof]
-        current = candidate.to_dict()
-        current.update({"TckrSymb": symbol, "SctySrs": series, "Date": pd.Timestamp(asof)})
-        existing_current = hist[hist["Date"].dt.date.eq(asof)]
-        if len(existing_current) == 1:
-            base = existing_current.iloc[0].to_dict()
-            for key, value in current.items():
-                if value is not None and not pd.isna(value):
-                    base[key] = value
-            hist = hist[~hist.index.isin(existing_current.index)]
-            hist = pd.concat([hist, pd.DataFrame([base])], ignore_index=True, sort=False)
-        elif len(existing_current) == 0:
-            hist = pd.concat([hist, pd.DataFrame([current])], ignore_index=True, sort=False)
-        # Preserve multiple cached rows for this date as an ambiguous session.
-        hist = hist.sort_values("Date", kind="mergesort")
-        # Do not collapse duplicate symbol/session rows: they are ambiguous
-        # source data and must fail the exact-window completeness check.
-        for column in ("HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
-            if column in hist.columns:
-                hist[column] = pd.to_numeric(hist[column], errors="coerce")
+        hist = candidate_price_history(history_index, candidate, asof)
 
         window_dates = ordered_dates[-TOTAL_SESSIONS:]
         aligned = hist[hist["Date"].dt.date.isin(window_dates)].copy().sort_values("Date")
