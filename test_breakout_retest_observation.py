@@ -51,7 +51,7 @@ def test_retest_observation_does_not_claim_exact_touch_when_price_never_crosses_
     row = build_breakout_retest_observation(
         _candidate(), [_history(exact_touch=False)]
     ).iloc[0]
-    assert row["ExactLevelTouchObserved"] is False
+    assert row["ExactLevelTouchObserved"] == False
     assert row["RetestObservationStatus"] == "POST_BREAKOUT_PRICE_OBSERVATIONS_AVAILABLE"
 
 
