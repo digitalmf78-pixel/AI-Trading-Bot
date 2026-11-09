@@ -384,3 +384,14 @@ Before taking action on this repository:
 - VCP failure remains separately visible as WAIT_FOR_DATA in the Base/VCP watchlist; it does not suppress Potential Accumulation candidates.
 
 **Validation:** GitHub Actions run `42589369637`, commit `e845b79d11f8011868463fcb46decd7b301581e3`, completed SUCCESS: 276 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed.
+
+## 25. Breakout and Support/Resistance input integrity audit (09-Nov-2026)
+
+- Breakout/Pullback now rejects duplicate candidate identities into explicit WAIT_FOR_DATA without multiplying rows during the merge.
+- Current breakout candle must have finite, positive OHLC, high >= open/close, low <= open/close, high >= low, and non-negative finite current volume. Invalid candles do not become No Breakout or Pullback.
+- Prior 20-session breakout volume baseline requires exactly 20 prior market sessions, one row per symbol/session, finite non-negative volume and a positive average. Prior 20-session price highs/lows must be finite, positive and structurally valid. The existing 20D/50D breakout thresholds are unchanged.
+- ATR14 is unavailable if any OHLC observation in its required history is missing, non-finite, non-positive or structurally invalid.
+- Support/Resistance now checks current candle structure, prior-day and prior-week high/low validity, and exact 20/50/100/200-session high/low windows. Duplicate candidate rows do not multiply the output; incomplete required history schema returns WAIT_FOR_DATA rather than raising.
+- No retest-window, false-breakout buffer or Pocket Pivot formula was invented. These remain pending user-approved definitions; no new breakout/entry gate was introduced.
+
+**Validation:** GitHub Actions run `42590228703`, commit `f1c189472894cf14cd151900b52288dde9c4b1c8`, completed SUCCESS: 284 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. Issuer Matching and RSS Parser workflow also completed SUCCESS.
