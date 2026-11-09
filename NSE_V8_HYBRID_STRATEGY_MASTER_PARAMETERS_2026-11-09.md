@@ -60,7 +60,7 @@ The four separate outputs are:
 - Do not apply a Strong Fundamental gate before data collection. Missing metrics must remain visible with explicit statuses; do not silently drop candidates.
 - Fundamental cache must persist inside this GitHub repository, be reused across runs, retain historical snapshots and official verification status, and refresh when a new quarterly reporting period becomes available.
 - Use official filing verification with exact symbol, exact period-end and valid publication/as-of timing. Unresolved values remain unverified/WAIT.
-- **Pending boundary decision:** whether to collect fundamentals for every unique Delivery A/B stock before liquidity, or retain the current Liquidity-first collection boundary. Do not change this boundary until explicitly resolved.
+- **Approved boundary (confirmed 06-Nov-2026):** the complete Delivery A OR B union, including all RVOL bands, proceeds to Liquidity. Fundamental data collection then runs for every Liquidity-qualified candidate. Do not move fundamentals before Liquidity unless the user explicitly changes this sequence.
 
 ### RSI
 - RSI is informational only. It must not reject stocks or apply an eligibility/score penalty.
@@ -164,7 +164,7 @@ Read-only mapping against GitHub `main`:
 - Existing Support/Resistance and Breakout/Pullback logic is partial; it is not a complete hybrid engine.
 - The following dedicated capabilities were not found in the audited paths and require implementation/audit: absolute Delivery Quantity trend + price-stability model; fixed-range base metrics; repeated S/R test counts; VCP contraction engine; EMA50/EMA200 observation; post-breakout retest; reproducible Pocket Pivot; four independent watchlist outputs.
 - The current scanner's later core technical/confirmation flow can exclude non-Breakout/Pullback candidates. The hybrid implementation must preserve early-stage accumulation/base candidates in their own watchlists instead of treating lack of breakout as a final rejection.
-- Current fundamentals are collected after Liquidity. The boundary decision remains open as noted above.
+- Current fundamentals are collected after Liquidity for every liquidity-qualified candidate. This is the approved production boundary confirmed on 06-Nov-2026.
 - Audit is a code-to-rule finding, not a claim that the missing features have already been implemented or tested.
 
 ## 10. Explicitly unresolved — do not ask repeatedly; keep recorded until decision is needed
@@ -304,13 +304,13 @@ Before taking action on this repository:
 
 **Current code verified:**
 - Liquidity is a hard gate using 20 prior sessions of NSE Bhavcopy TtlTrfVal; average daily traded value >=₹1.5 crore passes. Tiers remain LOW ₹1.5–<₹2 crore, MEDIUM ₹2–<₹5 crore and STRONG >=₹5 crore.
-- Fundamental collection is currently called **after Liquidity** and receives the liquidity-qualified candidate frame. This is the existing implementation; whether collection should instead cover the entire Delivery A/B union before Liquidity remains an unresolved boundary decision. Do not change until explicitly resolved.
+- Fundamental collection is called **after Liquidity** and receives the liquidity-qualified candidate frame. The user confirmed this boundary on 06-Nov-2026: Delivery A/B union (all RVOL bands) -> Liquidity -> Fundamentals. Do not move collection before Liquidity without a later explicit change.
 - Fundamental collection never removes candidate rows. Manual metric values remain authoritative; provider failures and missing metrics remain visible as MISSING_DATA/PARTIAL_DATA/WAIT statuses.
 - The current metrics cache is `data/inputs/fundamental_metrics.csv`; dated snapshots are written under `data/cache/fundamental_history/`. The scheduled GitHub workflow stages and commits the current cache and dated history snapshots into the repository.
 - Yahoo Finance via yfinance is a secondary provider; official NSE filing metadata supplies publication-date verification and period-alignment statuses. Direct XBRL metric-value verification is run as a separate audit sidecar using hash-verified official XML evidence; it is not currently a candidate gate and is not merged into the FundamentalScore calculation.
 - FundamentalScore is informational only. The current score requires six numeric score metrics plus verified publication date, period end and metric-period alignment; the direct XBRL metric-value verification sidecar remains separately visible. Do not turn Strong Fundamental or score >=65 into an eligibility gate.
 
-**Open boundary decisions remain:** collect fundamentals for all Delivery A/B before Liquidity versus current Liquidity-first collection; and whether direct XBRL metric-value verification should become a score prerequisite or remain a non-gating evidence sidecar. No change made.
+**Open fundamental decision:** whether direct XBRL metric-value verification should become a score prerequisite or remain a non-gating evidence sidecar. The collection boundary itself is resolved: Delivery A/B union -> Liquidity -> Fundamentals.
 
 ## 19. Four independent Hybrid watchlists and final EOD data status (09-Nov-2026)
 
@@ -539,8 +539,8 @@ The production scanner must follow this exact sequence:
 ### FII/DII and fundamental-report diagnostics
 - FII/DII exact-date validation remains strict. In run 42615488413, the feed reported DataDate=2026-11-08 while RequestedEODDate=2026-11-09; values are retained as source diagnostics but are not promoted to exact-date/current context. The report log now prints both dates and the mismatch reason. No market-wide flow is treated as stock-specific evidence.
 - The sector refresh successfully supplied 23/23 exact-date sector-index closes. Five of 54 stock candidates still had no exact tracked sector mapping and correctly remained WAIT_FOR_DATA.
-- The workflow previously announced missing Delivery-A/B-specific fundamental exports and standalone shortlist files even though those are not generated by the current production path. Diagnostics now inspect the actual Liquidity-first outputs and explicitly state that per-A/B exports/standalone shortlist files are not expected while the collection-boundary decision remains open.
-- Fundamental collection remains after Liquidity. This PR does not resolve or change that pending boundary decision.
+- The workflow previously announced missing Delivery-A/B-specific fundamental exports and standalone shortlist files even though those are not generated by the current production path. Diagnostics now inspect the actual Liquidity-first outputs and explicitly state that per-A/B exports/standalone shortlist files are not expected under the approved Liquidity-first collection boundary.
+- Fundamental collection remains after Liquidity. This PR preserves the approved Liquidity-first boundary confirmed on 06-Nov-2026.
 
 ### Validation and change control
 - PR #34 merged by squash as commit `8fad96a15094b52378f6d2cb0f2bd4a126fed2db`.
