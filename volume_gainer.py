@@ -959,7 +959,7 @@ def calculate_average_volume(historical):
 
 @_perf_timed("rvol_calculation")
 def calculate_rvol(current, avg_volume):
-    print("\nSTEP 6: Calculating RVOL for primary-shortlisted stocks...")
+    print("\nSTEP 5: Calculating RVOL for the de-duplicated Delivery A/B union only...")
     baseline_columns = ["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"]
     if avg_volume is None or avg_volume.empty:
         baseline = pd.DataFrame(columns=baseline_columns)
