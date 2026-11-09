@@ -44,14 +44,23 @@ The active 30-calendar-day NSE Delivery A/B screening rules agreed on 2026-11-07
 The RSI informational-only / no-stock-rejection policy agreed on 2026-11-07 is documented in [NSE_V8_RSI_INFORMATIONAL_ONLY_RULES_ADDENDUM_2026-11-07.md](NSE_V8_RSI_INFORMATIONAL_ONLY_RULES_ADDENDUM_2026-11-07.md). RSI is reported to Telegram but cannot affect stock eligibility or any existing non-RSI filter.
 
 
-## Delivery-first eligibility and RVOL classification (2026-11-07)
+## Authoritative selection order — Delivery A/B before RVOL (09-Nov-2026)
 
-- **Delivery A OR B is the eligibility gate.** A stock qualifies when its Category A 30-calendar-day average Delivery is >=60.00%, or when every valid Delivery session in that window is >=60.00%. The existing minimum valid-report and point-in-time rules remain unchanged.
-- **RVOL is calculated for the Main Board universe but its threshold is applied only as a classification after Delivery.** RVOL >1.5 is labelled `HIGH_RVOL_GT_1_5`; RVOL <=1.5 is labelled `LOW_RVOL_LE_1_5`; unavailable/invalid RVOL is labelled `WAIT_FOR_DATA`.
-- **No stock that passes Delivery A or B is rejected or dropped because RVOL is <=1.5 or missing.** All unique Delivery-qualified stocks proceed to the existing liquidity check. Downstream technical analysis may use the RVOL value as an observation/setup input, but the RVOL threshold itself is not a pre-liquidity rejection gate.
-- The EOD artifacts separately expose the complete Delivery A list, complete Delivery B list, complete A/B union with RVOL classification, high-RVOL candidates, low-RVOL Delivery candidates, and RVOL-WAIT candidates.
-- The strict numeric boundary remains unchanged: exactly 1.50 belongs to the low-RVOL group; only values strictly greater than 1.50 belong to the high-RVOL group.
-- The Master Specification is not modified by this addendum. No Delivery thresholds, liquidity thresholds, or unrelated downstream filters are changed.
+The previous wording that RVOL is calculated for the full Mainboard universe is **obsolete and superseded**. The production order is:
+
+1. Load the latest verified NSE EOD Bhavcopy and prepare the eligible NSE Mainboard universe (Largecap, Midcap and Smallcap; existing SME/ETF/MF exclusions remain).
+2. Load/reuse the prior 20 complete trading-session Bhavcopy history and prepare the average-volume baseline only. **Do not calculate RVOL for the Mainboard universe at this stage.**
+3. Apply the existing 30-calendar-day Delivery Category A rule (average Delivery >=60.00%; minimum five valid distinct reports).
+4. Apply the existing 30-calendar-day Delivery Category B rule (every valid report >=60.00%; minimum five valid distinct reports).
+5. Build the complete **A OR B** union; preserve `A_ONLY`, `B_ONLY`, and `A_AND_B` membership and de-duplicate by symbol.
+6. **Only now calculate RVOL** for every unique stock in the A/B union, using current EOD volume divided by the average volume of the previous 20 complete trading sessions (current session excluded).
+7. Classify RVOL: strictly >1.5 = `HIGH_RVOL_GT_1_5`; <=1.5 = `LOW_RVOL_LE_1_5`; missing/invalid baseline or current volume = `WAIT_FOR_DATA`.
+8. **Do not reject or drop any A/B-qualified stock because RVOL is low or unavailable.** All unique A/B stocks, including HIGH, LOW and WAIT_FOR_DATA RVOL groups, continue to the existing Liquidity stage.
+9. Preserve RVOL and its verified 20-session baseline for downstream observations/technical calculations; do not recalculate RVOL for the full universe or apply a Top-20/Top-50 RVOL cap.
+
+The EOD artifacts separately expose the complete Delivery A list, complete Delivery B list, the de-duplicated A/B union with RVOL classification, high-RVOL candidates, low-RVOL Delivery candidates, and RVOL-WAIT candidates. Exactly 1.50 belongs to LOW; only values strictly greater than 1.50 belong to HIGH.
+
+This sequence supersedes any older README wording, comments or notes that place RVOL calculation before Delivery A/B. The original Master Specification remains unchanged; this is the current approved implementation order and does not alter Delivery thresholds, liquidity thresholds, or unrelated downstream filters.
 
 
 ---

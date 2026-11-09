@@ -187,16 +187,20 @@ def test_news_gate_preserves_category_a_only_candidates():
 def test_delivery_qualified_union_is_retained_and_rvol_only_classifies_in_scanner_source():
     source = Path("volume_gainer.py").read_text(encoding="utf-8")
 
-    # RVOL metrics are calculated for the Mainboard universe, but the threshold
-    # is not used to reject Delivery-qualified stocks before liquidity.
-    rvol_metrics_step = source.index("STEP 3: LOAD HISTORY AND CALCULATE RVOL METRICS (NO RVOL GATE YET)")
-    delivery_step = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    # Only the prior-20-session average-volume baseline is prepared before
+    # Delivery. RVOL itself is calculated only after the unique A/B union.
+    history_baseline_step = source.index("STEP 3: LOAD HISTORY AND PREPARE THE PRIOR-20-SESSION VOLUME BASELINE")
+    delivery_step = source.index("STEP 4: DELIVERY A/B ELIGIBILITY")
+    union_step = source.index('delivery_candidates = combined.drop_duplicates("TckrSymb", keep="first")')
+    rvol_calculation_step = source.index("current = calculate_rvol(delivery_candidates, avg_volume)")
     rvol_classification = source.index("current = classify_rvol_for_delivery_candidates")
     liquidity_step = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     fundamental_step = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical_step = source.index("STEP 7: PRICE + VOLUME")
 
-    assert rvol_metrics_step < delivery_step < rvol_classification < liquidity_step
+    assert history_baseline_step < delivery_step < union_step < rvol_calculation_step < rvol_classification < liquidity_step
+    assert "current = calculate_rvol(current, avg_volume)" not in source
+    assert "result = calculate_rvol(result, avg_volume)" not in source
     assert liquidity_step < fundamental_step < technical_step
     assert "def select_rvol_above_threshold" in source
     assert "minimum_rvol=1.5" in source

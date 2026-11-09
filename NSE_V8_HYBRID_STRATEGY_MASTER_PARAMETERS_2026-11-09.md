@@ -42,10 +42,12 @@ The four separate outputs are:
 - Evaluate A and B independently. Eligibility is **A OR B**. Preserve A_ONLY and A_AND_B membership/status and avoid duplicate symbols.
 - Keep the existing 5D/10D/20D consistency fields observational; they must not silently replace the 30-calendar-day A/B rule.
 
-### RVOL
-- RVOL = current EOD total traded volume / average volume of the previous 20 complete trading sessions. Exclude the current session from the baseline.
+### RVOL — calculate only after Delivery A/B union
+- Baseline: average volume of exactly the previous 20 complete, distinct NSE trading sessions for each symbol. Exclude the current EOD session. Missing/duplicate/invalid symbol-session data means `WAIT_FOR_DATA`; do not substitute older sessions.
+- **Calculation order is mandatory:** do not calculate RVOL for the full Mainboard universe before Delivery. First complete Category A and Category B independently, form the full A OR B union, preserve `A_ONLY` / `B_ONLY` / `A_AND_B`, and de-duplicate by symbol. Only then calculate RVOL for every unique A/B candidate.
 - `RVOL > 1.5` = `HIGH_RVOL_GT_1_5`; `RVOL <= 1.5` = `LOW_RVOL_LE_1_5`; missing/invalid = `WAIT_FOR_DATA`.
-- RVOL threshold is classification/information, **not an eligibility rejection gate**. Do not drop Delivery-qualified stocks because RVOL is <=1.5 or unavailable.
+- RVOL is classification/information, **never an eligibility rejection gate**. HIGH, LOW and WAIT_FOR_DATA A/B candidates all continue to the existing Liquidity stage. No Top-20/Top-50 RVOL cap.
+- Preserve the calculated RVOL and its verified 20-session baseline downstream; do not recalculate RVOL on the Mainboard universe or re-run the calculation on later cohorts.
 
 ### Liquidity
 - Existing hard minimum: 20-session average daily traded value **>=₹1.5 crore**.
@@ -474,3 +476,28 @@ Before taking action on this repository:
 - Regression tests cover incomplete and completed horizons and ensure sessions after session 10 do not affect the report.
 
 **Validation:** GitHub Actions run `42594713767`, commit `a45a75e26be60786f3db9a3b4296fb13333bed2b`, completed SUCCESS: 300 unit/data-audit tests passed, all 31 V8 regression tests passed, and sector/news/official-index tests passed. Issuer Matching/RSS Parser workflow also completed SUCCESS.
+
+
+## 32. Authoritative Delivery A/B → RVOL execution order (09-Nov-2026)
+
+**This section supersedes all older working notes, code comments, README text, or historical descriptions that imply RVOL is calculated before Delivery A/B.** The original Master Specification is not edited.
+
+The production scanner must follow this exact sequence:
+
+1. Read and validate the latest NSE EOD Bhavcopy; build the eligible Mainboard universe using the existing official classification and exclusions.
+2. Reuse the historical Bhavcopy cache and collect the prior 20 complete, distinct trading sessions. Calculate/prepare the per-symbol average-volume baseline only. Do not calculate RVOL yet.
+3. Calculate Delivery Category A over the existing full 30-calendar-day window, using all valid distinct reports and the existing minimum-five-report requirement. A passes at average Delivery >=60.00%.
+4. Calculate Delivery Category B independently over the same window. B passes only when every valid report is >=60.00%; retain the same minimum-five-report requirement.
+5. Build the full A OR B union. Preserve A_ONLY, B_ONLY and A_AND_B membership. De-duplicate by symbol before any RVOL calculation.
+6. Calculate RVOL for every unique A/B-union symbol: current EOD total traded volume / the average volume of its previous 20 complete sessions. The current session is excluded from the baseline.
+7. Classify each A/B stock: >1.5 HIGH_RVOL_GT_1_5; <=1.5 LOW_RVOL_LE_1_5; incomplete/invalid inputs WAIT_FOR_DATA.
+8. Retain every A/B stock regardless of RVOL band. No RVOL threshold rejection, no Top-20/Top-50 cap, and no removal of LOW or WAIT_FOR_DATA rows. All proceed to the existing Liquidity check.
+9. Preserve the same RVOL and AvgVolume20D fields for downstream technical observations. Do not perform a second full-universe RVOL calculation or recalculate it for a later cohort.
+
+### Required regression evidence
+- RVOL calculation is invoked only with the de-duplicated Delivery A/B union, never with the complete Mainboard universe.
+- Every A_ONLY, B_ONLY and A_AND_B candidate remains present after RVOL calculation/classification, including LOW and WAIT_FOR_DATA cases.
+- RVOL classification is strictly >1.5 for HIGH; exactly 1.5 is LOW.
+- The complete retained A/B cohort reaches Liquidity; no Top-20/Top-50 cap is introduced.
+
+**Change control:** Delivery A/B thresholds/windows, 20-session RVOL baseline definition, Liquidity threshold, downstream technical gates, risk controls and original Master Specification remain unchanged.

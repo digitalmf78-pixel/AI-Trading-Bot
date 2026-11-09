@@ -1,3 +1,5 @@
+> **HISTORICAL / SUPERSEDED (09-Nov-2026):** The selection order recorded below is retained only as an archive of the 2026-10-23 implementation snapshot. It is not an active instruction. The current rule is Delivery Category A + Category B → de-duplicated A OR B union → RVOL calculation/classification → retain HIGH/LOW/WAIT → Liquidity. Follow `README.md` and Section 32 of `NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md`. The original Master Specification remains unchanged.
+
 NSE V8 STOCK SELECTION PATCH LOG — 2026-10-23
 
 Confirmed user rules:

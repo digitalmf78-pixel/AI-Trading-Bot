@@ -900,7 +900,7 @@ def calculate_average_volume(historical):
     The current EOD session is excluded. A symbol needs one valid non-negative
     volume value in each of the 20 sessions; duplicates and missing rows wait.
     """
-    print("\nSTEP 4: Calculating prior-20-session average volume...")
+    print("\nSTEP 3: Preparing prior-20-session average-volume baseline (RVOL is calculated only after Delivery A/B)...")
     recent = historical[-20:]
     empty = pd.DataFrame(columns=["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"])
     if len(recent) < 20:
@@ -959,7 +959,7 @@ def calculate_average_volume(historical):
 
 @_perf_timed("rvol_calculation")
 def calculate_rvol(current, avg_volume):
-    print("\nSTEP 6: Calculating RVOL for primary-shortlisted stocks...")
+    print("\nSTEP 5: Calculating RVOL for the de-duplicated Delivery A/B union only...")
     baseline_columns = ["TckrSymb", "AvgVolume20D", "AvgVolumeSessions"]
     if avg_volume is None or avg_volume.empty:
         baseline = pd.DataFrame(columns=baseline_columns)
@@ -3449,16 +3449,16 @@ def main():
     print(f"Current verified Main Board symbols: {len(current)}")
 
     # --------------------------------------------------------
-    # STEP 3: LOAD HISTORY AND CALCULATE RVOL METRICS (NO RVOL GATE YET)
+    # STEP 3: LOAD HISTORY AND PREPARE THE PRIOR-20-SESSION VOLUME BASELINE.
+    # Do not calculate RVOL for the Mainboard universe here. RVOL calculation
+    # is deliberately deferred until the complete Delivery A OR B union exists.
     historical = collect_historical_days(eod_date, HISTORY_DAYS)
     avg_volume = calculate_average_volume(historical)
-    print("\\nSTEP 3A: Calculate RVOL metrics for the full verified Main Board universe; do not filter yet...")
-    current = calculate_rvol(current, avg_volume)
 
     # --------------------------------------------------------
-    # STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION (NO RVOL REJECTION)
+    # STEP 4: DELIVERY A/B ELIGIBILITY — BUILD THE COMPLETE A OR B UNION FIRST.
     # --------------------------------------------------------
-    print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B; RVOL will classify only...")
+    print("\\nSTEP 4: Classifying 30-calendar-day Delivery Categories A and B before RVOL...")
     delivery_data_available = True
     accumulation_report = pd.DataFrame()
     vcp_report = pd.DataFrame()
@@ -3574,8 +3574,12 @@ def main():
                 delivery_candidates["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"
                 delivery_candidates["DeliveryStatus"] = "PASS"
 
+                # STEP 5: Calculate RVOL only after A/B union + de-duplication.
+                # Every A/B-qualified stock is passed to calculate_rvol; HIGH,
+                # LOW and WAIT_FOR_DATA rows are all retained for Liquidity.
+                current = calculate_rvol(delivery_candidates, avg_volume)
                 current = classify_rvol_for_delivery_candidates(
-                    delivery_candidates, eod_date, minimum_rvol=1.5
+                    current, eod_date, minimum_rvol=1.5
                 )
                 current.to_csv("outputs/v8_delivery_qualified_all_rvol_classified.csv", index=False)
 
@@ -3777,10 +3781,11 @@ def main():
 
     # Calculate technical features for every stock that passed Delivery and Liquidity.
     # Fundamental score/status is enrichment only and never removes a candidate.
-    result = current.merge(avg_volume, on="TckrSymb", how="left", suffixes=("", "_baseline")) if "AvgVolume20D" not in current.columns else current.copy()
+    result = current.copy()
     result = calculate_5d_volume(result, historical)
     result = prepare_primary_shortlist(result, eod_date)
-    result = calculate_rvol(result, avg_volume)
+    # RVOL/AvgVolume20D were calculated once on the Delivery A/B union above.
+    # Preserve those verified fields; do not recalculate for a later cohort.
 
     # Keep the current session out of rolling-volume baselines, but include it
     # for indicators and price-structure calculations that describe today's EOD.

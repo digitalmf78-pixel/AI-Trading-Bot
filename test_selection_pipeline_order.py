@@ -5,12 +5,17 @@ ROOT = Path(__file__).resolve().parent
 
 def test_delivery_pass_union_is_retained_and_rvol_only_classifies_before_liquidity():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    history_baseline = source.index("STEP 3: LOAD HISTORY AND PREPARE THE PRIOR-20-SESSION VOLUME BASELINE")
+    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY")
+    union = source.index('delivery_candidates = combined.drop_duplicates("TckrSymb", keep="first")')
+    rvol_calculation = source.index("current = calculate_rvol(delivery_candidates, avg_volume)")
     rvol_classification = source.index("current = classify_rvol_for_delivery_candidates")
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
     fundamental = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
     technical = source.index("STEP 7: PRICE + VOLUME")
-    assert delivery < rvol_classification < liquidity < fundamental < technical
+    assert history_baseline < delivery < union < rvol_calculation < rvol_classification < liquidity < fundamental < technical
+    assert "current = calculate_rvol(current, avg_volume)" not in source
+    assert "result = calculate_rvol(result, avg_volume)" not in source
     assert "category_a_all" in source and "category_b_all" in source
     assert "A_AND_B" in source
     assert 'delivery_candidates["DeliveryFilterStatus"] = "PASS_GE_60_PERCENT"' in source
@@ -173,7 +178,7 @@ def test_rvol_classification_retains_high_low_and_missing_delivery_candidates(tm
 
 def test_accumulation_and_vcp_observations_run_before_liquidity_without_gating():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY, THEN RVOL CLASSIFICATION")
+    delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY — BUILD THE COMPLETE A OR B UNION FIRST.")
     rvol = source.index("current = classify_rvol_for_delivery_candidates")
     accumulation = source.index("accumulation_report = build_potential_accumulation_report")
     vcp = source.index("vcp_report = build_vcp_observation_report")
