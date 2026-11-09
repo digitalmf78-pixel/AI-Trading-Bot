@@ -51,6 +51,7 @@ jobs:
           from zoneinfo import ZoneInfo
           import pandas as pd
           from delivery_filter import get_delivery_sessions
+          from nse_trading_calendar import is_trading_session
 
           OUTPUT = Path("delivery_60_each_of_5_sessions_watchlist.csv")
           REQUIRED_SESSIONS = 5
@@ -69,7 +70,7 @@ jobs:
           # that has a valid report, then obtain five distinct valid sessions ending there.
           for offset in range(MAX_ASOF_LOOKBACK_DAYS + 1):
               candidate_date = today_ist - timedelta(days=offset)
-              if candidate_date.weekday() >= 5:
+              if not is_trading_session(candidate_date):
                   continue
               try:
                   candidate_sessions = get_delivery_sessions(
