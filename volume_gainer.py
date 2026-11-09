@@ -2236,7 +2236,7 @@ def calculate_support_resistance(result, historical):
     all_history, history_by_symbol = prepare_history_by_symbol(historical)
     if all_history is None or all_history.empty or "Date" not in all_history.columns:
         rows = []
-        for symbol in result["TckrSymb"]:
+        for symbol in result["TckrSymb"].drop_duplicates():
             rows.append({
                 "TckrSymb": symbol, "PDH": float("nan"), "PDL": float("nan"),
                 "PWH": float("nan"), "PWL": float("nan"), "SR20DHigh": float("nan"),
