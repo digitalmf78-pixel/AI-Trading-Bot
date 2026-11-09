@@ -52,3 +52,23 @@ The RSI informational-only / no-stock-rejection policy agreed on 2026-11-07 is d
 - The EOD artifacts separately expose the complete Delivery A list, complete Delivery B list, complete A/B union with RVOL classification, high-RVOL candidates, low-RVOL Delivery candidates, and RVOL-WAIT candidates.
 - The strict numeric boundary remains unchanged: exactly 1.50 belongs to the low-RVOL group; only values strictly greater than 1.50 belong to the high-RVOL group.
 - The Master Specification is not modified by this addendum. No Delivery thresholds, liquidity thresholds, or unrelated downstream filters are changed.
+
+
+---
+
+## Hybrid Strategy — persistent working parameters (09-Nov-2026)
+
+The current project scope, confirmed parameters, implementation order, Phase 1 code-audit findings, four independent watchlists, unresolved decisions and continuity instructions are recorded in:
+
+**[NSE V8 Hybrid Strategy Master Parameters](NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md)**
+
+Read this register before continuing project work. It is the persistent working reference for the Smart-Money Footprint + Accumulation + VCP + Breakout hybrid so the user does not need to repeat previously agreed decisions.
+
+### Working priority
+- Build **Potential Accumulation → Base/VCP Forming → Breakout Ready → Confirmed Entry** as four separate watchlists.
+- Preserve the current Mainboard universe, 30-calendar-day Delivery A/B rules, RVOL informational classification, ₹1.5 crore liquidity minimum, fundamental enrichment/cache, RSI informational-only policy and all existing risk gates.
+- Do not reject an early accumulation/base candidate solely because VCP or breakout is not yet present.
+- Do not change Sector Strength, News/Catalyst or mandatory 3+1 during the initial hybrid phases. Preserve them for later integration.
+- Pending thresholds (VCP contraction/base width/duration, Pocket Pivot formula, false-breakout buffer, retest window and other recorded open decisions) must not be guessed or silently turned into hard filters.
+- The original `Pasted text(20261009-143842).txt` / `NSE SWING TRADING SYSTEM V8.0` Master Specification remains unchanged and authoritative. The hybrid register supplements it; it does not replace it.
+
