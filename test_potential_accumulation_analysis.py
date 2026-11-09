@@ -55,6 +55,8 @@ def test_report_keeps_candidate_and_emits_20d_50d_200d_range_observations(tmp_pa
     assert row["PriceRange200DStatus"] == "WAIT_FOR_DATA"
     assert row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE"
     assert row["HighDeliverySessionCount"] == 3
+    assert row["HighDeliveryPriceResponseStatus"] == "OBSERVATIONS_AVAILABLE"
+    assert row["SellingPressureObservationStatus"] == "OBSERVATIONS_AVAILABLE"
     assert row["EvidenceStatus"] == "OBSERVATIONS_AVAILABLE"
     assert (tmp_path / "outputs/v8_potential_accumulation_observations_20261023.csv").exists()
 
@@ -117,3 +119,20 @@ def test_future_price_rows_are_excluded_from_asof_range(tmp_path, monkeypatch):
     )
     assert report.iloc[0]["PriceRange20DHigh"] < 999999
     assert report.iloc[0]["AsOfDate"] == "2026-10-23"
+
+
+
+def test_delivery_percent_without_price_fields_does_not_claim_price_response(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sessions = [(day, pd.DataFrame([{
+        "SYMBOL": "AAA", "SERIES": "EQ", "DELIV_QTY": 500,
+        "DELIV_PER": 65,
+    }])) for day, _ in _delivery_sessions()]
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [_history()], sessions, "2026-10-23"
+    )
+    row = report.iloc[0]
+    assert row["DeliveryEvidenceStatus"] == "OBSERVATIONS_AVAILABLE"
+    assert row["HighDeliveryPriceResponseStatus"] == "WAIT_FOR_DATA"
+    assert pd.isna(row["HighDeliveryPriceChangeAbsAveragePct"])
