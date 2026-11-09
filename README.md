@@ -77,3 +77,5 @@ Read this register before continuing project work. It is the persistent working 
 ## Hybrid strategy implementation status
 
 The working decisions, confirmed thresholds, pending parameters and phase-by-phase implementation status are maintained in [NSE V8 Hybrid Strategy Master Parameters](NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md). The original Master Specification remains unchanged. Delivery Quantity observations are informational only and do not alter Delivery A/B eligibility.
+
+- Delivery report integrity: the internal NSE report date is checked against the requested session before cached/downloaded data is accepted.
