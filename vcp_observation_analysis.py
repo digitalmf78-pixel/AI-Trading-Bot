@@ -149,6 +149,10 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             "RangeWidthBlock3Pct": float("nan"),
             "RangeContractionRatio2vs1": float("nan"),
             "RangeContractionRatio3vs2": float("nan"),
+            "RangeContractionDepth2vs1Pct": float("nan"),
+            "RangeContractionDepth3vs2Pct": float("nan"),
+            "PriceVolumeContractionRelationship": "WAIT_FOR_DATA",
+            "FalseVCPOutcomeStatus": "NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON",
             "VolumeAverageBlock1": float("nan"),
             "VolumeAverageBlock2": float("nan"),
             "VolumeAverageBlock3": float("nan"),
@@ -176,6 +180,8 @@ def build_vcp_observation_report(candidates, historical, asof_date):
                 ratio32 = widths[2] / widths[1] if widths[1] > 0 else float("nan")
                 row["RangeContractionRatio2vs1"] = ratio21
                 row["RangeContractionRatio3vs2"] = ratio32
+                row["RangeContractionDepth2vs1Pct"] = (1.0 - ratio21) * 100.0 if math.isfinite(ratio21) else float("nan")
+                row["RangeContractionDepth3vs2Pct"] = (1.0 - ratio32) * 100.0 if math.isfinite(ratio32) else float("nan")
                 transitions = int(widths[1] < widths[0]) + int(widths[2] < widths[1])
                 row["ContractionTransitionsObserved"] = transitions
                 row["ContractionSequenceObservation"] = (
@@ -208,6 +214,26 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             if row["VCPRangeObservationStatus"] == "COMPLETE" and row["VCPVolumeObservationStatus"] == "COMPLETE":
                 row["VCPObservationStatus"] = "COMPLETE"
                 row["VCPStatus"] = "NOT_CLASSIFIED"
+                price_contracted = (
+                    math.isfinite(_number(row["RangeContractionRatio2vs1"]))
+                    and math.isfinite(_number(row["RangeContractionRatio3vs2"]))
+                    and row["RangeContractionRatio2vs1"] < 1
+                    and row["RangeContractionRatio3vs2"] < 1
+                )
+                volume_contracted = (
+                    math.isfinite(_number(row["VolumeRatioBlock2vs1"]))
+                    and math.isfinite(_number(row["VolumeRatioBlock3vs2"]))
+                    and row["VolumeRatioBlock2vs1"] < 1
+                    and row["VolumeRatioBlock3vs2"] < 1
+                )
+                if price_contracted and volume_contracted:
+                    row["PriceVolumeContractionRelationship"] = "PRICE_AND_VOLUME_BOTH_CONTRACTED"
+                elif price_contracted:
+                    row["PriceVolumeContractionRelationship"] = "PRICE_CONTRACTED_VOLUME_DID_NOT_CONTRACT_BOTH_STEPS"
+                elif volume_contracted:
+                    row["PriceVolumeContractionRelationship"] = "VOLUME_CONTRACTED_PRICE_DID_NOT_CONTRACT_BOTH_STEPS"
+                else:
+                    row["PriceVolumeContractionRelationship"] = "NO_TWO_STEP_JOINT_CONTRACTION_OBSERVED"
             else:
                 row["VCPObservationStatus"] = "PARTIAL_DATA"
                 row["VCPStatus"] = "WAIT_FOR_DATA"
