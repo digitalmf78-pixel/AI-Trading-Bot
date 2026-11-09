@@ -19,7 +19,7 @@ def test_missing_asof_delivery_report_uses_latest_five_valid_sessions(monkeypatc
     valid = {
         date(2026, 10, 22): _frame(values=(61.0,)),
         date(2026, 10, 21): _frame(values=(62.0,)),
-        date(2026, 10, 20): _frame(values=(63.0,)),
+        date(2026, 10, 15): _frame(values=(63.0,)),
         date(2026, 10, 19): _frame(values=(64.0,)),
         date(2026, 10, 16): _frame(values=(65.0,)),
     }
@@ -42,7 +42,7 @@ def test_delivery_audit_labels_actual_window_when_asof_report_missing(monkeypatc
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
-    dates = [date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    dates = [date(2026, 10, 15), date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 21), date(2026, 10, 22)]
     values = [55.0, 65.0, 58.0, 70.0, 62.0]  # average >= 60; not every day >= 60
     reports = [(day, _frame(values=(value,))) for day, value in zip(dates, values)]
 
@@ -58,7 +58,7 @@ def test_delivery_audit_labels_actual_window_when_asof_report_missing(monkeypatc
     assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
     assert row["DeliveryAsOfDate"] == "2026-10-23"
     assert bool(row["DeliveryAsOfReportAvailable"]) is False
-    assert row["DeliveryWindowStartDate"] == "2026-10-16"
+    assert row["DeliveryWindowStartDate"] == "2026-10-15"
     assert row["DeliveryWindowEndDate"] == "2026-10-22"
     assert row["LatestDeliveryPct"] == 62.0
 
