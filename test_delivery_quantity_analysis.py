@@ -99,3 +99,66 @@ def test_quantity_zero_is_valid_and_change_percentage_is_nan_when_start_is_zero(
     )
     assert enriched.iloc[0]["DeliveryQty5DFirst"] == 0
     assert pd.isna(enriched.iloc[0]["DeliveryQty5DChangePct"])
+
+
+
+def test_duplicate_delivery_report_date_is_not_silently_dropped(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    reports = _reports(list(range(20)))
+    reports.append((reports[-1][0], reports[-1][1].copy()))
+    enriched, _ = build_delivery_quantity_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}]),
+        "2026-10-20", reports,
+    )
+    row = enriched.iloc[0]
+    assert row["DeliveryQty5DStatus"] == "WAIT_FOR_DATA"
+    assert row["DeliveryQty5DReason"] == "DUPLICATE_DELIVERY_REPORT_DATE"
+
+
+def test_invalid_delivery_quantity_row_cannot_be_filtered_away_to_create_pass(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    reports = _reports(list(range(20)))
+    reports[-1] = (reports[-1][0], pd.concat([
+        reports[-1][1],
+        pd.DataFrame([{
+            "SYMBOL": "AAA", "SERIES": "EQ", "DELIV_QTY": -10,
+            "DELIV_PER": 60, "TTL_TRD_QNTY": 100, "CLOSE_PRICE": 100,
+        }]),
+    ], ignore_index=True))
+    enriched, _ = build_delivery_quantity_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}]),
+        "2026-10-20", reports,
+    )
+    row = enriched.iloc[0]
+    assert row["DeliveryQty5DStatus"] == "WAIT_FOR_DATA"
+    assert row["DeliveryQty5DReason"] == "AMBIGUOUS_DUPLICATE_SYMBOL_SERIES"
+
+
+def test_single_invalid_delivery_quantity_is_wait_for_data(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    reports = _reports(list(range(20)))
+    reports[-1] = (reports[-1][0], pd.DataFrame([{
+        "SYMBOL": "AAA", "SERIES": "EQ", "DELIV_QTY": -10,
+        "DELIV_PER": 60, "TTL_TRD_QNTY": 100, "CLOSE_PRICE": 100,
+    }]))
+    enriched, _ = build_delivery_quantity_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}]),
+        "2026-10-20", reports,
+    )
+    row = enriched.iloc[0]
+    assert row["DeliveryQty5DStatus"] == "WAIT_FOR_DATA"
+    assert row["DeliveryQty5DReason"] == "INVALID_DELIVERY_QUANTITY"
+
+
+def test_duplicate_candidate_symbol_series_is_not_reported_as_complete(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    candidates = pd.DataFrame([
+        {"TckrSymb": "AAA", "SctySrs": "EQ"},
+        {"TckrSymb": "AAA", "SctySrs": "EQ"},
+    ])
+    enriched, _ = build_delivery_quantity_report(
+        candidates, "2026-10-20", _reports(list(range(20)))
+    )
+    assert len(enriched) == 2
+    assert enriched["DeliveryQty5DStatus"].eq("WAIT_FOR_DATA").all()
+    assert enriched["DeliveryQty5DReason"].eq("AMBIGUOUS_DUPLICATE_SYMBOL_SERIES").all()
