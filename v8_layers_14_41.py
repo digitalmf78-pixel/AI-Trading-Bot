@@ -721,17 +721,18 @@ def run_eod_layers(
     ad_values = {}
     ad_groups = {}
     expected_eod_dates = set(eod_window_dates)
-    for symbol, group in ad_history.groupby("TckrSymb"):
-        group = group.sort_values("Date").copy()
-        ad_groups[str(symbol)] = group
-        group_dates = group["Date"].dt.date
-        complete_symbol_window = (
-            eod_window_complete
-            and len(group) == 20
-            and group_dates.nunique() == 20
-            and set(group_dates) == expected_eod_dates
-        )
-        ad_values[str(symbol)] = _accumulation_score(group) if complete_symbol_window else float("nan")
+    if "TckrSymb" in ad_history.columns:
+        for symbol, group in ad_history.groupby("TckrSymb"):
+            group = group.sort_values("Date").copy()
+            ad_groups[str(symbol)] = group
+            group_dates = group["Date"].dt.date
+            complete_symbol_window = (
+                eod_window_complete
+                and len(group) == 20
+                and group_dates.nunique() == 20
+                and set(group_dates) == expected_eod_dates
+            )
+            ad_values[str(symbol)] = _accumulation_score(group) if complete_symbol_window else float("nan")
     output["AccumulationDistribution20D"] = output["TckrSymb"].astype(str).map(ad_values)
     output["AccumulationDistribution"] = output["AccumulationDistribution20D"].map(
         lambda value: "WAIT_FOR_DATA" if pd.isna(value) else "Accumulation" if value >= 0.20 else "Distribution" if value <= -0.20 else "Neutral"
