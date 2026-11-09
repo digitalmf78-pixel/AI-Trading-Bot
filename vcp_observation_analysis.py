@@ -49,8 +49,34 @@ def build_vcp_observation_report(candidates, historical, asof_date):
     ordered_dates = sorted(market_dates)
 
     rows = []
-    for _, candidate in candidates.drop_duplicates("TckrSymb", keep="first").iterrows():
+    candidate_symbols = candidates["TckrSymb"].astype(str).str.strip().str.upper()
+    candidate_counts = candidate_symbols.value_counts()
+    for candidate_index, candidate in candidates.iterrows():
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
+        if candidate_counts.get(symbol, 0) != 1:
+            rows.append({
+                "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
+                "VCPWindowSessions": min(len(ordered_dates), TOTAL_SESSIONS),
+                "VCPRangeObservationStatus": "WAIT_FOR_DATA",
+                "VCPVolumeObservationStatus": "WAIT_FOR_DATA",
+                "VCPObservationStatus": "WAIT_FOR_DATA",
+                "ContractionSequenceObservation": "WAIT_FOR_DATA",
+                "ContractionTransitionsObserved": float("nan"),
+                "RangeWidthBlock1Pct": float("nan"),
+                "RangeWidthBlock2Pct": float("nan"),
+                "RangeWidthBlock3Pct": float("nan"),
+                "RangeContractionRatio2vs1": float("nan"),
+                "RangeContractionRatio3vs2": float("nan"),
+                "VolumeAverageBlock1": float("nan"),
+                "VolumeAverageBlock2": float("nan"),
+                "VolumeAverageBlock3": float("nan"),
+                "VolumeRatioBlock2vs1": float("nan"),
+                "VolumeRatioBlock3vs2": float("nan"),
+                "VolumeDryUpRatio3vs2": float("nan"),
+                "VolumeDryUpFlag": "WAIT_FOR_DATA",
+                "VCPStatus": "WAIT_FOR_DATA",
+            })
+            continue
         series = str(candidate.get("SctySrs", "EQ")).strip().upper() or "EQ"
         frames = []
         for raw in historical or []:
@@ -101,6 +127,14 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             and set(aligned["Date"].dt.date) == set(window_dates)
             and {"HghPric", "LwPric", "ClsPric"}.issubset(aligned.columns)
             and aligned[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
+            and aligned[["HghPric", "LwPric", "ClsPric"]].apply(
+                lambda column: column.map(
+                    lambda value: math.isfinite(float(value)) and float(value) > 0
+                )
+            ).all().all()
+            and (aligned["HghPric"] >= aligned["LwPric"]).all()
+            and (aligned["ClsPric"] >= aligned["LwPric"]).all()
+            and (aligned["ClsPric"] <= aligned["HghPric"]).all()
         )
         row = {
             "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
@@ -153,7 +187,9 @@ def build_vcp_observation_report(candidates, historical, asof_date):
             volume_complete = (
                 "TtlTradgVol" in aligned.columns
                 and aligned["TtlTradgVol"].notna().all()
-                and (aligned["TtlTradgVol"] >= 0).all()
+                and aligned["TtlTradgVol"].map(
+                    lambda value: math.isfinite(float(value)) and float(value) >= 0
+                ).all()
             )
             if volume_complete:
                 row["VCPVolumeObservationStatus"] = "COMPLETE"
