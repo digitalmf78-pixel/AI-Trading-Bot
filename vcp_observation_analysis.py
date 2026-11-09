@@ -56,7 +56,11 @@ def build_vcp_observation_report(candidates, historical, asof_date):
         for raw in historical or []:
             if raw is None or raw.empty or "TckrSymb" not in raw.columns or "Date" not in raw.columns:
                 continue
-            part = raw[raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)].copy()
+            raw_dates = pd.to_datetime(raw["Date"], errors="coerce")
+            part = raw[
+                raw["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)
+                & raw_dates.dt.date.lt(asof)
+            ].copy()
             if "SctySrs" in part.columns:
                 part = part[part["SctySrs"].astype(str).str.strip().str.upper().eq(series)]
             if not part.empty:
@@ -68,7 +72,8 @@ def build_vcp_observation_report(candidates, historical, asof_date):
         hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
         hist = hist.dropna(subset=["Date"])
         hist = hist[hist["Date"].dt.date <= asof].sort_values("Date", kind="mergesort")
-        hist = hist.groupby(["TckrSymb", "Date"], as_index=False, sort=False).last()
+        # Do not collapse duplicate symbol/session rows: they are ambiguous
+        # source data and must fail the exact-window completeness check.
         for column in ("HghPric", "LwPric", "ClsPric", "TtlTradgVol"):
             if column in hist.columns:
                 hist[column] = pd.to_numeric(hist[column], errors="coerce")
@@ -78,6 +83,8 @@ def build_vcp_observation_report(candidates, historical, asof_date):
         complete_window = (
             len(window_dates) == TOTAL_SESSIONS
             and len(aligned) == TOTAL_SESSIONS
+            and aligned["Date"].dt.date.nunique() == TOTAL_SESSIONS
+            and set(aligned["Date"].dt.date) == set(window_dates)
             and {"HghPric", "LwPric", "ClsPric"}.issubset(aligned.columns)
             and aligned[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
         )
