@@ -70,14 +70,14 @@ def _sha256(value: str) -> str:
 
 
 _SENSITIVE_TEXT_PATTERNS = (
-    re.compile(r"(?i)\\b(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|passwd|secret|client[_-]?secret|refresh[_-]?token|session(?:id)?|chat[_-]?id)\\s*[:=]\\s*[^\\s,;&]+"),
-    re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{8,}"),
-    re.compile(r"(?i)\\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\\b"),
+    re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|passwd|secret|client[_-]?secret|refresh[_-]?token|session(?:id)?|chat[_-]?id)\s*[:=]\s*[^\s,;&]+"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\b"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r"(?i)https?://[^\\s?]+\\?[^\\s]+"),
-    re.compile(r"(?i)https?://[^/\\s:@]+:[^/@\\s]+@"),
-    re.compile(r"(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"),
-    re.compile(r"(?<!\\d)(?:\\+?\\d[\\s().-]?){9,14}\\d(?!\\d)"),
+    re.compile(r"(?i)https?://[^\s?]+\?[^\s]+"),
+    re.compile(r"(?i)https?://[^/\s:@]+:[^/@\s]+@"),
+    re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
+    re.compile(r"(?<!\d)(?:\+?\d[\s().-]?){9,14}\d(?!\d)"),
 )
 
 
@@ -92,7 +92,7 @@ def _reject_sensitive_text(value: Any, path: str = "$") -> None:
     elif isinstance(value, str):
         if len(value) > 2000:
             raise SignalValidationError(f"Text value exceeds 2000 characters at {path}")
-        if re.search(r"[\\x00-\\x08\\x0b-\\x1f\\x7f]", value):
+        if re.search(r"[\x00-\x08\x0b-\x1f\x7f]", value):
             raise SignalValidationError(f"Control character in text value at {path}")
         if any(pattern.search(value) for pattern in _SENSITIVE_TEXT_PATTERNS):
             raise SignalValidationError(f"Sensitive or account-derived text rejected at {path}")
