@@ -252,3 +252,17 @@ Source: GitHub Actions run `42634890331`, artifact `nse-v8-reports-42634890331` 
 - The repository tree currently tracks fundamental history snapshots, but not `data/bhavcopy/` or `data/cache/delivery/`; those datasets are stored in the GitHub Actions cache (the 10-Nov checkpoint records a ~35 MB restored NSE cache).
 - Consequently, the real-data Track 2 observer run over all 2,588 symbols has **not** yet been executed in this session. The artifact inspection above is a read-only coverage audit, not a substitute for rerunning the observation engines.
 - Next safe step: restore the existing main-branch Actions cache in an isolated audit-only workflow, download the fixed 09-Nov report artifact, run only the Track 2 builder with network/Telegram disabled, and upload its separate `outputs/track2_full_mainboard/` reports. No production scanner wiring is implied.
+
+
+## Real-data Track 2 offline run — completed (10-Nov-2026)
+
+- Isolated GitHub Actions run [42804931499](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42804931499) — **SUCCESS** on audit branch commit `d8e0de8e41e532d52225de41e799606da4f066fe`.
+- Restored the existing main-branch NSE Actions cache read-only and downloaded the fixed 09-Nov EOD artifact. The validation used **201 Bhavcopy sessions including the 09-Nov as-of session (200 prior sessions)** and **21 cached Delivery report dates** from 12-Oct through 09-Nov. No cache errors were reported.
+- Exact cohort parity was independently checked against the source `v8_main_board_universe_audit.csv`: **2,588/2,588 symbols match**, with zero missing, extra, duplicate or invalid symbols. The cohort and each of the three observer outputs contain 2,588 unique rows.
+- Delivery Quantity observer: **2,253 COMPLETE_5_10_20D**, **335 WAIT_FOR_DATA**. Window coverage: 5D **2,352 COMPLETE / 236 WAIT**, 10D **2,302 / 286 WAIT**, 20D **2,253 / 335 WAIT**.
+- Potential Accumulation observer: **2,253 OBSERVATIONS_AVAILABLE**, **258 PARTIAL_DATA**, **77 WAIT_FOR_DATA**.
+- VCP observer: **2,023 COMPLETE**, **565 WAIT_FOR_DATA**. All 2,588 rows explicitly carry `FalseVCPOutcomeStatus=NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON`; complete observations remain `VCPStatus=NOT_CLASSIFIED` rather than being promoted to a VCP category.
+- Requested SIDEWAYS_ACCUMULATION / DIP_ACCUMULATION patterns remain `NOT_CLASSIFIED_PENDING_APPROVED_RULES`. No category thresholds were invented.
+- Safety assertions in the run summary: `track1_artifacts_unchanged=true`, `network_fetches=0`, `telegram_enabled=false`, `production_scanner_called=false`. All three observer error fields are null.
+- Artifact: `track2-full-mainboard-offline-42804931499` (artifact ID `13758437527`). It contains the cohort, three observer CSVs, coverage manifest and offline validation summary.
+- **Conclusion:** the standalone Track 2 builder has now completed a successful real-data, full-Mainboard offline execution with exact cohort coverage and isolated outputs. This validates the standalone research reports only; it does **not** authorize scheduled workflow wiring or production scanner integration. Track 1, main branch and Master Specification remain unchanged.
