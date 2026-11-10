@@ -131,6 +131,13 @@ def assemble_mainboard_cohort(
         if not isinstance(report, pd.DataFrame):
             raise CohortAssemblyError(f"{safe_stage}: report must be a DataFrame or None")
         if report.empty:
+            if not report.columns.is_unique:
+                duplicates = report.columns[report.columns.duplicated()].astype(str).unique().tolist()
+                raise CohortAssemblyError(f"{safe_stage}: duplicate column names are ambiguous: {duplicates[:20]}")
+            reserved_report_columns = {"_cohort_symbol_key", "_cohort_series_key"}
+            reserved_collisions = sorted(reserved_report_columns.intersection(map(str, report.columns)))
+            if reserved_collisions:
+                raise CohortAssemblyError(f"{safe_stage}: reserved internal columns supplied by source: {reserved_collisions}")
             base[coverage_col] = "NOT_EVALUATED"
             base[f"{safe_stage}__CoverageReason"] = "SOURCE_REPORT_EMPTY"
             diagnostics.append({"Stage": safe_stage, "Diagnostic": "SOURCE_REPORT_EMPTY", "Rows": 0})
