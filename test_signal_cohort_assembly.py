@@ -202,3 +202,30 @@ def test_stage_payload_cannot_shadow_coverage_status():
     report = pd.DataFrame({"TckrSymb": ["AAA"], "CoverageStatus": ["spoofed"]})
     with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
         assemble_mainboard_cohort(main, reports={"Stage": report})
+
+
+def test_missing_stage_report_cannot_overwrite_existing_coverage_columns():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "Stage__CoverageStatus": ["source-value"]})
+    with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
+        assemble_mainboard_cohort(main, reports={"Stage": None})
+
+
+def test_empty_stage_report_cannot_overwrite_existing_coverage_columns():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "Stage__CoverageStatus": ["source-value"]})
+    empty = pd.DataFrame(columns=["TckrSymb"])
+    with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
+        assemble_mainboard_cohort(main, reports={"Stage": empty})
+
+
+def test_empty_evidence_report_duplicate_columns_fail_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    news = pd.DataFrame(columns=["TckrSymb", "Headline", "Headline"])
+    with pytest.raises(CohortAssemblyError, match="duplicate column names"):
+        assemble_mainboard_cohort(main, news_report=news)
+
+
+def test_empty_evidence_report_reserved_coverage_column_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    news = pd.DataFrame(columns=["TckrSymb", "NewsEvidenceCoverageStatus"])
+    with pytest.raises(CohortAssemblyError, match="reserved coverage column"):
+        assemble_mainboard_cohort(main, news_report=news)
