@@ -826,6 +826,18 @@ def run_eod_layers(
         if column in ad_history.columns:
             ad_history[column] = pd.to_numeric(ad_history[column], errors="coerce")
     ad_history = ad_history.sort_values("Date")
+    # Reuse the validated 20-session OHLCV window for the ATR fallback below.
+    # Key by both symbol and security series so EQ/BE rows cannot be mixed.
+    ad_groups = {}
+    group_columns = ["TckrSymb"]
+    if "SctySrs" in ad_history.columns:
+        group_columns.append("SctySrs")
+    for group_key, group_frame in ad_history.groupby(group_columns, dropna=False):
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
+        symbol_key = str(group_key[0]).strip().upper()
+        series_key = str(group_key[1]).strip().upper() if len(group_key) > 1 else ""
+        ad_groups[(symbol_key, series_key)] = group_frame.sort_values("Date").tail(20).copy()
     ad_values, ad_diagnostics = _accumulation_distribution_for_candidates(
         ad_history,
         output,
@@ -918,7 +930,10 @@ def run_eod_layers(
         support = _num(row.get("SRSupport"))
         atr = _num(row.get("ATR14"))
         if pd.isna(atr) or atr <= 0:
-            records = ad_groups.get(str(row.get("TckrSymb")))
+            records = ad_groups.get((
+                str(row.get("TckrSymb", "")).strip().upper(),
+                str(row.get("SctySrs", "")).strip().upper(),
+            ))
             if (
                 eod_window_complete and records is not None and len(records) == 20
                 and {"HghPric", "LwPric", "ClsPric"}.issubset(records.columns)
