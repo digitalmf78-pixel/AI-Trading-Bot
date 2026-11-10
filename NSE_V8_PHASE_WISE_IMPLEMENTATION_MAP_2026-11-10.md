@@ -27,14 +27,14 @@
 - Current README and hybrid register are implementation references. Original master spec remains authoritative.
 
 ## Phase 0 — Live repository baseline audit
-**Status: COMPLETED FOR INITIAL AUDIT; evidence matrix still being finalized**
+**Status: INITIAL AUDIT COMPLETED; detailed evidence reports committed on this branch**
 - Main branch and relevant source modules inspected; baseline EOD figures retained as comparison values, not fixed expectations.
 - Working branch created: `audit/implementation-roadmap-2026-11-10`.
 - This roadmap was committed on the working branch only. No production source or main-branch file was changed.
-- Remaining audit evidence: current workflows, cache coverage by 5/10/20/30/90/200 sessions, Telegram actual-send path, latest artifacts and full Track 1 regression baseline.
+- Main source flow, cohort construction and the 09-Nov EOD artifact have been inspected. Workflow scheduler details and a full Track 1 regression replay remain to be verified.
 
 ## Phase 1 — Data contracts and canonical schemas
-**Status: IN PROGRESS**
+**Status: AUDIT IN PROGRESS; schema design documented**
 1. Map current symbol/company mapping and canonical symbol identity.
 2. Define compatible records for Delivery, price/volume, Fundamentals, institutional evidence, news and events.
 3. Ensure every record carries as-of date/time, source, publication/reporting period, fetch/first-seen/last-checked time, freshness, verification, coverage and missing-data status as applicable.
@@ -44,12 +44,15 @@
 **Exit criteria:** schema/data-contract matrix and tests for timezone, source provenance, duplicate identity and missing values.
 
 ## Phase 2 — Historical Delivery data audit
-**Status: PLANNED**
+**Status: INITIAL ARTIFACT AUDIT COMPLETED; BACKFILL DECISION PENDING**
 1. Preserve 30-day Delivery A/B eligibility unchanged.
 2. Measure actual per-symbol and archive coverage for 5/10/20/30/90/200 distinct sessions.
 3. Separate exchange report availability from Bhavcopy session coverage.
 4. Verify date uniqueness, symbol mapping, session calendar, cache freshness and source completeness.
 5. Propose a separate backfill only if actual coverage proves it necessary; do not fabricate or substitute values.
+
+**Observed 09-Nov-2026 artifact:** 201 Bhavcopy/price dates (2026-01-16 to 2026-11-09; 502,424 rows; 2,996 symbols) and 21 Delivery report dates (2026-10-12 to 2026-11-09). Delivery Quantity completeness: 5D 2,352/2,588 (90.88%); 10D 2,302/2,588 (88.95%); 20D 2,253/2,588 (87.06%). No network calls; historical point-in-time Fundamentals unavailable. See `NSE_V8_HISTORICAL_COVERAGE_AUDIT_2026-11-10.md`.
+
 **Exit criteria:** dated coverage report and a safe backfill proposal, if required.
 
 ## Phase 3 — Early Accumulation Research Engine
