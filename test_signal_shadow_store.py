@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from signal_shadow_store import (
     SignalConflictError,
+    SignalStoreError,
     SignalValidationError,
     append_immutable_jsonl,
     build_signal_snapshot,
@@ -39,6 +41,11 @@ def test_signal_id_and_payload_hash_ignore_runner_timestamp():
     assert first["signal_id"] == second["signal_id"]
     assert first["snapshot_payload_sha256"] == second["snapshot_payload_sha256"]
     assert first["CreatedAtUTC"] != second["CreatedAtUTC"]
+
+
+def test_datetime_is_not_accepted_as_an_eod_date():
+    with pytest.raises(SignalValidationError, match="not a datetime"):
+        snapshot(eod_date=datetime(2026, 11, 9, 16, 0, tzinfo=timezone.utc))
 
 
 def test_only_eod_mode_can_create_snapshots():
@@ -106,6 +113,27 @@ def test_changed_payload_conflicts_and_preserves_existing_record(tmp_path: Path)
     assert stored["signal_fields"]["Close"] == 1500.0
 
 
+def test_caller_cannot_supply_a_false_snapshot_hash(tmp_path: Path):
+    row = snapshot()
+    row["snapshot_payload_sha256"] = "0" * 64
+    with pytest.raises(SignalValidationError, match="hash mismatch"):
+        append_immutable_jsonl(tmp_path / "bad.jsonl", [row], key_field="signal_id",
+                               hash_field="snapshot_payload_sha256")
+    assert not (tmp_path / "bad.jsonl").exists()
+
+
+def test_existing_record_tampering_is_detected(tmp_path: Path):
+    path = tmp_path / "tampered.jsonl"
+    row = snapshot()
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    loaded["signal_fields"]["Close"] = 9999.0
+    path.write_text(json.dumps(loaded) + "\n", encoding="utf-8")
+    with pytest.raises(SignalStoreError, match="hash mismatch"):
+        append_immutable_jsonl(path, [row], key_field="signal_id",
+                               hash_field="snapshot_payload_sha256")
+
+
 def test_conflicting_duplicates_inside_batch_fail(tmp_path: Path):
     path = tmp_path / "2026-11-09.jsonl"
     with pytest.raises(SignalConflictError):
@@ -122,3 +150,14 @@ def test_append_batch_deduplicates_exact_repeats(tmp_path: Path):
     result = append_immutable_jsonl(path, [row, row], key_field="signal_id",
                                     hash_field="snapshot_payload_sha256")
     assert result == {"appended": 1, "duplicates": 1}
+
+
+def test_stage_event_digest_is_verified_when_appended(tmp_path: Path):
+    event = build_stage_event(
+        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
+        observed_at_utc="2026-11-10T10:00:00+00:00",
+    )
+    path = tmp_path / "events.jsonl"
+    assert append_immutable_jsonl(path, [event], key_field="event_id",
+                                  hash_field="event_id") == {"appended": 1, "duplicates": 0}
