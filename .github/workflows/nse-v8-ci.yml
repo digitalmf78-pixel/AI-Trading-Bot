@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - main
+      - audit/implementation-roadmap-2026-11-10
     paths:
       - '**.py'
       - '.github/workflows/**'
