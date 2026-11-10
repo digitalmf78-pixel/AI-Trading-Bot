@@ -158,7 +158,7 @@ jobs:
                   & bhav["TtlTradgVol"].ge(0)
               ].copy()
 
-              if not official_etf_symbols and not ({"ISIN", "FinInstrmNm"} & set(bhav.columns)):
+              if not official_etf_symbols and not {"ISIN", "FinInstrmNm"}.issubset(bhav.columns):
                   write_empty(f"WAIT_FOR_DATA: ETF/MF classification unavailable for {day}")
                   raise SystemExit(0)
 
@@ -166,8 +166,13 @@ jobs:
               if "ISIN" in bhav.columns:
                   etf_mask |= bhav["ISIN"].fillna("").astype(str).str.strip().str.upper().str.startswith("INF")
               if "FinInstrmNm" in bhav.columns:
-                  etf_mask |= bhav["FinInstrmNm"].fillna("").astype(str).str.contains(
+                  instrument_name = bhav["FinInstrmNm"].fillna("").astype(str)
+                  etf_mask |= instrument_name.str.contains(
                       r"\bAMC\s*-\s*", case=False, regex=True, na=False
+                  )
+                  etf_mask |= instrument_name.str.contains(
+                      r"\b(ETF|EXCHANGE TRADED FUND|MUTUAL FUND)\b",
+                      case=False, regex=True, na=False,
                   )
               excluded_etfs = set(bhav.loc[etf_mask, "TckrSymb"])
               bhav = bhav.loc[~etf_mask].copy()
