@@ -47,9 +47,13 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Fixed a malformed f-string in the one-to-many evidence series-mismatch diagnostic before attempting the next test run.
 - Added fail-closed guards for generated coverage columns when stage reports are missing or empty.
 - Added validation for duplicate columns and reserved coverage columns in empty News/Event evidence frames.
-- Added four new cohort tests. Current source contains 29 cohort test functions and 16 shadow-store test functions (45 total).
+- Added four new cohort tests. Current source contains 31 cohort test functions and 16 shadow-store test functions (47 total).
 - Added the working audit branch to the CI workflow's push branch allow-list. This workflow-file change is confined to the working branch; main remains untouched.
 - A status lookup for the workflow-triggering commit returned no status checks yet. Therefore the latest 44-test revision and full repository CI are **not yet confirmed executed**. The previously reported 34-pass result remains limited to the earlier revision only.
 
 - Added one further test for reserved internal join-key columns in an empty evidence report. Current inventory is now 29 cohort + 16 shadow-store test functions (45 total).
 - A new Python test-file commit was pushed after the audit-branch CI trigger was added, but the GitHub connector's commit-status endpoint still returns no checks, and its workflow-run helper only exposes pull-request-triggered runs. Actual workflow execution therefore remains unverified; do not interpret an empty status list as a pass.
+
+- Added empty-stage-report schema checks: duplicate columns and reserved internal join keys now fail closed even when the DataFrame has zero rows. Added two tests for these cases.
+- Current test inventory is 31 cohort + 16 shadow-store test functions (47 total).
+- The latest pushed commit has no status checks and no workflow run visible through the connected GitHub actions read methods. The available workflow-run helper is limited to pull-request-triggered runs; no workflow-dispatch/write action is exposed. Consequently CI execution is still pending/unverified.
