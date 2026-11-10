@@ -1,5 +1,11 @@
 # NSE V8 P2 — Official XBRL Financial Fact Audit (2026-11-03)
 
+> **Status update (2026-11-10):** This document records the initial candidate-extraction phase. The subsequent [P2 Statement Reconciliation Audit](README_P2_XBRL_STATEMENT_RECONCILIATION_2026-11-03.md) reconciled 55/55 arithmetic checks across the five supplied NSE XML samples and established that `CashFlowsFromUsedInOperatingActivities` (not the separate intermediate subtotal `CashFlowsFromUsedInOperations`) is the operating-cash-flow total that cross-foots with investing, financing, and pre-FX cash movement in those samples. The production verifier therefore now permits this annual direct fact only when the filing has an exact annual-aligned basis, matching official filing metadata, hash-verified XML/context/entity/period/unit/dimensions/value, and the same-context CFO + CFI + CFF cross-foot all pass. This is **not** blanket verification of provider values.
+>
+> The earlier statement below that the production direct-fact mapping table is empty is historical and superseded by that later reconciliation. Q4 standalone CFO remains unavailable in the five reviewed samples; no annual-minus-9M CFO derivation is permitted without verified 9M evidence.
+>
+> Latest persisted audit snapshot from the 2026-11-09 EOD run: 13 metric rows across 13 symbols were `OFFICIAL_XBRL_VERIFIED`; 18 OperatingCashFlowINR rows across 18 symbols were `PROVIDER_VALUE_MISMATCH`; 775 metric rows across 100 symbols lacked confirmed filing metadata; and 99 symbols had no exact official filing URL in the fetched NSE filing register. These remain visible audit states, not reasons to promote or silently rewrite cached values.
+
 ## Purpose
 
 This patch adds a conservative extraction/audit stage for the official NSE XBRL XML samples already downloaded by `nse_xbrl_sample_diagnostic.py`.
@@ -28,7 +34,7 @@ All listed facts above are raw candidate values in INR, not verified normalized 
 
 The dry run extracted 97 candidate facts across five XMLs. All five XML symbols matched their expected symbols and all five filing URLs passed the NSE HTTPS host allow-list check. These five sample XMLs had no explicit or typed context dimensions. The parser supports extracting dimensions when present; their absence in these five samples is not a global claim about NSE filings.
 
-## Important unresolved accounting mapping
+## Historical candidate mapping status (superseded by the later statement reconciliation)
 
 The samples contain both:
 - `CashFlowsFromUsedInOperations`
@@ -36,7 +42,7 @@ The samples contain both:
 
 Their values differ. This patch intentionally labels both as candidates and does **not** select either as the definitive Operating Cash Flow metric. Taxonomy/statement-row semantics and cross-company reconciliation must be completed before choosing a production mapping.
 
-The production metric verifier now follows this unresolved state: its approved direct-fact mapping table is empty, so neither cash-flow tag can receive `OFFICIAL_XBRL_VERIFIED` until the accounting mapping is reviewed and explicitly added. A matching hash/value/context alone cannot make an unapproved fact tag authoritative.
+At the time of this initial candidate-only patch, the production direct-fact mapping was intentionally empty. This status was superseded after the later five-filing statement-reconciliation audit selected `CashFlowsFromUsedInOperatingActivities` as the cross-footed annual operating-cash-flow total. The production verifier now uses that single tag under the strict hash/context/value and same-context cash-flow cross-foot checks described in the status update above. A matching hash/value/context alone cannot make an unapproved fact tag authoritative.
 
 Likewise:
 - `ProfitLossForPeriod` is extracted as a candidate net-profit fact.
