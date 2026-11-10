@@ -50,7 +50,31 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     duplicates = sorted(out.loc[out["_cohort_symbol_key"].duplicated(keep=False), "_cohort_symbol_key"].unique())
     if duplicates:
         raise CohortAssemblyError(f"{label}: duplicate symbol keys are ambiguous: {duplicates[:20]}")
+    if "SctySrs" in out.columns:
+        out["_cohort_series_key"] = out["SctySrs"].map(
+            lambda value: "" if pd.isna(value) else str(value).strip().upper()
+        )
+        if (out["_cohort_series_key"] == "").any():
+            raise CohortAssemblyError(f"{label}: blank/null SctySrs for a symbol-keyed row")
     return out
+
+
+def _validate_series_alignment(base: pd.DataFrame, report: pd.DataFrame, label: str) -> None:
+    if "_cohort_series_key" not in base.columns or "_cohort_series_key" not in report.columns:
+        return
+    aligned = base[["_cohort_symbol_key", "_cohort_series_key"]].merge(
+        report[["_cohort_symbol_key", "_cohort_series_key"]],
+        on="_cohort_symbol_key", how="inner", suffixes=("_base", "_report"),
+        validate="one_to_one",
+    )
+    mismatch = aligned[
+        aligned["_cohort_series_key_base"] != aligned["_cohort_series_key_report"]
+    ]
+    if not mismatch.empty:
+        sample = mismatch.head(20).to_dict("records")
+        raise CohortAssemblyError(
+            f"{label}: SctySrs mismatch for matching symbols: {sample}"
+        )
 
 
 def assemble_mainboard_cohort(
@@ -93,6 +117,7 @@ def assemble_mainboard_cohort(
             continue
 
         keyed_report = _keyed(report, safe_stage)
+        _validate_series_alignment(base, keyed_report, safe_stage)
         report_symbols = set(keyed_report["_cohort_symbol_key"])
         base_symbols = set(base["_cohort_symbol_key"])
         matched = base_symbols & report_symbols
@@ -160,7 +185,7 @@ def assemble_mainboard_cohort(
     stage_coverage = [c for c in base.columns if c.endswith("__CoverageStatus")]
     base["DownstreamReportsPresent"] = base[stage_coverage].eq("SOURCE_ROW_PRESENT").sum(axis=1) if stage_coverage else 0
     base["DownstreamReportsExpected"] = len(stage_coverage)
-    base = base.drop(columns=["_cohort_symbol_key"])
+    base = base.drop(columns=["_cohort_symbol_key", "_cohort_series_key"], errors="ignore")
     return CohortAssemblyResult(
         cohort=base.reset_index(drop=True),
         news_evidence=news.reset_index(drop=True),
