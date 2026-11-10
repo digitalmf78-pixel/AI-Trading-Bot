@@ -661,6 +661,9 @@ INDUSTRY_TO_TRACKED_INDEX = {
     "CERAMICS": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
     "GRANITES & MARBLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
     "GRANITES AND MARBLES": ("Nifty Consumer Durables", "NIFTY CONSUMER DURABLES"),
+    "SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
+    "HEALTHCARE SERVICES": ("Nifty Healthcare", "NIFTY HEALTHCARE"),
+    "COMMERCE": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
 }
 
 
@@ -827,6 +830,9 @@ OFFICIAL_SECTOR_TO_TRACKED_INDEX = {
     "OIL AND GAS": ("Nifty Oil and Gas", "NIFTY OIL & GAS"),
     "INSURANCE": ("Nifty Insurance", "NIFTY INSURANCE"),
     "PRIVATE BANKS": ("Nifty Private Bank", "NIFTY PRIVATE BANK"),
+    "SERVICES": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
+    "HEALTHCARE SERVICES": ("Nifty Healthcare", "NIFTY HEALTHCARE"),
+    "COMMERCE": ("Nifty Consumer Services", "NIFTY CONSUMER SERVICES"),
 }
 
 

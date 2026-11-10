@@ -3791,6 +3791,9 @@ def main():
     # Accumulation score (descriptive, non-gating)
     result = calculate_accumulation_score(result)
 
+    # Consolidation detection (descriptive, non-gating)
+    result = calculate_consolidation_score(result, analysis_history)
+
     # --------------------------------------------------------
     # STEP 9
     # --------------------------------------------------------
@@ -4092,3 +4095,62 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+
+# ============================================================
+# CONSOLIDATION DETECTION (descriptive, non-gating)
+# ============================================================
+
+def calculate_consolidation_score(result, historical):
+    if result is None or result.empty:
+        return result
+
+    _, history_by_symbol = prepare_history_by_symbol(historical)
+    scores = []
+    statuses = []
+
+    for _, row in result.iterrows():
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        hist = history_by_symbol.get(symbol)
+        score = 0.0
+        status = "NO_CONSOLIDATION"
+
+        if hist is not None and not hist.empty and len(hist) >= 10:
+            closes = pd.to_numeric(hist["ClsPric"], errors="coerce").dropna()
+            if len(closes) >= 10:
+                recent = closes.tail(10)
+                high = float(recent.max())
+                low = float(recent.min())
+                if high > 0:
+                    range_pct = (high - low) / high * 100.0
+                    if range_pct <= 5.0:
+                        score = 90.0
+                        status = "TIGHT_CONSOLIDATION"
+                    elif range_pct <= 10.0:
+                        score = 70.0
+                        status = "MODERATE_CONSOLIDATION"
+                    elif range_pct <= 15.0:
+                        score = 50.0
+                        status = "LOOSE_CONSOLIDATION"
+                    else:
+                        score = 10.0
+                        status = "NO_CONSOLIDATION"
+
+                    vols = pd.to_numeric(hist["TtlTradgVol"], errors="coerce").dropna()
+                    if len(vols) >= 10:
+                        recent_vols = vols.tail(5)
+                        older_vols = vols.tail(10).head(5)
+                        if older_vols.mean() > 0:
+                            vol_ratio = recent_vols.mean() / older_vols.mean()
+                            if vol_ratio < 0.8:
+                                score = min(score + 10.0, 100.0)
+                                status = status + "_VOL_CONTRACTING"
+
+        scores.append(round(score, 2))
+        statuses.append(status)
+
+    result = result.copy()
+    result["ConsolidationScore"] = scores
+    result["ConsolidationStatus"] = statuses
+    print("[CONSOLIDATION] " + str(result["ConsolidationStatus"].value_counts().to_dict()))
+    return result
