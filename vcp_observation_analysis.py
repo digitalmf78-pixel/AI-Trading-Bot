@@ -50,6 +50,18 @@ def build_vcp_observation_report(candidates, historical, asof_date, output_path=
             rows.append({
                 "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
                 "VCPWindowSessions": min(len(ordered_dates), TOTAL_SESSIONS),
+                "VCPAvailableSymbolSessions": 0,
+                "VCPSymbolWindowRows": 0,
+                "VCPSymbolWindowUniqueDates": 0,
+                "VCPMissingSessionCount": min(len(ordered_dates), TOTAL_SESSIONS),
+                "VCPDuplicateSessionCount": 0,
+                "VCPMissingOHLCRowCount": 0,
+                "VCPInvalidOHLCRowCount": 0,
+                "VCPMissingVolumeRowCount": 0,
+                "VCPInvalidVolumeRowCount": 0,
+                "VCPRangeWaitReason": "AMBIGUOUS_DUPLICATE_CANDIDATE_SYMBOL",
+                "VCPVolumeWaitReason": "AMBIGUOUS_DUPLICATE_CANDIDATE_SYMBOL",
+                "VCPWaitReason": "AMBIGUOUS_DUPLICATE_CANDIDATE_SYMBOL",
                 "VCPRangeObservationStatus": "WAIT_FOR_DATA",
                 "VCPVolumeObservationStatus": "WAIT_FOR_DATA",
                 "VCPObservationStatus": "WAIT_FOR_DATA",
@@ -74,25 +86,79 @@ def build_vcp_observation_report(candidates, historical, asof_date, output_path=
 
         window_dates = ordered_dates[-TOTAL_SESSIONS:]
         aligned = hist[hist["Date"].dt.date.isin(window_dates)].copy().sort_values("Date")
-        complete_window = (
-            len(window_dates) == TOTAL_SESSIONS
-            and len(aligned) == TOTAL_SESSIONS
-            and aligned["Date"].dt.date.nunique() == TOTAL_SESSIONS
-            and set(aligned["Date"].dt.date) == set(window_dates)
-            and {"HghPric", "LwPric", "ClsPric"}.issubset(aligned.columns)
-            and aligned[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
-            and aligned[["HghPric", "LwPric", "ClsPric"]].apply(
-                lambda column: column.map(
-                    lambda value: math.isfinite(float(value)) and float(value) > 0
-                )
-            ).all().all()
-            and (aligned["HghPric"] >= aligned["LwPric"]).all()
-            and (aligned["ClsPric"] >= aligned["LwPric"]).all()
-            and (aligned["ClsPric"] <= aligned["HghPric"]).all()
+        aligned_dates = aligned["Date"].dt.date
+        unique_dates = set(aligned_dates)
+        missing_dates = set(window_dates) - unique_dates
+        duplicate_dates = aligned_dates[aligned_dates.duplicated(keep=False)].nunique()
+        ohlc_columns = ["HghPric", "LwPric", "ClsPric"]
+        has_ohlc_columns = set(ohlc_columns).issubset(aligned.columns)
+        missing_ohlc_rows = (
+            int(aligned[ohlc_columns].isna().any(axis=1).sum())
+            if has_ohlc_columns else len(aligned)
         )
+        invalid_ohlc_rows = 0
+        if has_ohlc_columns:
+            for _, candle in aligned.iterrows():
+                values = [_number(candle[column]) for column in ohlc_columns]
+                if not all(math.isfinite(value) and value > 0 for value in values):
+                    continue
+                high, low, close = values
+                if high < low or close < low or close > high:
+                    invalid_ohlc_rows += 1
+        if len(window_dates) != TOTAL_SESSIONS:
+            range_wait_reason = "INSUFFICIENT_MARKET_SESSION_WINDOW"
+        elif duplicate_dates:
+            range_wait_reason = "DUPLICATE_SYMBOL_SESSION_ROWS"
+        elif missing_dates:
+            range_wait_reason = "MISSING_SYMBOL_SESSION_ROWS"
+        elif not has_ohlc_columns:
+            range_wait_reason = "MISSING_OHLC_COLUMNS"
+        elif missing_ohlc_rows:
+            range_wait_reason = "MISSING_OHLC_VALUES"
+        elif invalid_ohlc_rows:
+            range_wait_reason = "INVALID_OHLC_VALUES"
+        else:
+            range_wait_reason = "OK"
+        complete_window = range_wait_reason == "OK"
+        volume_missing_rows = (
+            int(aligned["TtlTradgVol"].isna().sum())
+            if "TtlTradgVol" in aligned.columns else len(aligned)
+        )
+        volume_invalid_rows = 0
+        if "TtlTradgVol" in aligned.columns:
+            for value in aligned["TtlTradgVol"].dropna():
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    volume_invalid_rows += 1
+                    continue
+                if not math.isfinite(number) or number < 0:
+                    volume_invalid_rows += 1
+        if not complete_window:
+            volume_wait_reason = "RANGE_WINDOW_INCOMPLETE"
+        elif "TtlTradgVol" not in aligned.columns:
+            volume_wait_reason = "MISSING_VOLUME_COLUMN"
+        elif volume_missing_rows:
+            volume_wait_reason = "MISSING_VOLUME_VALUES"
+        elif volume_invalid_rows:
+            volume_wait_reason = "INVALID_VOLUME_VALUES"
+        else:
+            volume_wait_reason = "OK"
         row = {
             "TckrSymb": symbol, "AsOfDate": asof.isoformat(),
             "VCPWindowSessions": min(len(ordered_dates), TOTAL_SESSIONS),
+            "VCPAvailableSymbolSessions": int(hist["Date"].dt.date.nunique()),
+            "VCPSymbolWindowRows": int(len(aligned)),
+            "VCPSymbolWindowUniqueDates": int(len(unique_dates)),
+            "VCPMissingSessionCount": int(len(missing_dates)),
+            "VCPDuplicateSessionCount": int(duplicate_dates),
+            "VCPMissingOHLCRowCount": int(missing_ohlc_rows),
+            "VCPInvalidOHLCRowCount": int(invalid_ohlc_rows),
+            "VCPMissingVolumeRowCount": int(volume_missing_rows),
+            "VCPInvalidVolumeRowCount": int(volume_invalid_rows),
+            "VCPRangeWaitReason": range_wait_reason,
+            "VCPVolumeWaitReason": volume_wait_reason,
+            "VCPWaitReason": range_wait_reason if range_wait_reason != "OK" else volume_wait_reason,
             "VCPRangeObservationStatus": "WAIT_FOR_DATA",
             "VCPVolumeObservationStatus": "WAIT_FOR_DATA",
             "VCPObservationStatus": "WAIT_FOR_DATA",
@@ -152,6 +218,8 @@ def build_vcp_observation_report(candidates, historical, asof_date, output_path=
                 ).all()
             )
             if volume_complete:
+                row["VCPVolumeWaitReason"] = "OK"
+                row["VCPWaitReason"] = "OK"
                 row["VCPVolumeObservationStatus"] = "COMPLETE"
                 volume_averages = [float(block["TtlTradgVol"].mean()) for block in blocks]
                 for index, value in enumerate(volume_averages, start=1):
@@ -191,6 +259,7 @@ def build_vcp_observation_report(candidates, historical, asof_date, output_path=
             else:
                 row["VCPObservationStatus"] = "PARTIAL_DATA"
                 row["VCPStatus"] = "WAIT_FOR_DATA"
+                row["VCPWaitReason"] = row["VCPVolumeWaitReason"]
         rows.append(row)
 
     report = pd.DataFrame(rows)
