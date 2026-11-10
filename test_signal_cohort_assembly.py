@@ -251,3 +251,33 @@ def test_empty_stage_report_reserved_internal_columns_fail_closed():
     empty = pd.DataFrame(columns=["TckrSymb", "_cohort_series_key"])
     with pytest.raises(CohortAssemblyError, match="reserved internal columns"):
         assemble_mainboard_cohort(main, reports={"Stage": empty})
+
+
+
+def test_empty_mainboard_cohort_returns_empty_schema_without_losing_columns():
+    main = pd.DataFrame({"TckrSymb": pd.Series(dtype="object"), "SctySrs": pd.Series(dtype="object")})
+    result = assemble_mainboard_cohort(main, reports={"Delivery": None})
+    assert result.cohort.empty
+    assert "CohortIdentityKey" in result.cohort.columns
+    assert result.cohort["Delivery__CoverageStatus"].dtype == object
+    assert result.cohort["DownstreamReportsExpected"].iloc[0:0].empty
+
+
+@pytest.mark.parametrize("bad_symbol", [[ "AAA", "BBB" ], {"symbol": "AAA"}])
+def test_non_scalar_symbol_identity_fails_closed(bad_symbol):
+    main = pd.DataFrame({"TckrSymb": [bad_symbol]})
+    with pytest.raises(CohortAssemblyError, match="scalar"):
+        assemble_mainboard_cohort(main)
+
+
+def test_non_scalar_series_identity_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": [["EQ", "BE"]]})
+    with pytest.raises(CohortAssemblyError, match="SctySrs key must be a scalar"):
+        assemble_mainboard_cohort(main)
+
+
+def test_non_scalar_news_series_identity_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    news = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": [["EQ", "BE"]]})
+    with pytest.raises(CohortAssemblyError, match="SctySrs key must be a scalar"):
+        assemble_mainboard_cohort(main, news_report=news)
