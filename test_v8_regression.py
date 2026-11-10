@@ -642,46 +642,6 @@ def test_news_window_premarket_covers_five_calendar_days_including_weekend_to_09
     assert end_ist.hour == 9 and end_ist.minute == 15
 
 
-if __name__ == "__main__":
-    tests = [
-        test_3_confirmations_plus_separate_primary_source_gate,
-        test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
-        test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts,
-        test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff,
-        test_news_window_premarket_covers_five_calendar_days_including_weekend_to_0915,
-        test_nse_naive_rss_timestamp_is_interpreted_as_ist_for_eod_window,
-        test_three_secondary_reposts_do_not_create_three_confirmations,
-        test_untrusted_domain_cannot_be_primary_just_because_of_label,
-        test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
-        test_delivery_average_category_passes_while_daily_category_fails,
-        test_delivery_exactly_60_each_day_passes,
-        test_delivery_below_60_rejects_and_incomplete_waits,
-        test_news_gate_preserves_category_a_only_candidates,
-        test_delivery_qualified_union_is_retained_and_rvol_only_classifies_in_scanner_source,
-        test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
-        test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
-        test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx,
-        test_ema44_missing_history_returns_wait_for_data,
-        test_telegram_digest_excludes_wait_for_data_from_ranked_top4,
-        test_telegram_digest_only_ranks_complete_liquidity_qualified_pipeline_stocks,
-        test_telegram_digest_empty_result_is_a_short_no_candidate_message,
-        test_next_day_pipeline_only_receives_final_watch_candidates,
-        test_risk_reward_requires_structural_resistance_and_never_synthesizes_2r,
-        test_structural_resistance_rr_passes_only_when_at_least_2r,
-        test_structural_risk_reward_rejects_invalid_entry_or_stop,
-        test_source_code_uses_greater_than_or_equal_60_delivery_status,
-        test_breakout_requires_strong_clv_above_075,
-        test_pullback_requires_volume_contraction_and_bullish_reversal,
-        test_negative_relative_strength_is_warning_not_standalone_rejection,
-        test_mixed_improving_trend_does_not_confirm_core_setup,
-        test_breakout_selector_rejects_clv_equal_to_075,
-    ]
-    for test in tests:
-        test()
-        print(f"PASS: {test.__name__}")
-    print(f"PASS: all {len(tests)} V8 regression tests")
-
-
 
 def test_accumulation_distribution_is_scoped_to_candidate_security_series():
     dates = pd.bdate_range("2026-10-13", periods=20)
@@ -733,3 +693,45 @@ def test_accumulation_distribution_keeps_incomplete_candidate_series_waiting():
     assert diagnostics.iloc[0]["Status"] == "WAIT_FOR_DATA"
     assert diagnostics.iloc[0]["Reason"] == "SESSION_ROW_COUNT_NOT_20"
     assert diagnostics.iloc[0]["MissingSessionDates"] == dates[-1].date().isoformat()
+
+if __name__ == "__main__":
+    tests = [
+        test_3_confirmations_plus_separate_primary_source_gate,
+        test_accumulation_distribution_is_scoped_to_candidate_security_series,
+        test_accumulation_distribution_keeps_incomplete_candidate_series_waiting,
+        test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
+        test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts,
+        test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff,
+        test_news_window_premarket_covers_five_calendar_days_including_weekend_to_0915,
+        test_nse_naive_rss_timestamp_is_interpreted_as_ist_for_eod_window,
+        test_three_secondary_reposts_do_not_create_three_confirmations,
+        test_untrusted_domain_cannot_be_primary_just_because_of_label,
+        test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
+        test_delivery_average_category_passes_while_daily_category_fails,
+        test_delivery_exactly_60_each_day_passes,
+        test_delivery_below_60_rejects_and_incomplete_waits,
+        test_news_gate_preserves_category_a_only_candidates,
+        test_delivery_qualified_union_is_retained_and_rvol_only_classifies_in_scanner_source,
+        test_empty_delivery_shortlist_keeps_merge_keys_through_technical_steps,
+        test_ema44_analysis_is_descriptive_and_does_not_reject_not_near_candidates,
+        test_global_ema44_close_position_controls_trend_not_ema20_rsi_or_adx,
+        test_ema44_missing_history_returns_wait_for_data,
+        test_telegram_digest_excludes_wait_for_data_from_ranked_top4,
+        test_telegram_digest_only_ranks_complete_liquidity_qualified_pipeline_stocks,
+        test_telegram_digest_empty_result_is_a_short_no_candidate_message,
+        test_next_day_pipeline_only_receives_final_watch_candidates,
+        test_risk_reward_requires_structural_resistance_and_never_synthesizes_2r,
+        test_structural_resistance_rr_passes_only_when_at_least_2r,
+        test_structural_risk_reward_rejects_invalid_entry_or_stop,
+        test_source_code_uses_greater_than_or_equal_60_delivery_status,
+        test_breakout_requires_strong_clv_above_075,
+        test_pullback_requires_volume_contraction_and_bullish_reversal,
+        test_negative_relative_strength_is_warning_not_standalone_rejection,
+        test_mixed_improving_trend_does_not_confirm_core_setup,
+        test_breakout_selector_rejects_clv_equal_to_075,
+    ]
+    for test in tests:
+        test()
+        print(f"PASS: {test.__name__}")
+    print(f"PASS: all {len(tests)} V8 regression tests")
+
