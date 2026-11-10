@@ -206,3 +206,60 @@ def test_signal_snapshot_rejects_string_source_reports():
 def test_signal_snapshot_rejects_non_string_field_keys():
     with pytest.raises(SignalValidationError, match="keys must be strings"):
         snapshot(signal_fields={1: "invalid-key"})
+
+
+
+def test_append_rejects_mismatched_key_hash_pairing(tmp_path: Path):
+    with pytest.raises(SignalValidationError, match="key/hash field pairing"):
+        append_immutable_jsonl(
+            tmp_path / "bad.jsonl", [snapshot()],
+            key_field="EODDate", hash_field="snapshot_payload_sha256",
+        )
+    assert not (tmp_path / "bad.jsonl").exists()
+
+
+def test_snapshot_identity_is_revalidated_even_with_recomputed_payload_hash(tmp_path: Path):
+    row = snapshot()
+    row["signal_id"] = "f" * 64
+    from signal_shadow_store import _canonical_json, _sha256
+    payload = {key: value for key, value in row.items()
+               if key not in {"WorkflowRunId", "WorkflowRunAttempt", "CreatedAtUTC", "snapshot_payload_sha256"}}
+    row["snapshot_payload_sha256"] = _sha256(_canonical_json(payload))
+    with pytest.raises(SignalValidationError, match="signal_id does not match"):
+        append_immutable_jsonl(
+            tmp_path / "bad-identity.jsonl", [row], key_field="signal_id",
+            hash_field="snapshot_payload_sha256",
+        )
+    assert not (tmp_path / "bad-identity.jsonl").exists()
+
+
+def test_snapshot_reserved_metadata_is_revalidated_on_append(tmp_path: Path):
+    row = snapshot()
+    row["RunMode"] = "INTRADAY"
+    from signal_shadow_store import _canonical_json, _sha256
+    payload = {key: value for key, value in row.items()
+               if key not in {"WorkflowRunId", "WorkflowRunAttempt", "CreatedAtUTC", "snapshot_payload_sha256"}}
+    row["snapshot_payload_sha256"] = _sha256(_canonical_json(payload))
+    with pytest.raises(SignalValidationError, match="RunMode must be EOD"):
+        append_immutable_jsonl(
+            tmp_path / "bad-mode.jsonl", [row], key_field="signal_id",
+            hash_field="snapshot_payload_sha256",
+        )
+
+
+def test_stage_event_requires_timezone_aware_persisted_timestamp(tmp_path: Path):
+    event = build_stage_event(
+        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
+        observed_at_utc="2026-11-10T10:00:00+00:00",
+    )
+    event["ObservedAtUTC"] = "2026-11-10T10:00:00"
+    from signal_shadow_store import _canonical_json, _sha256
+    payload = {key: value for key, value in event.items()
+               if key not in {"event_id", "ObservedAtUTC"}}
+    event["event_id"] = _sha256(_canonical_json(payload))
+    with pytest.raises(SignalValidationError, match="must include a timezone"):
+        append_immutable_jsonl(
+            tmp_path / "bad-time.jsonl", [event], key_field="event_id",
+            hash_field="event_id",
+        )
