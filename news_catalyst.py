@@ -1462,6 +1462,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
             lines.append("  News/Catalyst: " + catalyst[:180])
     lines.extend([
         "",
+        "RSI patterns: Retest/Divergence = NOT_EVALUATED (informational only; no stock rejection).",
         "RSI/Overbought हे informational आहेत; RSI मुळे stock reject केलेला नाही.",
         "ही screening report आहे; BUY recommendation किंवा automatic order नाही. WAIT_FOR_DATA ला PASS समजू नका.",
     ])
