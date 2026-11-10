@@ -155,3 +155,15 @@ The following changes were committed after the 54-case focused execution. THEY H
 - The design requires redaction of secrets and account-derived values before serialization. Snapshot fields are allow-listed, and the store rejects sensitive-looking **field names**; however, the current stage-event `ReasonText` and `SourceReport` are free-text values and the validator does not inspect string contents for embedded credentials, URLs with secret query parameters, or account-derived values.
 - This is not evidence of an existing leak because the helper is not wired into the workflow and the design requires curated/redacted inputs. It is a pre-integration requirement: add explicit safe-text/redaction validation or prove the caller-side redaction contract with tests before enabling persistence.
 - No code change was made for this item because a safe redaction policy for free-text reasons has not yet been specified.
+
+
+## Track 2 Full Mainboard standalone builder — implementation checkpoint (10-Nov-2026)
+- Added `track2_full_mainboard.py`: a standalone, non-gating report builder that accepts the official Mainboard-filtered cohort before Delivery A/B, runs Delivery Quantity, Potential Accumulation and VCP observers on the complete unique Mainboard input, and writes all artifacts under `outputs/track2_full_mainboard/`.
+- Added optional `output_path` parameters to the three existing observation modules so Track 2 can write isolated artifacts without overwriting Track 1's existing output files. Default paths and existing scanner call sites remain unchanged.
+- Added `test_track2_full_mainboard.py` and included it in CI compilation/pytest commands.
+- Tests cover full-cohort scope (including A/B-failed and WAIT names), duplicate identity fail-closed behaviour, board-status validation, invalid symbols, observer failure isolation, empty input and category-request validation.
+- SIDEWAYS_ACCUMULATION / DIP_ACCUMULATION remain `NOT_CLASSIFIED_PENDING_APPROVED_RULES`; no numeric classification thresholds were added.
+- GitHub Actions run [42800483179](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42800483179) — **SUCCESS** on commit `8400ac0f6bfa2b9578ae9ca22bef3e96d7548ce9`: Python compilation PASS; **397 pytest tests passed in 4.02s**; all 33 V8 regression tests PASS; 43 sector/news/official-index unittests PASS.
+- The first explicit Track 2 test run exposed a duplicate-key join validation bug. The implementation was corrected to exclude ambiguous identities from observer input while retaining one WAIT_FOR_DATA row in the cohort report; the final run above validates the correction.
+- **Not done:** no Track 2 scheduled workflow wiring, no scanner call-site integration, no live EOD run, no real NSE fetch, no Track 1 output or eligibility changes, and no Master Specification change. This remains isolated code on the audit branch.
+- Current branch comparison: **90 commits ahead, 2 behind main**. No merge/rebase/PR was performed; main remains untouched.
