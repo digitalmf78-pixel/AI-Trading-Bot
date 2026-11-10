@@ -703,7 +703,7 @@ def _accumulation_distribution_for_candidates(
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         series = str(candidate.get("SctySrs", "")).strip().upper()
         series_aware = "SctySrs" in (ad_history.columns if ad_history is not None else [])
-        if series_aware and series:
+        if series_aware:
             group = history[
                 history["TckrSymb"].eq(symbol) & history["_AD_SERIES"].eq(series)
             ].copy()
