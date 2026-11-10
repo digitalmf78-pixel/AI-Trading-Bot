@@ -31,7 +31,7 @@ jobs:
             data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv
-          key: ${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
 
@@ -41,7 +41,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip requests pandas
+        run: python -m pip install --upgrade pip requests pandas pytest
 
       - name: Filter using five individual daily Delivery percentages
         env:
@@ -97,7 +97,12 @@ jobs:
               raise SystemExit(0)
 
           sessions = sorted(sessions, key=lambda item: item[0])
+          asof = sessions[-1][0]
           print("[SESSIONS] oldest-to-newest: " + ", ".join(day.isoformat() for day, _ in sessions))
+
+          # Run focused unit tests before any live/cache-based shortlist work.
+          import subprocess, sys
+          subprocess.run([sys.executable, "-m", "pytest", "-q", "test_delivery_60_each_of_5_sessions.py"], check=True)
 
           # Resolve the same official Main Board / SME classification used by V8.
           http = requests.Session()
@@ -152,6 +157,10 @@ jobs:
                   & bhav["ClsPric"].gt(0)
                   & bhav["TtlTradgVol"].ge(0)
               ].copy()
+
+              if not official_etf_symbols and not ({"ISIN", "FinInstrmNm"} & set(bhav.columns)):
+                  write_empty(f"WAIT_FOR_DATA: ETF/MF classification unavailable for {day}")
+                  raise SystemExit(0)
 
               etf_mask = bhav["TckrSymb"].isin(official_etf_symbols)
               if "ISIN" in bhav.columns:
