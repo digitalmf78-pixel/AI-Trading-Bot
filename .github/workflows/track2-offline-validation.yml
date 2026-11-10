@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 jobs:
   offline-track2:
@@ -41,7 +41,7 @@ jobs:
             nse-bhavcopy-Linux-main-
 
       - name: Download fixed 09-Nov EOD artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v4
         with:
           name: nse-v8-reports-42634890331
           repository: digitalmf78-pixel/AI-Trading-Bot
