@@ -230,6 +230,7 @@ def build_delivery_quantity_report(
         audit_rows.append(record)
 
     audit = pd.DataFrame(audit_rows)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    audit.to_csv(OUTPUT_DIR / f"v8_delivery_quantity_observations_{asof:%Y%m%d}.csv", index=False)
+    target_path = Path(output_path) if output_path is not None else OUTPUT_DIR / f"v8_delivery_quantity_observations_{asof:%Y%m%d}.csv"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    audit.to_csv(target_path, index=False)
     return audit.copy(), audit
