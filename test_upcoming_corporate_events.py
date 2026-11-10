@@ -85,10 +85,7 @@ def test_event_report_has_one_status_row_per_shortlisted_symbol_and_no_other_sym
     assert len(out) == 2
 
 
-def test_current_event_discovery_lookback_does_not_cap_future_display_horizon():
-    # Characterizes the current implementation only: the issuer API searches
-    # a 90-calendar-day announcement lookback, while explicit future event
-    # dates are not yet restricted to a separate next-20-calendar-day horizon.
+def test_90_day_discovery_keeps_far_future_event_but_marks_it_outside_20_day_horizon():
     item = _item(
         "Board Meeting Intimation",
         "The Board meeting will be held on 05-Dec-2026 to consider quarterly results.",
@@ -101,3 +98,22 @@ def test_current_event_discovery_lookback_does_not_cap_future_display_horizon():
     assert rows[0]["LookbackDays"] == "90"
     assert rows[0]["EventDate"] == "2026-12-05"
     assert rows[0]["Status"] == "OFFICIAL_DATE_CONFIRMED"
+    assert rows[0]["DaysToEvent"] == "46"
+    assert rows[0]["EventHorizonStatus"] == "FUTURE_OUTSIDE_20_DAY_HORIZON"
+
+
+def test_event_horizon_includes_day_20_and_excludes_day_21():
+    day_20 = _item(
+        "Board Meeting Intimation",
+        "The Board meeting will be held on 09-Nov-2026.",
+    )
+    day_21 = _item(
+        "Board Meeting Intimation",
+        "The Board meeting will be held on 10-Nov-2026.",
+    )
+    rows_20 = news._upcoming_event_rows_for_item("ABC", day_20, "2026-10-20", "EOD")
+    rows_21 = news._upcoming_event_rows_for_item("ABC", day_21, "2026-10-20", "EOD")
+    assert rows_20[0]["DaysToEvent"] == "20"
+    assert rows_20[0]["EventHorizonStatus"] == "NEXT_20_CALENDAR_DAYS"
+    assert rows_21[0]["DaysToEvent"] == "21"
+    assert rows_21[0]["EventHorizonStatus"] == "FUTURE_OUTSIDE_20_DAY_HORIZON"
