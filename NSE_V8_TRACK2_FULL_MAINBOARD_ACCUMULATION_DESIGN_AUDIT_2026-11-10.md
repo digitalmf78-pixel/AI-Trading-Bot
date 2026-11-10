@@ -389,3 +389,34 @@ The user explicitly approved a seven-calendar-day News window on 10-Nov-2026. Th
 Keep the 90-day source-discovery lookback independent from the 20-calendar-day event display horizon. If approved, add a separate display-horizon status/field and preserve farther-future confirmed official events as longer-horizon evidence rather than silently dropping them. Do not shorten the API lookback to 20 days. Separately align News to seven days only after explicit boundary semantics are settled. Both changes require their own fixtures and real-EOD validation.
 
 CI run **42812650737** completed SUCCESS: Python compilation PASS; **416 pytest tests passed**; **33 V8 regression tests passed**; **43 sector/news/official-index tests passed**. Only a characterization test was added; News and Corporate Event runtime behavior is unchanged. No scanner wiring, trading gate, main branch, or Master Specification change was made.
+
+
+## 14. Signal shadow-store persistence and restart audit (10-Nov-2026)
+
+A focused source/test review was completed for `signal_shadow_store.py`, `test_signal_shadow_store.py`, `signal_cohort_assembly.py`, and the current CI/offline workflows. No production scanner or scheduled EOD integration was added.
+
+### Existing persistence contract
+- Snapshots and stage events are JSONL records. Snapshot identity is deterministic from EOD date, uppercase symbol, strategy commit SHA, and `EOD_CANDIDATE`; stage-event identity is a deterministic digest of its event payload.
+- Snapshot payload digest deliberately excludes runner ID, attempt, and creation timestamp. Exact retries therefore become no-ops; a changed immutable payload for an existing signal key raises a conflict and preserves the prior record.
+- Before append, existing JSONL rows are parsed, schema-checked, semantically checked, and re-hashed. Tampered or malformed existing records fail closed. Appends flush and `fsync` the file.
+- The path is supplied by the caller. The helper does not prescribe a date-partition layout, manifest, retention/rotation policy, schema migration policy, or forward-outcome tracker.
+- The helper explicitly does not provide inter-process/file locking. Concurrent writers to the same partition must be serialized by the eventual workflow/branch-write strategy. A crash during a line append can leave a malformed trailing record; the next read fails closed rather than silently repairing or discarding it.
+- The hashes detect accidental/tampered content relative to the stored digest; they are not digital signatures or proof of source authenticity.
+- Tests cover exact retry/no-op, immutable payload conflict, batch duplicate handling, tamper/hash mismatch, invalid schema/identity/timezone, and sensitive free-text rejection. They do not yet exercise multiple independent processes or workflow retry/restart on a real repository partition.
+
+### Defect found and fixed
+- `build_signal_snapshot` accepted any iterable for `source_reports`, but validated it by converting it to a list and then iterated the original iterable again. A one-shot generator was therefore exhausted and the persisted `source_reports` list became empty.
+- The helper now materializes `source_reports` once and uses the same list for validation and persistence. A regression test supplies a generator and verifies both report names survive.
+- This is an isolated helper correction; no scanner call site or persistence path was wired.
+
+### Remaining integrity/design gaps before integration
+1. Stage-event `signal_id` is checked as non-empty text but is not recomputed against its EOD date, symbol, strategy SHA, and signal type. A caller could associate a valid event payload with the wrong signal ID. Add an explicit identity-link contract/test before production use.
+2. No workflow-level serialization/locking or atomic multi-writer protocol exists. The future GitHub write workflow must use a concurrency group and a safe single-writer commit/retry design before any persistent append is enabled.
+3. Partition path, run manifest, historical retention, schema evolution, correction/replay policy, and forward-outcome horizon/definitions remain unspecified. Do not invent these values.
+4. The shadow store and cohort assembly remain standalone helpers; neither is wired into the production scanner or scheduled EOD flow. No real EOD shadow snapshot or forward outcome has been generated.
+
+### Cohort assembly boundary
+- `signal_cohort_assembly.py` preserves the complete Mainboard input cohort and performs one-to-one stage-report left joins on normalized symbol, with series mismatch checks when both sides provide series. News and Corporate Event evidence are preserved separately as one-to-many rows so they do not inflate cohort counts.
+- The helper validates symbol/series shape, duplicate keys/columns, generated-column collisions, and input non-mutation. It does not itself validate report EOD/as-of provenance, enforce a partition date, or persist the assembled result; those responsibilities remain with a future caller/manifest contract.
+
+The helper change and new generator regression test are committed on the audit branch. CI validation for the latest commit is pending at the time of this note. Main branch and Master Specification remain unchanged.
