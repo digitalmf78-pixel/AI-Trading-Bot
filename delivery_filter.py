@@ -211,12 +211,19 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         print(f"[DELIVERY] {exc}")
         audit = candidates.copy()
         audit["DeliverySessions"] = 0
+        audit["DeliveryExpectedSessions30D"] = float("nan")
+        audit["DeliveryCoveragePct"] = float("nan")
         audit["DeliveryDailyPassCount"] = 0
         audit["DeliveryMin30D"] = float("nan")
+        audit["DeliveryMax30D"] = float("nan")
         audit["AvgDelivery30D"] = float("nan")
         audit["DeliveryMin5D"] = float("nan")
         audit["AvgDelivery5D"] = float("nan")
         audit["LatestDeliveryPct"] = float("nan")
+        audit["DeliveryAsOfDate"] = asof.isoformat()
+        audit["DeliveryWindowStartDate"] = (asof - timedelta(days=29)).isoformat()
+        audit["DeliveryWindowEndDate"] = asof.isoformat()
+        audit["DeliveryLatestReportDate"] = ""
         audit["DeliveryCategoryAStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryCategoryBStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryStatus"] = "WAIT_FOR_DATA"
@@ -256,6 +263,13 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     asof_report_available = asof.isoformat() in report_dates
     report_age_days = (asof - reports[-1][0]).days
     window_stale = report_age_days > MAX_REPORT_AGE_DAYS
+    window_start = asof - timedelta(days=29)
+    # Coverage denominator is the number of official NSE equity sessions in
+    # the 30-calendar-day window, including special sessions (e.g. Muhurat).
+    expected_sessions = sum(
+        1 for offset in range(30)
+        if is_trading_session(asof - timedelta(days=offset))
+    )
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
@@ -268,6 +282,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
         daily_min = min(values) if count >= 5 else float("nan")
+        daily_max = max(values) if count >= 5 else float("nan")
+        coverage_pct = (count / expected_sessions * 100.0) if expected_sessions else float("nan")
         if count < 5:
             category_a = category_b = overall = "WAIT_FOR_DATA"
         else:
@@ -293,8 +309,11 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
             "DeliverySessions": count,
+            "DeliveryExpectedSessions30D": expected_sessions,
+            "DeliveryCoveragePct": coverage_pct,
             "DeliveryDailyPassCount": daily_pass_count,
             "DeliveryMin30D": daily_min,
+            "DeliveryMax30D": daily_max,
             "AvgDelivery30D": avg,
             # Compatibility aliases now describe the complete 30-calendar-day window.
             "DeliveryMin5D": daily_min,
@@ -304,8 +323,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliveryAsOfReportAvailable": asof_report_available,
             "DeliveryReportAgeDays": report_age_days,
             "DeliveryWindowStale": window_stale,
-            "DeliveryWindowStartDate": report_dates[0],
-            "DeliveryWindowEndDate": report_dates[-1],
+            "DeliveryWindowStartDate": window_start.isoformat(),
+            "DeliveryWindowEndDate": asof.isoformat(),
+            "DeliveryLatestReportDate": latest_valid_report_date,
             "DeliveryCategoryAStatus": category_a,
             "DeliveryCategoryBStatus": category_b,
             "DeliveryStatus": overall,
