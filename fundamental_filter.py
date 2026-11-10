@@ -50,7 +50,8 @@ STATUS_COLUMNS = [
     "FundamentalMetricsCompletenessPct", "FundamentalScoreCoveragePct",
     "FundamentalAssessmentStatus", "Fundamental65PlusStatus", "ValuationCoveragePct",
     "ValuationFieldsAvailable", "ValuationFieldsMissing",
-    "ValuationAssessmentStatus",
+    "ValuationAssessmentStatus", "FundamentalThresholdStatus",
+    "FundamentalThresholdPassCount", "FundamentalThresholdTotalCount",
 ]
 SCORE_METRICS = {
     "RevenueGrowthPct": True,
@@ -117,11 +118,35 @@ def apply_fundamental_filter(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Enrich every candidate with available fundamentals; never remove a row.
 
-    `thresholds_path` remains in the signature for backward compatibility but
-    is deliberately not used to reject candidates at the data-collection stage.
+    Thresholds from ``thresholds_path`` are applied as an informational
+    ``FundamentalThresholdStatus`` column (PASS/FAIL per rule) but do NOT
+    reject any candidate.  Score-based ranking remains in ``FundamentalScore``.
     Returns (enriched candidates, audit report).
     """
-    del thresholds_path  # thresholds are reserved for a future shortlist stage
+    # Load thresholds (conservative defaults if file missing).
+    thresholds = {}
+    tp = Path(thresholds_path)
+    if tp.exists() and tp.stat().st_size:
+        try:
+            raw = json.loads(tp.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                # Replace None with conservative defaults so float() never fails.
+                defaults = {
+                    "min_revenue_growth_pct": 0.0,
+                    "min_profit_growth_pct": 0.0,
+                    "min_roe_pct": 10.0,
+                    "min_roce_pct": 12.0,
+                    "max_debt_to_equity": 1.0,
+                    "min_interest_coverage": 3.0,
+                    "require_positive_operating_cash_flow": True,
+                    "require_positive_free_cash_flow": False,
+                }
+                for key, default in defaults.items():
+                    if raw.get(key) is None:
+                        raw[key] = default
+                thresholds = raw
+        except (json.JSONDecodeError, OSError):
+            thresholds = {}
     metrics = _load_inputs(Path(metrics_path))
     output = candidates.copy()
     if "TckrSymb" not in output.columns:
@@ -227,6 +252,36 @@ def apply_fundamental_filter(
             )
         else:
             row["ValuationAssessmentStatus"] = "WAIT_FOR_DATA"
+
+        # Apply thresholds as informational status (never a rejection gate).
+        threshold_checks = []
+        if _nonempty(row.get("RevenueGrowthPct")):
+            rev_ok = float(_number(row.get("RevenueGrowthPct"))) >= float(thresholds.get("min_revenue_growth_pct") or 0.0)
+            threshold_checks.append("RevenueGrowth" + ("PASS" if rev_ok else "FAIL"))
+        if _nonempty(row.get("ProfitGrowthPct")):
+            prof_ok = float(_number(row.get("ProfitGrowthPct"))) >= float(thresholds.get("min_profit_growth_pct") or 0.0)
+            threshold_checks.append("ProfitGrowth" + ("PASS" if prof_ok else "FAIL"))
+        if _nonempty(row.get("ROEPercent")):
+            roe_ok = float(_number(row.get("ROEPercent"))) >= float(thresholds.get("min_roe_pct") or 10.0)
+            threshold_checks.append("ROE" + ("PASS" if roe_ok else "FAIL"))
+        if _nonempty(row.get("ROCEPercent")):
+            roce_ok = float(_number(row.get("ROCEPercent"))) >= float(thresholds.get("min_roce_pct") or 12.0)
+            threshold_checks.append("ROCE" + ("PASS" if roce_ok else "FAIL"))
+        if _nonempty(row.get("DebtToEquity")):
+            de_ok = float(_number(row.get("DebtToEquity"))) <= float(thresholds.get("max_debt_to_equity") or 1.0)
+            threshold_checks.append("DebtToEquity" + ("PASS" if de_ok else "FAIL"))
+        if _nonempty(row.get("InterestCoverage")):
+            ic_ok = float(_number(row.get("InterestCoverage"))) >= float(thresholds.get("min_interest_coverage") or 3.0)
+            threshold_checks.append("InterestCoverage" + ("PASS" if ic_ok else "FAIL"))
+        if _nonempty(row.get("OperatingCashFlowINR")) and (thresholds.get("require_positive_operating_cash_flow") is not False):
+            ocf_ok = float(_number(row.get("OperatingCashFlowINR"))) > 0
+            threshold_checks.append("OperatingCashFlow" + ("PASS" if ocf_ok else "FAIL"))
+        if _nonempty(row.get("FreeCashFlowINR")) and (thresholds.get("require_positive_free_cash_flow") is True):
+            fcf_ok = float(_number(row.get("FreeCashFlowINR"))) > 0
+            threshold_checks.append("FreeCashFlow" + ("PASS" if fcf_ok else "FAIL"))
+        row["FundamentalThresholdStatus"] = ";".join(threshold_checks) if threshold_checks else "WAIT_FOR_DATA"
+        row["FundamentalThresholdPassCount"] = sum(1 for c in threshold_checks if c.endswith("PASS"))
+        row["FundamentalThresholdTotalCount"] = len(threshold_checks)
         enriched_rows.append(row)
 
     audit = pd.DataFrame(enriched_rows)

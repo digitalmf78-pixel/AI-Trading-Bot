@@ -1327,6 +1327,48 @@ def calculate_clv(result):
 
 
 # ============================================================
+# ACCUMULATION SCORE (descriptive scoring factor)
+# ============================================================
+
+def calculate_accumulation_score(result):
+    if result is None or result.empty:
+        return result
+
+    scores = []
+    for _, row in result.iterrows():
+        score = 0.0
+        clv = pd.to_numeric(pd.Series([row.get("CLV")]), errors="coerce").iloc[0]
+        if pd.notna(clv):
+            score += float(clv) * 40.0
+
+        low_days = pd.to_numeric(pd.Series([row.get("LowVolumeDays5D")]), errors="coerce").iloc[0]
+        if pd.notna(low_days):
+            score += min(float(low_days) / 5.0, 1.0) * 30.0
+
+        price_change = pd.to_numeric(pd.Series([row.get("PriceChangePct")]), errors="coerce").iloc[0]
+        if pd.notna(price_change):
+            abs_change = abs(float(price_change))
+            if abs_change <= 1.0:
+                score += 20.0
+            elif abs_change <= 3.0:
+                score += 10.0
+
+        rvol = pd.to_numeric(pd.Series([row.get("RVOL")]), errors="coerce").iloc[0]
+        if pd.notna(rvol) and float(rvol) <= 1.5:
+            score += 10.0
+
+        scores.append(round(score, 2))
+
+    result = result.copy()
+    result["AccumulationScore"] = scores
+    result["AccumulationStatus"] = result["AccumulationScore"].apply(
+        lambda s: "HIGH_ACCUMULATION" if s >= 70 else "MODERATE_ACCUMULATION" if s >= 40 else "LOW_ACCUMULATION"
+    )
+    print("[ACCUMULATION SCORE] " + str(result["AccumulationStatus"].value_counts().to_dict()))
+    return result
+
+
+# ============================================================
 # RSI
 # ============================================================
 
@@ -3745,6 +3787,9 @@ def main():
     result = calculate_clv(
         result
     )
+
+    # Accumulation score (descriptive, non-gating)
+    result = calculate_accumulation_score(result)
 
     # --------------------------------------------------------
     # STEP 9
