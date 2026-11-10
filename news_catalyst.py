@@ -595,7 +595,7 @@ def _news_window_bounds(eod_date, scan_mode=None, now=None):
         eod_day = pd.Timestamp(eod_date)
         eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
         end_day = eod_day.normalize()
-        start_ist = end_day - pd.Timedelta(days=4)
+        start_ist = end_day - pd.Timedelta(days=6)
         end_ist = end_day + pd.Timedelta(hours=22)
 
     return (
