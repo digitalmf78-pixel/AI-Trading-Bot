@@ -113,11 +113,13 @@ def test_internal_join_keys_are_not_exposed_in_output():
     assert result.cohort.loc[0, "Stage__SctySrs"] == "EQ"
 
 
-def test_series_column_presence_mismatch_fails_closed_when_symbols_overlap():
+def test_missing_report_series_is_explicitly_diagnosed_without_rejecting_symbol_join():
     main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
     report = pd.DataFrame({"TckrSymb": ["AAA"], "Status": ["PASS"]})
-    with pytest.raises(CohortAssemblyError, match="SctySrs must be present on both"):
-        assemble_mainboard_cohort(main, reports={"Stage": report})
+    result = assemble_mainboard_cohort(main, reports={"Stage": report})
+    diagnostic = result.diagnostics[result.diagnostics["Stage"] == "Stage"].iloc[0]
+    assert diagnostic["SeriesAlignmentStatus"] == "NOT_CHECKED_SERIES_MISSING_IN_REPORT"
+    assert result.cohort.loc[0, "Stage__CoverageStatus"] == "SOURCE_ROW_PRESENT"
 
 
 def test_duplicate_column_names_fail_closed():
@@ -141,11 +143,15 @@ def test_one_to_many_evidence_series_mismatch_fails_closed():
         assemble_mainboard_cohort(main, news_report=news)
 
 
-def test_one_to_many_evidence_requires_series_when_base_has_series():
+def test_one_to_many_evidence_missing_series_is_diagnosed_not_rejected():
     main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
     events = pd.DataFrame({"TckrSymb": ["AAA"], "EventType": ["Results"]})
-    with pytest.raises(CohortAssemblyError, match="SctySrs must be present"):
-        assemble_mainboard_cohort(main, corporate_events_report=events)
+    result = assemble_mainboard_cohort(main, corporate_events_report=events)
+    diagnostic = result.diagnostics[
+        result.diagnostics["Diagnostic"] == "SERIES_ALIGNMENT_NOT_CHECKED_SERIES_MISSING_IN_REPORT"
+    ]
+    assert len(diagnostic) == 1
+    assert result.corporate_event_evidence.loc[0, "CorporateEventEvidenceCoverageStatus"] == "SOURCE_ROW_PRESENT"
 
 
 def test_one_to_many_evidence_duplicate_columns_fail_closed():
