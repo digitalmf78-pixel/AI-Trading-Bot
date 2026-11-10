@@ -17,8 +17,6 @@ SCHEMA_VERSION = "1.0"
 SIGNAL_TYPE = "EOD_CANDIDATE"
 EXCHANGE_TIMEZONE = "Asia/Kolkata"
 
-# Explicit allow-list for the first minimal signal-time envelope. Extend only
-# after mapping and review; never serialize a complete scanner dataframe row.
 SAFE_SIGNAL_FIELDS = {
     "Close", "Open", "High", "Low", "Volume", "TtlTrfVal", "SctySrs",
     "RVOL", "RVOLBand", "RVOLThresholdStatus",
@@ -52,6 +50,10 @@ class SignalValidationError(SignalStoreError):
 
 
 def _iso_date(value: str | date) -> str:
+    # datetime subclasses date; accepting it would silently serialize a timestamp
+    # as EODDate and make the same logical session acquire a different identity.
+    if isinstance(value, datetime):
+        raise SignalValidationError("EOD date must be a date, not a datetime")
     try:
         parsed = value if isinstance(value, date) else date.fromisoformat(str(value))
     except (TypeError, ValueError) as exc:
@@ -86,6 +88,23 @@ def _require_text(value: Any, label: str) -> str:
     return text
 
 
+def _verified_record_digest(record: Mapping[str, Any], hash_field: str) -> str:
+    """Recompute supported immutable digests; never trust a caller-supplied hash."""
+    if hash_field == "snapshot_payload_sha256":
+        excluded = {"WorkflowRunId", "WorkflowRunAttempt", "CreatedAtUTC", hash_field}
+    elif hash_field == "event_id":
+        excluded = {"event_id", "ObservedAtUTC"}
+    else:
+        raise SignalValidationError(f"Unsupported immutable hash field: {hash_field}")
+    if hash_field not in record:
+        raise SignalValidationError(f"Record requires {hash_field}")
+    payload = {key: value for key, value in record.items() if key not in excluded}
+    try:
+        return _sha256(_canonical_json(payload))
+    except (TypeError, ValueError) as exc:
+        raise SignalValidationError(f"Record is not canonical JSON: {exc}") from exc
+
+
 def build_signal_snapshot(
     *,
     eod_date: str | date,
@@ -113,7 +132,6 @@ def build_signal_snapshot(
     _reject_sensitive_keys(signal_fields)
 
     safe_fields = dict(signal_fields)
-    # Fail closed on NaN/Infinity and non-JSON values.
     try:
         _canonical_json(safe_fields)
     except (TypeError, ValueError) as exc:
@@ -137,7 +155,7 @@ def build_signal_snapshot(
     timestamp = created_at_utc or datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         raise SignalValidationError("created_at_utc must be an ISO-8601 timestamp") from exc
     if parsed_timestamp.tzinfo is None:
         raise SignalValidationError("created_at_utc must include a timezone")
@@ -183,7 +201,7 @@ def build_stage_event(
     timestamp = observed_at_utc or datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         raise SignalValidationError("observed_at_utc must be an ISO-8601 timestamp") from exc
     if parsed.tzinfo is None:
         raise SignalValidationError("observed_at_utc must include a timezone")
@@ -192,10 +210,11 @@ def build_stage_event(
 
 def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]], *,
                            key_field: str, hash_field: str) -> dict[str, int]:
-    """Append records; exact retries are no-ops and changed payloads conflict.
+    """Append records; verify hashes, make exact retries no-ops, reject conflicts.
 
-    Existing records are never rewritten. The workflow's branch-scoped
-    concurrency is expected to serialize repository writes.
+    Supports snapshot_payload_sha256 snapshots and event_id stage events.
+    Existing records are never rewritten. Workflow branch concurrency must
+    serialize repository writes; this function does not provide file locking.
     """
     target = Path(path)
     pending = list(records)
@@ -210,8 +229,11 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
                 try:
                     row = json.loads(line)
                     key, digest = str(row[key_field]), str(row[hash_field])
-                except (json.JSONDecodeError, KeyError, TypeError) as exc:
-                    raise SignalStoreError(f"Invalid existing JSONL record at {target}:{line_number}") from exc
+                    actual_digest = _verified_record_digest(row, hash_field)
+                except (json.JSONDecodeError, KeyError, TypeError, SignalValidationError) as exc:
+                    raise SignalStoreError(f"Invalid or tampered JSONL record at {target}:{line_number}: {exc}") from exc
+                if digest != actual_digest:
+                    raise SignalStoreError(f"Stored record hash mismatch at {target}:{line_number}")
                 if key in existing and existing[key] != digest:
                     raise SignalStoreError(f"Existing partition contains conflicting key {key}")
                 existing[key] = digest
@@ -223,6 +245,9 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
         if key_field not in record or hash_field not in record:
             raise SignalValidationError(f"Record requires {key_field} and {hash_field}")
         key, digest = str(record[key_field]), str(record[hash_field])
+        actual_digest = _verified_record_digest(record, hash_field)
+        if digest != actual_digest:
+            raise SignalValidationError(f"Record hash mismatch for key {key}")
         if key in seen_batch:
             if seen_batch[key] != digest:
                 raise SignalConflictError(f"Conflicting duplicate key in input batch: {key}")
