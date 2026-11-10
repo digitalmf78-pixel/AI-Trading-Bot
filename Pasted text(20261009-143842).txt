@@ -13,15 +13,18 @@ This update records the subsequently approved production rules and hybrid-strate
 5. No Top-20 or Top-50 shortlist cap is permitted.
 6. The old `Price > ₹50` example is not an active hard rejection rule unless separately approved and documented after backtesting.
 
-### B. Authoritative Delivery A/B screening rule
+### B. Authoritative Delivery A/B screening rule — clarified 10 November 2026
 
 1. The Delivery window is the 30 calendar days ending on and including the EOD as-of date.
-2. Count only valid, distinct NSE Delivery report dates not later than the as-of date. Require at least five valid distinct reports; otherwise return `WAIT_FOR_DATA`.
-3. Category A passes when the arithmetic average Delivery Percentage across all valid reports in that window is `>=60.00%`. Exactly 60.00% passes.
-4. Category B passes only when every valid report in the same window is `>=60.00%`. Exactly 60.00% passes.
-5. Evaluate A and B independently. The eligible cohort is the full `A OR B` union. Preserve `A_ONLY`, `B_ONLY` and `A_AND_B` membership and de-duplicate by symbol.
-6. Existing 5D/10D/20D Delivery consistency observations do not replace or alter the 30-calendar-day A/B eligibility rule.
-7. A requested separate five-session delivery-only YAML, if used, remains a separate artifact and must contain only its explicitly requested five-session Delivery condition; it must not be confused with the production 30-calendar-day A/B pipeline.
+2. Count **all** valid, distinct, candidate-specific NSE Delivery report sessions inside this 30-calendar-day window, and never use a report dated after the as-of date. Do not restrict the production calculation to the latest five sessions.
+3. **Minimum data requirement:** at least five valid distinct report sessions are required. With fewer than five, set `WAIT_FOR_DATA`; do not PASS or FAIL the stock on an incomplete window.
+4. If more than five valid sessions exist, use **every valid session available in the 30-day window** for both Category A and Category B. Do not stop at five and do not discard older in-window valid sessions merely to create a five-day sample.
+5. **Category A — Average Delivery Strength:** calculate the arithmetic average Delivery Percentage across all valid sessions in the 30-day window. PASS when the average is `>=60.00%`; exactly 60.00% passes. A daily value below 60.00% does not by itself fail Category A if the full-window average remains >=60.00%.
+6. **Category B — Consistent Daily Delivery Strength:** PASS only when every valid session in the same 30-day window has Delivery Percentage `>=60.00%`. Exactly 60.00% passes. One valid session below 60.00% means Category B FAIL, while Category A must still be evaluated independently.
+7. Evaluate A and B independently. The eligible cohort is the full `A OR B` union. Preserve `A_ONLY`, `B_ONLY` (should not normally occur when A is computed as the same-window arithmetic average and threshold), and `A_AND_B` membership/status; de-duplicate by symbol. Category B is the stronger consistency classification; it is not a separate BUY signal.
+8. **Required result/report fields per stock:** as-of date; 30-calendar-day window start/end; valid Delivery session count; expected/available coverage where determinable; each valid session date and Delivery %; arithmetic average Delivery %; minimum daily Delivery %; maximum daily Delivery %; Category A status; Category B status; membership (`A_ONLY` / `A_AND_B`); and reason/status (`PASS` / `FAIL` / `WAIT_FOR_DATA`). Show the actual number of valid sessions used (for example, 5/30, 12/30 or 20/30) so a reader can distinguish a five-session sample from a broader sample. Do not imply that 30 reports are expected: 30 is a calendar-day window, not 30 trading sessions.
+9. Keep existing 5D/10D/20D consistency fields as additional observations only; they must not replace or alter the 30-calendar-day A/B eligibility rule.
+10. A requested separate five-session delivery-only YAML/watchlist remains a separate artifact and must not be confused with the production 30-calendar-day A/B pipeline.
 
 ### C. Authoritative execution order — Delivery before RVOL
 
