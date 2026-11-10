@@ -569,10 +569,10 @@ def _nse_announcement_api_items(
 def _news_window_bounds(eod_date, scan_mode=None, now=None):
     """Return the news scan window as UTC bounds plus its IST display bounds.
 
-    EOD mode: five calendar dates inclusive, from 00:00 IST on EOD date - 4
+    EOD mode: seven calendar dates inclusive, from 00:00 IST on EOD date - 6
     days through 22:00 IST on the EOD date.
 
-    PREMARKET mode: five calendar dates inclusive relative to the next entry
+    PREMARKET mode: seven calendar dates inclusive relative to the next entry
     session's local scan date, through 09:15 IST on that date. This captures
     overnight/weekend announcements without changing the technical EOD date.
     """
@@ -589,13 +589,13 @@ def _news_window_bounds(eod_date, scan_mode=None, now=None):
 
     if mode == "PREMARKET":
         end_day = now_ist.normalize()
-        start_ist = end_day - pd.Timedelta(days=4)
+        start_ist = end_day - pd.Timedelta(days=6)
         end_ist = end_day + pd.Timedelta(hours=9, minutes=15)
     else:
         eod_day = pd.Timestamp(eod_date)
         eod_day = eod_day.tz_localize("Asia/Kolkata") if eod_day.tzinfo is None else eod_day.tz_convert("Asia/Kolkata")
         end_day = eod_day.normalize()
-        start_ist = end_day - pd.Timedelta(days=4)
+        start_ist = end_day - pd.Timedelta(days=6)
         end_ist = end_day + pd.Timedelta(hours=22)
 
     return (
@@ -819,7 +819,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         f"start_ist={window_start_ist.strftime('%Y-%m-%d %H:%M:%S %Z')} "
         f"end_ist={window_end_ist.strftime('%Y-%m-%d %H:%M:%S %Z')} "
         f"eod_date={pd.Timestamp(eod_date).date()} "
-        f"calendar_days=5"
+        f"calendar_days=7"
     )
 
     rows: list[dict[str, str]] = []

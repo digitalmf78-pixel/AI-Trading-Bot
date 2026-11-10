@@ -214,6 +214,7 @@ def build_potential_accumulation_report(
     historical,
     delivery_sessions,
     asof_date,
+    output_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """Create non-gating quantity/price/base/supply observations for A/B names."""
     if candidates is None or candidates.empty:
@@ -456,6 +457,7 @@ def build_potential_accumulation_report(
         rows.append(row)
 
     report = pd.DataFrame(rows)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    report.to_csv(OUTPUT_DIR / f"v8_potential_accumulation_observations_{asof:%Y%m%d}.csv", index=False)
+    target_path = Path(output_path) if output_path is not None else OUTPUT_DIR / f"v8_potential_accumulation_observations_{asof:%Y%m%d}.csv"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    report.to_csv(target_path, index=False)
     return report

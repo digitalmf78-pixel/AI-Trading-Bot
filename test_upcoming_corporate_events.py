@@ -83,3 +83,21 @@ def test_event_report_has_one_status_row_per_shortlisted_symbol_and_no_other_sym
     assert out.loc[out["TckrSymb"] == "ABC", "Status"].iloc[0] == "OFFICIAL_DATE_CONFIRMED"
     assert out.loc[out["TckrSymb"] == "XYZ", "Status"].iloc[0] == "WAIT_FOR_DATA"
     assert len(out) == 2
+
+
+def test_current_event_discovery_lookback_does_not_cap_future_display_horizon():
+    # Characterizes the current implementation only: the issuer API searches
+    # a 90-calendar-day announcement lookback, while explicit future event
+    # dates are not yet restricted to a separate next-20-calendar-day horizon.
+    item = _item(
+        "Board Meeting Intimation",
+        "The Board meeting will be held on 05-Dec-2026 to consider quarterly results.",
+        published="2026-10-19T12:00:00+05:30",
+    )
+    rows = news._upcoming_event_rows_for_item(
+        "ABC", item, "2026-10-20", "EOD", lookback_days=90
+    )
+    assert len(rows) == 1
+    assert rows[0]["LookbackDays"] == "90"
+    assert rows[0]["EventDate"] == "2026-12-05"
+    assert rows[0]["Status"] == "OFFICIAL_DATE_CONFIRMED"

@@ -619,23 +619,23 @@ def test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts():
     assert "normalized_items=1 symbol_mismatch=1" in output, output
 
 
-def test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff():
+def test_news_window_eod_uses_seven_calendar_days_and_2200_ist_cutoff():
     start_utc, end_utc, start_ist, end_ist, mode = news_catalyst._news_window_bounds(
         "2026-10-16", scan_mode="EOD", now="2026-10-16T22:10:00+05:30"
     )
     assert mode == "EOD"
-    assert start_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-12 00:00:00 IST", start_ist
+    assert start_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-10 00:00:00 IST", start_ist
     assert end_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-16 22:00:00 IST", end_ist
-    assert (end_ist.normalize() - start_ist.normalize()).days == 4
+    assert (end_ist.normalize() - start_ist.normalize()).days == 6
     assert start_utc < end_utc
 
 
-def test_news_window_premarket_covers_five_calendar_days_including_weekend_to_0915():
+def test_news_window_premarket_covers_seven_calendar_days_including_weekend_to_0915():
     start_utc, end_utc, start_ist, end_ist, mode = news_catalyst._news_window_bounds(
         "2026-10-16", scan_mode="PREMARKET", now="2026-10-19T09:05:00+05:30"
     )
     assert mode == "PREMARKET"
-    assert start_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-15 00:00:00 IST", start_ist
+    assert start_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-13 00:00:00 IST", start_ist
     assert end_ist.strftime("%Y-%m-%d %H:%M:%S %Z") == "2026-10-19 09:15:00 IST", end_ist
     assert start_utc < end_utc
     assert start_ist.date() <= pd.Timestamp("2026-10-17").date()  # weekend included
@@ -701,8 +701,8 @@ if __name__ == "__main__":
         test_accumulation_distribution_keeps_incomplete_candidate_series_waiting,
         test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
         test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts,
-        test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff,
-        test_news_window_premarket_covers_five_calendar_days_including_weekend_to_0915,
+        test_news_window_eod_uses_seven_calendar_days_and_2200_ist_cutoff,
+        test_news_window_premarket_covers_seven_calendar_days_including_weekend_to_0915,
         test_nse_naive_rss_timestamp_is_interpreted_as_ist_for_eod_window,
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,

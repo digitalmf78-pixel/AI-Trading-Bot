@@ -137,3 +137,66 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Ten-session breakout observation implementation validated successfully: 300 unit/data-audit tests + all 31 V8 regression tests passed; sector/news/official-index and issuer/RSS workflows passed. False-breakout failure and re-entry definitions remain pending approval.
 
 - Runtime optimization (09-Nov-2026): Potential Accumulation and VCP now build a one-pass symbol/series index over the existing Bhavcopy history and reuse it for candidate lookups, preserving duplicate-session and WAIT_FOR_DATA integrity. Sector-history fallback now stops retrying all remaining Nifty indices after a confirmed service-wide HTML ReturnUrl redirect; no synthetic sector values are introduced. PR #33 merged after NSE V8 CI, sector mapping cache tests, and news parser tests all passed. Trading gates and the Master Specification remain unchanged. Live end-to-end runtime benchmark is pending the next scanner execution.
+
+
+## Track 2 Full Mainboard Accumulation (10-Nov-2026)
+- Added a standalone, non-gating Track 2 builder in `track2_full_mainboard.py`. It takes the official Mainboard-filtered cohort before Delivery A/B and runs the existing Delivery Quantity, Potential Accumulation and VCP observers over all unique Mainboard symbols.
+- Track 2 writes to `outputs/track2_full_mainboard/`; optional observer output paths keep its files separate from Track 1 artifacts. It does not change Track 1 eligibility, ranking, watchlists or scanner flow.
+- Duplicate/invalid identities and observer failures are retained as explicit WAIT_FOR_DATA states; the report does not silently drop the rest of the cohort.
+- SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION are still research requests, not classified patterns. Exact rules and thresholds require approval; none were invented.
+- Latest CI (run 42807562406): Python compilation PASS; **403 pytest tests passed**, **33 V8 regression tests PASS**, and **43 sector/news/official-index tests PASS**.
+- Real-data offline validation (run 42807562907, source EOD 09-Nov-2026) completed successfully using the existing cached 201-session Bhavcopy history and 21 Delivery report dates. Exact cohort parity: **2,588/2,588** unique Mainboard symbols, zero duplicates/invalid symbols. Delivery Quantity: 2,253 COMPLETE / 335 WAIT; Potential Accumulation: 2,253 OBSERVATIONS_AVAILABLE / 258 PARTIAL_DATA / 77 WAIT; VCP: 2,023 COMPLETE / 565 WAIT. All observer errors were null.
+- Diagnostic findings: 203 BE rows have missing Delivery Quantity in the dedicated Track 2 observer report; 132 EQ rows WAIT on Delivery Quantity session coverage. All 565 VCP WAIT rows are due to missing symbol-session rows in the 60-session window; no duplicate dates or invalid OHLCV rows were reported in those WAIT rows. Pivot/EMA observations require exact 201-session symbol history (1,665 COMPLETE / 923 WAIT); this contract remains under review and was not relaxed.
+- Safety checks passed: Track 1 source artifacts unchanged; zero network fetches; Telegram disabled; production scanner not called. SIDEWAYS/DIP remain NOT_CLASSIFIED_PENDING_APPROVED_RULES and false-VCP forward outcomes remain unevaluated.
+- Track 2 remains an isolated, non-gating report and is **not wired into the scheduled EOD workflow**. Audit branch only; Master Specification, main branch and production scanner remain unchanged. See `NSE_V8_TRACK2_FULL_MAINBOARD_ACCUMULATION_DESIGN_AUDIT_2026-11-10.md` for detailed diagnostics and the unresolved 201-session contract.
+
+
+### Track 2 raw-source audit update (10-Nov-2026)
+- Offline Track 2 validation run [42810173636](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42810173636) completed SUCCESS; artifact `track2-full-mainboard-offline-42810173636` (ID 13761744331).
+- Raw Delivery source audit across 21 report dates confirmed the BE `DELIV_QTY` column is present but all 4,502 BE source rows have blank/missing quantity. Of 4,263 BE candidate-date pairs, 3,542 source rows exist (all quantities missing) and 721 have no matching source row. Do not convert missing to zero; the reason for blank BE values is not established.
+- EQ candidate-date audit: 48,800 valid quantity rows, 1,285 missing source rows and one explicit zero; no duplicate source symbol rows.
+- Pivot/EMA exact history contract remains 201 symbol sessions (200 prior + current EOD): 1,665 COMPLETE / 923 WAIT. Four symbols have complete 200D range but lack the additional earliest session.
+- Track 2 coverage: 2,588/2,588; Delivery Quantity 2,253 complete / 335 WAIT; Potential Accumulation 2,253 available / 258 partial / 77 WAIT; VCP 2,023 complete / 565 WAIT. All observer errors null.
+- Safety: zero network fetches, Telegram disabled, production scanner not called, Track 1 artifacts unchanged. Track 2 remains standalone/non-gating; Master Specification and main branch unchanged. Detailed source audit is in `NSE_V8_TRACK2_FULL_MAINBOARD_ACCUMULATION_DESIGN_AUDIT_2026-11-10.md`.
+
+
+### Shadow-store safety audit (10-Nov-2026)
+- Hardened `signal_shadow_store.py` so allow-listed text values and stage-event free text are scanned for common credentials/tokens, Bearer strings, private URLs, email/phone-like identifiers, control characters and oversized text. Checks run both when building records and when validating persisted records.
+- CI run [42811907344](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42811907344) passed: compilation PASS, **411 pytest tests**, **33 V8 regression tests**, and **43 sector/news/official-index tests**.
+- The checks are heuristic and do not replace curated input/least-data rules. Shadow store remains standalone and is not connected to production scanner or scheduled EOD; no signal snapshots were deployed. Main branch and Master Specification remain unchanged. See the Track 2 design/data-contract audit for details.
+
+
+### Cohort Assembly validation update (10-Nov-2026)
+- Strengthened tests for the canonical **2,588-row Mainboard cohort** vs the **758-row Delivery A/B report**: all 2,588 remain; 758 stage rows present; 1,830 are `NOT_EVALUATED` where the downstream report has no row.
+- Confirmed native WAIT/reject statuses are preserved, News/Corporate Event one-to-many evidence stays separate and does not inflate stage coverage counts, and source frames are not mutated.
+- CI [42812305661](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42812305661) SUCCESS: **415 pytest**, **33 V8 regression**, **43 sector/news/index tests**; compilation PASS.
+- This is synthetic contract validation, not yet a real-EOD integrated cohort run. The helper remains standalone/non-gating; no production wiring was made.
+
+
+### News / Corporate Events window audit (10-Nov-2026)
+- Confirmed current News window is **5 calendar days** (EOD: start 00:00 IST at EOD−4 through 22:00 IST EOD; PREMARKET: start local date−4 through 09:15). Recorded data-contract target remains **7 days**; no runtime change applied.
+- Confirmed issuer announcement discovery uses a **90-day lookback**, while explicit future EventDates are currently marked confirmed without a separate next-20-calendar-day display cap. Added a characterization test; this is documented current behavior, not an approved final horizon.
+- Keep 90-day discovery separate from the 20-day display horizon; do not reduce source lookback. Any future alignment requires explicit approval and real-EOD validation.
+- CI [42812650737](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42812650737) SUCCESS: **416 pytest**, **33 V8 regression**, **43 sector/news/index tests**; compilation PASS. No runtime behavior changed.
+
+
+## News/Catalyst window — approved 7 calendar days (10-Nov-2026)
+
+- EOD: 00:00 IST on EOD date minus six calendar days through 22:00 IST on EOD date.
+- PREMARKET: 00:00 IST on local scan date minus six calendar days through 09:15 IST on local scan date.
+- Both windows cover seven calendar dates inclusive, including weekends/holidays.
+- This changes News evidence lookback only; Corporate Events retains its separate 90-calendar-day source-discovery lookback. Official evidence remains primary and secondary coverage remains unverified.
+- The original Master Specification is not rewritten; see the dated implementation audit for validation status.
+
+
+## Signal shadow-store status — audit only (10-Nov-2026)
+
+The append-only JSONL snapshot/event helper and full-Mainboard cohort assembly helper remain standalone and are **not** connected to the production scanner or scheduled EOD workflow. The shadow-store audit covers immutable identity/digests, exact retry no-ops, conflicts, tamper detection, and free-text redaction. A one-shot `source_reports` generator-consumption defect was fixed with a regression test. Before integration, define the date partition/manifest and retention policy, validate stage-event-to-snapshot identity linkage, and implement serialized single-writer GitHub persistence with restart/retry tests. No real EOD shadow snapshots or forward outcomes exist yet. See the dated Track 2/Shadow Store audit for detailed findings. 
+
+
+### Shadow persistence writer — design checkpoint (10-Nov-2026)
+
+A dedicated, opt-in shadow persistence workflow is the recommended future design; it is not implemented or enabled. The standalone JSONL helper now stages validated complete partitions in a same-directory temporary file, fsyncs, atomically replaces the target, and cleans up after a simulated replace failure. Latest CI run 42826235237 passed: 421 pytest + 33 V8 regression tests. The future writer must still serialize all writers with one shared GitHub Actions concurrency group, use optimistic latest-branch fetch/push retries (never force-push), and make reruns idempotent with an auditable manifest. It must remain separate from production EOD scanning, NSE fetching and Telegram delivery. Multi-run race, fsync-failure, rerun, tamper and redaction tests remain required before enabling writes. See the dated audit report for the full protocol and open decisions.
+
+
+- Further atomic persistence tests passed in CI run 42826604469: simulated staged-file fsync failure leaves the old partition intact; simulated parent-directory fsync failure is recovered by an idempotent retry. New files default to mode 0600; existing permissions are preserved. This remains single-process helper validation, not multi-writer workflow validation.

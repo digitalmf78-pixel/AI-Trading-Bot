@@ -175,7 +175,7 @@ Read-only mapping against GitHub `main`:
 These are pending, not approved thresholds:
 1. Whether the proposed count of **6–8 sessions with Delivery >=60% among 20 sessions** should remain informational or become a separate rule. Until approved, informational only; it does not replace Delivery A/B.
 2. Whether to create a shadow/watchlist for stocks below ₹1.5 crore traded value.
-3. Fundamental collection boundary: all Delivery A/B stocks before Liquidity vs current Liquidity-first flow.
+3. **RESOLVED (06-Nov-2026):** Fundamentals are collected after Liquidity for every Liquidity-qualified candidate. Approved sequence: Delivery A/B union (all RVOL bands) → Liquidity → Fundamentals. This is not pending; do not move the collection boundary without explicit approval.
 4. VCP contraction count, contraction-depth sequence and exact base width/duration thresholds.
 5. Pocket Pivot exact formula, lookback and candle conditions.
 6. False-breakout buffer and retest window length.
@@ -551,3 +551,22 @@ The production scanner must follow this exact sequence:
 - News Matching and Parser Tests workflow also completed SUCCESS.
 - The fix is CI-validated. The next live scanner run must confirm that Layer 18 now computes valid observations and that the downstream 3+1 layer advances only when its existing independent evidence requirements are met.
 - No Delivery A/B, RVOL, liquidity, fundamental thresholds, sector/news criteria, 3+1 thresholds, risk controls, watchlist eligibility, or trade-entry rules were changed. The original Master Specification remains unchanged.
+
+
+## Track 2 Full Mainboard Accumulation — design audit checkpoint (10-Nov-2026)
+- Added `NSE_V8_TRACK2_FULL_MAINBOARD_ACCUMULATION_DESIGN_AUDIT_2026-11-10.md` on the audit branch.
+- Canonical Track 2 source is the official Mainboard-filtered frame before Delivery A/B; the 09-Nov audited artifact has 2,588 unique PASS_MAIN_BOARD rows, matching the full Delivery dual-category audit exactly. The A/B union is 758 and must not be used as Track 2's base.
+- Existing Delivery Quantity observer already runs on the full Delivery audit cohort. Existing Potential Accumulation and VCP observers are currently A/B-union scoped; separate full-Mainboard outputs and orchestration remain unimplemented.
+- Proposed Track 2 report is observational and independent; it must preserve every Mainboard symbol, isolate failures as WAIT_FOR_DATA, and never feed back into Track 1 eligibility or outputs.
+- SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION are research targets only until the user approves exact definitions/lookbacks/thresholds. Do not invent numeric criteria or classify stocks yet.
+- No scanner code, workflow, production behaviour, Master Specification, or main-branch content was changed for this audit checkpoint.
+
+
+## Track 2 standalone builder implementation checkpoint (10-Nov-2026)
+- Added `track2_full_mainboard.py` as a standalone non-gating builder over the full official Mainboard-filtered frame before Delivery A/B.
+- Reuses Delivery Quantity, Potential Accumulation and VCP observers with optional separate output paths, preventing Track 2 from overwriting Track 1 artifacts.
+- Added `test_track2_full_mainboard.py`; CI includes the new test file and compile target.
+- Latest CI run [42800483179](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42800483179): **397 passed**, 33 V8 regression tests PASS, 43 sector/news/official-index tests PASS.
+- Duplicate/invalid identity rows remain visible with WAIT_FOR_DATA; observer errors are isolated; full input membership is preserved.
+- SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION remain unclassified pending explicit approved rules. No new thresholds, scoring, filters or entry signals.
+- No scanner/workflow integration, no Track 1 change, no live EOD run, and no Master Specification change. Audit branch only.
