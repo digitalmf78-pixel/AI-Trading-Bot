@@ -167,3 +167,11 @@ The following changes were committed after the 54-case focused execution. THEY H
 - The first explicit Track 2 test run exposed a duplicate-key join validation bug. The implementation was corrected to exclude ambiguous identities from observer input while retaining one WAIT_FOR_DATA row in the cohort report; the final run above validates the correction.
 - **Not done:** no Track 2 scheduled workflow wiring, no scanner call-site integration, no live EOD run, no real NSE fetch, no Track 1 output or eligibility changes, and no Master Specification change. This remains isolated code on the audit branch.
 - Current branch comparison: **90 commits ahead, 2 behind main**. No merge/rebase/PR was performed; main remains untouched.
+
+## Track 2 full-Mainboard validation update (10-Nov-2026)
+- Added a synthetic 2,588-symbol Track 2 cohort test and committed it as `5d3db64c4b643b80122d089c60da0972d25bf3a4`.
+- Latest GitHub Actions run `42801601368`: **SUCCESS**; configured pytest **398 passed in 7.52s**; V8 regression **33 PASS**; sector/news/official-index **43 PASS**; Python compilation PASS.
+- Inspected the actual 09-Nov EOD report artifact `nse-v8-reports-42634890331` read-only. It confirms 2,588 Mainboard symbols (2,385 EQ + 203 BE), with Delivery Quantity already covering all 2,588 (2,253 complete, 335 WAIT).
+- Existing Potential Accumulation and VCP outputs remain limited to the 758-row A/B union; 1,830 Mainboard symbols have no evaluation row in those existing reports.
+- The artifact does not include raw 200-session Bhavcopy or raw Delivery cache files. The real-data Track 2 observer run is therefore still pending cache restoration. No live NSE fetch was performed.
+- Track 2 remains standalone and unwired; no production scanner, main branch, Master Specification, or Track 1 behavior changed.
