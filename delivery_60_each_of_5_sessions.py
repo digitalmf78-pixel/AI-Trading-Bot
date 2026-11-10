@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from main_board_filter import apply_main_board_filter
 
 REQUIRED_SESSIONS = 5
 MIN_DELIVERY_INCLUSIVE = 60.0
@@ -110,3 +111,76 @@ def filter_five_session_delivery(
         "qualifying_symbols": len(qualifying),
     }
     return qualifying, pd.DataFrame(audit_rows, columns=AUDIT_COLUMNS), summary
+
+
+def eligible_mainboard_eq_symbols(
+    bhavcopy: pd.DataFrame,
+    main_board_symbols: set[str],
+    sme_symbols: set[str],
+    official_etf_symbols: set[str] | None = None,
+    source_status: str = "OFFICIAL_NSE_LISTS",
+) -> tuple[set[str], dict]:
+    """Apply V8's official EQ stock-universe checks to one dated Bhavcopy.
+
+    This is universe classification only: EQ series, valid Bhavcopy price/volume,
+    ETF/MF exclusion, and official Main Board membership. It applies no trading
+    or technical signal filters.
+    """
+    required = {"TckrSymb", "SctySrs", "ClsPric", "TtlTradgVol", "ISIN"}
+    missing = required - set(bhavcopy.columns)
+    if missing:
+        raise ValueError(f"Bhavcopy is missing required stock-universe fields: {sorted(missing)}")
+
+    frame = bhavcopy.copy()
+    frame["TckrSymb"] = frame["TckrSymb"].astype(str).str.strip().str.upper()
+    frame["SctySrs"] = frame["SctySrs"].astype(str).str.strip().str.upper()
+    frame["ClsPric"] = pd.to_numeric(frame["ClsPric"], errors="coerce")
+    frame["TtlTradgVol"] = pd.to_numeric(frame["TtlTradgVol"], errors="coerce")
+    frame = frame[
+        frame["SctySrs"].eq("EQ")
+        & frame["ClsPric"].gt(0)
+        & frame["TtlTradgVol"].ge(0)
+        & frame["TckrSymb"].ne("")
+        & frame["TckrSymb"].ne("NAN")
+    ].copy()
+    input_eq_rows = len(frame)
+
+    etf_set = {str(symbol).strip().upper() for symbol in (official_etf_symbols or set())}
+    if not etf_set and "FinInstrmNm" not in frame.columns:
+        raise ValueError("Official ETF list and Bhavcopy instrument-name fallback are both unavailable")
+    etf_mask = frame["TckrSymb"].isin(etf_set)
+    etf_mask |= frame["ISIN"].fillna("").astype(str).str.strip().str.upper().str.startswith("INF")
+    if "FinInstrmNm" in frame.columns:
+        instrument_name = frame["FinInstrmNm"].fillna("").astype(str)
+        etf_mask |= instrument_name.str.contains(
+            r"\bAMC\s*-\s*", case=False, regex=True, na=False
+        )
+        etf_mask |= instrument_name.str.contains(
+            r"\b(ETF|EXCHANGE TRADED FUND|MUTUAL FUND)\b",
+            case=False, regex=True, na=False,
+        )
+    excluded_etf_mf = set(frame.loc[etf_mask, "TckrSymb"])
+    frame = frame.loc[~etf_mask].copy()
+
+    counts = frame.groupby("TckrSymb").size()
+    ambiguous = set(counts[counts != 1].index)
+    if ambiguous:
+        frame = frame.loc[~frame["TckrSymb"].isin(ambiguous)].copy()
+
+    board_frame, board_audit = apply_main_board_filter(
+        frame,
+        main_board_symbols,
+        sme_symbols,
+        source_status=source_status,
+    )
+    eligible = set(board_frame["TckrSymb"].astype(str).str.strip().str.upper())
+    board_counts = board_audit["MainBoardStatus"].value_counts().to_dict()
+    summary = {
+        "input_eq_rows": input_eq_rows,
+        "excluded_etf_mf_symbols": len(excluded_etf_mf),
+        "ambiguous_symbols": len(ambiguous),
+        "main_board_eligible_symbols": len(eligible),
+        "excluded_sme_symbols": int(board_counts.get("EXCLUDED_SME", 0)),
+        "excluded_unverified_symbols": int(board_counts.get("EXCLUDED_UNVERIFIED_CLASSIFICATION", 0)),
+    }
+    return eligible, summary
