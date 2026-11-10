@@ -28,6 +28,7 @@ class CohortAssemblyError(ValueError):
 class CohortAssemblyResult:
     cohort: pd.DataFrame
     news_evidence: pd.DataFrame
+    corporate_event_evidence: pd.DataFrame
     diagnostics: pd.DataFrame
 
 
@@ -57,6 +58,7 @@ def assemble_mainboard_cohort(
     *,
     reports: Mapping[str, pd.DataFrame | None] | None = None,
     news_report: pd.DataFrame | None = None,
+    corporate_events_report: pd.DataFrame | None = None,
 ) -> CohortAssemblyResult:
     """Left-join stage evidence onto every official Main Board candidate.
 
@@ -117,37 +119,42 @@ def assemble_mainboard_cohort(
         # Do not synthesize or reinterpret native status fields. The raw status
         # survives under <stage>__<original-column> exactly as supplied.
 
-    if news_report is None:
-        news = pd.DataFrame(columns=["TckrSymb", "NewsEvidenceCoverageStatus"])
-        diagnostics.append({"Stage": "news_evidence", "Diagnostic": "SOURCE_REPORT_NOT_SUPPLIED", "Rows": 0})
-    else:
-        if not isinstance(news_report, pd.DataFrame):
-            raise CohortAssemblyError("news_report: expected a pandas DataFrame or None")
-        if news_report.empty:
-            news = news_report.copy()
-            if SYMBOL_COLUMN not in news.columns:
-                news[SYMBOL_COLUMN] = pd.Series(dtype="object")
-            news["NewsEvidenceCoverageStatus"] = pd.Series(dtype="object")
-            diagnostics.append({"Stage": "news_evidence", "Diagnostic": "SOURCE_REPORT_EMPTY", "Rows": 0})
-        else:
-            if SYMBOL_COLUMN not in news_report.columns:
-                raise CohortAssemblyError(f"news_report: missing required {SYMBOL_COLUMN} column")
-            news = news_report.copy()
-            news["_cohort_symbol_key"] = news[SYMBOL_COLUMN].map(_normalise_symbol)
-            if (news["_cohort_symbol_key"] == "").any():
-                raise CohortAssemblyError("news_report: blank/null symbol key")
-            cohort_symbols = set(base["_cohort_symbol_key"])
-            news["NewsEvidenceCoverageStatus"] = news["_cohort_symbol_key"].map(
-                lambda key: "SOURCE_ROW_PRESENT" if key in cohort_symbols else "OUT_OF_COHORT"
-            )
-            news = news.drop(columns=["_cohort_symbol_key"])
-            diagnostics.append({
-                "Stage": "news_evidence",
-                "Diagnostic": "ONE_TO_MANY_EVIDENCE_PRESERVED",
-                "Rows": len(news),
-                "MatchedEvidenceRows": int(news["NewsEvidenceCoverageStatus"].eq("SOURCE_ROW_PRESENT").sum()),
-                "OutOfCohortRows": int(news["NewsEvidenceCoverageStatus"].eq("OUT_OF_COHORT").sum()),
-            })
+    def _one_to_many_evidence(report: pd.DataFrame | None, label: str) -> pd.DataFrame:
+        coverage_column = f"{label}EvidenceCoverageStatus"
+        if report is None:
+            diagnostics.append({"Stage": label.lower() + "_evidence", "Diagnostic": "SOURCE_REPORT_NOT_SUPPLIED", "Rows": 0})
+            return pd.DataFrame(columns=[SYMBOL_COLUMN, coverage_column])
+        if not isinstance(report, pd.DataFrame):
+            raise CohortAssemblyError(f"{label.lower()}_report: expected a pandas DataFrame or None")
+        if report.empty:
+            empty = report.copy()
+            if SYMBOL_COLUMN not in empty.columns:
+                empty[SYMBOL_COLUMN] = pd.Series(dtype="object")
+            empty[coverage_column] = pd.Series(dtype="object")
+            diagnostics.append({"Stage": label.lower() + "_evidence", "Diagnostic": "SOURCE_REPORT_EMPTY", "Rows": 0})
+            return empty
+        if SYMBOL_COLUMN not in report.columns:
+            raise CohortAssemblyError(f"{label.lower()}_report: missing required {SYMBOL_COLUMN} column")
+        evidence = report.copy()
+        evidence["_cohort_symbol_key"] = evidence[SYMBOL_COLUMN].map(_normalise_symbol)
+        if (evidence["_cohort_symbol_key"] == "").any():
+            raise CohortAssemblyError(f"{label.lower()}_report: blank/null symbol key")
+        cohort_symbols = set(base["_cohort_symbol_key"])
+        evidence[coverage_column] = evidence["_cohort_symbol_key"].map(
+            lambda key: "SOURCE_ROW_PRESENT" if key in cohort_symbols else "OUT_OF_COHORT"
+        )
+        evidence = evidence.drop(columns=["_cohort_symbol_key"])
+        diagnostics.append({
+            "Stage": label.lower() + "_evidence",
+            "Diagnostic": "ONE_TO_MANY_EVIDENCE_PRESERVED",
+            "Rows": len(evidence),
+            "MatchedEvidenceRows": int(evidence[coverage_column].eq("SOURCE_ROW_PRESENT").sum()),
+            "OutOfCohortRows": int(evidence[coverage_column].eq("OUT_OF_COHORT").sum()),
+        })
+        return evidence
+
+    news = _one_to_many_evidence(news_report, "News")
+    corporate_events = _one_to_many_evidence(corporate_events_report, "CorporateEvent")
 
     # Explicit row-level coverage summary. No downstream status is used to filter.
     stage_coverage = [c for c in base.columns if c.endswith("__CoverageStatus")]
@@ -157,5 +164,6 @@ def assemble_mainboard_cohort(
     return CohortAssemblyResult(
         cohort=base.reset_index(drop=True),
         news_evidence=news.reset_index(drop=True),
+        corporate_event_evidence=corporate_events.reset_index(drop=True),
         diagnostics=pd.DataFrame(diagnostics),
     )
