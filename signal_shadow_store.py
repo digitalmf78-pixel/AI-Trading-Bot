@@ -70,7 +70,7 @@ def _sha256(value: str) -> str:
 
 
 _SENSITIVE_TEXT_PATTERNS = (
-    re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|passwd|secret|client[_-]?secret|refresh[_-]?token|session(?:id)?|chat[_-]?id)\s*[:=]\s*[^\s,;&]+"),
+    re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|token|credential|auth(?:orization)?|password|passwd|secret|client[_-]?secret|refresh[_-]?token|session(?:id)?|chat[_-]?id)\s*[:=]\s*[^\s,;&]+"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
     re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\b"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
