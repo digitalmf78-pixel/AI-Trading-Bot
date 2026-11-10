@@ -450,3 +450,11 @@ The repository currently has no workflow that persists shadow snapshots/events. 
 - Latest CI run `42826235237` passed on commit `259d37561724cdcc03f64e286f63aabccd0c2713`: 421 pytest tests and all 33 V8 regression tests passed; Python compilation and sector/news/official-index tests passed.
 - A first atomic-writer test run exposed two issues before acceptance: the newline argument was over-escaped, and phone-like redaction heuristics falsely scanned the cryptographic payload digest. Both were corrected; opaque digest/commit fields are excluded from free-text heuristics and remain protected by their explicit identity/hash validation.
 - Atomic replacement is now implemented and CI-validated in the standalone helper. This is still a design recommendation for workflow-level single-writer orchestration only: no concurrency group, write permission, shadow-store persistence workflow, or production wiring was added. Main branch and Master Specification remain unchanged.
+
+
+### Additional atomic-writer failure tests — 10-Nov-2026
+- Added file-`fsync` failure injection: the original partition remains byte-for-byte unchanged and the temporary file is cleaned up when the staged file cannot be synced.
+- Added parent-directory-`fsync` failure injection: replacement may already have occurred, so the call raises an error with commit outcome requiring reconciliation; the test confirms the complete new record is present and a retry is an idempotent no-op. This is an intentional uncertain-commit boundary, not a rollback guarantee.
+- New partitions now default to mode `0600`; existing partition mode is preserved. This avoids making potentially sensitive observational data world-readable by default.
+- Latest CI run `42826604469` succeeded on code commit `502261df08329e67151cac015b357e112c7c7bea`: 421 pytest tests and 33 V8 regression tests passed; compilation and sector/news/official-index tests passed.
+- This validates single-process atomic replacement and retry behavior only. It does not establish concurrent-writer safety, power-loss durability on every filesystem, or GitHub branch commit serialization. No writer workflow or production wiring has been enabled.
