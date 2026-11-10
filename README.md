@@ -171,3 +171,10 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Confirmed native WAIT/reject statuses are preserved, News/Corporate Event one-to-many evidence stays separate and does not inflate stage coverage counts, and source frames are not mutated.
 - CI [42812305661](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42812305661) SUCCESS: **415 pytest**, **33 V8 regression**, **43 sector/news/index tests**; compilation PASS.
 - This is synthetic contract validation, not yet a real-EOD integrated cohort run. The helper remains standalone/non-gating; no production wiring was made.
+
+
+### News / Corporate Events window audit (10-Nov-2026)
+- Confirmed current News window is **5 calendar days** (EOD: start 00:00 IST at EOD−4 through 22:00 IST EOD; PREMARKET: start local date−4 through 09:15). Recorded data-contract target remains **7 days**; no runtime change applied.
+- Confirmed issuer announcement discovery uses a **90-day lookback**, while explicit future EventDates are currently marked confirmed without a separate next-20-calendar-day display cap. Added a characterization test; this is documented current behavior, not an approved final horizon.
+- Keep 90-day discovery separate from the 20-day display horizon; do not reduce source lookback. Any future alignment requires explicit approval and real-EOD validation.
+- CI [42812650737](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42812650737) SUCCESS: **416 pytest**, **33 V8 regression**, **43 sector/news/index tests**; compilation PASS. No runtime behavior changed.
