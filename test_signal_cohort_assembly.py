@@ -188,3 +188,17 @@ def test_evidence_coverage_column_collision_fails_closed():
     })
     with pytest.raises(CohortAssemblyError, match="reserved coverage column"):
         assemble_mainboard_cohort(main, news_report=news)
+
+
+def test_generated_stage_coverage_columns_cannot_overwrite_base_data():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "Delivery__CoverageStatus": ["source-value"]})
+    report = pd.DataFrame({"TckrSymb": ["AAA"], "Status": ["PASS"]})
+    with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
+        assemble_mainboard_cohort(main, reports={"Delivery": report})
+
+
+def test_stage_payload_cannot_shadow_coverage_status():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    report = pd.DataFrame({"TckrSymb": ["AAA"], "CoverageStatus": ["spoofed"]})
+    with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
+        assemble_mainboard_cohort(main, reports={"Stage": report})
