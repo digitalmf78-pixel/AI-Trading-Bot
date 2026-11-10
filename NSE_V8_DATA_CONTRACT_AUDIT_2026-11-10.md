@@ -15,8 +15,8 @@ The repository has useful module-specific CSV schemas, but it does not yet expos
 | Delivery quantity | `delivery_quantity_analysis.py`; `outputs/v8_delivery_quantity_observations_YYYYMMDD.csv` | Symbol, series, 5/10/20 session quantity totals/averages/first/last/change/slope; Delivery % average; traded-volume average; close first/last/change/range; dated quantity/%/volume/close values; as-of date, source dates, per-window status/reason | No Delivered Value field; 30/90/200 delivery windows are not part of this module; source/fetch/freshness metadata is not fully standardized |
 | Price/volume | Bhavcopy history consumed by `potential_accumulation_analysis.py` and VCP modules | OHLCV, point-in-time history index, 20/50/100/200 rolling ranges, pivots, ATR, EMA20/44/50/200 and delivery/price response observations | Potential Accumulation report is called with the A/B union, not an independent full Mainboard research cohort; no explicit Sideways/Dip result types yet |
 | Fundamentals | `fundamental_data_provider.py`; `data/inputs/fundamental_metrics.csv`; `data/cache/fundamental_history/` | Symbol, as-of/retrieved time, source/URL, financial period, publication date/status, official filing URL/source, metric-period alignment, TTM audit, metrics and valuation timestamps/status | Broad provenance metadata exists; audit still needed for cache history shape, official reconciliation and per-field freshness/status |
-| Institutional | `fii_dii_activity.py`; `outputs/v8_fii_dii_market_activity.csv` | Exact-date FII/FPI and DII aggregate cash-flow data with explicit `MARKET_WIDE_AGGREGATE_NOT_PER_STOCK` scope | Market-wide context only. No stock-specific bulk/block deals, shareholding, promoter pledge or insider/PIT/SAST evidence engine found in inspected modules |
-| News | `news_catalyst.py`; `data/inputs/news_evidence_auto.csv` | Symbol, PublishedAt, Headline, Source, SourceType, URL, Impact, EventID, SourceDomain; official/secondary distinction and issuer matching | Visible schema lacks explicit FirstSeenAt/LastCheckedAt and durable revision/syndication history; current window is 5 calendar days, requested window is 7 |
+| Institutional | `fii_dii_activity.py`; `outputs/v8_fii_dii_market_activity.csv` | Exact-date FII/FPI and DII aggregate cash-flow data with explicit `MARKET_WIDE_AGGREGATE_NOT_PER_STOCK` scope | Repository recursive tree and source inspection show no separate stock-specific bulk/block deals, shareholding, promoter pledge or insider/PIT/SAST evidence module; market-wide context only |
+| News | `news_catalyst.py`; `data/inputs/news_evidence_auto.csv` | Symbol, PublishedAt, Headline, Source, SourceType, URL, Impact, EventID, SourceDomain; official/secondary distinction and issuer matching | Current 7-day requirement is not met (code explicitly uses five calendar dates); visible tracked tree has no dedicated durable news cache/history path, and schema lacks FirstSeenAt/LastCheckedAt/revision history |
 | Events | `news_catalyst.py`; `outputs/v8_upcoming_corporate_events.csv` | EODDate, symbol, EventType, EventDate, AnnouncementDate, Headline, Source, SourceType, URL, Status, LookbackDays | Current 90-day announcement discovery lookback is not the requested next-20-calendar-day event horizon; no durable changed/cancelled/postponed event history in visible output schema |
 | Telegram | `build_marathi_digest` / `send_marathi_telegram` in `news_catalyst.py` | Current EOD/premarket digest, liquidity/fundamental summary, per-stock existing confirmation fields, 3500-character chunks, retries and Telegram acknowledgement logs | Required four-section ordering (Catalyst, Early Accumulation, Trade Ready, Negative/Risk Alerts) is not implemented as a distinct reporting contract |
 | Watchlists | `hybrid_watchlists.py` | Four separate CSV outputs; status and reason; reports do not mutate candidate dataframe | Daily status snapshots/transitions and immutable prior status history require verification/implementation |
@@ -54,15 +54,20 @@ The inspected Delivery Quantity alias map has quantity, Delivery %, traded volum
 - Event changes/cancellations/postponements need append-only history or equivalent revision records; do not overwrite old event facts.
 - Duplicate detection must distinguish syndicated copies from a genuinely new issuer announcement.
 
-## 7. Phase 1 work still required
-1. Inspect fundamental cache write/read and official verification paths end-to-end.
-2. Inspect all repository source files for stock-specific institutional disclosure coverage.
-3. Inspect news/event collection windows and output/cache persistence end-to-end.
-4. Inspect current workflow artifacts for actual schema columns and row coverage.
-5. Measure actual Delivery report and Bhavcopy history coverage for 5/10/20/30/90/200 sessions.
-6. Finalize versioned schema proposal and tests before implementing new producers/consumers.
+## 7. Additional verified findings from workflow artifact and repository tree
+- Fundamental history snapshots are tracked for 10 dates from 2026-10-28 through 2026-11-09. The scheduled workflow has regression tests asserting persistence of `fundamental_metrics.csv`, official filing cache and dated history snapshots. The 09-Nov run artifact also confirms historical Fundamentals are not point-in-time and cannot be claimed as a historical backtest.
+- Fundamental metric verification in the 09-Nov artifact: 13 metric values marked OFFICIAL_XBRL_VERIFIED; 893 PROVIDER_ONLY; 18 PROVIDER_VALUE_MISMATCH; 2,643 DERIVED_RECONCILIATION_REQUIRED; 775 FILING_METADATA_NOT_CONFIRMED. These are metric-value rows, not unique-stock counts.
+- The repository tree contains no dedicated stock-specific institutional activity module; `fii_dii_activity.py` is explicitly market-wide only.
+- The tracked tree contains no dedicated durable News/Event cache or append-only event revision history path. News and upcoming-event outputs are generated under `data/inputs` / `outputs`, but persistent first-seen/revision lifecycle is not established by the inspected schema.
 
-## 8. Safety and compatibility checks
+## 8. Phase 1 work still required
+1. Complete a field-level audit of fundamental cache read/write and official verification paths; preserve existing functionality.
+2. Define the new Track 2 research contract and full-Mainboard input/output schema.
+3. Define append-only news/event cache and revision records without changing current source-matching rules.
+4. Define stock-specific institutional evidence schema and official source audit.
+5. Finalize versioned schema proposal and tests before implementing new producers/consumers.
+
+## 9. Safety and compatibility checks
 - No existing production thresholds, filters, scores or candidate membership changed.
 - No new hard gate introduced.
 - No secrets or credentials added.
