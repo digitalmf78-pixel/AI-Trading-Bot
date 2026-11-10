@@ -5,6 +5,11 @@ name: 5-Day Delivery Above 60% Watchlist (Reuse V8 Cache)
 # A stock passes only when Delivery % is >=60.00% on EACH of 5 valid sessions.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/delivery_60_valuation_watchlist.yml"
   schedule:
     # 17:30 UTC = 23:00 IST, Monday-Friday, after the NSE cash-market session.
     - cron: "30 17 * * 1-5"
