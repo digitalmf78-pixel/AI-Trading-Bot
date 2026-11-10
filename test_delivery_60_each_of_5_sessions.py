@@ -1,7 +1,10 @@
 import pandas as pd
 import pytest
 
-from delivery_60_each_of_5_sessions import filter_five_session_delivery
+from delivery_60_each_of_5_sessions import (
+    eligible_mainboard_eq_symbols,
+    filter_five_session_delivery,
+)
 
 
 def _sessions(values_by_symbol):
@@ -64,3 +67,28 @@ def test_exactly_five_distinct_sessions_are_required():
     sessions[4] = sessions[3]
     with pytest.raises(ValueError, match="Five distinct"):
         filter_five_session_delivery(sessions)
+
+
+def test_official_universe_helper_excludes_etf_mutual_fund_sme_and_unknown_rows():
+    bhav = pd.DataFrame([
+        {"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000A01001", "FinInstrmNm": "AAA LIMITED"},
+        {"TckrSymb": "BBB", "SctySrs": "EQ", "ClsPric": 20, "TtlTradgVol": 200, "ISIN": "INE000B01001", "FinInstrmNm": "BBB LIMITED"},
+        {"TckrSymb": "ETF1", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000E01001", "FinInstrmNm": "ETF1"},
+        {"TckrSymb": "MF1", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INF000M01001", "FinInstrmNm": "MF1"},
+        {"TckrSymb": "AMC1", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000C01001", "FinInstrmNm": "AMC - BANKPSU"},
+        {"TckrSymb": "ETFNAME", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000F01001", "FinInstrmNm": "ABC EXCHANGE TRADED FUND"},
+        {"TckrSymb": "SME1", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000S01001", "FinInstrmNm": "SME LIMITED"},
+        {"TckrSymb": "UNKNOWN", "SctySrs": "EQ", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000U01001", "FinInstrmNm": "UNKNOWN LIMITED"},
+        {"TckrSymb": "BE1", "SctySrs": "BE", "ClsPric": 10, "TtlTradgVol": 100, "ISIN": "INE000B01002", "FinInstrmNm": "BE SERIES"},
+    ])
+    eligible, summary = eligible_mainboard_eq_symbols(
+        bhav,
+        main_board_symbols={"AAA", "BBB", "ETF1", "MF1", "AMC1", "ETFNAME", "SME1"},
+        sme_symbols={"SME1"},
+        official_etf_symbols={"ETF1"},
+    )
+    assert eligible == {"AAA", "BBB"}
+    assert summary["excluded_etf_mf_symbols"] == 4
+    assert summary["excluded_sme_symbols"] == 1
+    assert summary["excluded_unverified_symbols"] == 1
+    assert summary["main_board_eligible_symbols"] == 2
