@@ -105,6 +105,48 @@ def _verified_record_digest(record: Mapping[str, Any], hash_field: str) -> str:
         raise SignalValidationError(f"Record is not canonical JSON: {exc}") from exc
 
 
+def _validate_record_schema(record: Mapping[str, Any], hash_field: str) -> None:
+    """Reject unexpected persisted fields, even if a caller recomputes a valid hash."""
+    if hash_field == "snapshot_payload_sha256":
+        allowed = {
+            "schema_version", "signal_id", "EODDate", "Symbol", "SignalType",
+            "StrategyVersion", "RunMode", "ExchangeTimezone", "signal_fields",
+            "source_reports", "WorkflowRunId", "WorkflowRunAttempt",
+            "CreatedAtUTC", "snapshot_payload_sha256",
+        }
+        if set(record) != allowed:
+            unexpected = sorted(map(str, set(record) - allowed))
+            missing = sorted(allowed - set(record))
+            raise SignalValidationError(
+                f"Snapshot record schema mismatch; unexpected={unexpected}, missing={missing}"
+            )
+        fields = record.get("signal_fields")
+        if not isinstance(fields, Mapping):
+            raise SignalValidationError("Snapshot signal_fields must be a mapping")
+        unknown = sorted(set(fields) - SAFE_SIGNAL_FIELDS)
+        if unknown:
+            raise SignalValidationError(f"Unapproved persisted signal fields: {', '.join(unknown)}")
+        reports = record.get("source_reports")
+        if not isinstance(reports, list) or any(not isinstance(item, str) for item in reports):
+            raise SignalValidationError("Snapshot source_reports must be a list of strings")
+        _reject_sensitive_keys(record)
+    elif hash_field == "event_id":
+        allowed = {
+            "event_id", "signal_id", "EODDate", "Symbol", "StageName", "Status",
+            "ReasonCode", "ReasonText", "StrategyVersion", "SourceReport",
+            "SourceRowHash", "ObservedAtUTC",
+        }
+        if set(record) != allowed:
+            unexpected = sorted(map(str, set(record) - allowed))
+            missing = sorted(allowed - set(record))
+            raise SignalValidationError(
+                f"Stage-event record schema mismatch; unexpected={unexpected}, missing={missing}"
+            )
+        _reject_sensitive_keys(record)
+    else:
+        raise SignalValidationError(f"Unsupported immutable hash field: {hash_field}")
+
+
 def build_signal_snapshot(
     *,
     eod_date: str | date,
@@ -228,6 +270,7 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
                     continue
                 try:
                     row = json.loads(line)
+                    _validate_record_schema(row, hash_field)
                     key, digest = str(row[key_field]), str(row[hash_field])
                     actual_digest = _verified_record_digest(row, hash_field)
                 except (json.JSONDecodeError, KeyError, TypeError, SignalValidationError) as exc:
@@ -244,6 +287,7 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
     for record in pending:
         if key_field not in record or hash_field not in record:
             raise SignalValidationError(f"Record requires {key_field} and {hash_field}")
+        _validate_record_schema(record, hash_field)
         key, digest = str(record[key_field]), str(record[hash_field])
         actual_digest = _verified_record_digest(record, hash_field)
         if digest != actual_digest:
