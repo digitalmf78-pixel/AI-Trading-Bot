@@ -87,6 +87,13 @@ def _require_text(value: Any, label: str) -> str:
         raise SignalValidationError(f"{label} is required")
     return text
 
+def _require_strategy_sha(value: Any) -> str:
+    version = _require_text(value, "strategy_version")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", version):
+        raise SignalValidationError("strategy_version must be a 40-character Git commit SHA")
+    return version.lower()
+
+
 
 def _verified_record_digest(record: Mapping[str, Any], hash_field: str) -> str:
     """Recompute supported immutable digests; never trust a caller-supplied hash."""
@@ -164,8 +171,10 @@ def _validate_record_semantics(record: Mapping[str, Any], hash_field: str) -> No
         if record.get("ExchangeTimezone") != EXCHANGE_TIMEZONE:
             raise SignalValidationError("Unsupported snapshot ExchangeTimezone")
         day = _iso_date(record.get("EODDate"))
+        if record.get("EODDate") != day:
+            raise SignalValidationError("Persisted EODDate must use canonical YYYY-MM-DD format")
         symbol = _require_text(record.get("Symbol"), "persisted Symbol")
-        version = _require_text(record.get("StrategyVersion"), "persisted StrategyVersion")
+        version = _require_strategy_sha(record.get("StrategyVersion"))
         if symbol != symbol.upper():
             raise SignalValidationError("Persisted Symbol must be uppercase")
         expected_id = _sha256("|".join((day, symbol, version, SIGNAL_TYPE)))
@@ -178,7 +187,7 @@ def _validate_record_semantics(record: Mapping[str, Any], hash_field: str) -> No
         _require_text(record.get("signal_id"), "persisted signal_id")
         _require_text(record.get("StageName"), "persisted StageName")
         _require_text(record.get("Status"), "persisted Status")
-        _require_text(record.get("StrategyVersion"), "persisted StrategyVersion")
+        _require_strategy_sha(record.get("StrategyVersion"))
         if symbol != symbol.upper():
             raise SignalValidationError("Persisted Symbol must be uppercase")
         timestamp = record.get("ObservedAtUTC")
@@ -191,8 +200,8 @@ def _validate_record_semantics(record: Mapping[str, Any], hash_field: str) -> No
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError as exc:
         raise SignalValidationError("Persisted observation timestamp must be ISO-8601") from exc
-    if parsed.tzinfo is None:
-        raise SignalValidationError("Persisted observation timestamp must include a timezone")
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise SignalValidationError("Persisted observation timestamp must be UTC")
 
 
 def build_signal_snapshot(
@@ -210,7 +219,7 @@ def build_signal_snapshot(
     """Build one deterministic-identity snapshot from a curated field mapping."""
     day = _iso_date(eod_date)
     ticker = _require_text(symbol, "symbol").upper()
-    version = _require_text(strategy_version, "strategy_version")
+    version = _require_strategy_sha(strategy_version)
     mode = _require_text(run_mode, "run_mode").upper()
     if mode != "EOD":
         raise SignalValidationError("Only EOD runs may create signal snapshots")
@@ -251,8 +260,8 @@ def build_signal_snapshot(
         parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except (AttributeError, TypeError, ValueError) as exc:
         raise SignalValidationError("created_at_utc must be an ISO-8601 timestamp") from exc
-    if parsed_timestamp.tzinfo is None:
-        raise SignalValidationError("created_at_utc must include a timezone")
+    if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() != timezone.utc.utcoffset(parsed_timestamp):
+        raise SignalValidationError("created_at_utc must be a UTC timestamp")
     return {
         **payload,
         "WorkflowRunId": str(workflow_run_id),
@@ -286,7 +295,7 @@ def build_stage_event(
         "Status": _require_text(status, "status"),
         "ReasonCode": str(reason_code or ""),
         "ReasonText": str(reason_text or ""),
-        "StrategyVersion": _require_text(strategy_version, "strategy_version"),
+        "StrategyVersion": _require_strategy_sha(strategy_version),
         "SourceReport": str(source_report or ""),
         "SourceRowHash": str(source_row_hash or ""),
     }
@@ -297,8 +306,8 @@ def build_stage_event(
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except (AttributeError, TypeError, ValueError) as exc:
         raise SignalValidationError("observed_at_utc must be an ISO-8601 timestamp") from exc
-    if parsed.tzinfo is None:
-        raise SignalValidationError("observed_at_utc must include a timezone")
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise SignalValidationError("observed_at_utc must be a UTC timestamp")
     return {"event_id": event_id, **fields, "ObservedAtUTC": timestamp}
 
 
