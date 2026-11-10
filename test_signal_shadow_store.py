@@ -263,3 +263,23 @@ def test_stage_event_requires_timezone_aware_persisted_timestamp(tmp_path: Path)
             tmp_path / "bad-time.jsonl", [event], key_field="event_id",
             hash_field="event_id",
         )
+
+
+
+def test_strategy_version_must_be_exact_git_commit_sha():
+    with pytest.raises(SignalValidationError, match="40-character Git commit SHA"):
+        snapshot(strategy_version="release-v8")
+
+
+def test_snapshot_timestamp_must_be_utc_not_merely_timezone_aware():
+    with pytest.raises(SignalValidationError, match="must be a UTC timestamp"):
+        snapshot(created_at_utc="2026-11-10T15:30:00+05:30")
+
+
+def test_stage_event_timestamp_must_be_utc_not_merely_timezone_aware():
+    with pytest.raises(SignalValidationError, match="must be a UTC timestamp"):
+        build_stage_event(
+            signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+            strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
+            observed_at_utc="2026-11-10T15:30:00+05:30",
+        )
