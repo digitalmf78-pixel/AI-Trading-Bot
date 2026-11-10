@@ -179,16 +179,16 @@ def build_track2_full_mainboard_report(
         rows.append(record)
 
     base = pd.DataFrame(rows)
-    eligible = base[
-        base["Track2CohortStatus"].eq("PASS_MAIN_BOARD_INPUT")
-        & base["TckrSymb"].astype(str).ne("")
-    ][["TckrSymb"]].merge(
-        source.drop(columns=["_TRACK2_SYMBOL"]).assign(
-            TckrSymb=source["_TRACK2_SYMBOL"]
-        ),
-        on="TckrSymb", how="left", validate="one_to_one"
+    eligible_symbols = set(
+        base.loc[
+            base["Track2CohortStatus"].eq("PASS_MAIN_BOARD_INPUT")
+            & base["TckrSymb"].astype(str).ne(""),
+            "TckrSymb",
+        ].map(_symbol)
     )
-    eligible_symbols = set(eligible["TckrSymb"].map(_symbol)) if not eligible.empty else set()
+    eligible_source = source.loc[source["_TRACK2_SYMBOL"].isin(eligible_symbols)].copy()
+    eligible = eligible_source.drop(columns=["_TRACK2_SYMBOL"]).copy()
+    eligible["TckrSymb"] = eligible_source["_TRACK2_SYMBOL"].values
 
     observer_errors = {}
     reports = {}
