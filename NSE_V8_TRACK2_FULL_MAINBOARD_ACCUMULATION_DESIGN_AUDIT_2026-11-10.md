@@ -266,3 +266,34 @@ Source: GitHub Actions run `42634890331`, artifact `nse-v8-reports-42634890331` 
 - Safety assertions in the run summary: `track1_artifacts_unchanged=true`, `network_fetches=0`, `telegram_enabled=false`, `production_scanner_called=false`. All three observer error fields are null.
 - Artifact: `track2-full-mainboard-offline-42804931499` (artifact ID `13758437527`). It contains the cohort, three observer CSVs, coverage manifest and offline validation summary.
 - **Conclusion:** the standalone Track 2 builder has now completed a successful real-data, full-Mainboard offline execution with exact cohort coverage and isolated outputs. This validates the standalone research reports only; it does **not** authorize scheduled workflow wiring or production scanner integration. Track 1, main branch and Master Specification remain unchanged.
+
+## Track 2 status-quality audit — 10-Nov-2026
+
+The uploaded real-data artifact was inspected at row and status-field level. This is a read-only analysis; no observer logic or eligibility behavior was changed.
+
+### Delivery Quantity — WAIT breakdown
+- The 2,588-row cohort is 2,385 EQ + 203 BE.
+- All **203 BE symbols** report `INVALID_DELIVERY_QUANTITY` in each of the 5D/10D/20D windows. Cross-tab confirms the 203 rows are exactly the BE series; no EQ symbol has this reason. The implementation emits this reason when the source quantity is null/non-finite/negative. The report does not distinguish a structurally unavailable BE delivery quantity from a genuinely malformed numeric value. This should be clarified in diagnostics before interpreting these as data-quality failures.
+- EQ coverage: **2,253 COMPLETE_5_10_20D**, **132 WAIT_FOR_DATA**. The EQ WAIT reason is `INSUFFICIENT_OR_MISSING_SYMBOL_SESSION_DATA`: 33 symbols fail 5D, 83 fail 10D, 132 fail 20D.
+- These are observational statuses only; none of these values are a Track 1 eligibility gate.
+
+### Potential Accumulation — partial/WAIT decomposition
+- **2,253 OBSERVATIONS_AVAILABLE**.
+- The **258 PARTIAL_DATA** rows split into:
+  - **138 BE**: 20D price history complete, delivery evidence WAIT.
+  - **120 EQ**: delivery evidence available, 20D price history WAIT.
+- The **77 WAIT_FOR_DATA** rows have both price history and delivery evidence WAIT; this group contains **65 BE + 12 EQ**.
+- Price-range coverage declines with longer lookbacks: 20D **2,391**, 50D **2,174**, 100D **1,867**, 200D **1,669** observations available.
+- Pivot structure and all four EMA observations (20/44/50/200) are COMPLETE for **1,665** and WAIT for **923**. The implementation requires the symbol history to match the entire ordered market-session date set (201 dates) before producing pivots/EMAs. This is stricter than the separate 200-session range window and explains why the 200D range has four more available rows than pivot/EMA. Confirm whether full 201-session exact coverage is the intended contract; do not relax it without approval.
+
+### VCP — missing-data observability gap
+- **2,023 COMPLETE / 565 WAIT_FOR_DATA**. The implementation uses exactly 60 market sessions (three 20-session blocks) and requires a complete, unique, valid OHLC row for every one of those dates before either range or volume observations are produced.
+- All 565 WAIT rows have both range and volume status WAIT. The current output does not expose a per-symbol reason or actual symbol-specific valid-session count, so it cannot distinguish insufficient listing history, missing session rows, duplicate dates, or invalid OHLC. Add diagnostic reason/count fields and tests before any attempt to reduce this WAIT population.
+- For all 2,588 symbols, `FalseVCPOutcomeStatus=NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON`; this is intentional and must remain separate from the 60-session observation status.
+
+### Current safe conclusion / next diagnostic work
+1. Keep all Track 2 reports observational and separate from Track 1.
+2. Add source-level diagnostic fields for BE delivery quantity missingness (missing vs malformed vs series not covered), without converting missing values to zero or treating BE as PASS.
+3. Add VCP WAIT reason and per-symbol available/valid session counts; identify whether each WAIT is due to history length, missing date, duplicate date, invalid OHLC, or missing/invalid volume. Preserve WAIT unless the source evidence proves the required window complete.
+4. Review the 201-date exact-history requirement for pivot/EMA and document the intended session contract; do not weaken it silently.
+5. Re-run focused tests and the isolated offline validation after diagnostic-only changes. No Track 2 production wiring, Track 1 changes, main-branch changes or Master Specification edits are authorized by this audit.
