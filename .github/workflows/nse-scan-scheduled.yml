@@ -19,7 +19,7 @@ env:
 jobs:
   nse-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,17 +27,30 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
 
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
 
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/
+            data/inputs/fundamental_metrics.csv
+            data/inputs/fundamental_thresholds.json
+          key: nse-v8-data-${{ github.run_id }}
+          restore-keys: |
+            nse-v8-data-
+
       - name: Run NSE V8 scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
           SEND_TELEGRAM: 'true'
         run: |
           python volume_gainer.py
@@ -46,7 +59,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v8-scan-reports
+          name: v8-scan-reports-${{ github.run_number }}
           path: outputs/
           retention-days: 30
 
@@ -54,6 +67,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v8-delivery-audit
+          name: v8-delivery-audit-${{ github.run_number }}
           path: data/reports/
           retention-days: 30
