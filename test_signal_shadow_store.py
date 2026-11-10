@@ -198,6 +198,62 @@ def test_atomic_replace_preserves_existing_rows_and_adds_complete_lines(tmp_path
     assert rows == [before, second]
 
 
+def test_file_fsync_failure_preserves_old_partition_and_cleans_temp(tmp_path: Path, monkeypatch):
+    import signal_shadow_store
+    path = tmp_path / "2026-11-09.jsonl"
+    first = snapshot()
+    append_immutable_jsonl(path, [first], key_field="signal_id",
+                           hash_field="snapshot_payload_sha256")
+    before = path.read_bytes()
+    second = build_signal_snapshot(
+        eod_date="2026-11-09", symbol="TCS", strategy_version=SHA,
+        signal_fields={"Close": 3500.0},
+    )
+
+    def fail_fsync(_fd):
+        raise OSError("simulated file fsync failure")
+
+    monkeypatch.setattr(signal_shadow_store.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="simulated file fsync failure"):
+        append_immutable_jsonl(
+            path, [second], key_field="signal_id",
+            hash_field="snapshot_payload_sha256",
+        )
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob(".2026-11-09.jsonl.*.tmp"))
+
+
+def test_directory_fsync_failure_is_recoverable_by_idempotent_retry(tmp_path: Path, monkeypatch):
+    import signal_shadow_store
+    path = tmp_path / "2026-11-09.jsonl"
+    second = build_signal_snapshot(
+        eod_date="2026-11-09", symbol="TCS", strategy_version=SHA,
+        signal_fields={"Close": 3500.0},
+    )
+    real_fsync = signal_shadow_store.os.fsync
+    calls = {"count": 0}
+
+    def fail_second_fsync(fd):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("simulated directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(signal_shadow_store.os, "fsync", fail_second_fsync)
+    with pytest.raises(OSError, match="simulated directory fsync failure"):
+        append_immutable_jsonl(
+            path, [second], key_field="signal_id",
+            hash_field="snapshot_payload_sha256",
+        )
+    assert path.exists()
+    assert [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] == [second]
+    assert not list(tmp_path.glob(".2026-11-09.jsonl.*.tmp"))
+    assert append_immutable_jsonl(
+        path, [second], key_field="signal_id",
+        hash_field="snapshot_payload_sha256",
+    ) == {"appended": 0, "duplicates": 1}
+
+
 def test_stage_event_digest_is_verified_when_appended(tmp_path: Path):
     event = build_stage_event(
         signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
