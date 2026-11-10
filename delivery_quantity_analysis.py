@@ -64,6 +64,7 @@ def build_delivery_quantity_report(
     candidates: pd.DataFrame,
     asof_date,
     sessions: list[tuple[date, pd.DataFrame]],
+    output_path: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Enrich candidates with 5/10/20-session quantity and price observations.
 
