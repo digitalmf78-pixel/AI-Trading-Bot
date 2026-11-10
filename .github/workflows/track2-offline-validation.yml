@@ -36,7 +36,7 @@ jobs:
             data/cache/xbrl_samples/
             data/cache/xbrl_period_pairs/
             outputs/v8_official_financial_results_filings.csv
-          key: track2-offline-\${{ runner.os }}-\${{ github.run_id }}
+          key: track2-offline-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-Linux-main-
 
@@ -46,7 +46,7 @@ jobs:
           name: nse-v8-reports-42634890331
           repository: digitalmf78-pixel/AI-Trading-Bot
           run-id: 42634890331
-          github-token: \${{ github.token }}
+          github-token: ${{ github.token }}
           path: artifact
 
       - name: Set up Python
@@ -64,6 +64,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: track2-full-mainboard-offline-\${{ github.run_id }}
+          name: track2-full-mainboard-offline-${{ github.run_id }}
           path: outputs/track2_full_mainboard/
           if-no-files-found: warn
