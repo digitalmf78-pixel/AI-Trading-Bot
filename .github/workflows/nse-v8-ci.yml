@@ -44,7 +44,7 @@ jobs:
           sanitize_public_artifacts.py signal_shadow_store.py signal_cohort_assembly.py
           nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py
           nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py
-          nse_bhavcopy_test.py nifty500_api_test.py
+          nse_bhavcopy_test.py nifty500_api_test.py test_track2_data_quality_diagnostics.py
 
       - name: Run unit and data-audit tests
         run: >-
@@ -58,7 +58,7 @@ jobs:
           test_fundamental_metric_verification.py test_fii_dii_activity.py test_nse_xbrl_fetch.py
           test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py
           test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py
-          test_track2_full_mainboard.py test_sanitize_public_artifacts.py test_signal_shadow_store.py test_signal_cohort_assembly.py test_rsi_informational_only.py
+          test_track2_full_mainboard.py test_track2_data_quality_diagnostics.py test_sanitize_public_artifacts.py test_signal_shadow_store.py test_signal_cohort_assembly.py test_rsi_informational_only.py
           test_news_catalyst_parser.py test_upcoming_corporate_events.py test_bottom_detection.py test_delivery_consistency.py
 
       - name: Run V8 regression script
