@@ -292,3 +292,66 @@ def test_out_of_cohort_news_with_series_is_preserved_as_out_of_cohort():
     result = assemble_mainboard_cohort(main, news_report=news)
     assert len(result.news_evidence) == 1
     assert result.news_evidence.loc[0, "NewsEvidenceCoverageStatus"] == "OUT_OF_COHORT"
+
+
+def test_full_2588_symbol_mainboard_cohort_is_not_reduced_to_delivery_union():
+    symbols = [f"STK{i:04d}" for i in range(2588)]
+    main = pd.DataFrame({
+        "TckrSymb": symbols,
+        "SctySrs": ["EQ"] * 2385 + ["BE"] * 203,
+        "MainBoardStatus": ["PASS_MAIN_BOARD"] * 2588,
+    })
+    # The 758-row delivery union is a downstream report, not the base cohort.
+    delivery_symbols = symbols[:758]
+    delivery = pd.DataFrame({
+        "TckrSymb": delivery_symbols,
+        "DeliveryFilterStatus": ["PASS_A_OR_B"] * 758,
+        "DeliveryCategoryAStatus": ["PASS"] * 758,
+        "DeliveryCategoryBStatus": ["PASS"] * 102 + ["NOT_PASS"] * 656,
+    })
+    result = assemble_mainboard_cohort(main, reports={"Delivery": delivery})
+    assert len(result.cohort) == 2588
+    assert result.cohort["TckrSymb"].tolist() == symbols
+    assert result.cohort["CohortEligibilityStatus"].eq("PASS_MAIN_BOARD_INPUT").all()
+    assert result.cohort["Delivery__CoverageStatus"].eq("SOURCE_ROW_PRESENT").sum() == 758
+    assert result.cohort["Delivery__CoverageStatus"].eq("NOT_EVALUATED").sum() == 1830
+    assert result.cohort["Delivery__DeliveryFilterStatus"].notna().sum() == 758
+
+
+def test_native_wait_and_reject_statuses_are_preserved_without_gate_interpretation():
+    main = pd.DataFrame({"TckrSymb": ["AAA", "BBB", "CCC"]})
+    report = pd.DataFrame({
+        "TckrSymb": ["AAA", "BBB"],
+        "Status": ["WAIT_FOR_DATA", "FILTERED_OUT_AVG_LT_60_PERCENT"],
+    })
+    result = assemble_mainboard_cohort(main, reports={"Delivery": report})
+    assert result.cohort["TckrSymb"].tolist() == ["AAA", "BBB", "CCC"]
+    assert result.cohort["Delivery__Status"].tolist()[:2] == [
+        "WAIT_FOR_DATA", "FILTERED_OUT_AVG_LT_60_PERCENT"
+    ]
+    assert result.cohort.loc[2, "Delivery__CoverageStatus"] == "NOT_EVALUATED"
+
+
+def test_one_to_many_news_and_event_rows_do_not_inflate_stage_coverage_counts():
+    main = pd.DataFrame({"TckrSymb": ["AAA", "BBB"]})
+    stage = pd.DataFrame({"TckrSymb": ["AAA"], "Status": ["PASS"]})
+    news = pd.DataFrame({"TckrSymb": ["AAA", "AAA", "BBB"], "Headline": ["n1", "n2", "n3"]})
+    events = pd.DataFrame({"TckrSymb": ["AAA", "AAA"], "EventType": ["AGM", "Results"]})
+    result = assemble_mainboard_cohort(
+        main, reports={"StageA": stage}, news_report=news, corporate_events_report=events
+    )
+    assert result.cohort["DownstreamReportsExpected"].tolist() == [1, 1]
+    assert result.cohort["DownstreamReportsPresent"].tolist() == [1, 0]
+    assert len(result.news_evidence) == 3
+    assert len(result.corporate_event_evidence) == 2
+
+
+def test_assembly_does_not_mutate_any_input_frame():
+    main = pd.DataFrame({"TckrSymb": ["AAA", "BBB"], "SctySrs": ["EQ", "BE"]})
+    stage = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"], "Status": ["PASS"]})
+    news = pd.DataFrame({"TckrSymb": ["AAA", "AAA"], "Headline": ["h1", "h2"]})
+    before = [frame.copy(deep=True) for frame in (main, stage, news)]
+    assemble_mainboard_cohort(main, reports={"Stage": stage}, news_report=news)
+    pd.testing.assert_frame_equal(main, before[0])
+    pd.testing.assert_frame_equal(stage, before[1])
+    pd.testing.assert_frame_equal(news, before[2])
