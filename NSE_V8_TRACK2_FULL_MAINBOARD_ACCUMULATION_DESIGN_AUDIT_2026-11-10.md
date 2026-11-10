@@ -357,3 +357,12 @@ The audit branch now applies recursive text-value checks at snapshot/event const
 Regression validation run **42811907344** completed SUCCESS on commit `8506a46bf53d5398aff569242fbb12b1541f3645`: Python compilation PASS; **411 pytest tests passed**; **33 V8 regression tests passed**; **43 sector/news/official-index tests passed**. The initial redaction test run exposed two gaps (generic `token=` and `credential=` assignments); those patterns were added and the full CI rerun passed.
 
 This remains an isolated helper hardening change. The signal shadow store is still not wired into the production scanner or scheduled EOD workflow; no signal snapshots were deployed or written. Main branch, Master Specification, scanner selection, and trading gates remain unchanged.
+
+
+## 12. Cohort Assembly contract validation (10-Nov-2026)
+
+The standalone `signal_cohort_assembly.py` helper and its tests were reviewed and strengthened. The canonical input remains the complete Mainboard candidate frame immediately after official Mainboard classification—not the 758-row Delivery A/B union. The join uses `TckrSymb` as identity, consistent with the current scanner's symbol-level deduplication; duplicate symbol keys fail closed. Where both sides provide `SctySrs`, mismatches fail closed. If a report omits `SctySrs`, symbol matching remains possible but the diagnostics explicitly state that series alignment was not checked.
+
+The new synthetic contract test uses 2,588 Mainboard symbols (2,385 EQ + 203 BE) and a 758-row Delivery report. It verifies that all 2,588 cohort rows remain, 758 report rows are present, and 1,830 are explicitly `NOT_EVALUATED` due to missing report rows. Additional tests confirm native WAIT/reject statuses are preserved verbatim, News and Corporate Event one-to-many evidence does not inflate the cohort or stage-report coverage counts, and input frames are not mutated.
+
+CI run **42812305661** completed SUCCESS: Python compilation PASS; **415 pytest tests passed**; **33 V8 regression tests passed**; **43 sector/news/official-index tests passed**. This validates the assembly contract on synthetic data; it is not yet a real-EOD integrated cohort run. The helper remains standalone and non-gating, and no scanner/workflow wiring was added.
