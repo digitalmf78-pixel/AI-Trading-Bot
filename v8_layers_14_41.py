@@ -698,7 +698,6 @@ def _accumulation_distribution_for_candidates(
         history = pd.DataFrame(columns=["TckrSymb", "Date", "_AD_SERIES"])
 
     expected_dates = set(eod_window_dates or [])
-    expected_sorted = sorted(expected_dates)
     for _, candidate in candidates.iterrows():
         symbol = str(candidate.get("TckrSymb", "")).strip().upper()
         series = str(candidate.get("SctySrs", "")).strip().upper()
@@ -833,7 +832,7 @@ def run_eod_layers(
         eod_window_complete,
         eod_window_dates,
     )
-    if "SctySrs" in ad_history.columns and "SctySrs" in output.columns:
+    if "SctySrs" in ad_history.columns:
         output["AccumulationDistribution20D"] = [
             ad_values.get((
                 str(row.get("TckrSymb", "")).strip().upper(),
