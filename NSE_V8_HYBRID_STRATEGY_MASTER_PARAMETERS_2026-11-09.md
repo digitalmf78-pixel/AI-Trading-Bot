@@ -175,7 +175,7 @@ Read-only mapping against GitHub `main`:
 These are pending, not approved thresholds:
 1. Whether the proposed count of **6–8 sessions with Delivery >=60% among 20 sessions** should remain informational or become a separate rule. Until approved, informational only; it does not replace Delivery A/B.
 2. Whether to create a shadow/watchlist for stocks below ₹1.5 crore traded value.
-3. Fundamental collection boundary: all Delivery A/B stocks before Liquidity vs current Liquidity-first flow.
+3. **RESOLVED (06-Nov-2026):** Fundamentals are collected after Liquidity for every Liquidity-qualified candidate. Approved sequence: Delivery A/B union (all RVOL bands) → Liquidity → Fundamentals. This is not pending; do not move the collection boundary without explicit approval.
 4. VCP contraction count, contraction-depth sequence and exact base width/duration thresholds.
 5. Pocket Pivot exact formula, lookback and candle conditions.
 6. False-breakout buffer and retest window length.
