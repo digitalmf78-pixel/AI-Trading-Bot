@@ -229,3 +229,10 @@ def test_empty_evidence_report_reserved_coverage_column_fails_closed():
     news = pd.DataFrame(columns=["TckrSymb", "NewsEvidenceCoverageStatus"])
     with pytest.raises(CohortAssemblyError, match="reserved coverage column"):
         assemble_mainboard_cohort(main, news_report=news)
+
+
+def test_empty_evidence_report_reserved_internal_keys_fail_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    news = pd.DataFrame(columns=["TckrSymb", "_cohort_symbol_key"])
+    with pytest.raises(CohortAssemblyError, match="reserved internal cohort columns"):
+        assemble_mainboard_cohort(main, news_report=news)
