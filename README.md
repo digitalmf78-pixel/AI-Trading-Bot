@@ -24,10 +24,13 @@ Four independent reports are maintained: Potential Accumulation, Base/VCP Formin
 
 ## Latest audited run
 
-GitHub Actions run [42615488413](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42615488413) completed successfully. It reported 758 unique Delivery A/B candidates (A=758, B=102), RVOL HIGH=105, LOW=610, WAIT=43, and Liquidity PASS=54 (27 strong, 20 medium, 7 low). These are scanner counts, not trade recommendations.
+GitHub Actions run [42774048772](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42774048772) completed successfully on the 2026-11-10 main-branch fix. It reported 3,037 universe rows (2,588 Mainboard PASS; 449 SME excluded), 758 Delivery A-qualified rows, 102 B-qualified rows (included within A), and 758 unique A/B candidates. RVOL classification: HIGH=105, LOW=610, WAIT=43. RVOL is informational and did not reject any A/B candidate.
 
-The run had 23/23 official sector-index closes, while 5 of 54 stock-sector mappings remained WAIT_FOR_DATA. FII/DII aggregate feed returned 2026-11-08 for requested EOD 2026-11-09; the exact-date check correctly kept it WAIT_FOR_DATA. The same run exposed an Accumulation/Distribution window-validation bug; PR #34 fixes the current-EOD date check and adds regression tests. The fix is CI-validated but awaits the next live scanner run for end-to-end confirmation.
+The 758 candidates then reached the 20-session liquidity filter: 54 PASS, 661 below the minimum, and 43 WAIT_FOR_DATA. Among the 54 liquidity-qualified candidates, fundamentals were COMPLETE=31 and PARTIAL_DATA=23; no fundamental score/data status was used as a rejection gate. The core technical screen evaluated those 54: 3 PASS and 51 REJECT. The final EOD shortlist was empty; this is not a claim that the 54 liquidity candidates all became final trade setups.
 
+Stage-level audit rows can repeat symbols because the same stock appears at different gates. Read counts per stage, not as a sum of unique stocks. The old `DELIVERY_5D` audit label has been corrected to `DELIVERY_30D_AB`; it refers to the production 30-calendar-day A/B screen, not the separate five-session watchlist.
+
+The correctly named pre-news cohort export is `outputs/v8_liquidity_qualified_pre_news_candidates.csv`. The former `v8_pre_news_rvol_gt_1_5_candidates.csv` filename remains temporarily as a compatibility alias; despite its legacy name, it contains all 54 liquidity-qualified candidates, including LOW RVOL stocks.
 ---
 
 ## Free-source fundamentals policy
