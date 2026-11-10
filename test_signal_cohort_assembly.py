@@ -236,3 +236,17 @@ def test_empty_evidence_report_reserved_internal_keys_fail_closed():
     news = pd.DataFrame(columns=["TckrSymb", "_cohort_symbol_key"])
     with pytest.raises(CohortAssemblyError, match="reserved internal cohort columns"):
         assemble_mainboard_cohort(main, news_report=news)
+
+
+def test_empty_stage_report_duplicate_columns_fail_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    empty = pd.DataFrame(columns=["TckrSymb", "Status", "Status"])
+    with pytest.raises(CohortAssemblyError, match="duplicate column names"):
+        assemble_mainboard_cohort(main, reports={"Stage": empty})
+
+
+def test_empty_stage_report_reserved_internal_columns_fail_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    empty = pd.DataFrame(columns=["TckrSymb", "_cohort_series_key"])
+    with pytest.raises(CohortAssemblyError, match="reserved internal columns"):
+        assemble_mainboard_cohort(main, reports={"Stage": empty})
