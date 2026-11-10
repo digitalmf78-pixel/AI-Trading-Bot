@@ -101,6 +101,7 @@ def build_vcp_observation_report(candidates, historical, asof_date, output_path=
             for _, candle in aligned.iterrows():
                 values = [_number(candle[column]) for column in ohlc_columns]
                 if not all(math.isfinite(value) and value > 0 for value in values):
+                    invalid_ohlc_rows += 1
                     continue
                 high, low, close = values
                 if high < low or close < low or close > high:
