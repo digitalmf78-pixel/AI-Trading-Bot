@@ -196,3 +196,13 @@ def test_jsonl_append_rejects_non_mapping_records(tmp_path: Path, bad_record):
     with pytest.raises(SignalValidationError, match="must be a mapping"):
         append_immutable_jsonl(tmp_path / "invalid.jsonl", [bad_record],
                                key_field="signal_id", hash_field="snapshot_payload_sha256")
+
+
+def test_signal_snapshot_rejects_string_source_reports():
+    with pytest.raises(SignalValidationError, match="iterable of report names"):
+        snapshot(source_reports="not-a-list")
+
+
+def test_signal_snapshot_rejects_non_string_field_keys():
+    with pytest.raises(SignalValidationError, match="keys must be strings"):
+        snapshot(signal_fields={1: "invalid-key"})
