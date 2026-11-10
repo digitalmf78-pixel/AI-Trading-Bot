@@ -420,3 +420,31 @@ A focused source/test review was completed for `signal_shadow_store.py`, `test_s
 - The helper validates symbol/series shape, duplicate keys/columns, generated-column collisions, and input non-mutation. It does not itself validate report EOD/as-of provenance, enforce a partition date, or persist the assembled result; those responsibilities remain with a future caller/manifest contract.
 
 The helper change and new generator regression test are committed on the audit branch. CI validation for the latest commit is pending at the time of this note. Main branch and Master Specification remain unchanged.
+
+
+## 15. Single-writer persistence architecture review (10-Nov-2026)
+
+The repository currently has no workflow that persists shadow snapshots/events. The existing Track 2 offline workflow is read-only with respect to protected EOD inputs and writes a separate report artifact. The CI workflow is test-only. Neither should be repurposed to commit shadow records.
+
+### Recommended future write protocol (design only; not implemented)
+1. **One dedicated workflow owns writes.** Keep snapshot/event persistence out of the production scanner and scheduled EOD workflow. A separate opt-in shadow-persistence workflow should consume a completed, immutable EOD report artifact and its manifest.
+2. **Serialize all writers for the same target branch/store.** Configure a shared GitHub Actions `concurrency` group for every workflow that may write the shadow store, with `cancel-in-progress: false`. A per-run or per-EOD group is insufficient if two EOD dates or retries can target the same branch/file. The group name must be identical across all potential writers. GitHub Actions concurrency is a workflow scheduler lock, not a filesystem lock.
+3. **Use optimistic branch-head protection.** Checkout/fetch the latest target branch immediately before applying changes. Commit against the fetched HEAD and push; if the remote advances, fetch and retry by replaying the immutable append against the new HEAD. Never force-push, reset away another writer, or overwrite a newer partition. Bound retries and fail closed if the branch continues moving.
+4. **Make the append crash-safe.** Current helper uses append mode, flush, and file `fsync`, but a process crash during a multi-line append can leave a partial final line. Before enabling persistence, stage a complete replacement partition in a temporary file, validate the entire old+new JSONL content, `fsync` it, then atomically `os.replace` the target on the same filesystem and sync the parent directory where supported. Keep immutable prior records and reject conflicts. This is a helper-level change requiring dedicated failure-injection tests.
+5. **Make retries idempotent.** Derive partition and record identities deterministically from the approved EOD date/symbol/strategy SHA; on rerun, exact records are no-ops and conflicting immutable payloads fail. A manifest should record input artifact identifiers/hashes, EOD date, strategy commit SHA, workflow run/attempt, record counts, append/duplicate counts, and validation status. Do not treat workflow run ID as record identity.
+6. **Least privilege and no secrets.** The future writer alone receives the minimum `contents: write` permission. Keep Telegram, NSE network fetch, and production scanner disabled in this workflow. Run redaction and schema/hash validation before commit.
+7. **Recovery and observability.** On malformed/tampered partition, stop without auto-truncating or silently repairing. Upload diagnostic artifacts, preserve the prior branch state, and require a separately reviewed repair procedure. Retention, partition naming, schema migration and replay/correction policy must be explicitly decided before implementation.
+
+### Required validation before any write workflow
+- Two simulated runs racing for the same target branch: one wins, the other fetches latest and retries without data loss.
+- Same EOD artifact reprocessed twice: second run appends zero duplicates except any previously absent exact records; no duplicate JSONL keys.
+- Two distinct EOD dates processed concurrently: serialization prevents non-fast-forward loss even if partitions differ.
+- Injected interruption before replacement, after temp-file fsync, and after replacement: target is always either the previous complete partition or the new complete partition; no partial JSONL line.
+- Tampered existing record, invalid event-to-snapshot link, redaction violation, and hash mismatch all fail before branch commit.
+- Workflow rerun after successful commit is a no-op and records a clear manifest result.
+
+### Current validation checkpoint
+- Stage-event identity is now recomputed and checked against EOD date, uppercase symbol, strategy SHA, and the canonical signal type, both when constructing and validating persisted events.
+- Latest CI run `42825511016` succeeded: 419 pytest tests and all 33 V8 regression tests passed; Python compilation and sector/news/official-index test step also succeeded.
+- Intermediate run `42825502361` failed on the code-only commit before the corresponding test update was present; the subsequent complete commit `e3e9e645e4aa3099f27d6ea55f661bf242f04def` passed.
+- This is a design recommendation only. No concurrency group, write permission, shadow-store persistence workflow, or production wiring was added. Main branch and Master Specification remain unchanged.
