@@ -265,9 +265,12 @@ def build_signal_snapshot(
         raise SignalValidationError(f"Unapproved signal fields: {', '.join(unknown)}")
     if isinstance(source_reports, (str, bytes)):
         raise SignalValidationError("source_reports must be an iterable of report names, not a string")
+    # Materialize once: callers may supply a generator, which must not be
+    # consumed by validation before it is included in the persisted snapshot.
+    source_report_names = list(source_reports)
     _reject_sensitive_keys(signal_fields)
     _reject_sensitive_text(signal_fields)
-    _reject_sensitive_text(list(source_reports), "source_reports")
+    _reject_sensitive_text(source_report_names, "source_reports")
 
     safe_fields = dict(signal_fields)
     try:
@@ -287,7 +290,7 @@ def build_signal_snapshot(
         "RunMode": mode,
         "ExchangeTimezone": EXCHANGE_TIMEZONE,
         "signal_fields": safe_fields,
-        "source_reports": sorted({str(item) for item in source_reports}),
+        "source_reports": sorted({str(item) for item in source_report_names}),
     }
     payload_hash = _sha256(_canonical_json(payload))
     timestamp = created_at_utc or datetime.now(timezone.utc).isoformat(timespec="seconds")
