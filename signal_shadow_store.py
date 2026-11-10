@@ -438,17 +438,17 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
         temp_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", newline="\\n",
+                mode="w", encoding="utf-8", newline="\n",
                 dir=target.parent, prefix=f".{target.name}.", suffix=".tmp",
                 delete=False,
             ) as stream:
                 temp_path = stream.name
                 for line in original_lines:
                     stream.write(line)
-                if original_lines and not original_lines[-1].endswith(("\\n", "\\r")):
-                    stream.write("\\n")
+                if original_lines and not original_lines[-1].endswith(("\n", "\r")):
+                    stream.write("\n")
                 for row in append_rows:
-                    stream.write(row + "\\n")
+                    stream.write(row + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             file_mode = stat.S_IMODE(target.stat().st_mode) if target_existed else 0o644
