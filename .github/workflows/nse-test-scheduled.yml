@@ -125,7 +125,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py data/inputs/nse_trading_calendar.json delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
+          for f in track2_full_mainboard.py potential_accumulation_analysis.py vcp_observation_analysis.py delivery_quantity_analysis.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py data/inputs/nse_trading_calendar.json delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
@@ -153,7 +153,7 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile track2_full_mainboard.py potential_accumulation_analysis.py vcp_observation_analysis.py delivery_quantity_analysis.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== MAIN BOARD / BHAVCOPY CACHE REUSE TESTS ====="
           python -m pytest -q test_main_board_filter.py test_bhavcopy_history_cache_reuse.py
@@ -162,6 +162,9 @@ jobs:
 
           echo "===== P2 CASH FLOW BASIS + NSE XBRL FETCH TESTS ====="
           python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
+
+          echo "===== TRACK 2 FULL MAINBOARD OBSERVER TESTS ====="
+          python -m pytest -q test_track2_full_mainboard.py test_track2_data_quality_diagnostics.py test_potential_accumulation_analysis.py test_vcp_observation_analysis.py test_delivery_quantity_analysis.py
 
           echo "===== V8 REGRESSION TESTS ====="
           python -u test_v8_regression.py
