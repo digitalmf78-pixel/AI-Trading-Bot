@@ -297,3 +297,23 @@ The uploaded real-data artifact was inspected at row and status-field level. Thi
 3. Add VCP WAIT reason and per-symbol available/valid session counts; identify whether each WAIT is due to history length, missing date, duplicate date, invalid OHLC, or missing/invalid volume. Preserve WAIT unless the source evidence proves the required window complete.
 4. Review the 201-date exact-history requirement for pivot/EMA and document the intended session contract; do not weaken it silently.
 5. Re-run focused tests and the isolated offline validation after diagnostic-only changes. No Track 2 production wiring, Track 1 changes, main-branch changes or Master Specification edits are authorized by this audit.
+
+
+## Latest diagnostic offline rerun — completed (10-Nov-2026)
+
+- GitHub Actions run [42807562907](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42807562907) — **SUCCESS**, audit branch commit `b7a3fc473abc6f5f8cd8a90fc834d2c4a184e27c`.
+- The run restored the existing NSE Actions cache read-only, downloaded source EOD artifact from run `42634890331`, and completed Track 2 with no observer errors.
+- Input and output cohort: **2,588 rows / 2,588 unique symbols**; zero duplicate and invalid symbols; `cohort_status=COMPLETE`.
+- Historical input: **201 Bhavcopy sessions** (09-Nov as-of session plus 200 prior sessions); **21 Delivery report dates** from 12-Oct through 09-Nov; no Bhavcopy or Delivery cache errors.
+- Delivery Quantity observer: **2,253 COMPLETE_5_10_20D / 335 WAIT_FOR_DATA**. The diagnostic observer CSV now distinguishes the 203 BE rows as `MISSING_DELIVERY_QUANTITY` in each 5D/10D/20D window; the remaining EQ rows are 2,253 complete plus 132 WAIT due to missing/insufficient symbol-session data. No missing quantity is converted to zero. Note: the merged cohort also retains original Track 1 source columns, where the older generic `INVALID_DELIVERY_QUANTITY` reason remains; use the dedicated Track 2 Delivery Quantity observer CSV for the new diagnostic reason fields.
+- Potential Accumulation observer: **2,253 OBSERVATIONS_AVAILABLE / 258 PARTIAL_DATA / 77 WAIT_FOR_DATA**. Price-history coverage: 20D **2,391**, 50D **2,174**, 100D **1,867**, 200D **1,669**. Pivot structure and EMA20/44/50/200 remain **1,665 COMPLETE / 923 WAIT_FOR_DATA**. All 1,665 complete rows have exactly 201 symbol-history sessions; the pivot/EMA observer still requires exact match to the complete 201-date ordered session set. The separate 200D rolling-range observer has four more available rows (1,669), so the 201-session contract remains an explicit review item and was not relaxed.
+- VCP observer: **2,023 COMPLETE / 565 WAIT_FOR_DATA**. The added diagnostics show all 565 WAIT rows have `MISSING_SYMBOL_SESSION_ROWS`; their 60-session window has 1–59 missing sessions, with no duplicate dates, missing/invalid OHLC rows, or missing/invalid volume rows reported in those WAIT rows. The volume status is `RANGE_WINDOW_INCOMPLETE` because the range window is not complete. This resolves the previous report-observability gap; it does not justify relaxing the 60-session requirement.
+- All 2,588 rows remain `FalseVCPOutcomeStatus=NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON`. Requested sideways/dip patterns remain `NOT_CLASSIFIED_PENDING_APPROVED_RULES`; no classification thresholds were introduced.
+- Safety assertions: `track1_artifacts_unchanged=true`, `network_fetches=0`, `telegram_enabled=false`, `production_scanner_called=false`. All three observer error fields are null. The separate Track 2 artifact uploaded successfully (artifact ID `13762065857`; name `track2-full-mainboard-offline-42807562907`).
+- The run log confirms the isolated workflow did not call the production scanner, perform network fetches, or send Telegram messages. The source Track 1 artifact was unchanged.
+
+### Updated diagnostic conclusion
+1. The full-Mainboard standalone Track 2 execution and all three observer outputs now have exact 2,588-row cohort coverage.
+2. The Delivery Quantity and VCP reason/count diagnostics are present in the dedicated observer artifacts; BE missing quantity remains WAIT and must not be interpreted as zero or as a malformed numeric value without source-contract evidence.
+3. The 201-session pivot/EMA exact-history requirement remains unresolved as a contract decision. Do not relax it without an explicit approved decision and tests.
+4. Track 2 remains an isolated observational research report. No scheduled EOD integration, production scanner wiring, Track 1 eligibility/ranking change, main-branch change, or Master Specification edit was made or authorized.
