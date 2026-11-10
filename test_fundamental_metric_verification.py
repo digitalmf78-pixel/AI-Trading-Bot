@@ -74,9 +74,9 @@ def _evidence(xml_path: Path, **overrides):
 
 
 def _approve_test_cashflow_mapping(monkeypatch):
-    # Exercise the generic evidence validator with a deliberately test-only
-    # mapping. Production has no approved tag until accounting review resolves
-    # the competing NSE cash-flow concepts.
+    # Explicitly pin the selected annual operating-cash-flow concept in this
+    # validator test. Production uses the same tag only after exact XML/context
+    # checks and a same-context CFO + CFI + CFF cross-foot pass.
     monkeypatch.setitem(DIRECT_FACT_TAGS, 'OperatingCashFlowINR',
                         {'CashFlowsFromUsedInOperatingActivities'})
 
