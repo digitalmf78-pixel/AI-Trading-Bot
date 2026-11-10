@@ -151,6 +151,50 @@ def _validate_record_schema(record: Mapping[str, Any], hash_field: str) -> None:
         raise SignalValidationError(f"Unsupported immutable hash field: {hash_field}")
 
 
+
+def _validate_record_semantics(record: Mapping[str, Any], hash_field: str) -> None:
+    """Validate identity and immutable record metadata beyond JSON shape."""
+    if hash_field == "snapshot_payload_sha256":
+        if record.get("schema_version") != SCHEMA_VERSION:
+            raise SignalValidationError("Unsupported snapshot schema_version")
+        if record.get("SignalType") != SIGNAL_TYPE:
+            raise SignalValidationError("Unsupported snapshot SignalType")
+        if record.get("RunMode") != "EOD":
+            raise SignalValidationError("Snapshot RunMode must be EOD")
+        if record.get("ExchangeTimezone") != EXCHANGE_TIMEZONE:
+            raise SignalValidationError("Unsupported snapshot ExchangeTimezone")
+        day = _iso_date(record.get("EODDate"))
+        symbol = _require_text(record.get("Symbol"), "persisted Symbol")
+        version = _require_text(record.get("StrategyVersion"), "persisted StrategyVersion")
+        if symbol != symbol.upper():
+            raise SignalValidationError("Persisted Symbol must be uppercase")
+        expected_id = _sha256("|".join((day, symbol, version, SIGNAL_TYPE)))
+        if record.get("signal_id") != expected_id:
+            raise SignalValidationError("Snapshot signal_id does not match its identity fields")
+        timestamp = record.get("CreatedAtUTC")
+    elif hash_field == "event_id":
+        _iso_date(record.get("EODDate"))
+        symbol = _require_text(record.get("Symbol"), "persisted Symbol")
+        _require_text(record.get("signal_id"), "persisted signal_id")
+        _require_text(record.get("StageName"), "persisted StageName")
+        _require_text(record.get("Status"), "persisted Status")
+        _require_text(record.get("StrategyVersion"), "persisted StrategyVersion")
+        if symbol != symbol.upper():
+            raise SignalValidationError("Persisted Symbol must be uppercase")
+        timestamp = record.get("ObservedAtUTC")
+    else:
+        raise SignalValidationError(f"Unsupported immutable hash field: {hash_field}")
+
+    if not isinstance(timestamp, str):
+        raise SignalValidationError("Persisted observation timestamp must be text")
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SignalValidationError("Persisted observation timestamp must be ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise SignalValidationError("Persisted observation timestamp must include a timezone")
+
+
 def build_signal_snapshot(
     *,
     eod_date: str | date,
@@ -266,6 +310,15 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
     Existing records are never rewritten. Workflow branch concurrency must
     serialize repository writes; this function does not provide file locking.
     """
+    expected_pair = {
+        "snapshot_payload_sha256": "signal_id",
+        "event_id": "event_id",
+    }
+    if hash_field not in expected_pair or key_field != expected_pair[hash_field]:
+        raise SignalValidationError(
+            "Unsupported key/hash field pairing; snapshots require signal_id/"
+            "snapshot_payload_sha256 and stage events require event_id/event_id"
+        )
     target = Path(path)
     pending = list(records)
     if not pending:
@@ -279,6 +332,7 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
                 try:
                     row = json.loads(line)
                     _validate_record_schema(row, hash_field)
+                    _validate_record_semantics(row, hash_field)
                     key, digest = str(row[key_field]), str(row[hash_field])
                     actual_digest = _verified_record_digest(row, hash_field)
                 except (json.JSONDecodeError, KeyError, TypeError, SignalValidationError) as exc:
@@ -294,6 +348,7 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
     duplicates = 0
     for record in pending:
         _validate_record_schema(record, hash_field)
+        _validate_record_semantics(record, hash_field)
         if key_field not in record or hash_field not in record:
             raise SignalValidationError(f"Record requires {key_field} and {hash_field}")
         key, digest = str(record[key_field]), str(record[hash_field])
