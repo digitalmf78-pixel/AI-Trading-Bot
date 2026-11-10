@@ -243,11 +243,10 @@ def assemble_mainboard_cohort(
                 if (evidence["_cohort_series_key"] == "").any():
                     raise CohortAssemblyError(f"{label.lower()}_report: blank/null SctySrs")
                 series_map = base.set_index("_cohort_symbol_key")["_cohort_series_key"].to_dict()
-                mismatch = evidence[
-                    evidence["_cohort_symbol_key"].isin(cohort_symbols)
-                    & evidence.apply(
-                        lambda row: row["_cohort_series_key"] != series_map[row["_cohort_symbol_key"]], axis=1
-                    )
+                matching_mask = evidence["_cohort_symbol_key"].isin(cohort_symbols)
+                expected_series = evidence["_cohort_symbol_key"].map(series_map)
+                mismatch = evidence.loc[
+                    matching_mask & evidence["_cohort_series_key"].ne(expected_series)
                 ]
                 if not mismatch.empty:
                     raise CohortAssemblyError(
