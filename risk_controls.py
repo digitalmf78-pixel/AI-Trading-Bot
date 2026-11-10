@@ -147,7 +147,14 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
             if qty <= 0:
                 reason.append("POSITION_SIZE_ZERO")
             if not sector or sector.casefold() == "unknown":
-                reason.append("SECTOR_REQUIRED_FOR_CONCENTRATION_CHECK")
+                # Allow "Unknown" sector only when portfolio is verified empty
+                # (no existing positions). Otherwise require explicit sector.
+                if not (
+                    config.get("portfolio_exposure_verified") is True
+                    and config.get("current_total_exposure_pct", 1) == 0
+                    and not config.get("sector_exposure_pct_by_sector")
+                ):
+                    reason.append("SECTOR_REQUIRED_FOR_CONCENTRATION_CHECK")
             else:
                 sector_exposure = config["sector_exposure_pct_by_sector"].get(sector)
                 # A verified empty portfolio has zero exposure in every sector.
