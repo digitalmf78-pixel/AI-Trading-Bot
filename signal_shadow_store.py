@@ -125,6 +125,8 @@ def _validate_record_schema(record: Mapping[str, Any], hash_field: str) -> None:
         fields = record.get("signal_fields")
         if not isinstance(fields, Mapping):
             raise SignalValidationError("Snapshot signal_fields must be a mapping")
+        if any(not isinstance(key, str) for key in fields):
+            raise SignalValidationError("Persisted signal_fields keys must be strings")
         unknown = sorted(set(fields) - SAFE_SIGNAL_FIELDS)
         if unknown:
             raise SignalValidationError(f"Unapproved persisted signal fields: {', '.join(unknown)}")
@@ -170,9 +172,13 @@ def build_signal_snapshot(
         raise SignalValidationError("Only EOD runs may create signal snapshots")
     if not isinstance(signal_fields, Mapping):
         raise SignalValidationError("signal_fields must be a mapping")
+    if any(not isinstance(key, str) for key in signal_fields):
+        raise SignalValidationError("signal_fields keys must be strings")
     unknown = sorted(set(signal_fields) - SAFE_SIGNAL_FIELDS)
     if unknown:
         raise SignalValidationError(f"Unapproved signal fields: {', '.join(unknown)}")
+    if isinstance(source_reports, (str, bytes)):
+        raise SignalValidationError("source_reports must be an iterable of report names, not a string")
     _reject_sensitive_keys(signal_fields)
 
     safe_fields = dict(signal_fields)
@@ -287,9 +293,9 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
     append_rows: list[str] = []
     duplicates = 0
     for record in pending:
+        _validate_record_schema(record, hash_field)
         if key_field not in record or hash_field not in record:
             raise SignalValidationError(f"Record requires {key_field} and {hash_field}")
-        _validate_record_schema(record, hash_field)
         key, digest = str(record[key_field]), str(record[hash_field])
         actual_digest = _verified_record_digest(record, hash_field)
         if digest != actual_digest:
