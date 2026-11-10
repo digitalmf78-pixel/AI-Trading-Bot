@@ -189,3 +189,10 @@ def test_stage_event_append_rejects_unapproved_field_even_with_valid_hash():
     with pytest.raises(SignalValidationError, match="schema mismatch"):
         append_immutable_jsonl(Path("unused-events.jsonl"), [event], key_field="event_id",
                                hash_field="event_id")
+
+
+@pytest.mark.parametrize("bad_record", [["not", "a", "mapping"], "not-a-mapping"])
+def test_jsonl_append_rejects_non_mapping_records(tmp_path: Path, bad_record):
+    with pytest.raises(SignalValidationError, match="must be a mapping"):
+        append_immutable_jsonl(tmp_path / "invalid.jsonl", [bad_record],
+                               key_field="signal_id", hash_field="snapshot_payload_sha256")
