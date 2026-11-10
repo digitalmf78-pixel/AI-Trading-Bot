@@ -1,22 +1,20 @@
-name: Update NSE Trading Calendar
+name: NSE Calendar Coverage Check
 
 on:
   schedule:
-    # Monthly on the 1st
+    # Monthly coverage check.
     - cron: '0 6 1 * *'
-    # Daily from Nov 1 to Dec 31 (to catch next year's calendar early)
-    - cron: '0 6 1-31 11,12 *'
+    # Daily during Nov-Dec so a missing next-year calendar is caught early.
+    - cron: '0 6 * 11,12 *'
   workflow_dispatch:
-    inputs:
-      year:
-        description: 'Year to update (e.g. 2027). Leave empty for auto-detect.'
-        required: false
-        default: ''
+
+permissions:
+  contents: read
 
 jobs:
-  update-calendar:
+  calendar-coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,50 +25,94 @@ jobs:
           python-version: '3.12'
 
       - name: Check calendar coverage
-        id: check
+        id: coverage
         run: |
-          python -c "
+          python - <<'PY'
           import json
+          import os
           from datetime import date
-          cal = json.load(open('data/inputs/nse_trading_calendar.json'))
-          current = str(date.today().year)
-          next_yr = str(date.today().year + 1)
-          years = list(cal.get('years', {}).keys())
-          print(f'Current year: {current}, Next year: {next_yr}')
-          print(f'Available years: {years}')
+          from pathlib import Path
+
+          calendar_path = Path("data/inputs/nse_trading_calendar.json")
+          payload = json.loads(calendar_path.read_text(encoding="utf-8"))
+          years = {str(y) for y in payload.get("years", {})}
+          today = date.today()
+          current = str(today.year)
+          next_year = str(today.year + 1)
+
           missing = []
           if current not in years:
               missing.append(current)
-          if date.today().month >= 11 and next_yr not in years:
-              missing.append(next_yr)
+          # From 1 November onwards the next year must be covered (60-day rule).
+          if today.month >= 11 and next_year not in years:
+              missing.append(next_year)
+
+          print(f"current_year={current}")
+          print(f"next_year={next_year}")
+          print(f"available_years={sorted(years)}")
+          print(f"missing_years={','.join(missing)}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"missing={'|'.join(missing)}\n")
+
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary.open("a", encoding="utf-8") as fh:
+              fh.write("## NSE trading calendar coverage\n\n")
+              fh.write(f"- Available years: {', '.join(sorted(years)) or 'none'}\n")
+              fh.write(f"- Missing years: {', '.join(missing) or 'none'}\n")
+
           if missing:
-              print(f'MISSING_YEARS={\",\".join(missing)}')
-              print('::warning::NSE calendar missing years: ' + ','.join(missing))
+              print(f"::warning::NSE trading calendar is missing: {', '.join(missing)}")
           else:
-              print('CALENDAR_OK')
-          " > /tmp/cal_check.txt
-          cat /tmp/cal_check.txt
+              print("CALENDAR_OK")
+          PY
 
-      - name: Fetch NSE holiday list
-        if: steps.check.outputs.missing_years != ''
+      - name: Warn on Telegram when coverage is missing
+        if: steps.coverage.outputs.missing != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MISSING: ${{ steps.coverage.outputs.missing }}
         run: |
-          echo "Fetching official NSE holiday list..."
-          # NSE publishes holiday list at:
-          # https://www.nseindia.com/resources/exchange-communication-holidays
-          # This step should be implemented with the official NSE API.
-          # For now, create a placeholder that alerts the maintainer.
-          echo "::warning::NSE calendar needs manual update for missing years."
-          echo "Please fetch from: https://www.nseindia.com/resources/exchange-communication-holidays"
-          echo "And update data/inputs/nse_trading_calendar.json"
+          python - <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
 
-      - name: Open PR if calendar updated
-        if: steps.check.outputs.missing_years != ''
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+          missing = os.getenv("MISSING", "").replace("|", ", ")
+          if not token or not chat_id:
+              print("Telegram secrets not configured; skipping Telegram warning.")
+              raise SystemExit(0)
+
+          text = (
+              "⚠️ NSE V8 calendar warning\n"
+              f"Missing official NSE calendar year(s): {missing}\n"
+              "Fetch the official NSE holiday list and update "
+              "data/inputs/nse_trading_calendar.json. Holidays are never guessed."
+          )
+          payload = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+          url = f"https://api.telegram.org/bot{token}/sendMessage"
+          with urllib.request.urlopen(url, data=payload, timeout=30) as response:
+              print(f"Telegram status: {response.status}")
+          PY
+
+      - name: Fail when the current year is missing
+        if: steps.coverage.outputs.missing != ''
+        env:
+          MISSING: ${{ steps.coverage.outputs.missing }}
         run: |
-          echo "Calendar update needed. Manual intervention required."
-          echo "Missing years: ${{ steps.check.outputs.missing_years }}"
-          # In production, this would:
-          # 1. Fetch NSE holiday list via official API
-          # 2. Validate against NSE circular
-          # 3. Update nse_trading_calendar.json
-          # 4. Open a PR with the changes
-          # 5. Notify via Telegram
+          python - <<'PY'
+          import os
+          from datetime import date
+
+          missing = os.getenv("MISSING", "").split("|")
+          if str(date.today().year) in missing:
+              raise SystemExit(
+                  "NSE trading calendar does not cover the current year. "
+                  "Scanning would fail closed with WAIT_FOR_DATA. "
+                  "Update data/inputs/nse_trading_calendar.json from the official NSE holiday list."
+              )
+          print("Only next-year coverage is missing; warning already raised.")
+          PY
