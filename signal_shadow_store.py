@@ -69,6 +69,35 @@ def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+_SENSITIVE_TEXT_PATTERNS = (
+    re.compile(r"(?i)\\b(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|passwd|secret|client[_-]?secret|refresh[_-]?token|session(?:id)?|chat[_-]?id)\\s*[:=]\\s*[^\\s,;&]+"),
+    re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)\\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\\b"),
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)https?://[^\\s?]+\\?[^\\s]+"),
+    re.compile(r"(?i)https?://[^/\\s:@]+:[^/@\\s]+@"),
+    re.compile(r"(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"),
+    re.compile(r"(?<!\\d)(?:\\+?\\d[\\s().-]?){9,14}\\d(?!\\d)"),
+)
+
+
+def _reject_sensitive_text(value: Any, path: str = "$") -> None:
+    """Reject credentials, private URLs, and common personal/account identifiers in text values."""
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            _reject_sensitive_text(child, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _reject_sensitive_text(child, f"{path}[{index}]")
+    elif isinstance(value, str):
+        if len(value) > 2000:
+            raise SignalValidationError(f"Text value exceeds 2000 characters at {path}")
+        if re.search(r"[\\x00-\\x08\\x0b-\\x1f\\x7f]", value):
+            raise SignalValidationError(f"Control character in text value at {path}")
+        if any(pattern.search(value) for pattern in _SENSITIVE_TEXT_PATTERNS):
+            raise SignalValidationError(f"Sensitive or account-derived text rejected at {path}")
+
+
 def _reject_sensitive_keys(value: Any, path: str = "$") -> None:
     if isinstance(value, Mapping):
         for key, child in value.items():
@@ -141,6 +170,7 @@ def _validate_record_schema(record: Mapping[str, Any], hash_field: str) -> None:
         if not isinstance(reports, list) or any(not isinstance(item, str) for item in reports):
             raise SignalValidationError("Snapshot source_reports must be a list of strings")
         _reject_sensitive_keys(record)
+        _reject_sensitive_text(record)
     elif hash_field == "event_id":
         allowed = {
             "event_id", "signal_id", "EODDate", "Symbol", "StageName", "Status",
@@ -154,6 +184,7 @@ def _validate_record_schema(record: Mapping[str, Any], hash_field: str) -> None:
                 f"Stage-event record schema mismatch; unexpected={unexpected}, missing={missing}"
             )
         _reject_sensitive_keys(record)
+        _reject_sensitive_text(record)
     else:
         raise SignalValidationError(f"Unsupported immutable hash field: {hash_field}")
 
@@ -235,6 +266,8 @@ def build_signal_snapshot(
     if isinstance(source_reports, (str, bytes)):
         raise SignalValidationError("source_reports must be an iterable of report names, not a string")
     _reject_sensitive_keys(signal_fields)
+    _reject_sensitive_text(signal_fields)
+    _reject_sensitive_text(list(source_reports), "source_reports")
 
     safe_fields = dict(signal_fields)
     try:
@@ -302,6 +335,7 @@ def build_stage_event(
         "SourceRowHash": str(source_row_hash or ""),
     }
     _reject_sensitive_keys(fields)
+    _reject_sensitive_text(fields)
     event_id = _sha256(_canonical_json(fields))
     timestamp = observed_at_utc or datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
