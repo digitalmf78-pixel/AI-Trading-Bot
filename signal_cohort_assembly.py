@@ -198,7 +198,7 @@ def assemble_mainboard_cohort(
                 if not mismatch.empty:
                     raise CohortAssemblyError(
                         f"{label.lower()}_report: SctySrs mismatch for evidence rows: "
-                        f"{mismatch[[SYMBOL_COLUMN, "SctySrs"]].head(20).to_dict("records")}"
+                        f"{mismatch[[SYMBOL_COLUMN, 'SctySrs']].head(20).to_dict("records")}"
                     )
         evidence[coverage_column] = evidence["_cohort_symbol_key"].map(
             lambda key: "SOURCE_ROW_PRESENT" if key in cohort_symbols else "OUT_OF_COHORT"
