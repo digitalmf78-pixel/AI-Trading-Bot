@@ -74,3 +74,12 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Snapshot field names must be strings before allow-list sorting; persisted snapshots recheck this condition.
 - Added two tests covering string source_reports and non-string field keys. Latest inventory: 31 Cohort Assembly + 18 Signal Shadow Store test functions = 49 functions; pytest-expanded cases = 50.
 - No tests have been executed against this latest revision. GitHub connector exposes no run for the push commit; empty status response is not a pass.
+
+
+## Focused local execution result (2026-11-10)
+- Retrieved the four current branch files from `audit/implementation-roadmap-2026-11-10` and ran the two focused test modules in an isolated local Python environment (Python 3.13.5, pandas 2.2.3, pytest 9.0.2).
+- Initial combined run exposed a real defect: a stage report payload field named `CoverageStatus` could alias the generated `<Stage>__CoverageStatus` column without raising. The implementation now rejects both reserved payload names `CoverageStatus` and `CoverageReason`; the test covers both names.
+- After the branch fix, combined focused result: **54 passed in 0.27s**.
+- Syntax compilation check: **4/4 files passed** (`signal_cohort_assembly.py`, `signal_shadow_store.py`, and their two focused test files).
+- This is a local focused test run of the current branch modules/tests, not a GitHub Actions CI run. Full repository CI, broader regression suite, and real EOD shadow validation remain unverified.
+- The change remains on the audit branch only. No production scanner wiring, trading filter, Telegram behavior, Master Specification, or main-branch code was changed.
