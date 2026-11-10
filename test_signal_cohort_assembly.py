@@ -281,3 +281,14 @@ def test_non_scalar_news_series_identity_fails_closed():
     news = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": [["EQ", "BE"]]})
     with pytest.raises(CohortAssemblyError, match="SctySrs key must be a scalar"):
         assemble_mainboard_cohort(main, news_report=news)
+
+def test_out_of_cohort_news_with_series_is_preserved_as_out_of_cohort():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    news = pd.DataFrame({
+        "TckrSymb": ["OUTSIDE"],
+        "SctySrs": ["EQ"],
+        "Headline": ["Unmatched evidence row"],
+    })
+    result = assemble_mainboard_cohort(main, news_report=news)
+    assert len(result.news_evidence) == 1
+    assert result.news_evidence.loc[0, "NewsEvidenceCoverageStatus"] == "OUT_OF_COHORT"
