@@ -27,9 +27,17 @@ class CohortAssemblyResult:
 
 
 def _normalise_symbol(value) -> str:
+    if not pd.api.types.is_scalar(value):
+        raise CohortAssemblyError("symbol key must be a scalar value")
     if pd.isna(value):
         return ""
     return str(value).strip().upper()
+
+
+def _normalise_series(value) -> str:
+    if not pd.api.types.is_scalar(value):
+        raise CohortAssemblyError("SctySrs key must be a scalar value")
+    return "" if pd.isna(value) else str(value).strip().upper()
 
 
 def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
@@ -52,9 +60,7 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     if duplicates:
         raise CohortAssemblyError(f"{label}: duplicate symbol keys are ambiguous: {duplicates[:20]}")
     if "SctySrs" in out.columns:
-        out["_cohort_series_key"] = out["SctySrs"].map(
-            lambda value: "" if pd.isna(value) else str(value).strip().upper()
-        )
+        out["_cohort_series_key"] = out["SctySrs"].map(_normalise_series)
         if (out["_cohort_series_key"] == "").any():
             raise CohortAssemblyError(f"{label}: blank/null SctySrs for a symbol-keyed row")
     return out
@@ -233,9 +239,7 @@ def assemble_mainboard_cohort(
                     "Rows": len(evidence),
                 })
             else:
-                evidence["_cohort_series_key"] = evidence["SctySrs"].map(
-                    lambda value: "" if pd.isna(value) else str(value).strip().upper()
-                )
+                evidence["_cohort_series_key"] = evidence["SctySrs"].map(_normalise_series)
                 if (evidence["_cohort_series_key"] == "").any():
                     raise CohortAssemblyError(f"{label.lower()}_report: blank/null SctySrs")
                 series_map = base.set_index("_cohort_symbol_key")["_cohort_series_key"].to_dict()
