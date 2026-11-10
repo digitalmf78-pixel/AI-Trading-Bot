@@ -131,7 +131,7 @@ def assemble_mainboard_cohort(
             "OutOfCohortRows": len(extras),
         })
 
-        payload_columns = [c for c in keyed_report.columns if c != "_cohort_symbol_key"]
+        payload_columns = [c for c in keyed_report.columns if c not in {"_cohort_symbol_key", "_cohort_series_key"}]
         renamed = keyed_report[["_cohort_symbol_key"] + payload_columns].rename(
             columns={c: f"{safe_stage}__{c}" for c in payload_columns}
         )
