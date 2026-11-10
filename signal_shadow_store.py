@@ -213,14 +213,18 @@ def _validate_record_semantics(record: Mapping[str, Any], hash_field: str) -> No
             raise SignalValidationError("Snapshot signal_id does not match its identity fields")
         timestamp = record.get("CreatedAtUTC")
     elif hash_field == "event_id":
-        _iso_date(record.get("EODDate"))
+        day = _iso_date(record.get("EODDate"))
+        if record.get("EODDate") != day:
+            raise SignalValidationError("Persisted EODDate must use canonical YYYY-MM-DD format")
         symbol = _require_text(record.get("Symbol"), "persisted Symbol")
-        _require_text(record.get("signal_id"), "persisted signal_id")
         _require_text(record.get("StageName"), "persisted StageName")
         _require_text(record.get("Status"), "persisted Status")
-        _require_strategy_sha(record.get("StrategyVersion"))
+        version = _require_strategy_sha(record.get("StrategyVersion"))
         if symbol != symbol.upper():
             raise SignalValidationError("Persisted Symbol must be uppercase")
+        expected_id = _sha256("|".join((day, symbol, version, SIGNAL_TYPE)))
+        if record.get("signal_id") != expected_id:
+            raise SignalValidationError("Stage-event signal_id does not match its identity fields")
         timestamp = record.get("ObservedAtUTC")
     else:
         raise SignalValidationError(f"Unsupported immutable hash field: {hash_field}")
@@ -325,15 +329,20 @@ def build_stage_event(
 ) -> dict[str, Any]:
     """Build a deterministic stage event; source statuses are preserved verbatim."""
     day = _iso_date(eod_date)
+    ticker = _require_text(symbol, "symbol").upper()
+    version = _require_strategy_sha(strategy_version)
+    expected_id = _sha256("|".join((day, ticker, version, SIGNAL_TYPE)))
+    if signal_id != expected_id:
+        raise SignalValidationError("Stage-event signal_id does not match its identity fields")
     fields = {
-        "signal_id": _require_text(signal_id, "signal_id"),
+        "signal_id": expected_id,
         "EODDate": day,
-        "Symbol": _require_text(symbol, "symbol").upper(),
+        "Symbol": ticker,
         "StageName": _require_text(stage_name, "stage_name"),
         "Status": _require_text(status, "status"),
         "ReasonCode": str(reason_code or ""),
         "ReasonText": str(reason_text or ""),
-        "StrategyVersion": _require_strategy_sha(strategy_version),
+        "StrategyVersion": version,
         "SourceReport": str(source_report or ""),
         "SourceRowHash": str(source_row_hash or ""),
     }
