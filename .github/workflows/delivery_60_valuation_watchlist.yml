@@ -134,7 +134,7 @@ jobs:
 
               bhav = pd.read_csv(bhav_path, dtype=str)
               bhav.columns = [str(c).strip() for c in bhav.columns]
-              required = {"TckrSymb", "SctySrs", "ClsPric", "TtlTradgVol"}
+              required = {"TckrSymb", "SctySrs", "ClsPric", "TtlTradgVol", "ISIN"}
               if not required.issubset(bhav.columns):
                   write_empty(f"WAIT_FOR_DATA: Bhavcopy schema incomplete for {day}: missing={sorted(required - set(bhav.columns))}")
                   raise SystemExit(0)
@@ -158,7 +158,7 @@ jobs:
                   & bhav["TtlTradgVol"].ge(0)
               ].copy()
 
-              if not official_etf_symbols and not {"ISIN", "FinInstrmNm"}.issubset(bhav.columns):
+              if not official_etf_symbols and "FinInstrmNm" not in bhav.columns:
                   write_empty(f"WAIT_FOR_DATA: ETF/MF classification unavailable for {day}")
                   raise SystemExit(0)
 
