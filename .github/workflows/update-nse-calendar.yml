@@ -1,0 +1,76 @@
+name: Update NSE Trading Calendar
+
+on:
+  schedule:
+    # Monthly on the 1st
+    - cron: '0 6 1 * *'
+    # Daily from Nov 1 to Dec 31 (to catch next year's calendar early)
+    - cron: '0 6 1-31 11,12 *'
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year to update (e.g. 2027). Leave empty for auto-detect.'
+        required: false
+        default: ''
+
+jobs:
+  update-calendar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check calendar coverage
+        id: check
+        run: |
+          python -c "
+          import json
+          from datetime import date
+          cal = json.load(open('data/inputs/nse_trading_calendar.json'))
+          current = str(date.today().year)
+          next_yr = str(date.today().year + 1)
+          years = list(cal.get('years', {}).keys())
+          print(f'Current year: {current}, Next year: {next_yr}')
+          print(f'Available years: {years}')
+          missing = []
+          if current not in years:
+              missing.append(current)
+          if date.today().month >= 11 and next_yr not in years:
+              missing.append(next_yr)
+          if missing:
+              print(f'MISSING_YEARS={\",\".join(missing)}')
+              print('::warning::NSE calendar missing years: ' + ','.join(missing))
+          else:
+              print('CALENDAR_OK')
+          " > /tmp/cal_check.txt
+          cat /tmp/cal_check.txt
+
+      - name: Fetch NSE holiday list
+        if: steps.check.outputs.missing_years != ''
+        run: |
+          echo "Fetching official NSE holiday list..."
+          # NSE publishes holiday list at:
+          # https://www.nseindia.com/resources/exchange-communication-holidays
+          # This step should be implemented with the official NSE API.
+          # For now, create a placeholder that alerts the maintainer.
+          echo "::warning::NSE calendar needs manual update for missing years."
+          echo "Please fetch from: https://www.nseindia.com/resources/exchange-communication-holidays"
+          echo "And update data/inputs/nse_trading_calendar.json"
+
+      - name: Open PR if calendar updated
+        if: steps.check.outputs.missing_years != ''
+        run: |
+          echo "Calendar update needed. Manual intervention required."
+          echo "Missing years: ${{ steps.check.outputs.missing_years }}"
+          # In production, this would:
+          # 1. Fetch NSE holiday list via official API
+          # 2. Validate against NSE circular
+          # 3. Update nse_trading_calendar.json
+          # 4. Open a PR with the changes
+          # 5. Notify via Telegram

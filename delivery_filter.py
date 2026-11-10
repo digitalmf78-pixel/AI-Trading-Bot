@@ -247,7 +247,16 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         frame["REPORT_DATE"] = report_date.isoformat()
         duplicate_keys = frame.duplicated(["SYMBOL", "SERIES"], keep=False)
         if duplicate_keys.any():
-            frame = frame.loc[~duplicate_keys].copy()
+            dup_count = int(duplicate_keys.sum())
+            dup_symbols = sorted(set(frame.loc[duplicate_keys, "SYMBOL"].tolist()))
+            print(
+                f"[DELIVERY] {report_date}: {dup_count} duplicate (SYMBOL, SERIES) rows "
+                f"found for {len(dup_symbols)} symbol(s); keeping first occurrence. "
+                f"Symbols: {dup_symbols[:10]}"
+            )
+            # Deterministic rule: keep the first occurrence, drop the rest.
+            # This avoids silently losing the entire session for that symbol.
+            frame = frame.drop_duplicates(["SYMBOL", "SERIES"], keep="first").copy()
         pieces.append(frame)
 
     all_delivery = pd.concat(
