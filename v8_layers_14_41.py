@@ -662,6 +662,95 @@ def _validate_eod_window_frames(session_frames, eod_date):
     return True, dates
 
 
+def _accumulation_distribution_for_candidates(
+    ad_history: pd.DataFrame,
+    candidates: pd.DataFrame,
+    eod_window_complete: bool,
+    eod_window_dates: list,
+) -> tuple[dict, pd.DataFrame]:
+    """Calculate 20-session AD per candidate's exact NSE symbol/series.
+
+    Bhavcopy may contain multiple security series for the same symbol. A symbol-only
+    group can therefore contain more than 20 rows even when the candidate's own
+    series has a complete 20-session window. Keep series separate; missing or
+    ambiguous rows remain WAIT_FOR_DATA. This is an observation-only correction.
+    """
+    diagnostic_columns = [
+        "TckrSymb", "SctySrs", "ExpectedSessions", "ObservedRows",
+        "UniqueSessions", "DuplicateSessionDates", "MissingSessionDates",
+        "UnexpectedSessionDates", "Status", "Reason",
+    ]
+    values = {}
+    diagnostics = []
+    if candidates is None or candidates.empty:
+        return values, pd.DataFrame(columns=diagnostic_columns)
+
+    history = ad_history.copy() if ad_history is not None else pd.DataFrame()
+    if not history.empty and {"TckrSymb", "Date"}.issubset(history.columns):
+        history["TckrSymb"] = history["TckrSymb"].astype(str).str.strip().str.upper()
+        history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
+        history = history.dropna(subset=["Date"])
+        if "SctySrs" in history.columns:
+            history["_AD_SERIES"] = history["SctySrs"].fillna("").astype(str).str.strip().str.upper()
+        else:
+            history["_AD_SERIES"] = ""
+    else:
+        history = pd.DataFrame(columns=["TckrSymb", "Date", "_AD_SERIES"])
+
+    expected_dates = set(eod_window_dates or [])
+    expected_sorted = sorted(expected_dates)
+    for _, candidate in candidates.iterrows():
+        symbol = str(candidate.get("TckrSymb", "")).strip().upper()
+        series = str(candidate.get("SctySrs", "")).strip().upper()
+        series_aware = "SctySrs" in (ad_history.columns if ad_history is not None else [])
+        if series_aware and series:
+            group = history[
+                history["TckrSymb"].eq(symbol) & history["_AD_SERIES"].eq(series)
+            ].copy()
+            key = (symbol, series)
+        else:
+            group = history[history["TckrSymb"].eq(symbol)].copy()
+            key = symbol
+
+        group = group.sort_values("Date", kind="mergesort")
+        dates = group["Date"].dt.date.tolist() if not group.empty else []
+        unique_dates = set(dates)
+        duplicate_dates = sorted({day for day in dates if dates.count(day) > 1})
+        missing_dates = sorted(expected_dates - unique_dates)
+        unexpected_dates = sorted(unique_dates - expected_dates)
+        reason = "COMPLETE"
+        score = float("nan")
+        if not eod_window_complete:
+            reason = "EOD_WINDOW_INVALID"
+        elif len(group) != 20:
+            reason = "DUPLICATE_SESSION_ROWS" if duplicate_dates else "SESSION_ROW_COUNT_NOT_20"
+        elif len(unique_dates) != 20:
+            reason = "DUPLICATE_SESSION_DATES"
+        elif unique_dates != expected_dates:
+            reason = "SESSION_DATE_SET_MISMATCH"
+        else:
+            score = _accumulation_score(group)
+            if pd.isna(score):
+                reason = "INVALID_OHLCV"
+        if reason == "COMPLETE":
+            values[key] = score
+        else:
+            values[key] = float("nan")
+        diagnostics.append({
+            "TckrSymb": symbol,
+            "SctySrs": series,
+            "ExpectedSessions": len(expected_dates),
+            "ObservedRows": len(group),
+            "UniqueSessions": len(unique_dates),
+            "DuplicateSessionDates": ";".join(day.isoformat() for day in duplicate_dates),
+            "MissingSessionDates": ";".join(day.isoformat() for day in missing_dates),
+            "UnexpectedSessionDates": ";".join(day.isoformat() for day in unexpected_dates),
+            "Status": "PASS" if reason == "COMPLETE" else "WAIT_FOR_DATA",
+            "Reason": reason,
+        })
+    return values, pd.DataFrame(diagnostics, columns=diagnostic_columns)
+
+
 def run_eod_layers(
     result: pd.DataFrame,
     historical: list[pd.DataFrame],
@@ -738,22 +827,24 @@ def run_eod_layers(
         if column in ad_history.columns:
             ad_history[column] = pd.to_numeric(ad_history[column], errors="coerce")
     ad_history = ad_history.sort_values("Date")
-    ad_values = {}
-    ad_groups = {}
-    expected_eod_dates = set(eod_window_dates)
-    if "TckrSymb" in ad_history.columns:
-        for symbol, group in ad_history.groupby("TckrSymb"):
-            group = group.sort_values("Date").copy()
-            ad_groups[str(symbol)] = group
-            group_dates = group["Date"].dt.date
-            complete_symbol_window = (
-                eod_window_complete
-                and len(group) == 20
-                and group_dates.nunique() == 20
-                and set(group_dates) == expected_eod_dates
-            )
-            ad_values[str(symbol)] = _accumulation_score(group) if complete_symbol_window else float("nan")
-    output["AccumulationDistribution20D"] = output["TckrSymb"].astype(str).map(ad_values)
+    ad_values, ad_diagnostics = _accumulation_distribution_for_candidates(
+        ad_history,
+        output,
+        eod_window_complete,
+        eod_window_dates,
+    )
+    if "SctySrs" in ad_history.columns and "SctySrs" in output.columns:
+        output["AccumulationDistribution20D"] = [
+            ad_values.get((
+                str(row.get("TckrSymb", "")).strip().upper(),
+                str(row.get("SctySrs", "")).strip().upper(),
+            ), float("nan"))
+            for _, row in output.iterrows()
+        ]
+    else:
+        output["AccumulationDistribution20D"] = output["TckrSymb"].astype(str).str.strip().str.upper().map(ad_values)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ad_diagnostics.to_csv(OUTPUT_DIR / "v8_accumulation_distribution_diagnostics.csv", index=False)
     output["AccumulationDistribution"] = output["AccumulationDistribution20D"].map(
         lambda value: "WAIT_FOR_DATA" if pd.isna(value) else "Accumulation" if value >= 0.20 else "Distribution" if value <= -0.20 else "Neutral"
     )
