@@ -83,3 +83,27 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Syntax compilation check: **4/4 files passed** (`signal_cohort_assembly.py`, `signal_shadow_store.py`, and their two focused test files).
 - This is a local focused test run of the current branch modules/tests, not a GitHub Actions CI run. Full repository CI, broader regression suite, and real EOD shadow validation remain unverified.
 - The change remains on the audit branch only. No production scanner wiring, trading filter, Telegram behavior, Master Specification, or main-branch code was changed.
+
+## Follow-up hardening after the 54-case local run (2026-11-10)
+The following changes were committed after the 54-case focused execution. THEY HAVE NOT YET BEEN EXECUTED, so the earlier 54-pass result does not cover them.
+
+### Signal Shadow Store
+- Enforce key_field / hash_field pairing: snapshots must use signal_id + snapshot_payload_sha256; stage events must use event_id + event_id.
+- Revalidate snapshot identity by recomputing signal_id from canonical EOD date, uppercase symbol, strategy Git SHA, and signal type.
+- Revalidate snapshot schema version, signal type, EOD run mode, exchange timezone, date representation, and timestamp metadata at append time.
+- Require StrategyVersion to be a 40-character Git commit SHA.
+- Require CreatedAtUTC and ObservedAtUTC values to be UTC (not merely any timezone-aware timestamp).
+- Added seven focused tests across key/hash mismatch, recomputed-but-invalid identity, reserved metadata, invalid strategy SHA, and UTC timestamp rules.
+
+### Cohort Assembly
+- Reject non-scalar symbol and series identity values explicitly rather than allowing pandas isna() array ambiguity.
+- Added empty-Mainboard-cohort coverage and tests for non-scalar symbol/series values in Mainboard and News evidence.
+- Added four new test functions (one parameterized with two cases).
+
+### Current validation state
+- Current focused test inventory is approximately 66 pytest cases (including parameterized cases); this count is derived from the known test additions and has NOT been confirmed by executing pytest.
+- No new local test execution is available for these post-54-case changes in this session. Do not label them passed.
+- Latest branch commit: 8dfe613f8229adba03a75195f370dd1e83b4f171.
+- Latest GitHub combined-status lookup returned an empty status list, and the available workflow-run lookup returned no runs. GitHub Actions execution is therefore still unverified.
+- Branch comparison now reports 68 commits ahead and 1 behind main. Main has advanced independently; no merge/rebase was attempted and main remains untouched by this work.
+- Production scanner integration, trading filters, workflow persistence, Telegram behavior, and the Master Specification remain unchanged.
