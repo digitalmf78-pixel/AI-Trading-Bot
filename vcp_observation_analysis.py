@@ -31,7 +31,7 @@ def _day(value):
     return None if pd.isna(parsed) else parsed.date()
 
 
-def build_vcp_observation_report(candidates, historical, asof_date):
+def build_vcp_observation_report(candidates, historical, asof_date, output_path=None):
     """Report sequential 20-session price-range and volume observations."""
     if candidates is None or candidates.empty:
         return pd.DataFrame()
