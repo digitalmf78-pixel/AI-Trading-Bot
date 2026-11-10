@@ -7,6 +7,11 @@ on:
     paths:
       - ".github/workflows/track2-offline-validation.yml"
       - "scripts/track2_offline_validation.py"
+      - "track2_full_mainboard.py"
+      - "history_index.py"
+      - "delivery_quantity_analysis.py"
+      - "potential_accumulation_analysis.py"
+      - "vcp_observation_analysis.py"
 
 permissions:
   contents: read
