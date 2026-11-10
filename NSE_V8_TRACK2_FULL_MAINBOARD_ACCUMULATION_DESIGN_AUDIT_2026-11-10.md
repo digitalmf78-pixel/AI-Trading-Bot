@@ -317,3 +317,32 @@ The uploaded real-data artifact was inspected at row and status-field level. Thi
 2. The Delivery Quantity and VCP reason/count diagnostics are present in the dedicated observer artifacts; BE missing quantity remains WAIT and must not be interpreted as zero or as a malformed numeric value without source-contract evidence.
 3. The 201-session pivot/EMA exact-history requirement remains unresolved as a contract decision. Do not relax it without an explicit approved decision and tests.
 4. Track 2 remains an isolated observational research report. No scheduled EOD integration, production scanner wiring, Track 1 eligibility/ranking change, main-branch change, or Master Specification edit was made or authorized.
+
+
+## 10. Verified raw Delivery source contract (09-Nov-2026 offline audit)
+
+Offline validation run **42810173636** completed successfully on audit branch commit `1b6098009d1af88fa64cabf6d18e6ac5dd4fe16e`. It restored the existing cache read-only and audited all 21 cached Delivery report dates (2026-10-12 through 2026-11-09) against the 2,588-symbol Mainboard cohort. No NSE/network fetch occurred; Telegram was disabled; the production scanner was not called; protected Track 1 artifacts remained byte-for-byte unchanged.
+
+### BE source rows
+- The `DELIV_QTY` column exists in each of the 21 BE report files.
+- Across those files there are **4,502 BE source rows**, and all **4,502 have missing/null DELIV_QTY**; no non-finite or negative quantity was observed.
+- Across the 203 BE Mainboard candidates and 21 dates (4,263 candidate-date pairs), **3,542 source rows were present and all 3,542 had missing quantity**; **721 candidate-date pairs had no matching source row**. No duplicate source symbol rows were found.
+- This verifies the raw cached-file condition behind the observer's `MISSING_DELIVERY_QUANTITY` status. It does **not** establish why NSE's BE records carry blank quantities or prove that BE delivery quantity should be treated as zero. Keep the value missing/WAIT; do not impute zero or change eligibility.
+
+### EQ source rows
+- The `DELIV_QTY` column exists in all 21 EQ report files.
+- Across the 2,385 EQ Mainboard candidates and 21 dates (50,085 candidate-date pairs), **48,800 matching source rows** had valid numeric quantity, **1,285 pairs** had no matching source row, and **one** matching row had quantity zero. No missing, non-finite or negative quantity was found among matching EQ rows; no duplicate source symbol rows were found.
+- The zero quantity is retained as zero, distinct from missing. Existing completeness rules still determine WAIT status for incomplete windows.
+
+### 201-session Pivot/EMA contract
+The cached market calendar has 201 distinct sessions including 09-Nov-2026: 200 prior complete sessions plus the current EOD as-of session. The symbol-level Pivot/EMA observer requires the full ordered 201-session history. On this cohort, Pivot Structure and EMA20/44/50/200 each report **1,665 COMPLETE / 923 WAIT_FOR_DATA**. Four symbols (`BHARATCOAL`, `CENTEXT`, `SPCENET`, `SETL`) have a complete trailing 200-session price range but lack the additional earliest date required by the 201-session Pivot/EMA contract. This is a distinct window contract, not grounds to relax the 201-session requirement.
+
+### Track 2 run result and safety
+- Full Mainboard cohort: **2,588/2,588** rows, exact unique-symbol coverage, zero duplicates/invalid symbols.
+- Delivery Quantity: **2,253 COMPLETE_5_10_20D / 335 WAIT_FOR_DATA**.
+- Potential Accumulation: **2,253 OBSERVATIONS_AVAILABLE / 258 PARTIAL_DATA / 77 WAIT_FOR_DATA**.
+- VCP: **2,023 COMPLETE / 565 WAIT_FOR_DATA**. All 565 VCP WAIT rows are due to missing symbol-session rows in the 60-session window; no duplicate dates, missing/invalid OHLC rows or missing/invalid volume rows were reported for those WAIT rows.
+- Observer errors: none. Research categories remain `NOT_CLASSIFIED_PENDING_APPROVED_RULES`; false-VCP forward outcomes remain unevaluated.
+- Workflow artifact: `track2-full-mainboard-offline-42810173636` (artifact ID 13761744331).
+
+These are source/data-quality findings only. They do not change Track 1 gates, Mainboard membership, scanner scheduling, watchlist eligibility, or the Master Specification. Track 2 remains standalone and non-gating.
