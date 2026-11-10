@@ -101,3 +101,13 @@ def test_series_mismatch_for_same_symbol_fails_closed():
     report = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["BE"], "Status": ["PASS"]})
     with pytest.raises(CohortAssemblyError, match="SctySrs mismatch"):
         assemble_mainboard_cohort(main, reports={"Stage": report})
+
+
+def test_internal_join_keys_are_not_exposed_in_output():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    report = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"], "Status": ["PASS"]})
+    result = assemble_mainboard_cohort(main, reports={"Stage": report})
+    assert "_cohort_symbol_key" not in result.cohort.columns
+    assert "_cohort_series_key" not in result.cohort.columns
+    assert "Stage___cohort_series_key" not in result.cohort.columns
+    assert result.cohort.loc[0, "Stage__SctySrs"] == "EQ"
