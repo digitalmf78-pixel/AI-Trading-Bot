@@ -1424,17 +1424,23 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         chase = value(row, "ChaseStatus")
         risk_status = value(row, "RiskControlStatus")
         eod_status = value(row, "EODWatchlistStatus")
-        lines.append(f"• {symbol} | {tier} {turnover_text} | Delivery A:{a_short} B:{b_short} avg:{avg_delivery} | RVOL:{rvol}")
-        lines.append(f"  Fundamental:{fund_status} score:{fund_score} | Technical:{technical} setup:{setup} | Trend:{trend} | EMA44:{ema_signal}")
-        rsi_value = number(row, "RSI14", "", 1)
-        rsi_zone = value(row, "RSIZone")
-        rsi_direction = value(row, "RSIDirection")
-        rsi_behaviour = value(row, "RSIBehaviour")
-        rsi_retest = value(row, "RSIRetestStatus", "NOT_EVALUATED")
-        rsi_divergence = value(row, "RSIDivergenceStatus", "NOT_EVALUATED")
-        lines.append(f"  RSI14:{rsi_value} zone:{rsi_zone} direction:{rsi_direction} behaviour:{rsi_behaviour} | RSI patterns: Retest {rsi_retest} | Divergence {rsi_divergence} (informational only; no stock rejection)")
-        lines.append(f"  Sector:{sector_status} ({sector}) | News:{news_status} primary_verified:{news_verified} | 3+1:{confirmation}/{mandatory_status}")
-        lines.append(f"  R:R:{rr_status} {rr_value} | Chase:{chase} | Risk:{risk_status} | FINAL:{eod_status}")
+        def _s(val):
+            v = str(val).upper()
+            if v.startswith("PASS") or v in {"WATCH", "PASS_CORE_TECHNICAL_SCREEN", "RISK_LIMITS_PASSED"}:
+                return "OK"
+            if v.startswith("WAIT"):
+                return "WAIT"
+            if v.startswith("FAIL") or v.startswith("REJECT") or v.startswith("SKIP") or v.startswith("FILTERED"):
+                return "FAIL"
+            return "NA"
+
+        lines.append("  " + symbol + " | " + tier + " " + turnover_text)
+        rvol_raw = value(row, "RVOLStatus")
+        lines.append("  Delivery: A" + _s(a_status) + " B" + _s(b_status) + " (avg " + str(avg_delivery) + ") | RVOL: " + str(rvol) + " " + _s(rvol_raw))
+        lines.append("  Fund: " + str(fund_status) + " " + str(fund_score) + " " + _s(fund_status) + " | Tech: " + str(technical) + " " + _s(technical) + " | Setup: " + str(setup))
+        lines.append("  Trend: " + str(trend) + " | EMA44: " + str(ema_signal) + " " + _s(ema_signal) + " | RSI: " + str(number(row, "RSI14", "", 1)))
+        lines.append("  Sector: " + str(sector) + " " + _s(sector_status) + " | News: " + str(news_status) + " " + _s(news_status) + " | 3+1: " + str(confirmation) + " " + _s(mandatory_status))
+        lines.append("  R:R: " + str(rr_status) + " " + str(rr_value) + " " + _s(rr_status) + " | Chase: " + str(chase) + " " + _s(chase) + " | Risk: " + str(risk_status) + " " + _s(risk_status) + " | FINAL: " + str(eod_status) + " " + _s(eod_status))
 
         reasons = []
         for label, col in (
