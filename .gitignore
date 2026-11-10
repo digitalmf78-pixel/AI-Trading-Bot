@@ -3,3 +3,4 @@ __pycache__/
 data/bhavcopy/
 outputs/
 data/inputs/positions.csv
+data/inputs/risk_config.json
