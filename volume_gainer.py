@@ -4094,15 +4094,6 @@ def main():
 
 
 # ============================================================
-# ENTRY POINT
-# ============================================================
-
-if __name__ == "__main__":
-    main()
-
-
-
-# ============================================================
 # CONSOLIDATION DETECTION (descriptive, non-gating)
 # ============================================================
 
@@ -4159,3 +4150,12 @@ def calculate_consolidation_score(result, historical):
     result["ConsolidationStatus"] = statuses
     print("[CONSOLIDATION] " + str(result["ConsolidationStatus"].value_counts().to_dict()))
     return result
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+# Keep this guard last: any helper defined below it would raise NameError on
+# the first live scan even though every unit test still passes.
+if __name__ == "__main__":
+    main()
