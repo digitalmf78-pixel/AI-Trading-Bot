@@ -164,3 +164,10 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Hardened `signal_shadow_store.py` so allow-listed text values and stage-event free text are scanned for common credentials/tokens, Bearer strings, private URLs, email/phone-like identifiers, control characters and oversized text. Checks run both when building records and when validating persisted records.
 - CI run [42811907344](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42811907344) passed: compilation PASS, **411 pytest tests**, **33 V8 regression tests**, and **43 sector/news/official-index tests**.
 - The checks are heuristic and do not replace curated input/least-data rules. Shadow store remains standalone and is not connected to production scanner or scheduled EOD; no signal snapshots were deployed. Main branch and Master Specification remain unchanged. See the Track 2 design/data-contract audit for details.
+
+
+### Cohort Assembly validation update (10-Nov-2026)
+- Strengthened tests for the canonical **2,588-row Mainboard cohort** vs the **758-row Delivery A/B report**: all 2,588 remain; 758 stage rows present; 1,830 are `NOT_EVALUATED` where the downstream report has no row.
+- Confirmed native WAIT/reject statuses are preserved, News/Corporate Event one-to-many evidence stays separate and does not inflate stage coverage counts, and source frames are not mutated.
+- CI [42812305661](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42812305661) SUCCESS: **415 pytest**, **33 V8 regression**, **43 sector/news/index tests**; compilation PASS.
+- This is synthetic contract validation, not yet a real-EOD integrated cohort run. The helper remains standalone/non-gating; no production wiring was made.
