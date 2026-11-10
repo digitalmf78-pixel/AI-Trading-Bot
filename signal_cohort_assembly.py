@@ -40,6 +40,10 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     if not frame.columns.is_unique:
         duplicates = frame.columns[frame.columns.duplicated()].astype(str).unique().tolist()
         raise CohortAssemblyError(f"{label}: duplicate column names are ambiguous: {duplicates[:20]}")
+    reserved = {"_cohort_symbol_key", "_cohort_series_key"}
+    collisions = sorted(reserved.intersection(map(str, frame.columns)))
+    if collisions:
+        raise CohortAssemblyError(f"{label}: reserved internal columns supplied by source: {collisions}")
     out = frame.copy()
     out["_cohort_symbol_key"] = out[SYMBOL_COLUMN].map(_normalise_symbol)
     if (out["_cohort_symbol_key"] == "").any():
@@ -93,6 +97,13 @@ def assemble_mainboard_cohort(
     scanner identity must update this contract and tests explicitly.
     """
     base = _keyed(mainboard_candidates, "mainboard_candidates")
+    generated_base_columns = {
+        "CohortEligibilityStatus", "CohortIdentityKey",
+        "DownstreamReportsPresent", "DownstreamReportsExpected",
+    }
+    base_collisions = sorted(generated_base_columns.intersection(map(str, base.columns)))
+    if base_collisions:
+        raise CohortAssemblyError(f"mainboard_candidates: source columns collide with generated fields: {base_collisions}")
     # Preserve source columns untouched; only the internal key is removed at end.
     base["CohortEligibilityStatus"] = "PASS_MAIN_BOARD_INPUT"
     base["CohortIdentityKey"] = base["_cohort_symbol_key"]
@@ -145,6 +156,12 @@ def assemble_mainboard_cohort(
         renamed = keyed_report[["_cohort_symbol_key"] + payload_columns].rename(
             columns={c: f"{safe_stage}__{c}" for c in payload_columns}
         )
+        generated_names = set(renamed.columns) - {"_cohort_symbol_key"}
+        output_collisions = sorted(generated_names.intersection(map(str, base.columns)))
+        if output_collisions:
+            raise CohortAssemblyError(
+                f"{safe_stage}: generated output columns collide with existing cohort columns: {output_collisions[:20]}"
+            )
         base = base.merge(renamed, on="_cohort_symbol_key", how="left", validate="one_to_one", sort=False)
         matched_mask = base["_cohort_symbol_key"].isin(matched)
         base[coverage_col] = "SOURCE_ROW_PRESENT"
@@ -173,6 +190,10 @@ def assemble_mainboard_cohort(
         if not report.columns.is_unique:
             duplicates = report.columns[report.columns.duplicated()].astype(str).unique().tolist()
             raise CohortAssemblyError(f"{label.lower()}_report: duplicate column names are ambiguous: {duplicates[:20]}")
+        if coverage_column in report.columns:
+            raise CohortAssemblyError(f"{label.lower()}_report: reserved coverage column already exists: {coverage_column}")
+        if "_cohort_symbol_key" in report.columns or "_cohort_series_key" in report.columns:
+            raise CohortAssemblyError(f"{label.lower()}_report: source uses reserved internal cohort columns")
         evidence = report.copy()
         evidence["_cohort_symbol_key"] = evidence[SYMBOL_COLUMN].map(_normalise_symbol)
         if (evidence["_cohort_symbol_key"] == "").any():
