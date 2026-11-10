@@ -32,6 +32,7 @@ from delivery_quantity_analysis import build_delivery_quantity_report
 from potential_accumulation_analysis import build_potential_accumulation_report
 from vcp_observation_analysis import build_vcp_observation_report
 from breakout_retest_observation import build_breakout_retest_observation
+from track2_full_mainboard import build_track2_full_mainboard_report
 from hybrid_watchlists import (
     write_early_hybrid_watchlists,
     write_breakout_ready_watchlist,
@@ -3355,6 +3356,9 @@ def main():
         )
 
     print(f"Current verified Main Board symbols: {len(current)}")
+    # Immutable Track 2 input: official Mainboard cohort before Delivery A/B.
+    # Track 2 writes isolated research artifacts and never mutates Track 1.
+    track2_mainboard_candidates = current.copy(deep=True)
 
     # --------------------------------------------------------
     # STEP 3: LOAD HISTORY AND PREPARE THE PRIOR-20-SESSION VOLUME BASELINE.
@@ -3383,6 +3387,28 @@ def main():
                 eod_date, required_sessions=5, max_calendar_days=30,
                 session=session, collect_all=True,
             )
+
+            # Track 2 is a separate, non-gating research cohort over the full
+            # official Mainboard frame. It reuses the already-fetched Delivery
+            # reports and historical EOD data; no second NSE Delivery fetch.
+            try:
+                track2_report, track2_manifest = build_track2_full_mainboard_report(
+                    track2_mainboard_candidates,
+                    historical,
+                    delivery_sessions,
+                    eod_date,
+                )
+                print(
+                    "[TRACK 2] Full Mainboard research report saved; "
+                    f"cohort_rows={len(track2_report)}, "
+                    f"eligible_unique={track2_manifest.get('eligible_unique_mainboard_symbols', 0)}; "
+                    "non-gating and isolated from Track 1."
+                )
+            except Exception as track2_exc:
+                print(
+                    "[TRACK 2] WAIT_FOR_DATA; Track 1 continues unchanged: "
+                    f"{type(track2_exc).__name__}: {track2_exc}"
+                )
             _, delivery_audit = apply_delivery_filter(
                 current, eod_date, symbol_col="TckrSymb", series_col="SctySrs",
                 minimum_average=60.0, sessions=delivery_sessions,
