@@ -140,6 +140,9 @@ def build_delivery_quantity_report(
         record = candidate.to_dict()
         all_values: dict[date, dict] = {}
         duplicate_dates: list[str] = []
+        missing_quantity_dates: list[str] = []
+        nonfinite_quantity_dates: list[str] = []
+        negative_quantity_dates: list[str] = []
         invalid_quantity_dates: list[str] = []
         candidate_is_duplicated = (
             frame["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol).sum() > 1
@@ -157,7 +160,16 @@ def build_delivery_quantity_report(
             if len(match) == 1:
                 value = match.iloc[0].to_dict()
                 quantity = value.get("DELIVERY_QTY")
-                if pd.isna(quantity) or not math.isfinite(float(quantity)) or float(quantity) < 0:
+                if pd.isna(quantity):
+                    missing_quantity_dates.append(day.isoformat())
+                    invalid_quantity_dates.append(day.isoformat())
+                    continue
+                if not math.isfinite(float(quantity)):
+                    nonfinite_quantity_dates.append(day.isoformat())
+                    invalid_quantity_dates.append(day.isoformat())
+                    continue
+                if float(quantity) < 0:
+                    negative_quantity_dates.append(day.isoformat())
                     invalid_quantity_dates.append(day.isoformat())
                     continue
                 all_values[day] = value
@@ -183,11 +195,24 @@ def build_delivery_quantity_report(
                     if duplicate_in_window or candidate_is_duplicated else
                     "DUPLICATE_DELIVERY_REPORT_DATE"
                     if any(day in duplicate_session_dates for day in window_days) else
-                    "INVALID_DELIVERY_QUANTITY"
-                    if any(day.isoformat() in invalid_quantity_dates for day in window_days) else
+                    "MISSING_DELIVERY_QUANTITY"
+                    if any(day.isoformat() in missing_quantity_dates for day in window_days) else
+                    "NONFINITE_DELIVERY_QUANTITY"
+                    if any(day.isoformat() in nonfinite_quantity_dates for day in window_days) else
+                    "NEGATIVE_DELIVERY_QUANTITY"
+                    if any(day.isoformat() in negative_quantity_dates for day in window_days) else
                     "DELIVERY_QUANTITY_SCHEMA_MISSING"
                     if any(day in schema_errors for day in window_days) else
                     "INSUFFICIENT_OR_MISSING_SYMBOL_SESSION_DATA"
+                )
+                record[f"{prefix}MissingQuantityDates"] = ",".join(
+                    day.isoformat() for day in window_days if day.isoformat() in missing_quantity_dates
+                )
+                record[f"{prefix}NonfiniteQuantityDates"] = ",".join(
+                    day.isoformat() for day in window_days if day.isoformat() in nonfinite_quantity_dates
+                )
+                record[f"{prefix}NegativeQuantityDates"] = ",".join(
+                    day.isoformat() for day in window_days if day.isoformat() in negative_quantity_dates
                 )
                 for suffix in ("Total", "Average", "First", "Last", "ChangePct", "SlopePerSession",
                                "DeliveryPctAverage", "TradedVolumeAverage", "CloseFirst", "CloseLast",
@@ -197,6 +222,9 @@ def build_delivery_quantity_report(
 
             qty = [float(value["DELIVERY_QTY"]) for value in values]
             record[f"{prefix}Reason"] = "OK"
+            record[f"{prefix}MissingQuantityDates"] = ""
+            record[f"{prefix}NonfiniteQuantityDates"] = ""
+            record[f"{prefix}NegativeQuantityDates"] = ""
             record[f"{prefix}Total"] = sum(qty)
             record[f"{prefix}Average"] = sum(qty) / window
             record[f"{prefix}First"] = qty[0]
