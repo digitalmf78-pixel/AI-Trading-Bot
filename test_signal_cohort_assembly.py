@@ -132,3 +132,24 @@ def test_stage_names_are_validated_and_normalized_collisions_rejected():
         assemble_mainboard_cohort(main, reports={"Bad Stage": pd.DataFrame({"TckrSymb": ["AAA"]})})
     with pytest.raises(CohortAssemblyError, match="Duplicate stage name"):
         assemble_mainboard_cohort(main, reports={"Delivery": None, " Delivery ": None})
+
+
+def test_one_to_many_evidence_series_mismatch_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    news = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["BE"], "Headline": ["h"]})
+    with pytest.raises(CohortAssemblyError, match="SctySrs mismatch for evidence rows"):
+        assemble_mainboard_cohort(main, news_report=news)
+
+
+def test_one_to_many_evidence_requires_series_when_base_has_series():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    events = pd.DataFrame({"TckrSymb": ["AAA"], "EventType": ["Results"]})
+    with pytest.raises(CohortAssemblyError, match="SctySrs must be present"):
+        assemble_mainboard_cohort(main, corporate_events_report=events)
+
+
+def test_one_to_many_evidence_duplicate_columns_fail_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    news = pd.DataFrame([["AAA", "x", "y"]], columns=["TckrSymb", "Headline", "Headline"])
+    with pytest.raises(CohortAssemblyError, match="duplicate column names"):
+        assemble_mainboard_cohort(main, news_report=news)
