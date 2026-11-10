@@ -220,3 +220,13 @@ def test_accumulation_engine_failure_keeps_delivery_ab_candidates_for_wait_watch
     assert '"TckrSymb", keep="first"' in fallback
     assert 'accumulation_report["DeliveryEvidenceStatus"] = "WAIT_FOR_DATA"' in fallback
     assert 'accumulation_report["EvidenceStatus"] = "WAIT_FOR_DATA"' in fallback
+
+
+
+def test_liquidity_pre_news_artifact_and_delivery_stage_labels_are_unambiguous():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    assert 'v8_liquidity_qualified_pre_news_candidates.csv' in source
+    assert 'v8_pre_news_rvol_gt_1_5_candidates.csv' in source  # legacy compatibility alias
+    assert '_append_stage(delivery_audit, "DELIVERY_30D_AB", "DeliveryFilterStatus")' in source
+    assert '_append_stage(delivery_audit, "DELIVERY_5D", "DeliveryFilterStatus")' not in source
+    assert "complete 30-calendar-day Category A OR B union" in source
