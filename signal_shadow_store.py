@@ -200,7 +200,9 @@ def _validate_record_semantics(record: Mapping[str, Any], hash_field: str) -> No
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError as exc:
         raise SignalValidationError("Persisted observation timestamp must be ISO-8601") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+    if parsed.tzinfo is None:
+        raise SignalValidationError("Persisted observation timestamp must include a timezone")
+    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
         raise SignalValidationError("Persisted observation timestamp must be UTC")
 
 
