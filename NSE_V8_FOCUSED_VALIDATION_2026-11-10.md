@@ -150,3 +150,8 @@ The following changes were committed after the 54-case focused execution. THEY H
 - The subsequent documentation-only register correction is on the same audit branch; no production code or Master Specification changed.
 - Current branch comparison: **75 commits ahead, 2 behind main**. Main has advanced independently; no merge/rebase was attempted.
 - No live EOD run, real NSE fetch validation, Track 2 implementation, or signal-shadow persistence was performed in this audit.
+
+### Additional shadow-store security review
+- The design requires redaction of secrets and account-derived values before serialization. Snapshot fields are allow-listed, and the store rejects sensitive-looking **field names**; however, the current stage-event `ReasonText` and `SourceReport` are free-text values and the validator does not inspect string contents for embedded credentials, URLs with secret query parameters, or account-derived values.
+- This is not evidence of an existing leak because the helper is not wired into the workflow and the design requires curated/redacted inputs. It is a pre-integration requirement: add explicit safe-text/redaction validation or prove the caller-side redaction contract with tests before enabling persistence.
+- No code change was made for this item because a safe redaction policy for free-text reasons has not yet been specified.
