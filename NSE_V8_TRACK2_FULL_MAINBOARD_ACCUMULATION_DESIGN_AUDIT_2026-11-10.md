@@ -370,12 +370,14 @@ CI run **42812305661** completed SUCCESS: Python compilation PASS; **415 pytest 
 
 ## 13. News and Corporate Event window contract audit (10-Nov-2026)
 
-Read-only review of `news_catalyst.py` plus characterization tests confirms two separate window-contract gaps. No production logic was changed.
+The user explicitly approved a seven-calendar-day News window on 10-Nov-2026. The implementation and boundary tests have now been updated on the audit branch.
 
-### News/Catalyst window
-- Current EOD News window: five calendar dates inclusive, from 00:00 IST on EOD date minus four days through 22:00 IST on EOD date.
-- Current PREMARKET News window: five calendar dates inclusive, ending 09:15 IST on the local scan date.
-- The broader data-contract requirement recorded in this audit is seven calendar days. The implementation remains five days; existing tests deliberately assert the current five-day behavior. Do not silently change it until the intended EOD/Premarket boundaries and historical backfill semantics are approved.
+### News/Catalyst window — approved seven calendar dates inclusive
+- EOD News window: 00:00 IST on EOD date minus six calendar days through 22:00 IST on the EOD date.
+- PREMARKET News window: 00:00 IST on local scan date minus six calendar days through 09:15 IST on the local scan date.
+- Both modes therefore cover exactly seven calendar dates inclusive; weekends and holidays remain calendar dates and are not skipped.
+- Official NSE/company evidence remains primary; secondary stories remain unverified. This change affects only the News evidence lookback and its date-boundary diagnostics/tests. It does not alter the 90-calendar-day Corporate Events source-discovery lookback, Delivery A/B, RVOL, Liquidity, Fundamentals, Sector Strength, technical gates, or 3+1 confirmation.
+- The code/test update is committed on the audit branch; CI and a real EOD run are still required before calling the change fully validated.
 
 ### Corporate Events window
 - Issuer-specific official NSE announcement API discovery uses a 90-calendar-day lookback ending on the News window end date.
