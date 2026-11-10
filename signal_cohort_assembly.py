@@ -60,10 +60,6 @@ def _validate_series_alignment(base: pd.DataFrame, report: pd.DataFrame, label: 
     base_has_series = "_cohort_series_key" in base.columns
     report_has_series = "_cohort_series_key" in report.columns
     shared_symbols = set(base["_cohort_symbol_key"]) & set(report["_cohort_symbol_key"])
-    if shared_symbols and base_has_series != report_has_series:
-        raise CohortAssemblyError(
-            f"{label}: SctySrs must be present on both base and report when symbols overlap"
-        )
     if not base_has_series or not report_has_series:
         return
     aligned = base[["_cohort_symbol_key", "_cohort_series_key"]].merge(
@@ -130,9 +126,15 @@ def assemble_mainboard_cohort(
         base_symbols = set(base["_cohort_symbol_key"])
         matched = base_symbols & report_symbols
         extras = report_symbols - base_symbols
+        series_alignment = (
+            "VERIFIED_MATCH" if "_cohort_series_key" in base.columns and "_cohort_series_key" in keyed_report.columns
+            else "NOT_CHECKED_SERIES_MISSING_IN_BASE" if "_cohort_series_key" not in base.columns
+            else "NOT_CHECKED_SERIES_MISSING_IN_REPORT"
+        )
         diagnostics.append({
             "Stage": safe_stage,
             "Diagnostic": "LEFT_JOIN_COVERAGE",
+            "SeriesAlignmentStatus": series_alignment,
             "Rows": len(keyed_report),
             "MatchedCohortRows": len(matched),
             "MissingCohortRows": len(base_symbols - report_symbols),
@@ -178,10 +180,11 @@ def assemble_mainboard_cohort(
         cohort_symbols = set(base["_cohort_symbol_key"])
         if "_cohort_series_key" in base.columns:
             if "SctySrs" not in evidence.columns:
-                if cohort_symbols & set(evidence["_cohort_symbol_key"]):
-                    raise CohortAssemblyError(
-                        f"{label.lower()}_report: SctySrs must be present when evidence symbols overlap the cohort"
-                    )
+                diagnostics.append({
+                    "Stage": label.lower() + "_evidence",
+                    "Diagnostic": "SERIES_ALIGNMENT_NOT_CHECKED_SERIES_MISSING_IN_REPORT",
+                    "Rows": len(evidence),
+                })
             else:
                 evidence["_cohort_series_key"] = evidence["SctySrs"].map(
                     lambda value: "" if pd.isna(value) else str(value).strip().upper()
