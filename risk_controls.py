@@ -38,8 +38,16 @@ def load_risk_config(config_path: str | Path = CONFIG_PATH) -> dict:
         try:
             secret_config = json.loads(secret)
         except json.JSONDecodeError:
+            print(
+                "[RISK][ERROR] RISK_CONFIG_JSON is not valid JSON; "
+                "risk controls will fail closed with WAIT_FOR_DATA."
+            )
             return {}
         if not isinstance(secret_config, dict):
+            print(
+                "[RISK][ERROR] RISK_CONFIG_JSON must be a JSON object; "
+                "risk controls will fail closed with WAIT_FOR_DATA."
+            )
             return {}
         config.update(secret_config)
     return config
@@ -49,9 +57,55 @@ def _num(value):
     return pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
 
 
+def risk_config_warnings(config: dict) -> list[str]:
+    """Informational warnings for internally inconsistent risk settings.
+
+    These never change RiskControlStatus; they only surface settings that make
+    the configured risk budget unreachable or the stop limit unrealistically
+    tight.
+    """
+    warnings: list[str] = []
+
+    def _number(key):
+        try:
+            value = float(config[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    equity = _number("account_equity_inr")
+    risk_pct = _number("risk_per_trade_pct")
+    max_position_pct = _number("max_single_position_pct")
+    max_stop_pct = _number("max_stop_distance_pct")
+    if None in (equity, risk_pct, max_position_pct, max_stop_pct):
+        return warnings
+    if equity <= 0 or risk_pct <= 0 or max_position_pct <= 0 or max_stop_pct <= 0:
+        return warnings
+
+    # Maximum risk actually reachable when the stop is hit at the configured
+    # stop-distance limit and the single-position cap binds.
+    effective_risk_pct = max_position_pct * max_stop_pct / 100.0
+    if effective_risk_pct < risk_pct * 0.25:
+        warnings.append(
+            f"SINGLE_POSITION_CAP_DOMINATES: max_single_position_pct="
+            f"{max_position_pct:g}% with max_stop_distance_pct={max_stop_pct:g}% "
+            f"caps effective risk near {effective_risk_pct:.2f}% of equity, far below "
+            f"risk_per_trade_pct={risk_pct:g}%. Position sizing will be much smaller "
+            "than the risk budget implies."
+        )
+    if max_stop_pct < 3:
+        warnings.append(
+            f"STOP_DISTANCE_LIMIT_TOO_TIGHT: max_stop_distance_pct={max_stop_pct:g}% "
+            "will reject most swing setups built from ATR/structural stops."
+        )
+    return warnings
+
+
 def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path = CONFIG_PATH) -> pd.DataFrame:
     config_path = Path(config_path)
     config = load_risk_config(config_path)
+    for message in risk_config_warnings(config):
+        print("[RISK][WARN] " + message)
     missing = [key for key in REQUIRED_KEYS if config.get(key) is None]
     if not isinstance(config.get("sector_exposure_pct_by_sector"), dict):
         if "sector_exposure_pct_by_sector" not in missing:
@@ -184,6 +238,21 @@ def apply_portfolio_risk_controls(frame: pd.DataFrame, config_path: str | Path =
     out["RiskBudgetINR"] = risk_budgets
     out["ProposedExposurePct"] = exposures
     out["StopDistancePct"] = stop_distances
+
+    observed_stops = [
+        float(value) for value in stop_distances
+        if pd.notna(value) and math.isfinite(float(value))
+    ]
+    if observed_stops and not missing:
+        median_stop = float(pd.Series(observed_stops).median())
+        configured_limit = float(config["max_stop_distance_pct"])
+        if median_stop > configured_limit:
+            print(
+                f"[RISK][WARN] median stop distance {median_stop:.2f}% exceeds "
+                f"max_stop_distance_pct={configured_limit:g}%; most setups will be rejected. "
+                "Review the limit or the stop formula (strategy change needs approval)."
+            )
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUTPUT_DIR / "v8_risk_control_report.csv", index=False)
     return out
