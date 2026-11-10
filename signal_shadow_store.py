@@ -396,21 +396,21 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
         with target.open("r", encoding="utf-8", newline="") as stream:
             original_lines = stream.readlines()
         for line_number, line in enumerate(original_lines, 1):
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                    _validate_record_schema(row, hash_field)
-                    _validate_record_semantics(row, hash_field)
-                    key, digest = str(row[key_field]), str(row[hash_field])
-                    actual_digest = _verified_record_digest(row, hash_field)
-                except (json.JSONDecodeError, KeyError, TypeError, SignalValidationError) as exc:
-                    raise SignalStoreError(f"Invalid or tampered JSONL record at {target}:{line_number}: {exc}") from exc
-                if digest != actual_digest:
-                    raise SignalStoreError(f"Stored record hash mismatch at {target}:{line_number}")
-                if key in existing and existing[key] != digest:
-                    raise SignalStoreError(f"Existing partition contains conflicting key {key}")
-                existing[key] = digest
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                _validate_record_schema(row, hash_field)
+                _validate_record_semantics(row, hash_field)
+                key, digest = str(row[key_field]), str(row[hash_field])
+                actual_digest = _verified_record_digest(row, hash_field)
+            except (json.JSONDecodeError, KeyError, TypeError, SignalValidationError) as exc:
+                raise SignalStoreError(f"Invalid or tampered JSONL record at {target}:{line_number}: {exc}") from exc
+            if digest != actual_digest:
+                raise SignalStoreError(f"Stored record hash mismatch at {target}:{line_number}")
+            if key in existing and existing[key] != digest:
+                raise SignalStoreError(f"Existing partition contains conflicting key {key}")
+            existing[key] = digest
 
     seen_batch: dict[str, str] = {}
     append_rows: list[str] = []
@@ -456,7 +456,7 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
                     stream.write(row + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            file_mode = stat.S_IMODE(target.stat().st_mode) if target_existed else 0o644
+            file_mode = stat.S_IMODE(target.stat().st_mode) if target_existed else 0o600
             os.chmod(temp_path, file_mode)
             os.replace(temp_path, target)
             temp_path = None
