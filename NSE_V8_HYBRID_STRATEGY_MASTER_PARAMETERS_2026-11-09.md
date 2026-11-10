@@ -551,3 +551,12 @@ The production scanner must follow this exact sequence:
 - News Matching and Parser Tests workflow also completed SUCCESS.
 - The fix is CI-validated. The next live scanner run must confirm that Layer 18 now computes valid observations and that the downstream 3+1 layer advances only when its existing independent evidence requirements are met.
 - No Delivery A/B, RVOL, liquidity, fundamental thresholds, sector/news criteria, 3+1 thresholds, risk controls, watchlist eligibility, or trade-entry rules were changed. The original Master Specification remains unchanged.
+
+
+## Track 2 Full Mainboard Accumulation — design audit checkpoint (10-Nov-2026)
+- Added `NSE_V8_TRACK2_FULL_MAINBOARD_ACCUMULATION_DESIGN_AUDIT_2026-11-10.md` on the audit branch.
+- Canonical Track 2 source is the official Mainboard-filtered frame before Delivery A/B; the 09-Nov audited artifact has 2,588 unique PASS_MAIN_BOARD rows, matching the full Delivery dual-category audit exactly. The A/B union is 758 and must not be used as Track 2's base.
+- Existing Delivery Quantity observer already runs on the full Delivery audit cohort. Existing Potential Accumulation and VCP observers are currently A/B-union scoped; separate full-Mainboard outputs and orchestration remain unimplemented.
+- Proposed Track 2 report is observational and independent; it must preserve every Mainboard symbol, isolate failures as WAIT_FOR_DATA, and never feed back into Track 1 eligibility or outputs.
+- SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION are research targets only until the user approves exact definitions/lookbacks/thresholds. Do not invent numeric criteria or classify stocks yet.
+- No scanner code, workflow, production behaviour, Master Specification, or main-branch content was changed for this audit checkpoint.
