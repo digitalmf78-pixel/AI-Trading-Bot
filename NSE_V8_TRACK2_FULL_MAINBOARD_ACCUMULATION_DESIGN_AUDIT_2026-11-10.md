@@ -346,3 +346,14 @@ The cached market calendar has 201 distinct sessions including 09-Nov-2026: 200 
 - Workflow artifact: `track2-full-mainboard-offline-42810173636` (artifact ID 13761744331).
 
 These are source/data-quality findings only. They do not change Track 1 gates, Mainboard membership, scanner scheduling, watchlist eligibility, or the Master Specification. Track 2 remains standalone and non-gating.
+
+
+## 11. Shadow-store free-text redaction hardening (audit branch only)
+
+A separate pre-integration security review found that the shadow store's allow-listed field names and forbidden-key checks did not inspect free-text **values**. This could allow sensitive content embedded in `ReasonText`, `SourceReport`, source report names, or otherwise allow-listed string values to be persisted.
+
+The audit branch now applies recursive text-value checks at snapshot/event construction and persisted-record validation. The denylist rejects common credential assignments (including token/credential/API-key/password/secret fields), Bearer strings, common GitHub/AWS token formats, private-key headers, URLs containing query strings or URL user-info, email addresses, phone-like digit sequences, control characters, and text values over 2,000 characters. This is a defensive heuristic, not a guarantee that every possible secret or account identifier can be recognized; curated input and least-data collection remain required.
+
+Regression validation run **42811907344** completed SUCCESS on commit `8506a46bf53d5398aff569242fbb12b1541f3645`: Python compilation PASS; **411 pytest tests passed**; **33 V8 regression tests passed**; **43 sector/news/official-index tests passed**. The initial redaction test run exposed two gaps (generic `token=` and `credential=` assignments); those patterns were added and the full CI rerun passed.
+
+This remains an isolated helper hardening change. The signal shadow store is still not wired into the production scanner or scheduled EOD workflow; no signal snapshots were deployed or written. Main branch, Master Specification, scanner selection, and trading gates remain unchanged.
