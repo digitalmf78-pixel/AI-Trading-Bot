@@ -94,3 +94,10 @@ def test_news_and_event_evidence_can_both_be_empty_or_missing():
     result = assemble_mainboard_cohort(main, news_report=None, corporate_events_report=pd.DataFrame())
     assert list(result.news_evidence.columns) == ["TckrSymb", "NewsEvidenceCoverageStatus"]
     assert "CorporateEventEvidenceCoverageStatus" in result.corporate_event_evidence.columns
+
+
+def test_series_mismatch_for_same_symbol_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    report = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["BE"], "Status": ["PASS"]})
+    with pytest.raises(CohortAssemblyError, match="SctySrs mismatch"):
+        assemble_mainboard_cohort(main, reports={"Stage": report})
