@@ -221,3 +221,34 @@ Track 2 has a viable foundation: full Mainboard Delivery Quantity observations a
 The next safe implementation step—after design review—is a standalone, non-gating Track 2 report builder and tests using the full Mainboard frame, with category fields explicitly left NOT_CLASSIFIED_PENDING_APPROVED_RULES. Only after parity, no-lookahead and failure-isolation tests pass should it be considered for scheduled workflow wiring. Production integration remains a separate approval step.
 
 **No code or workflow was changed in this audit. The original Master Specification, Track 1 logic, main branch and production behaviour remain untouched.**
+
+## Track 2 full-cohort CI and 09-Nov artifact coverage review (10-Nov-2026)
+
+### Latest Track 2 CI
+- Commit with the 2,588-symbol synthetic full-cohort test: `5d3db64c4b643b80122d089c60da0972d25bf3a4`.
+- GitHub Actions run: `42801601368` — **SUCCESS**.
+- Python compilation: PASS.
+- Configured unit/data-audit suite: **398 passed in 7.52s**.
+- V8 regression script: **33 tests PASS**.
+- Sector/news/official-index unittest suite: **43 tests PASS**.
+- The added synthetic cohort test verifies 2,588 unique symbols are preserved, all three observer inputs receive the complete synthetic cohort, output coverage is exact, and the source DataFrame is not mutated.
+- This is synthetic orchestration/CI validation; it is not a real-data Track 2 run.
+
+### Actual 09-Nov-2026 EOD artifact inspected
+Source: GitHub Actions run `42634890331`, artifact `nse-v8-reports-42634890331` (downloaded and inspected read-only).
+
+- Mainboard universe audit: **3,037** unique rows — **2,588 PASS_MAIN_BOARD**, **449 EXCLUDED_SME**.
+- Mainboard PASS series composition: **2,385 EQ**, **203 BE**.
+- Delivery dual-category audit: **2,588** unique rows, exactly matching the Mainboard PASS symbol set.
+- Track 1 A/B union: **758** unique rows (656 A_ONLY, 102 A_AND_B, 0 B_ONLY); 1,830 Mainboard symbols are outside that union.
+- Existing Delivery Quantity report already covers all **2,588** Mainboard symbols: **2,253 COMPLETE_5_10_20D**, **335 WAIT_FOR_DATA**. Individual window counts: 5D 2,352 COMPLETE / 236 WAIT; 10D 2,302 / 286; 20D 2,253 / 335.
+- Existing Potential Accumulation report contains only **758** rows: 671 OBSERVATIONS_AVAILABLE and 87 PARTIAL_DATA (671 complete 20-session price histories; 87 WAIT_FOR_DATA).
+- Existing VCP report contains only **758** rows: 500 COMPLETE and 258 WAIT_FOR_DATA for both range and volume observations.
+- Therefore, the existing Track 1 Potential Accumulation and VCP reports leave **1,830** full-Mainboard symbols without an evaluation row. These are NOT_EVALUATED by the current reports; they must not be described as WAIT or as having no accumulation/VCP evidence.
+- This artifact confirms the original gap: Delivery Quantity is already full-Mainboard, while Potential Accumulation and VCP are still A/B-union scoped.
+
+### Real-data execution limitation and next action
+- The EOD report artifact contains the full Mainboard candidate frame and existing stage reports, but does not contain the 200-session raw Bhavcopy cache or the raw Delivery cache files.
+- The repository tree currently tracks fundamental history snapshots, but not `data/bhavcopy/` or `data/cache/delivery/`; those datasets are stored in the GitHub Actions cache (the 10-Nov checkpoint records a ~35 MB restored NSE cache).
+- Consequently, the real-data Track 2 observer run over all 2,588 symbols has **not** yet been executed in this session. The artifact inspection above is a read-only coverage audit, not a substitute for rerunning the observation engines.
+- Next safe step: restore the existing main-branch Actions cache in an isolated audit-only workflow, download the fixed 09-Nov report artifact, run only the Track 2 builder with network/Telegram disabled, and upload its separate `outputs/track2_full_mainboard/` reports. No production scanner wiring is implied.
