@@ -3,6 +3,7 @@ from hashlib import sha256
 from pathlib import Path
 import json
 import pandas as pd
+import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -76,7 +77,7 @@ def delivery_source_contract_audit(cohort, sessions):
                 "DeliveryQuantityColumn": qty_col or "",
                 "DeliveryQuantityColumnPresent": qty_col is not None,
                 "SourceQuantityMissingRows": int(part["_QTY"].isna().sum()),
-                "SourceQuantityNonfiniteRows": int((~np.isfinite(part["_QTY"].astype(float))).sum()) if qty_col else len(part),
+                "SourceQuantityNonfiniteRows": int((part["_QTY"].notna() & ~np.isfinite(part["_QTY"].astype(float))).sum()) if qty_col else len(part),
                 "SourceQuantityNegativeRows": int((part["_QTY"] < 0).sum()) if qty_col else 0,
                 "CandidateCount": len(candidates), "CandidateRowsPresent": present,
                 "CandidateRowsMissing": missing_row, "CandidateRowsDuplicate": duplicate_row,
