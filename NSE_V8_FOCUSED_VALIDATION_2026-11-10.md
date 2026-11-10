@@ -41,3 +41,12 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Reserved internal columns, generated cohort fields, generated stage payload/coverage fields, and one-to-many evidence coverage fields are protected against silent overwrites.
 - Duplicate evidence columns are rejected.
 - New cohort tests were added for these cases. **These newly added tests have not yet been executed**, so the previously reported 34-pass result applies only to the exact source revision tested before these subsequent additions. The current test files contain 24 cohort test functions and 16 shadow-store test functions (40 total); current full focused re-run is pending.
+
+
+## Latest follow-up review (2026-11-10)
+- Fixed a malformed f-string in the one-to-many evidence series-mismatch diagnostic before attempting the next test run.
+- Added fail-closed guards for generated coverage columns when stage reports are missing or empty.
+- Added validation for duplicate columns and reserved coverage columns in empty News/Event evidence frames.
+- Added four new cohort tests. Current source contains 28 cohort test functions and 16 shadow-store test functions (44 total).
+- Added the working audit branch to the CI workflow's push branch allow-list. This workflow-file change is confined to the working branch; main remains untouched.
+- A status lookup for the workflow-triggering commit returned no status checks yet. Therefore the latest 44-test revision and full repository CI are **not yet confirmed executed**. The previously reported 34-pass result remains limited to the earlier revision only.
