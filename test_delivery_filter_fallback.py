@@ -106,6 +106,9 @@ def test_30d_category_a_uses_average_of_all_valid_sessions_and_b_checks_each(mon
     assert row["AvgDelivery30D"] == 60.0
     assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+    assert row["DeliveryMax30D"] == 62.0
+    assert row["DeliveryWindowStartDate"] == "2026-09-10"
+    assert row["DeliveryWindowEndDate"] == "2026-10-09"
 
 
 def test_30d_candidate_with_fewer_than_five_symbol_sessions_waits(monkeypatch, tmp_path):
