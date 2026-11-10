@@ -1437,10 +1437,10 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         lines.append("  " + symbol + " | " + tier + " " + turnover_text)
         rvol_raw = value(row, "RVOLStatus")
         lines.append("  Delivery: A" + _s(a_status) + " B" + _s(b_status) + " (avg " + str(avg_delivery) + ") | RVOL: " + str(rvol) + " " + _s(rvol_raw))
-        lines.append("  Fund: " + str(fund_status) + " " + str(fund_score) + " " + _s(fund_status) + " | Tech: " + str(technical) + " " + _s(technical) + " | Setup: " + str(setup))
-        lines.append("  Trend: " + str(trend) + " | EMA44: " + str(ema_signal) + " " + _s(ema_signal) + " | RSI: " + str(number(row, "RSI14", "", 1)))
-        lines.append("  Sector: " + str(sector) + " " + _s(sector_status) + " | News: " + str(news_status) + " " + _s(news_status) + " | 3+1: " + str(confirmation) + " " + _s(mandatory_status))
-        lines.append("  R:R: " + str(rr_status) + " " + str(rr_value) + " " + _s(rr_status) + " | Chase: " + str(chase) + " " + _s(chase) + " | Risk: " + str(risk_status) + " " + _s(risk_status) + " | FINAL: " + str(eod_status) + " " + _s(eod_status))
+        lines.append("  Fund: " + str(fund_status) + " " + str(fund_score) + " " + _s(fund_status) + " | Technical:" + str(technical) + " (" + _s(technical) + ") | Setup: " + str(setup))
+        lines.append("  Trend: " + str(trend) + " (" + _s(trend) + ") | EMA44: " + str(ema_signal) + " " + _s(ema_signal) + " | RSI: " + str(number(row, "RSI14", "", 1)))
+        lines.append("  Sector:" + str(sector_status) + " (" + str(sector) + ") | News: " + str(news_status) + " " + _s(news_status) + " | 3+1:" + str(confirmation) + "/" + str(mandatory_status))
+        lines.append("  R:R: " + str(rr_status) + " " + str(rr_value) + " " + _s(rr_status) + " | Chase: " + str(chase) + " " + _s(chase) + " | Risk:" + str(risk_status) + " " + _s(risk_status) + " | FINAL:" + str(eod_status) + " " + _s(eod_status))
 
         reasons = []
         for label, col in (
