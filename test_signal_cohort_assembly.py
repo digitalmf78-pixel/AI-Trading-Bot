@@ -159,3 +159,32 @@ def test_one_to_many_evidence_duplicate_columns_fail_closed():
     news = pd.DataFrame([["AAA", "x", "y"]], columns=["TckrSymb", "Headline", "Headline"])
     with pytest.raises(CohortAssemblyError, match="duplicate column names"):
         assemble_mainboard_cohort(main, news_report=news)
+
+
+def test_reserved_internal_source_columns_fail_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "_cohort_symbol_key": ["spoofed"]})
+    with pytest.raises(CohortAssemblyError, match="reserved internal columns"):
+        assemble_mainboard_cohort(main)
+
+
+def test_generated_base_field_collision_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "CohortIdentityKey": ["source-value"]})
+    with pytest.raises(CohortAssemblyError, match="collide with generated fields"):
+        assemble_mainboard_cohort(main)
+
+
+def test_generated_stage_field_collision_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "Delivery__Status": ["source-value"]})
+    report = pd.DataFrame({"TckrSymb": ["AAA"], "Status": ["PASS"]})
+    with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
+        assemble_mainboard_cohort(main, reports={"Delivery": report})
+
+
+def test_evidence_coverage_column_collision_fails_closed():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    news = pd.DataFrame({
+        "TckrSymb": ["AAA"],
+        "NewsEvidenceCoverageStatus": ["spoofed"],
+    })
+    with pytest.raises(CohortAssemblyError, match="reserved coverage column"):
+        assemble_mainboard_cohort(main, news_report=news)
