@@ -9,6 +9,8 @@ import hashlib
 import json
 import os
 import re
+import stat
+import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -364,7 +366,9 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
     """Append records; verify hashes, make exact retries no-ops, reject conflicts.
 
     Supports snapshot_payload_sha256 snapshots and event_id stage events.
-    Existing records are never rewritten. Workflow branch concurrency must
+    Existing logical records are preserved. A complete replacement is staged
+    in the target directory and atomically renamed to avoid partial JSONL
+    partitions on interruption. Workflow branch concurrency must still
     serialize repository writes; this function does not provide file locking.
     """
     expected_pair = {
@@ -381,9 +385,12 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
     if not pending:
         return {"appended": 0, "duplicates": 0}
     existing: dict[str, str] = {}
-    if target.exists():
-        with target.open("r", encoding="utf-8") as stream:
-            for line_number, line in enumerate(stream, 1):
+    original_lines: list[str] = []
+    target_existed = target.exists()
+    if target_existed:
+        with target.open("r", encoding="utf-8", newline="") as stream:
+            original_lines = stream.readlines()
+        for line_number, line in enumerate(original_lines, 1):
                 if not line.strip():
                     continue
                 try:
@@ -428,9 +435,36 @@ def append_immutable_jsonl(path: str | Path, records: Iterable[Mapping[str, Any]
 
     if append_rows:
         target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("a", encoding="utf-8", newline="\n") as stream:
-            for row in append_rows:
-                stream.write(row + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        temp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", newline="\\n",
+                dir=target.parent, prefix=f".{target.name}.", suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temp_path = stream.name
+                for line in original_lines:
+                    stream.write(line)
+                if original_lines and not original_lines[-1].endswith(("\\n", "\\r")):
+                    stream.write("\\n")
+                for row in append_rows:
+                    stream.write(row + "\\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            file_mode = stat.S_IMODE(target.stat().st_mode) if target_existed else 0o644
+            os.chmod(temp_path, file_mode)
+            os.replace(temp_path, target)
+            temp_path = None
+            if hasattr(os, "O_DIRECTORY"):
+                directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
     return {"appended": len(append_rows), "duplicates": duplicates}
