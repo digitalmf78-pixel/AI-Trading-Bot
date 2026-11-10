@@ -1,0 +1,13 @@
+{
+  "account_equity_inr": null,
+  "risk_per_trade_pct": null,
+  "max_single_position_pct": null,
+  "max_sector_exposure_pct": null,
+  "max_total_exposure_pct": null,
+  "max_stop_distance_pct": null,
+  "current_total_exposure_pct": null,
+  "sector_exposure_pct_by_sector": null,
+  "portfolio_exposure_verified": null,
+  "max_open_positions": null,
+  "current_open_positions": null
+}
