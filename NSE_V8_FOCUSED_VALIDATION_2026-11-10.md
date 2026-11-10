@@ -64,5 +64,13 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Snapshot signal_fields are rechecked against the approved field allow-list at append/read validation, and source_reports must be a list of strings.
 - Sensitive-key rejection is repeated for persisted records, not only at builder time.
 - Non-mapping records fail closed with a domain validation error.
-- Added three shadow-store test functions (one parameterized), bringing the current inventory to 31 Cohort Assembly + 19 Signal Shadow Store test functions = 50 functions. Pytest-expanded case count is 51 because the non-mapping test has two parameters.
+- Added three shadow-store test functions (one parameterized), bringing the current inventory to 31 Cohort Assembly + 18 Signal Shadow Store test functions = 49 functions. Pytest-expanded case count is 50 because the non-mapping test has two parameters.
 - These latest changes have not been executed in a Python test environment. Prior 34-pass result remains for an earlier revision only; full CI remains unverified.
+
+
+## Additional input-type validation (2026-11-10)
+- Moved record mapping validation ahead of key membership checks so malformed list/string records fail with the intended validation error.
+- Snapshot builder now rejects a plain string/bytes for source_reports rather than treating it as an iterable of individual characters.
+- Snapshot field names must be strings before allow-list sorting; persisted snapshots recheck this condition.
+- Added two tests covering string source_reports and non-string field keys. Latest inventory: 31 Cohort Assembly + 18 Signal Shadow Store test functions = 49 functions; pytest-expanded cases = 50.
+- No tests have been executed against this latest revision. GitHub connector exposes no run for the push commit; empty status response is not a pass.
