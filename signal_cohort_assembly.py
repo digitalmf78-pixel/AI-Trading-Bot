@@ -157,6 +157,7 @@ def assemble_mainboard_cohort(
             columns={c: f"{safe_stage}__{c}" for c in payload_columns}
         )
         generated_names = set(renamed.columns) - {"_cohort_symbol_key"}
+        generated_names.update({coverage_col, f"{safe_stage}__CoverageReason"})
         output_collisions = sorted(generated_names.intersection(map(str, base.columns)))
         if output_collisions:
             raise CohortAssemblyError(
