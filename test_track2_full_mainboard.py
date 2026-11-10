@@ -164,3 +164,41 @@ def test_asof_date_is_required_and_validated(tmp_path):
         assert "Invalid as-of date" in str(exc)
     else:
         raise AssertionError("Invalid as-of date must fail")
+
+
+def test_synthetic_2588_symbol_mainboard_cohort_has_exact_coverage(tmp_path, monkeypatch):
+    calls = _patch_observers(monkeypatch)
+    source = pd.DataFrame({
+        "TckrSymb": [f"SYM{i:04d}" for i in range(2588)],
+        "SctySrs": ["EQ"] * 2385 + ["BE"] * 203,
+        "MainBoardStatus": ["PASS_MAIN_BOARD"] * 2588,
+        "BoardClassification": ["MAIN_BOARD"] * 2588,
+        "DeliveryFilterStatus": (
+            ["FILTERED_OUT_A_AND_B"] * 1830
+            + ["PASS_A_ONLY"] * 656
+            + ["PASS_A_AND_B"] * 102
+        ),
+    })
+    original = source.copy(deep=True)
+
+    report, manifest = track2.build_track2_full_mainboard_report(
+        source, [], [], "2026-11-09", output_dir=tmp_path
+    )
+
+    expected = {f"SYM{i:04d}" for i in range(2588)}
+    assert len(report) == 2588
+    assert report["TckrSymb"].nunique() == 2588
+    assert set(report["TckrSymb"]) == expected
+    assert report["Track2CohortStatus"].eq("PASS_MAIN_BOARD_INPUT").all()
+    assert report["Track2DeliveryQuantityObserverStatus"].eq("COMPLETE_5_10_20D").all()
+    assert report["Track2PotentialAccumulationObserverStatus"].eq("OBSERVATIONS_AVAILABLE").all()
+    assert report["Track2VCPObserverStatus"].eq("COMPLETE").all()
+    assert all(len(calls[name][0]) == 2588 for name in ("delivery", "accumulation", "vcp"))
+    assert manifest["expected_input_rows"] == 2588
+    assert manifest["eligible_unique_mainboard_symbols"] == 2588
+    assert manifest["output_rows"] == 2588
+    assert manifest["cohort_status"] == "COMPLETE"
+    saved = pd.read_csv(tmp_path / "v8_track2_full_mainboard_cohort_20261109.csv")
+    assert len(saved) == 2588
+    assert saved["TckrSymb"].nunique() == 2588
+    pd.testing.assert_frame_equal(source, original)
