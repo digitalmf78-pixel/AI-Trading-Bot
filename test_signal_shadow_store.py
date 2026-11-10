@@ -203,6 +203,17 @@ def test_signal_snapshot_rejects_string_source_reports():
         snapshot(source_reports="not-a-list")
 
 
+def test_signal_snapshot_preserves_one_shot_source_report_iterables():
+    row = snapshot(source_reports=iter([
+        "v8_delivery_dual_category_audit.csv",
+        "v8_main_board_universe_audit.csv",
+    ]))
+    assert row["source_reports"] == [
+        "v8_delivery_dual_category_audit.csv",
+        "v8_main_board_universe_audit.csv",
+    ]
+
+
 def test_signal_snapshot_rejects_non_string_field_keys():
     with pytest.raises(SignalValidationError, match="keys must be strings"):
         snapshot(signal_fields={1: "invalid-key"})
