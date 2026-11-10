@@ -197,10 +197,11 @@ def test_generated_stage_coverage_columns_cannot_overwrite_base_data():
         assemble_mainboard_cohort(main, reports={"Delivery": report})
 
 
-def test_stage_payload_cannot_shadow_coverage_status():
+@pytest.mark.parametrize("reserved_field", ["CoverageStatus", "CoverageReason"])
+def test_stage_payload_cannot_shadow_generated_coverage_fields(reserved_field):
     main = pd.DataFrame({"TckrSymb": ["AAA"]})
-    report = pd.DataFrame({"TckrSymb": ["AAA"], "CoverageStatus": ["spoofed"]})
-    with pytest.raises(CohortAssemblyError, match="generated output columns collide"):
+    report = pd.DataFrame({"TckrSymb": ["AAA"], reserved_field: ["spoofed"]})
+    with pytest.raises(CohortAssemblyError, match="reserved coverage field names"):
         assemble_mainboard_cohort(main, reports={"Stage": report})
 
 
