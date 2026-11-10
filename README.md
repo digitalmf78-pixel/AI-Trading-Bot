@@ -178,3 +178,12 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Confirmed issuer announcement discovery uses a **90-day lookback**, while explicit future EventDates are currently marked confirmed without a separate next-20-calendar-day display cap. Added a characterization test; this is documented current behavior, not an approved final horizon.
 - Keep 90-day discovery separate from the 20-day display horizon; do not reduce source lookback. Any future alignment requires explicit approval and real-EOD validation.
 - CI [42812650737](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42812650737) SUCCESS: **416 pytest**, **33 V8 regression**, **43 sector/news/index tests**; compilation PASS. No runtime behavior changed.
+
+
+## News/Catalyst window — approved 7 calendar days (10-Nov-2026)
+
+- EOD: 00:00 IST on EOD date minus six calendar days through 22:00 IST on EOD date.
+- PREMARKET: 00:00 IST on local scan date minus six calendar days through 09:15 IST on local scan date.
+- Both windows cover seven calendar dates inclusive, including weekends/holidays.
+- This changes News evidence lookback only; Corporate Events retains its separate 90-calendar-day source-discovery lookback. Official evidence remains primary and secondary coverage remains unverified.
+- The original Master Specification is not rewritten; see the dated implementation audit for validation status.
