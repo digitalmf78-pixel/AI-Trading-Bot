@@ -107,3 +107,18 @@ The following changes were committed after the 54-case focused execution. THEY H
 - Latest GitHub combined-status lookup returned an empty status list, and the available workflow-run lookup returned no runs. GitHub Actions execution is therefore still unverified.
 - Branch comparison now reports 68 commits ahead and 1 behind main. Main has advanced independently; no merge/rebase was attempted and main remains untouched by this work.
 - Production scanner integration, trading filters, workflow persistence, Telegram behavior, and the Master Specification remain unchanged.
+
+## Full GitHub Actions regression result (2026-11-10, latest revision)
+- Latest audit-branch commit under validation: `540e0cb38e1279a31ed83f2b0eaacc1db83e82ca`.
+- GitHub Actions run: [42798190518](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42798190518) — **SUCCESS**.
+- Python compile step: **PASS** for all configured scanner and audit modules.
+- Unit/data-audit pytest step: **388 passed in 6.81s**.
+- V8 regression script: completed successfully (workflow proceeded to the following test step).
+- Sector, news, and official-index unittest step: **43 tests passed**.
+- The run initially failed on the preceding revision with two test-only compatibility assertions:
+  1. The timestamp validator returned a generic UTC error for a naive timestamp; validation now distinguishes missing timezone from a non-UTC offset.
+  2. An empty-column dtype assertion assumed pandas object dtype; it now checks the invariant that the coverage column is present and empty, independent of pandas dtype backend.
+- The corrected revision's complete workflow is green. This supersedes the earlier 54-case focused-only state and the interim failed run.
+- This validates the configured GitHub Actions suite on the audit branch. It does not constitute live NSE EOD data validation or authorize production scanner integration.
+- Branch comparison at report update: **71 commits ahead, 1 behind main**. No merge/rebase was attempted; main remains untouched.
+- Observational cohort and shadow-store modules remain unwired from the production scanner. Master Specification and trading filters remain unchanged.
