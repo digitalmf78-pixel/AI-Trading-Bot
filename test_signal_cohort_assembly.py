@@ -259,7 +259,7 @@ def test_empty_mainboard_cohort_returns_empty_schema_without_losing_columns():
     result = assemble_mainboard_cohort(main, reports={"Delivery": None})
     assert result.cohort.empty
     assert "CohortIdentityKey" in result.cohort.columns
-    assert result.cohort["Delivery__CoverageStatus"].dtype == object
+    assert result.cohort["Delivery__CoverageStatus"].empty
     assert result.cohort["DownstreamReportsExpected"].iloc[0:0].empty
 
 
