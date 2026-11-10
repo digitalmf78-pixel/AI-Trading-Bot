@@ -366,3 +366,24 @@ The standalone `signal_cohort_assembly.py` helper and its tests were reviewed an
 The new synthetic contract test uses 2,588 Mainboard symbols (2,385 EQ + 203 BE) and a 758-row Delivery report. It verifies that all 2,588 cohort rows remain, 758 report rows are present, and 1,830 are explicitly `NOT_EVALUATED` due to missing report rows. Additional tests confirm native WAIT/reject statuses are preserved verbatim, News and Corporate Event one-to-many evidence does not inflate the cohort or stage-report coverage counts, and input frames are not mutated.
 
 CI run **42812305661** completed SUCCESS: Python compilation PASS; **415 pytest tests passed**; **33 V8 regression tests passed**; **43 sector/news/official-index tests passed**. This validates the assembly contract on synthetic data; it is not yet a real-EOD integrated cohort run. The helper remains standalone and non-gating, and no scanner/workflow wiring was added.
+
+
+## 13. News and Corporate Event window contract audit (10-Nov-2026)
+
+Read-only review of `news_catalyst.py` plus characterization tests confirms two separate window-contract gaps. No production logic was changed.
+
+### News/Catalyst window
+- Current EOD News window: five calendar dates inclusive, from 00:00 IST on EOD date minus four days through 22:00 IST on EOD date.
+- Current PREMARKET News window: five calendar dates inclusive, ending 09:15 IST on the local scan date.
+- The broader data-contract requirement recorded in this audit is seven calendar days. The implementation remains five days; existing tests deliberately assert the current five-day behavior. Do not silently change it until the intended EOD/Premarket boundaries and historical backfill semantics are approved.
+
+### Corporate Events window
+- Issuer-specific official NSE announcement API discovery uses a 90-calendar-day lookback ending on the News window end date.
+- The 90-day lookback is discovery coverage, not an event-date horizon. `_upcoming_event_rows_for_item` currently marks any explicit event date later than the reference date as `OFFICIAL_DATE_CONFIRMED`, without capping it to the separately recorded next-20-calendar-day display horizon.
+- A new characterization test confirms that an event 46 days after the EOD reference date remains `OFFICIAL_DATE_CONFIRMED` with `LookbackDays=90`. This records current behavior; it does not endorse it as the final display contract.
+- Event dates are extracted only from explicit date strings in issuer-filtered official announcement text; publication dates are not substituted for event dates. No future date produces `DATE_NOT_FOUND_OR_NO_FUTURE_DATE`; API coverage unavailable produces `WAIT_FOR_DATA` when no event row exists.
+
+### Safe next change (not applied)
+Keep the 90-day source-discovery lookback independent from the 20-calendar-day event display horizon. If approved, add a separate display-horizon status/field and preserve farther-future confirmed official events as longer-horizon evidence rather than silently dropping them. Do not shorten the API lookback to 20 days. Separately align News to seven days only after explicit boundary semantics are settled. Both changes require their own fixtures and real-EOD validation.
+
+CI run **42812650737** completed SUCCESS: Python compilation PASS; **416 pytest tests passed**; **33 V8 regression tests passed**; **43 sector/news/official-index tests passed**. Only a characterization test was added; News and Corporate Event runtime behavior is unchanged. No scanner wiring, trading gate, main branch, or Master Specification change was made.
