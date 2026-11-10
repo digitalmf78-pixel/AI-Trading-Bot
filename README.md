@@ -12,7 +12,7 @@ Automated NSE EOD research and swing-trading analysis pipeline. The scanner prod
 
 - Eligible NSE Mainboard universe (Largecap, Midcap, Smallcap; existing SME/ETF/MF exclusions).
 - Prior 20 complete sessions are loaded to prepare the average-volume baseline.
-- Delivery Category A and B are calculated independently over the full 30-calendar-day window; minimum five distinct valid reports; A average >=60.00%, B every valid report >=60.00%.
+- Delivery Category A and B are calculated independently over **all** valid distinct reports in the full 30-calendar-day window (not just the latest five); minimum five valid reports. A = average >=60.00%; B = every available valid day >=60.00%. Reports show actual valid-session count, dates, average/min/max Delivery %, A/B status and WAIT_FOR_DATA when fewer than five reports exist.
 - Form the complete de-duplicated A OR B union and preserve A_ONLY / B_ONLY / A_AND_B.
 - Calculate RVOL only for this union: >1.5 HIGH, <=1.5 LOW, invalid/missing WAIT_FOR_DATA. RVOL is classification only and never rejects a Delivery-qualified candidate.
 - All A/B candidates continue to the 20-session liquidity check; hard minimum average traded value ₹1.5 crore.
@@ -41,7 +41,7 @@ The run had 23/23 official sector-index closes, while 5 of 54 stock-sector mappi
 
 ## Current authoritative rule addendum
 
-The active 30-calendar-day NSE Delivery A/B screening rules agreed on 2026-11-07 are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). This addendum supplements the Master Specification; it does not replace or rewrite it.
+The active 30-calendar-day NSE Delivery A/B screening rules, clarified on 2026-11-10 to use every valid report in the window after a minimum of five, are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). The strict five-session Delivery-only watchlist remains a separate artifact. This addendum supplements the Master Specification; it does not replace or rewrite it.
 
 ## Current authoritative RSI rule addendum
 
