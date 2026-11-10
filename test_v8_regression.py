@@ -642,9 +642,63 @@ def test_news_window_premarket_covers_five_calendar_days_including_weekend_to_09
     assert end_ist.hour == 9 and end_ist.minute == 15
 
 
+
+def test_accumulation_distribution_is_scoped_to_candidate_security_series():
+    dates = pd.bdate_range("2026-10-13", periods=20)
+    rows = []
+    for day in dates:
+        # Two NSE series for one ticker on the same session must not be merged.
+        rows.append({
+            "TckrSymb": "ABC", "SctySrs": "EQ", "Date": day,
+            "HghPric": 11.0, "LwPric": 9.0, "ClsPric": 10.5, "TtlTradgVol": 100.0,
+        })
+        rows.append({
+            "TckrSymb": "ABC", "SctySrs": "BE", "Date": day,
+            "HghPric": 22.0, "LwPric": 20.0, "ClsPric": 20.5, "TtlTradgVol": 200.0,
+        })
+    history = pd.DataFrame(rows)
+    candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
+
+    values, diagnostics = layers._accumulation_distribution_for_candidates(
+        history, candidates, True, [day.date() for day in dates]
+    )
+
+    assert values[("ABC", "EQ")] == 1.0
+    assert len(diagnostics) == 1
+    assert diagnostics.iloc[0]["ObservedRows"] == 20
+    assert diagnostics.iloc[0]["UniqueSessions"] == 20
+    assert diagnostics.iloc[0]["Status"] == "PASS"
+    assert diagnostics.iloc[0]["Reason"] == "COMPLETE"
+
+
+def test_accumulation_distribution_keeps_incomplete_candidate_series_waiting():
+    dates = pd.bdate_range("2026-10-13", periods=20)
+    rows = [{
+        "TckrSymb": "ABC", "SctySrs": "EQ", "Date": day,
+        "HghPric": 11.0, "LwPric": 9.0, "ClsPric": 10.5, "TtlTradgVol": 100.0,
+    } for day in dates[:-1]]
+    # A different series cannot fill the missing EQ session.
+    rows.append({
+        "TckrSymb": "ABC", "SctySrs": "BE", "Date": dates[-1],
+        "HghPric": 22.0, "LwPric": 20.0, "ClsPric": 20.5, "TtlTradgVol": 200.0,
+    })
+    history = pd.DataFrame(rows)
+    candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
+
+    values, diagnostics = layers._accumulation_distribution_for_candidates(
+        history, candidates, True, [day.date() for day in dates]
+    )
+
+    assert pd.isna(values[("ABC", "EQ")])
+    assert diagnostics.iloc[0]["Status"] == "WAIT_FOR_DATA"
+    assert diagnostics.iloc[0]["Reason"] == "SESSION_ROW_COUNT_NOT_20"
+    assert diagnostics.iloc[0]["MissingSessionDates"] == dates[-1].date().isoformat()
+
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
+        test_accumulation_distribution_is_scoped_to_candidate_security_series,
+        test_accumulation_distribution_keeps_incomplete_candidate_series_waiting,
         test_nse_announcement_api_normalizer_uses_official_fields_and_symbol_filter,
         test_nse_api_raw_diagnostics_report_status_payload_fields_and_counts,
         test_news_window_eod_uses_five_calendar_days_and_2200_ist_cutoff,
