@@ -175,3 +175,17 @@ The following changes were committed after the 54-case focused execution. THEY H
 - Existing Potential Accumulation and VCP outputs remain limited to the 758-row A/B union; 1,830 Mainboard symbols have no evaluation row in those existing reports.
 - The artifact does not include raw 200-session Bhavcopy or raw Delivery cache files. The real-data Track 2 observer run is therefore still pending cache restoration. No live NSE fetch was performed.
 - Track 2 remains standalone and unwired; no production scanner, main branch, Master Specification, or Track 1 behavior changed.
+
+
+### Real-data Track 2 offline validation — completed (10-Nov-2026)
+
+- Isolated run [42804931499](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42804931499) completed **SUCCESS** on audit branch commit `d8e0de8e41e532d52225de41e799606da4f066fe`.
+- Restored the existing NSE cache read-only; used 201 Bhavcopy sessions (current as-of session plus 200 prior sessions) and 21 cached Delivery report dates. No NSE/network fetch was made and no cache errors were reported.
+- Exact source-symbol set comparison against the 09-Nov Mainboard PASS audit: **2,588/2,588 exact match**. Each Track 2 observer report contains all 2,588 unique symbols.
+- Delivery Quantity: **2,253 COMPLETE_5_10_20D / 335 WAIT_FOR_DATA**; 5D **2,352/236**, 10D **2,302/286**, 20D **2,253/335**.
+- Potential Accumulation: **2,253 OBSERVATIONS_AVAILABLE / 258 PARTIAL_DATA / 77 WAIT_FOR_DATA**.
+- VCP: **2,023 COMPLETE / 565 WAIT_FOR_DATA**. False-VCP forward outcome remains not evaluated because no approved forward horizon exists; completed observations remain NOT_CLASSIFIED.
+- Pattern categories remain `NOT_CLASSIFIED_PENDING_APPROVED_RULES`; no Sideways/Dip rules were invented.
+- Run summary confirms `track1_artifacts_unchanged=true`, `network_fetches=0`, `telegram_enabled=false`, and `production_scanner_called=false`. Observer error fields are null.
+- Artifact `track2-full-mainboard-offline-42804931499` (ID `13758437527`) uploaded successfully with cohort, observer CSVs, manifest and summary.
+- This is successful **standalone real-data validation only**. Track 2 remains unwired from the production scanner/scheduled EOD workflow; no production behaviour, Track 1 eligibility, main branch or Master Specification was changed.
