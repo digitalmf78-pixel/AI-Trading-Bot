@@ -71,3 +71,26 @@ def test_non_symbol_report_rejected():
     main = pd.DataFrame({"TckrSymb": ["AAA"]})
     with pytest.raises(CohortAssemblyError, match="TckrSymb"):
         assemble_mainboard_cohort(main, reports={"Stage": pd.DataFrame({"Symbol": ["AAA"]})})
+
+
+
+def test_corporate_events_one_to_many_rows_are_preserved_separately():
+    main = pd.DataFrame({"TckrSymb": ["AAA", "BBB"]})
+    events = pd.DataFrame({
+        "TckrSymb": ["AAA", "AAA", "ZZZ"],
+        "EventType": ["Board Meeting", "Results", "AGM"],
+        "EventDate": ["2026-11-12", "2026-11-15", "2026-11-20"],
+    })
+    result = assemble_mainboard_cohort(main, corporate_events_report=events)
+    assert len(result.cohort) == 2
+    assert len(result.corporate_event_evidence) == 3
+    assert result.corporate_event_evidence["CorporateEventEvidenceCoverageStatus"].tolist() == [
+        "SOURCE_ROW_PRESENT", "SOURCE_ROW_PRESENT", "OUT_OF_COHORT"
+    ]
+
+
+def test_news_and_event_evidence_can_both_be_empty_or_missing():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    result = assemble_mainboard_cohort(main, news_report=None, corporate_events_report=pd.DataFrame())
+    assert list(result.news_evidence.columns) == ["TckrSymb", "NewsEvidenceCoverageStatus"]
+    assert "CorporateEventEvidenceCoverageStatus" in result.corporate_event_evidence.columns
