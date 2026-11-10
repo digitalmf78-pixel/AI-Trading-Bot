@@ -152,6 +152,52 @@ def test_append_batch_deduplicates_exact_repeats(tmp_path: Path):
     assert result == {"appended": 1, "duplicates": 1}
 
 
+def test_atomic_replace_failure_preserves_original_partition(tmp_path: Path, monkeypatch):
+    import signal_shadow_store
+    path = tmp_path / "2026-11-09.jsonl"
+    original = snapshot()
+    append_immutable_jsonl(path, [original], key_field="signal_id",
+                           hash_field="snapshot_payload_sha256")
+    before = path.read_bytes()
+
+    def fail_replace(_source, _target):
+        raise OSError("simulated replace interruption")
+
+    monkeypatch.setattr(signal_shadow_store.os, "replace", fail_replace)
+    second = build_signal_snapshot(
+        eod_date="2026-11-09", symbol="TCS", strategy_version=SHA,
+        signal_fields={"Close": 3500.0},
+        created_at_utc="2026-11-10T10:00:00+00:00",
+    )
+    with pytest.raises(OSError, match="simulated replace interruption"):
+        append_immutable_jsonl(
+            path, [second], key_field="signal_id",
+            hash_field="snapshot_payload_sha256",
+        )
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob(".2026-11-09.jsonl.*.tmp"))
+
+
+def test_atomic_replace_preserves_existing_rows_and_adds_complete_lines(tmp_path: Path):
+    path = tmp_path / "2026-11-09.jsonl"
+    first = snapshot()
+    second = build_signal_snapshot(
+        eod_date="2026-11-09", symbol="TCS", strategy_version=SHA,
+        signal_fields={"Close": 3500.0},
+        created_at_utc="2026-11-10T10:00:00+00:00",
+    )
+    append_immutable_jsonl(path, [first], key_field="signal_id",
+                           hash_field="snapshot_payload_sha256")
+    before = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    result = append_immutable_jsonl(
+        path, [second], key_field="signal_id",
+        hash_field="snapshot_payload_sha256",
+    )
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert result == {"appended": 1, "duplicates": 0}
+    assert rows == [before, second]
+
+
 def test_stage_event_digest_is_verified_when_appended(tmp_path: Path):
     event = build_stage_event(
         signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
