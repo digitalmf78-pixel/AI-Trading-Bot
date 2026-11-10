@@ -137,3 +137,12 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Ten-session breakout observation implementation validated successfully: 300 unit/data-audit tests + all 31 V8 regression tests passed; sector/news/official-index and issuer/RSS workflows passed. False-breakout failure and re-entry definitions remain pending approval.
 
 - Runtime optimization (09-Nov-2026): Potential Accumulation and VCP now build a one-pass symbol/series index over the existing Bhavcopy history and reuse it for candidate lookups, preserving duplicate-session and WAIT_FOR_DATA integrity. Sector-history fallback now stops retrying all remaining Nifty indices after a confirmed service-wide HTML ReturnUrl redirect; no synthetic sector values are introduced. PR #33 merged after NSE V8 CI, sector mapping cache tests, and news parser tests all passed. Trading gates and the Master Specification remain unchanged. Live end-to-end runtime benchmark is pending the next scanner execution.
+
+
+## Track 2 Full Mainboard Accumulation (10-Nov-2026)
+- Added a standalone, non-gating Track 2 builder in `track2_full_mainboard.py`. It takes the official Mainboard-filtered cohort before Delivery A/B and runs the existing Delivery Quantity, Potential Accumulation and VCP observers over all unique Mainboard symbols.
+- Track 2 writes to `outputs/track2_full_mainboard/`; optional observer output paths keep its files separate from Track 1 artifacts. It does not change Track 1 eligibility, ranking, watchlists or scanner flow.
+- Duplicate/invalid identities and observer failures are retained as explicit WAIT_FOR_DATA states; the report does not silently drop the rest of the cohort.
+- SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION are still research requests, not classified patterns. Exact rules and thresholds require approval; none were invented.
+- CI validated: 397 pytest tests, 33 V8 regression tests, and 43 sector/news/official-index unittests passed (workflow run 42800483179).
+- This builder is not wired into the scheduled EOD workflow and has not been validated on a live NSE EOD run. Audit branch only; Master Specification and production scanner remain unchanged.
