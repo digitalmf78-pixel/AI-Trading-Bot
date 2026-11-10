@@ -194,6 +194,7 @@ def build_vcp_observation_report(candidates, historical, asof_date, output_path=
         rows.append(row)
 
     report = pd.DataFrame(rows)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    report.to_csv(OUTPUT_DIR / f"v8_vcp_contraction_observations_{asof:%Y%m%d}.csv", index=False)
+    target_path = Path(output_path) if output_path is not None else OUTPUT_DIR / f"v8_vcp_contraction_observations_{asof:%Y%m%d}.csv"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    report.to_csv(target_path, index=False)
     return report
