@@ -63,7 +63,6 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
 def _validate_series_alignment(base: pd.DataFrame, report: pd.DataFrame, label: str) -> None:
     base_has_series = "_cohort_series_key" in base.columns
     report_has_series = "_cohort_series_key" in report.columns
-    shared_symbols = set(base["_cohort_symbol_key"]) & set(report["_cohort_symbol_key"])
     if not base_has_series or not report_has_series:
         return
     aligned = base[["_cohort_symbol_key", "_cohort_series_key"]].merge(
@@ -118,6 +117,12 @@ def assemble_mainboard_cohort(
             raise CohortAssemblyError(f"Duplicate stage name after normalization: {safe_stage}")
         seen_stage_names.add(safe_stage)
         coverage_col = f"{safe_stage}__CoverageStatus"
+        generated_stage_columns = {coverage_col, f"{safe_stage}__CoverageReason"}
+        stage_collisions = sorted(generated_stage_columns.intersection(map(str, base.columns)))
+        if stage_collisions:
+            raise CohortAssemblyError(
+                f"{safe_stage}: generated output columns collide with existing cohort columns: {stage_collisions}"
+            )
         if report is None:
             base[coverage_col] = "NOT_EVALUATED"
             base[f"{safe_stage}__CoverageReason"] = "SOURCE_REPORT_NOT_SUPPLIED"
@@ -180,6 +185,13 @@ def assemble_mainboard_cohort(
         if not isinstance(report, pd.DataFrame):
             raise CohortAssemblyError(f"{label.lower()}_report: expected a pandas DataFrame or None")
         if report.empty:
+            if not report.columns.is_unique:
+                duplicates = report.columns[report.columns.duplicated()].astype(str).unique().tolist()
+                raise CohortAssemblyError(f"{label.lower()}_report: duplicate column names are ambiguous: {duplicates[:20]}")
+            if coverage_column in report.columns:
+                raise CohortAssemblyError(f"{label.lower()}_report: reserved coverage column already exists: {coverage_column}")
+            if "_cohort_symbol_key" in report.columns or "_cohort_series_key" in report.columns:
+                raise CohortAssemblyError(f"{label.lower()}_report: source uses reserved internal cohort columns")
             empty = report.copy()
             if SYMBOL_COLUMN not in empty.columns:
                 empty[SYMBOL_COLUMN] = pd.Series(dtype="object")
