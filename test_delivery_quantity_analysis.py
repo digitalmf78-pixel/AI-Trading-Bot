@@ -147,7 +147,7 @@ def test_single_invalid_delivery_quantity_is_wait_for_data(tmp_path, monkeypatch
     )
     row = enriched.iloc[0]
     assert row["DeliveryQty5DStatus"] == "WAIT_FOR_DATA"
-    assert row["DeliveryQty5DReason"] == "INVALID_DELIVERY_QUANTITY"
+    assert row["DeliveryQty5DReason"] == "NEGATIVE_DELIVERY_QUANTITY"
 
 
 def test_duplicate_candidate_symbol_series_is_not_reported_as_complete(tmp_path, monkeypatch):
