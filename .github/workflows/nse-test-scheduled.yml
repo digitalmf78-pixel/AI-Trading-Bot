@@ -354,13 +354,13 @@ jobs:
           done
           echo "===== SECTOR / DATA REPORTS ====="
           if [ -d data/reports ]; then
-            find data/reports -maxdepth 2 -type f -print
+            find data/reports -maxdepth 2 -type f -print || true
             for f in data/reports/sector_candidate_mapping_*.csv data/reports/delivery_first_audit_*.csv; do
               if [ -f "$f" ]; then echo "===== $f ====="; head -12 "$f"; fi
             done
           fi
           echo "===== BHAVCOPY CACHE SAMPLE ====="
-          if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print | head -20; else echo "Bhavcopy cache directory does not exist"; fi
+          if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print 2>/dev/null | head -20 || true; else echo "Bhavcopy cache directory does not exist"; fi
 
       - name: Persist fundamental cache and dated history in repository
         if: steps.nse_scan.outcome == 'success'
@@ -379,7 +379,7 @@ jobs:
             echo "ERROR: data/cache/fundamental_history directory is missing."
             exit 1
           fi
-          mapfile -d '' HISTORY_FILES < <(find data/cache/fundamental_history -maxdepth 1 -type f -name '*.csv' -print0 | sort -z)
+          mapfile -d '' HISTORY_FILES < <(find data/cache/fundamental_history -maxdepth 1 -type f -name '*.csv' -print0 2>/dev/null | sort -z)
           echo "HISTORY_CSV_COUNT=${#HISTORY_FILES[@]}"
           if [ "${#HISTORY_FILES[@]}" -eq 0 ]; then
             echo "ERROR: no dated fundamental history CSV files were produced."
