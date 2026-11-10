@@ -560,3 +560,13 @@ The production scanner must follow this exact sequence:
 - Proposed Track 2 report is observational and independent; it must preserve every Mainboard symbol, isolate failures as WAIT_FOR_DATA, and never feed back into Track 1 eligibility or outputs.
 - SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION are research targets only until the user approves exact definitions/lookbacks/thresholds. Do not invent numeric criteria or classify stocks yet.
 - No scanner code, workflow, production behaviour, Master Specification, or main-branch content was changed for this audit checkpoint.
+
+
+## Track 2 standalone builder implementation checkpoint (10-Nov-2026)
+- Added `track2_full_mainboard.py` as a standalone non-gating builder over the full official Mainboard-filtered frame before Delivery A/B.
+- Reuses Delivery Quantity, Potential Accumulation and VCP observers with optional separate output paths, preventing Track 2 from overwriting Track 1 artifacts.
+- Added `test_track2_full_mainboard.py`; CI includes the new test file and compile target.
+- Latest CI run [42800483179](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42800483179): **397 passed**, 33 V8 regression tests PASS, 43 sector/news/official-index tests PASS.
+- Duplicate/invalid identity rows remain visible with WAIT_FOR_DATA; observer errors are isolated; full input membership is preserved.
+- SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION remain unclassified pending explicit approved rules. No new thresholds, scoring, filters or entry signals.
+- No scanner/workflow integration, no Track 1 change, no live EOD run, and no Master Specification change. Audit branch only.
