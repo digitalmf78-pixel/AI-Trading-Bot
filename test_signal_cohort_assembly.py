@@ -111,3 +111,24 @@ def test_internal_join_keys_are_not_exposed_in_output():
     assert "_cohort_series_key" not in result.cohort.columns
     assert "Stage___cohort_series_key" not in result.cohort.columns
     assert result.cohort.loc[0, "Stage__SctySrs"] == "EQ"
+
+
+def test_series_column_presence_mismatch_fails_closed_when_symbols_overlap():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    report = pd.DataFrame({"TckrSymb": ["AAA"], "Status": ["PASS"]})
+    with pytest.raises(CohortAssemblyError, match="SctySrs must be present on both"):
+        assemble_mainboard_cohort(main, reports={"Stage": report})
+
+
+def test_duplicate_column_names_fail_closed():
+    main = pd.DataFrame([["AAA", "EQ"]], columns=["TckrSymb", "TckrSymb"])
+    with pytest.raises(CohortAssemblyError, match="duplicate column names"):
+        assemble_mainboard_cohort(main)
+
+
+def test_stage_names_are_validated_and_normalized_collisions_rejected():
+    main = pd.DataFrame({"TckrSymb": ["AAA"]})
+    with pytest.raises(CohortAssemblyError, match="Invalid stage name"):
+        assemble_mainboard_cohort(main, reports={"Bad Stage": pd.DataFrame({"TckrSymb": ["AAA"]})})
+    with pytest.raises(CohortAssemblyError, match="Duplicate stage name"):
+        assemble_mainboard_cohort(main, reports={"Delivery": None, " Delivery ": None})
