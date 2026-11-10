@@ -193,8 +193,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             session=http_session, collect_all=True,
         )
         verified_reports = {}
+        window_start = asof - timedelta(days=29)
         for day, frame in reports:
-            if day > asof:
+            if day > asof or day < window_start:
                 continue
             if not is_trading_session(day):
                 print(f"[DELIVERY] Rejecting report supplied for non-session date {day}")
