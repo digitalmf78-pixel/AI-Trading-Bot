@@ -158,3 +158,9 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Pivot/EMA exact history contract remains 201 symbol sessions (200 prior + current EOD): 1,665 COMPLETE / 923 WAIT. Four symbols have complete 200D range but lack the additional earliest session.
 - Track 2 coverage: 2,588/2,588; Delivery Quantity 2,253 complete / 335 WAIT; Potential Accumulation 2,253 available / 258 partial / 77 WAIT; VCP 2,023 complete / 565 WAIT. All observer errors null.
 - Safety: zero network fetches, Telegram disabled, production scanner not called, Track 1 artifacts unchanged. Track 2 remains standalone/non-gating; Master Specification and main branch unchanged. Detailed source audit is in `NSE_V8_TRACK2_FULL_MAINBOARD_ACCUMULATION_DESIGN_AUDIT_2026-11-10.md`.
+
+
+### Shadow-store safety audit (10-Nov-2026)
+- Hardened `signal_shadow_store.py` so allow-listed text values and stage-event free text are scanned for common credentials/tokens, Bearer strings, private URLs, email/phone-like identifiers, control characters and oversized text. Checks run both when building records and when validating persisted records.
+- CI run [42811907344](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42811907344) passed: compilation PASS, **411 pytest tests**, **33 V8 regression tests**, and **43 sector/news/official-index tests**.
+- The checks are heuristic and do not replace curated input/least-data rules. Shadow store remains standalone and is not connected to production scanner or scheduled EOD; no signal snapshots were deployed. Main branch and Master Specification remain unchanged. See the Track 2 design/data-contract audit for details.
