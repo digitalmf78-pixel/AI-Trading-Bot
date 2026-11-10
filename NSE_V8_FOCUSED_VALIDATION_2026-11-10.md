@@ -122,3 +122,31 @@ The following changes were committed after the 54-case focused execution. THEY H
 - This validates the configured GitHub Actions suite on the audit branch. It does not constitute live NSE EOD data validation or authorize production scanner integration.
 - Branch comparison at report update: **71 commits ahead, 1 behind main**. No merge/rebase was attempted; main remains untouched.
 - Observational cohort and shadow-store modules remain unwired from the production scanner. Master Specification and trading filters remain unchanged.
+
+## Integration-readiness static audit (2026-11-10)
+### Confirmed current production sequence
+- `volume_gainer.py` confirms official Mainboard classification before Delivery.
+- The scanner fetches all available distinct Delivery reports in the 30-calendar-day window (`required_sessions=5`, `collect_all=True`); A and B are independently calculated, then the full A OR B union is deduplicated before RVOL.
+- RVOL is calculated only for the A/B union. The Liquidity stage receives all A/B rows; its configured minimum remains ₹1.5 crore average daily traded value over 20 prior sessions.
+- Fundamentals are collected only after Liquidity for every liquidity-qualified row; collection/verification errors are recorded without dropping the liquidity-qualified candidates. The master parameter register's old unresolved item #3 was stale; it has now been marked RESOLVED in line with the explicit 06-Nov-2026 decision.
+- No Top-20/Top-50 RVOL cap was found in the current candidate annotation function; its legacy function name `select_top20_analysis_candidates` is misleading, but it returns the complete input frame and assigns ranks without truncation.
+### Confirmed gaps / not yet production-ready
+1. **Full-Mainboard Track 2 Accumulation:** Delivery Quantity observations are produced from the full Mainboard Delivery audit, but the Potential Accumulation price-response engine, VCP observations and early hybrid watchlists are called with the 758-row A/B union. The separate full-Mainboard SIDEWAYS_ACCUMULATION / DIP_ACCUMULATION research cohort remains unimplemented. It must be a separate Track 2 output and must not alter Track 1 A/B eligibility.
+2. **News window:** `news_catalyst.py` explicitly logs and applies a five-calendar-day news window. The data-contract requirement is seven calendar days. This is a real specification-to-code gap; no window change was made during this audit.
+3. **Corporate-event horizon:** the issuer announcement API searches a 90-day announcement lookback and records every explicit future event date. The current event report does not restrict confirmed events to the next 20 calendar days. Discovery lookback and display horizon need separate treatment; no event date or horizon was rewritten here.
+4. **Stock-specific institutional evidence:** current FII/FPI and DII module is market-wide aggregate only. No stock-specific bulk/block deals, shareholding, pledge, insider/PIT/SAST evidence producer was found in the audited paths. Do not infer stock-level buying from market-wide flows.
+5. **Shadow-store deployment:** cohort assembly and append-only signal-store modules remain standalone observational helpers. They are not called from `volume_gainer.py` or the scheduled EOD workflow. No daily `data/signals/**` persistence, run manifest, forward outcome tracker, or real EOD shadow run has been implemented/validated.
+6. **Cohort assembly contract:** the canonical base is the full 2,588-row `v8_delivery_dual_category_audit.csv` (not the 758-row A/B union). Stage reports are left-joined and absent rows remain NOT_EVALUATED; News and Events remain separate one-to-many evidence tables. `CohortEligibilityStatus=PASS_MAIN_BOARD_INPUT` is a caller assertion, not an independently verified board classification. `DownstreamReportsPresent/Expected` counts one-to-one stage report coverage only; it excludes News/Event evidence coverage.
+7. **Evidence-series join defect fixed:** the News/Event series-alignment code previously indexed the Mainboard series map for every evidence row, including out-of-cohort symbols, which could raise KeyError when an out-of-cohort evidence row carried SctySrs. It now compares only matching cohort symbols, and a regression test preserves the out-of-cohort row as OUT_OF_COHORT.
+### Documentation consistency
+- The hybrid parameter register's pending list incorrectly still labelled the Fundamentals collection boundary unresolved even though section 18 and README state that Liquidity-first was confirmed on 06-Nov-2026. Item #3 is now marked RESOLVED; no strategy behavior changed.
+- Historical audit notes that predate later implementation sections are retained as historical records; later dated sections and the current README/register define the current status.
+### Latest regression evidence
+- Latest workflow run: [42798705327](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/42798705327) — **SUCCESS** on code/test commit `e883d18d89ff9fcd45531d0ce18e644ebc7e2684`.
+- Python compile: PASS.
+- Configured pytest suite: **389 passed in 6.44s**.
+- V8 regression script: PASS (workflow continued).
+- Sector/news/official-index unittest suite: **43 tests passed**.
+- The subsequent documentation-only register correction is on the same audit branch; no production code or Master Specification changed.
+- Current branch comparison: **75 commits ahead, 2 behind main**. Main has advanced independently; no merge/rebase was attempted.
+- No live EOD run, real NSE fetch validation, Track 2 implementation, or signal-shadow persistence was performed in this audit.
