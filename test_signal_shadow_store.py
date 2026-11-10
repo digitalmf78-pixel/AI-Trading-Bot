@@ -71,7 +71,7 @@ def test_non_finite_values_fail_closed():
 
 def test_stage_event_preserves_raw_status_and_is_deterministic():
     args = dict(
-        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
         strategy_version=SHA, stage_name="DELIVERY_30D_AB",
         status="FILTERED_OUT_AVG_LT_60_PERCENT",
         reason_code="AVG_BELOW_THRESHOLD", reason_text="Raw source reason",
@@ -154,7 +154,7 @@ def test_append_batch_deduplicates_exact_repeats(tmp_path: Path):
 
 def test_stage_event_digest_is_verified_when_appended(tmp_path: Path):
     event = build_stage_event(
-        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
         strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
         observed_at_utc="2026-11-10T10:00:00+00:00",
     )
@@ -178,7 +178,7 @@ def test_snapshot_append_rejects_unapproved_top_level_field_even_with_valid_hash
 def test_stage_event_append_rejects_unapproved_field_even_with_valid_hash():
     from signal_shadow_store import _canonical_json, _sha256
     event = build_stage_event(
-        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
         strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
         observed_at_utc="2026-11-10T10:00:00+00:00",
     )
@@ -260,7 +260,7 @@ def test_snapshot_reserved_metadata_is_revalidated_on_append(tmp_path: Path):
 
 def test_stage_event_requires_timezone_aware_persisted_timestamp(tmp_path: Path):
     event = build_stage_event(
-        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
         strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
         observed_at_utc="2026-11-10T10:00:00+00:00",
     )
@@ -290,7 +290,7 @@ def test_snapshot_timestamp_must_be_utc_not_merely_timezone_aware():
 def test_stage_event_timestamp_must_be_utc_not_merely_timezone_aware():
     with pytest.raises(SignalValidationError, match="must be a UTC timestamp"):
         build_stage_event(
-            signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+            signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
             strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
             observed_at_utc="2026-11-10T15:30:00+05:30",
         )
@@ -306,7 +306,7 @@ def test_stage_event_timestamp_must_be_utc_not_merely_timezone_aware():
 def test_stage_event_rejects_sensitive_free_text(reason_text):
     with pytest.raises(SignalValidationError, match="Sensitive or account-derived text"):
         build_stage_event(
-            signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+            signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
             strategy_version=SHA, stage_name="LIQUIDITY", status="WAIT_FOR_DATA",
             reason_text=reason_text,
         )
@@ -327,3 +327,30 @@ def test_snapshot_rejects_control_characters_and_oversized_free_text():
         snapshot(signal_fields={"EODWatchlistReason": "bad\x00text"})
     with pytest.raises(SignalValidationError, match="exceeds 2000"):
         snapshot(signal_fields={"EODWatchlistReason": "x" * 2001})
+
+
+def test_stage_event_rejects_wrong_snapshot_identity_at_construction():
+    with pytest.raises(SignalValidationError, match="signal_id does not match"):
+        build_stage_event(
+            signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+            strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
+        )
+
+
+def test_stage_event_rejects_rehashed_wrong_identity_on_append(tmp_path: Path):
+    from signal_shadow_store import _canonical_json, _sha256
+    event = build_stage_event(
+        signal_id=snapshot()["signal_id"], eod_date="2026-11-09",
+        symbol="RELIANCE", strategy_version=SHA,
+        stage_name="DELIVERY_30D_AB", status="PASS",
+        observed_at_utc="2026-11-10T10:00:00+00:00",
+    )
+    event["signal_id"] = "b" * 64
+    payload = {k: v for k, v in event.items() if k not in {"event_id", "ObservedAtUTC"}}
+    event["event_id"] = _sha256(_canonical_json(payload))
+    with pytest.raises(SignalValidationError, match="signal_id does not match"):
+        append_immutable_jsonl(
+            tmp_path / "events.jsonl", [event],
+            key_field="event_id", hash_field="event_id",
+        )
+    assert not (tmp_path / "events.jsonl").exists()
