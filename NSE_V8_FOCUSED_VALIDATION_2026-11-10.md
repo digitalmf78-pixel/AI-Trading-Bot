@@ -47,7 +47,7 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Fixed a malformed f-string in the one-to-many evidence series-mismatch diagnostic before attempting the next test run.
 - Added fail-closed guards for generated coverage columns when stage reports are missing or empty.
 - Added validation for duplicate columns and reserved coverage columns in empty News/Event evidence frames.
-- Added four new cohort tests. Current source contains 31 cohort test functions and 19 shadow-store test functions (50 total).
+- Added four new cohort tests. Current source contains 31 cohort test functions and 18 shadow-store test functions (49 total).
 - Added the working audit branch to the CI workflow's push branch allow-list. This workflow-file change is confined to the working branch; main remains untouched.
 - A status lookup for the workflow-triggering commit returned no status checks yet. Therefore the latest 44-test revision and full repository CI are **not yet confirmed executed**. The previously reported 34-pass result remains limited to the earlier revision only.
 
