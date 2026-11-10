@@ -14,13 +14,6 @@ import re
 import pandas as pd
 
 SYMBOL_COLUMN = "TckrSymb"
-STATUS_COLUMNS = (
-    "WatchlistStatus", "DeliveryFilterStatus", "DeliveryCategoryAStatus",
-    "DeliveryCategoryBStatus", "LiquidityFilterStatus", "LiquidityStatus",
-    "FundamentalStatus", "CoreTechnicalScreenStatus", "EODWatchlistStatus",
-)
-
-
 class CohortAssemblyError(ValueError):
     """Raised when cohort identity or source report rows are ambiguous."""
 
@@ -175,11 +168,38 @@ def assemble_mainboard_cohort(
             return empty
         if SYMBOL_COLUMN not in report.columns:
             raise CohortAssemblyError(f"{label.lower()}_report: missing required {SYMBOL_COLUMN} column")
+        if not report.columns.is_unique:
+            duplicates = report.columns[report.columns.duplicated()].astype(str).unique().tolist()
+            raise CohortAssemblyError(f"{label.lower()}_report: duplicate column names are ambiguous: {duplicates[:20]}")
         evidence = report.copy()
         evidence["_cohort_symbol_key"] = evidence[SYMBOL_COLUMN].map(_normalise_symbol)
         if (evidence["_cohort_symbol_key"] == "").any():
             raise CohortAssemblyError(f"{label.lower()}_report: blank/null symbol key")
         cohort_symbols = set(base["_cohort_symbol_key"])
+        if "_cohort_series_key" in base.columns:
+            if "SctySrs" not in evidence.columns:
+                if cohort_symbols & set(evidence["_cohort_symbol_key"]):
+                    raise CohortAssemblyError(
+                        f"{label.lower()}_report: SctySrs must be present when evidence symbols overlap the cohort"
+                    )
+            else:
+                evidence["_cohort_series_key"] = evidence["SctySrs"].map(
+                    lambda value: "" if pd.isna(value) else str(value).strip().upper()
+                )
+                if (evidence["_cohort_series_key"] == "").any():
+                    raise CohortAssemblyError(f"{label.lower()}_report: blank/null SctySrs")
+                series_map = base.set_index("_cohort_symbol_key")["_cohort_series_key"].to_dict()
+                mismatch = evidence[
+                    evidence["_cohort_symbol_key"].isin(cohort_symbols)
+                    & evidence.apply(
+                        lambda row: row["_cohort_series_key"] != series_map[row["_cohort_symbol_key"]], axis=1
+                    )
+                ]
+                if not mismatch.empty:
+                    raise CohortAssemblyError(
+                        f"{label.lower()}_report: SctySrs mismatch for evidence rows: "
+                        f"{mismatch[[SYMBOL_COLUMN, "SctySrs"]].head(20).to_dict("records")}"
+                    )
         evidence[coverage_column] = evidence["_cohort_symbol_key"].map(
             lambda key: "SOURCE_ROW_PRESENT" if key in cohort_symbols else "OUT_OF_COHORT"
         )
