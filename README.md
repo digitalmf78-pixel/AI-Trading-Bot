@@ -192,3 +192,8 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 ## Signal shadow-store status — audit only (10-Nov-2026)
 
 The append-only JSONL snapshot/event helper and full-Mainboard cohort assembly helper remain standalone and are **not** connected to the production scanner or scheduled EOD workflow. The shadow-store audit covers immutable identity/digests, exact retry no-ops, conflicts, tamper detection, and free-text redaction. A one-shot `source_reports` generator-consumption defect was fixed with a regression test. Before integration, define the date partition/manifest and retention policy, validate stage-event-to-snapshot identity linkage, and implement serialized single-writer GitHub persistence with restart/retry tests. No real EOD shadow snapshots or forward outcomes exist yet. See the dated Track 2/Shadow Store audit for detailed findings. 
+
+
+### Shadow persistence writer — design checkpoint (10-Nov-2026)
+
+A dedicated, opt-in shadow persistence workflow is the recommended future design; it is not implemented or enabled. It must serialize all writers with one shared GitHub Actions concurrency group, use optimistic latest-branch fetch/push retries (never force-push), validate and atomically replace complete JSONL partitions, and make reruns idempotent with an auditable manifest. It must remain separate from production EOD scanning, NSE fetching and Telegram delivery. Multi-run race, interruption/failure-injection, rerun, tamper and redaction tests are mandatory before enabling writes. See the dated audit report for the full protocol and open decisions. Latest Stage Event identity validation CI passed: 419 pytest + 33 V8 regression tests.
