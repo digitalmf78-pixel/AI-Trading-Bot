@@ -283,3 +283,36 @@ def test_stage_event_timestamp_must_be_utc_not_merely_timezone_aware():
             strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
             observed_at_utc="2026-11-10T15:30:00+05:30",
         )
+
+
+@pytest.mark.parametrize("reason_text", [
+    "upstream response token=abc123SECRET",
+    "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+    "contact user@example.com for account details",
+    "customer phone +91 98765 43210",
+    "private report https://example.invalid/report?api_key=secretvalue",
+])
+def test_stage_event_rejects_sensitive_free_text(reason_text):
+    with pytest.raises(SignalValidationError, match="Sensitive or account-derived text"):
+        build_stage_event(
+            signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+            strategy_version=SHA, stage_name="LIQUIDITY", status="WAIT_FOR_DATA",
+            reason_text=reason_text,
+        )
+
+
+def test_snapshot_rejects_sensitive_text_inside_allowlisted_field():
+    with pytest.raises(SignalValidationError, match="Sensitive or account-derived text"):
+        snapshot(signal_fields={"EODWatchlistReason": "credential=do-not-store"})
+
+
+def test_snapshot_rejects_sensitive_text_in_source_report_name():
+    with pytest.raises(SignalValidationError, match="Sensitive or account-derived text"):
+        snapshot(source_reports=["https://example.invalid/report?token=secret"])
+
+
+def test_snapshot_rejects_control_characters_and_oversized_free_text():
+    with pytest.raises(SignalValidationError, match="Control character"):
+        snapshot(signal_fields={"EODWatchlistReason": "bad\x00text"})
+    with pytest.raises(SignalValidationError, match="exceeds 2000"):
+        snapshot(signal_fields={"EODWatchlistReason": "x" * 2001})
