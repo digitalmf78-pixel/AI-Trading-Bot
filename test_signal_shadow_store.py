@@ -161,3 +161,31 @@ def test_stage_event_digest_is_verified_when_appended(tmp_path: Path):
     path = tmp_path / "events.jsonl"
     assert append_immutable_jsonl(path, [event], key_field="event_id",
                                   hash_field="event_id") == {"appended": 1, "duplicates": 0}
+
+
+def test_snapshot_append_rejects_unapproved_top_level_field_even_with_valid_hash():
+    row = snapshot()
+    row["private_note"] = "must not persist"
+    from signal_shadow_store import _canonical_json, _sha256
+    payload = {key: value for key, value in row.items()
+               if key not in {"WorkflowRunId", "WorkflowRunAttempt", "CreatedAtUTC", "snapshot_payload_sha256"}}
+    row["snapshot_payload_sha256"] = _sha256(_canonical_json(payload))
+    with pytest.raises(SignalValidationError, match="schema mismatch"):
+        append_immutable_jsonl(Path("unused.jsonl"), [row], key_field="signal_id",
+                               hash_field="snapshot_payload_sha256")
+
+
+def test_stage_event_append_rejects_unapproved_field_even_with_valid_hash():
+    from signal_shadow_store import _canonical_json, _sha256
+    event = build_stage_event(
+        signal_id="b" * 64, eod_date="2026-11-09", symbol="RELIANCE",
+        strategy_version=SHA, stage_name="DELIVERY_30D_AB", status="PASS",
+        observed_at_utc="2026-11-10T10:00:00+00:00",
+    )
+    event["account_size"] = 100000
+    payload = {key: value for key, value in event.items()
+               if key not in {"event_id", "ObservedAtUTC"}}
+    event["event_id"] = _sha256(_canonical_json(payload))
+    with pytest.raises(SignalValidationError, match="schema mismatch"):
+        append_immutable_jsonl(Path("unused-events.jsonl"), [event], key_field="event_id",
+                               hash_field="event_id")
