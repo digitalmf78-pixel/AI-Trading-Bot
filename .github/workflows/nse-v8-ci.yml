@@ -37,7 +37,7 @@ jobs:
 
       - name: Compile scanner and audit modules
         run: >-
-          python -m py_compile history_index.py bottom_detection.py delivery_consistency.py delivery_quantity_analysis.py potential_accumulation_analysis.py vcp_observation_analysis.py breakout_retest_observation.py hybrid_watchlists.py delivery_categories.py volume_gainer.py main_board_filter.py delivery_60_each_of_5_sessions.py v8_layers_14_41.py news_catalyst.py
+          python -m py_compile track2_full_mainboard.py history_index.py bottom_detection.py delivery_consistency.py delivery_quantity_analysis.py potential_accumulation_analysis.py vcp_observation_analysis.py breakout_retest_observation.py hybrid_watchlists.py delivery_categories.py volume_gainer.py main_board_filter.py delivery_60_each_of_5_sessions.py v8_layers_14_41.py news_catalyst.py
           sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py liquidity_filter.py fundamental_filter.py
           fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py
           fundamental_metric_verification.py fii_dii_activity.py risk_controls.py nse_xbrl_fetch.py
@@ -58,7 +58,7 @@ jobs:
           test_fundamental_metric_verification.py test_fii_dii_activity.py test_nse_xbrl_fetch.py
           test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py
           test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py
-          test_sanitize_public_artifacts.py test_signal_shadow_store.py test_signal_cohort_assembly.py test_rsi_informational_only.py
+          test_track2_full_mainboard.py test_sanitize_public_artifacts.py test_signal_shadow_store.py test_signal_cohort_assembly.py test_rsi_informational_only.py
           test_news_catalyst_parser.py test_upcoming_corporate_events.py test_bottom_detection.py test_delivery_consistency.py
 
       - name: Run V8 regression script
