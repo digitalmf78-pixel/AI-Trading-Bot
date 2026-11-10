@@ -57,8 +57,9 @@ jobs:
           from delivery_60_each_of_5_sessions import (
               AUDIT_COLUMNS,
               filter_five_session_delivery,
+              eligible_mainboard_eq_symbols,
           )
-          from main_board_filter import load_official_board_lists, apply_main_board_filter
+          from main_board_filter import load_official_board_lists
           from nse_trading_calendar import is_trading_session
           from sector_data import _download_official_etf_symbols
 
@@ -158,41 +159,19 @@ jobs:
                   & bhav["TtlTradgVol"].ge(0)
               ].copy()
 
-              if not official_etf_symbols and "FinInstrmNm" not in bhav.columns:
-                  write_empty(f"WAIT_FOR_DATA: ETF/MF classification unavailable for {day}")
+              try:
+                  eligible_symbols, universe_summary = eligible_mainboard_eq_symbols(
+                      bhav,
+                      main_symbols,
+                      sme_symbols,
+                      official_etf_symbols,
+                      source_status=board_source_label,
+                  )
+              except ValueError as exc:
+                  write_empty(f"WAIT_FOR_DATA: stock-universe audit failed for {day}: {exc}")
                   raise SystemExit(0)
-
-              etf_mask = bhav["TckrSymb"].isin(official_etf_symbols)
-              if "ISIN" in bhav.columns:
-                  etf_mask |= bhav["ISIN"].fillna("").astype(str).str.strip().str.upper().str.startswith("INF")
-              if "FinInstrmNm" in bhav.columns:
-                  instrument_name = bhav["FinInstrmNm"].fillna("").astype(str)
-                  etf_mask |= instrument_name.str.contains(
-                      r"\bAMC\s*-\s*", case=False, regex=True, na=False
-                  )
-                  etf_mask |= instrument_name.str.contains(
-                      r"\b(ETF|EXCHANGE TRADED FUND|MUTUAL FUND)\b",
-                      case=False, regex=True, na=False,
-                  )
-              excluded_etfs = set(bhav.loc[etf_mask, "TckrSymb"])
-              bhav = bhav.loc[~etf_mask].copy()
-
-              counts = bhav.groupby("TckrSymb").size()
-              ambiguous = set(counts[counts != 1].index)
-              if ambiguous:
-                  bhav = bhav.loc[~bhav["TckrSymb"].isin(ambiguous)].copy()
-
-              board_frame, board_audit = apply_main_board_filter(
-                  bhav,
-                  main_symbols,
-                  sme_symbols,
-                  source_status=board_source_label,
-              )
-              eligible_symbols_by_date[day] = set(board_frame["TckrSymb"].astype(str).str.upper())
-              print(
-                  f"[UNIVERSE] {day}: EQ={len(bhav)}; excluded_etf_mf={len(excluded_etfs)}; "
-                  f"ambiguous={len(ambiguous)}; official_main_board_eligible={len(eligible_symbols_by_date[day])}"
-              )
+              eligible_symbols_by_date[day] = eligible_symbols
+              print(f"[UNIVERSE] {day}: {universe_summary}")
 
           try:
               qualifying, audit, summary = filter_five_session_delivery(
