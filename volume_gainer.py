@@ -2817,12 +2817,14 @@ def write_technical_parameter_audit(candidates, eod_date):
 
 
 def select_top20_analysis_candidates(result, eod_date):
-    """Annotate every RVOL > 1.5 technical candidate after core EOD screens.
+    """Annotate liquidity-qualified candidates after the core EOD screens.
 
-    Delivery Category B has passed: every daily Delivery % across five valid sessions is >= 60.00%; Category A retains the five-day average status for reporting. A candidate
-    must also have valid 20-session RVOL data, a real Breakout/Pullback setup, constructive
-    trend/candle and setup-specific volume rules. Negative relative strength is
-    retained as a scoring/ranking warning, not a standalone hard rejection.
+    Delivery eligibility is the complete 30-calendar-day Category A OR B union:
+    A = average Delivery >=60.00%; B = every valid report day >=60.00%, with at
+    least five valid distinct reports. The strict five-session watchlist is separate.
+    RVOL is classified on the A/B union; only the liquidity-qualified cohort
+    proceeds into this technical analysis. Negative relative strength is retained
+    as a scoring/ranking warning, not a standalone hard rejection.
     Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
     """
     if result is None or result.empty:
@@ -2944,6 +2946,10 @@ def select_top20_analysis_candidates(result, eod_date):
     os.makedirs(os.path.dirname(audit_path), exist_ok=True)
     audit.to_csv(audit_path, index=False)
     os.makedirs("outputs", exist_ok=True)
+    # This cohort contains all liquidity-qualified A/B candidates, not only HIGH RVOL.
+    # Keep the old filename as a compatibility alias; new consumers should use
+    # the accurately named artifact below.
+    frame.to_csv(os.path.join("outputs", "v8_liquidity_qualified_pre_news_candidates.csv"), index=False)
     frame.to_csv(os.path.join("outputs", "v8_pre_news_rvol_gt_1_5_candidates.csv"), index=False)
 
     counts = audit["CandidateScreenStatus"].value_counts().to_dict()
@@ -3891,7 +3897,7 @@ def main():
         else:
             temp["SelectionReason"] = temp["SelectionStatus"]
         stage_frames.append(temp)
-    _append_stage(delivery_audit, "DELIVERY_5D", "DeliveryFilterStatus")
+    _append_stage(delivery_audit, "DELIVERY_30D_AB", "DeliveryFilterStatus")
     _append_stage(liquidity_audit, "LIQUIDITY_20D", "LiquidityFilterStatus")
     _append_stage(fundamental_audit, "FUNDAMENTAL", "FundamentalStatus", "FundamentalReason")
     _append_stage(result, "PORTFOLIO_RISK", "RiskControlStatus", "RiskControlReason")
