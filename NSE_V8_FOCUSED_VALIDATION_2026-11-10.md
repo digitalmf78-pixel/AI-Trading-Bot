@@ -47,7 +47,7 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Fixed a malformed f-string in the one-to-many evidence series-mismatch diagnostic before attempting the next test run.
 - Added fail-closed guards for generated coverage columns when stage reports are missing or empty.
 - Added validation for duplicate columns and reserved coverage columns in empty News/Event evidence frames.
-- Added four new cohort tests. Current source contains 31 cohort test functions and 16 shadow-store test functions (47 total).
+- Added four new cohort tests. Current source contains 31 cohort test functions and 19 shadow-store test functions (50 total).
 - Added the working audit branch to the CI workflow's push branch allow-list. This workflow-file change is confined to the working branch; main remains untouched.
 - A status lookup for the workflow-triggering commit returned no status checks yet. Therefore the latest 44-test revision and full repository CI are **not yet confirmed executed**. The previously reported 34-pass result remains limited to the earlier revision only.
 
@@ -57,3 +57,12 @@ After the isolated 34-test execution above, additional cohort validation was add
 - Added empty-stage-report schema checks: duplicate columns and reserved internal join keys now fail closed even when the DataFrame has zero rows. Added two tests for these cases.
 - Current test inventory is 31 cohort + 16 shadow-store test functions (47 total).
 - The latest pushed commit has no status checks and no workflow run visible through the connected GitHub actions read methods. The available workflow-run helper is limited to pull-request-triggered runs; no workflow-dispatch/write action is exposed. Consequently CI execution is still pending/unverified.
+
+
+## Shadow-store schema hardening (2026-11-10)
+- Append-time and existing-file validation now enforce exact top-level schemas for snapshot records and stage-event records. Recomputing a valid digest no longer permits extra arbitrary fields to be persisted.
+- Snapshot signal_fields are rechecked against the approved field allow-list at append/read validation, and source_reports must be a list of strings.
+- Sensitive-key rejection is repeated for persisted records, not only at builder time.
+- Non-mapping records fail closed with a domain validation error.
+- Added three shadow-store test functions (one parameterized), bringing the current inventory to 31 Cohort Assembly + 19 Signal Shadow Store test functions = 50 functions. Pytest-expanded case count is 51 because the non-mapping test has two parameters.
+- These latest changes have not been executed in a Python test environment. Prior 34-pass result remains for an earlier revision only; full CI remains unverified.
