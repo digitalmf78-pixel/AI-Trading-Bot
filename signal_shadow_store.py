@@ -37,6 +37,9 @@ FORBIDDEN_KEY_PARTS = (
     "token", "password", "secret", "api_key", "apikey", "credential",
     "positionqty", "riskbudget", "proposedexposure", "accountsize",
 )
+# Opaque digests/commit IDs are validated by their identity/hash contracts;
+# scanning their hexadecimal text as phone-like free text causes false positives.
+OPAQUE_HASH_FIELDS = {"snapshot_payload_sha256", "signal_id", "event_id", "StrategyVersion"}
 
 
 class SignalStoreError(RuntimeError):
@@ -87,6 +90,8 @@ def _reject_sensitive_text(value: Any, path: str = "$") -> None:
     """Reject credentials, private URLs, and common personal/account identifiers in text values."""
     if isinstance(value, Mapping):
         for key, child in value.items():
+            if str(key) in OPAQUE_HASH_FIELDS:
+                continue
             _reject_sensitive_text(child, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
