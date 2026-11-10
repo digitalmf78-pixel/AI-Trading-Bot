@@ -107,6 +107,8 @@ def _verified_record_digest(record: Mapping[str, Any], hash_field: str) -> str:
 
 def _validate_record_schema(record: Mapping[str, Any], hash_field: str) -> None:
     """Reject unexpected persisted fields, even if a caller recomputes a valid hash."""
+    if not isinstance(record, Mapping):
+        raise SignalValidationError("Persisted signal record must be a mapping")
     if hash_field == "snapshot_payload_sha256":
         allowed = {
             "schema_version", "signal_id", "EODDate", "Symbol", "SignalType",
