@@ -25,7 +25,7 @@ def _perf_timed(stage_name):
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter, get_delivery_sessions
-from nse_trading_calendar import CalendarCoverageError, is_trading_session, official_session_reason
+from nse_trading_calendar import CalendarCoverageError, calendar_coverage_warnings, is_trading_session, official_session_reason
 from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
 from delivery_quantity_analysis import build_delivery_quantity_report
@@ -3345,6 +3345,11 @@ def main():
     print(
         "\nPython script started successfully."
     )
+
+    # Fail-closed calendar coverage is enforced at use time; warn early so the
+    # official NSE holiday list can be refreshed before the year rolls over.
+    for calendar_warning in calendar_coverage_warnings():
+        print(calendar_warning)
 
     # Exclude ETF units consistently from current EOD and historical volume data.
     refresh_official_etf_symbols()

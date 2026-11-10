@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from nse_trading_calendar import calendar_coverage_warnings
+
 CALENDAR_PATH = Path("data") / "inputs" / "nse_trading_calendar.json"
 
 
@@ -73,3 +75,17 @@ def test_calendar_special_sessions_are_valid_dates():
                     date.fromisoformat(d)
                 except ValueError:
                     pytest.fail(f"Invalid special session date in year {year}: {d}")
+
+
+def test_warning_is_emitted_after_november_when_next_year_missing():
+    warnings = calendar_coverage_warnings(date(2026, 11, 10))
+    assert any("[CALENDAR][WARN]" in message and "2027" in message for message in warnings)
+
+
+def test_no_next_year_warning_before_november():
+    assert calendar_coverage_warnings(date(2026, 6, 1)) == []
+
+
+def test_current_year_missing_emits_clear_error():
+    warnings = calendar_coverage_warnings(date(2030, 1, 2))
+    assert any("[CALENDAR][ERROR]" in message and "2030" in message for message in warnings)

@@ -70,3 +70,35 @@ def official_session_reason(value: Any) -> str:
         payload = _load_calendar()
         return str(payload["years"][str(day.year)]["special_sessions"][day.isoformat()])
     return status
+
+
+def calendar_coverage_warnings(today: Any | None = None) -> list[str]:
+    """Non-fatal warnings when the official calendar is about to expire.
+
+    The scanner already fails closed (WAIT_FOR_DATA) when a year is missing.
+    This helper makes the expiry visible in logs at least 60 days in advance
+    instead of only failing on the first scan of the new year.
+    """
+    day = _as_date(today) if today is not None else date.today()
+    try:
+        payload = _load_calendar()
+    except CalendarCoverageError as exc:
+        return [str(exc)]
+
+    years = payload.get("years", {})
+    warnings: list[str] = []
+    current_year = str(day.year)
+    next_year = str(day.year + 1)
+
+    if current_year not in years:
+        warnings.append(
+            f"[CALENDAR][ERROR] official NSE calendar not configured for {current_year}; "
+            "scanning will fail closed with WAIT_FOR_DATA."
+        )
+    elif day.month >= 11 and next_year not in years:
+        warnings.append(
+            f"[CALENDAR][WARN] official NSE calendar for {next_year} is missing. "
+            "Runs after 31-Dec will fail closed until the official NSE holiday list "
+            "is added (60-day rule)."
+        )
+    return warnings
