@@ -187,3 +187,8 @@ The working decisions, confirmed thresholds, pending parameters and phase-by-pha
 - Both windows cover seven calendar dates inclusive, including weekends/holidays.
 - This changes News evidence lookback only; Corporate Events retains its separate 90-calendar-day source-discovery lookback. Official evidence remains primary and secondary coverage remains unverified.
 - The original Master Specification is not rewritten; see the dated implementation audit for validation status.
+
+
+## Signal shadow-store status — audit only (10-Nov-2026)
+
+The append-only JSONL snapshot/event helper and full-Mainboard cohort assembly helper remain standalone and are **not** connected to the production scanner or scheduled EOD workflow. The shadow-store audit covers immutable identity/digests, exact retry no-ops, conflicts, tamper detection, and free-text redaction. A one-shot `source_reports` generator-consumption defect was fixed with a regression test. Before integration, define the date partition/manifest and retention policy, validate stage-event-to-snapshot identity linkage, and implement serialized single-writer GitHub persistence with restart/retry tests. No real EOD shadow snapshots or forward outcomes exist yet. See the dated Track 2/Shadow Store audit for detailed findings. 
