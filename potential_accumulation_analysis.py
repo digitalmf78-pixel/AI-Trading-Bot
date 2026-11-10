@@ -214,6 +214,7 @@ def build_potential_accumulation_report(
     historical,
     delivery_sessions,
     asof_date,
+    output_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """Create non-gating quantity/price/base/supply observations for A/B names."""
     if candidates is None or candidates.empty:
