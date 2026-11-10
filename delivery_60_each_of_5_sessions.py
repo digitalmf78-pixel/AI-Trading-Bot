@@ -156,7 +156,7 @@ def eligible_mainboard_eq_symbols(
             r"\bAMC\s*-\s*", case=False, regex=True, na=False
         )
         etf_mask |= instrument_name.str.contains(
-            r"\b(ETF|EXCHANGE TRADED FUND|MUTUAL FUND)\b",
+            r"\b(?:ETF|EXCHANGE TRADED FUND|MUTUAL FUND)\b",
             case=False, regex=True, na=False,
         )
     excluded_etf_mf = set(frame.loc[etf_mask, "TckrSymb"])

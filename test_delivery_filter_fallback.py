@@ -58,8 +58,16 @@ def test_delivery_audit_labels_actual_window_when_asof_report_missing(monkeypatc
     assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
     assert row["DeliveryAsOfDate"] == "2026-10-23"
     assert bool(row["DeliveryAsOfReportAvailable"]) is False
-    assert row["DeliveryWindowStartDate"] == "2026-10-15"
-    assert row["DeliveryWindowEndDate"] == "2026-10-22"
+    assert row["DeliveryWindowStartDate"] == "2026-09-24"
+    assert row["DeliveryWindowEndDate"] == "2026-10-23"
+    assert row["DeliveryLatestReportDate"] == "2026-10-22"
+    assert row["DeliveryMin30D"] == 55.0
+    assert row["DeliveryMax30D"] == 70.0
+    assert row["DeliverySessions"] == 5
+    assert row["DeliveryExpectedSessions30D"] == sum(
+        1 for offset in range(30) if is_trading_session(date(2026, 10, 23) - timedelta(days=offset))
+    )
+    assert row["DeliveryCoveragePct"] > 0
     assert row["LatestDeliveryPct"] == 62.0
 
 
@@ -104,8 +112,15 @@ def test_30d_category_a_uses_average_of_all_valid_sessions_and_b_checks_each(mon
     row = audit.iloc[0]
     assert row["DeliverySessions"] == 6
     assert row["AvgDelivery30D"] == 60.0
+    assert row["DeliveryMin30D"] == 50.0
+    assert row["DeliveryMax30D"] == 62.0
+    assert row["DeliveryWindowStartDate"] == "2026-09-10"
+    assert row["DeliveryWindowEndDate"] == "2026-10-09"
     assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+    assert row["DeliveryMax30D"] == 62.0
+    assert row["DeliveryWindowStartDate"] == "2026-09-10"
+    assert row["DeliveryWindowEndDate"] == "2026-10-09"
 
 
 def test_30d_candidate_with_fewer_than_five_symbol_sessions_waits(monkeypatch, tmp_path):
