@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping
+import re
 
 import pandas as pd
 
@@ -43,6 +44,9 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
         raise CohortAssemblyError(f"{label}: expected a pandas DataFrame")
     if SYMBOL_COLUMN not in frame.columns:
         raise CohortAssemblyError(f"{label}: missing required {SYMBOL_COLUMN} column")
+    if not frame.columns.is_unique:
+        duplicates = frame.columns[frame.columns.duplicated()].astype(str).unique().tolist()
+        raise CohortAssemblyError(f"{label}: duplicate column names are ambiguous: {duplicates[:20]}")
     out = frame.copy()
     out["_cohort_symbol_key"] = out[SYMBOL_COLUMN].map(_normalise_symbol)
     if (out["_cohort_symbol_key"] == "").any():
@@ -60,7 +64,14 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
 
 
 def _validate_series_alignment(base: pd.DataFrame, report: pd.DataFrame, label: str) -> None:
-    if "_cohort_series_key" not in base.columns or "_cohort_series_key" not in report.columns:
+    base_has_series = "_cohort_series_key" in base.columns
+    report_has_series = "_cohort_series_key" in report.columns
+    shared_symbols = set(base["_cohort_symbol_key"]) & set(report["_cohort_symbol_key"])
+    if shared_symbols and base_has_series != report_has_series:
+        raise CohortAssemblyError(
+            f"{label}: SctySrs must be present on both base and report when symbols overlap"
+        )
+    if not base_has_series or not report_has_series:
         return
     aligned = base[["_cohort_symbol_key", "_cohort_series_key"]].merge(
         report[["_cohort_symbol_key", "_cohort_series_key"]],
@@ -98,10 +109,14 @@ def assemble_mainboard_cohort(
     base["CohortIdentityKey"] = base["_cohort_symbol_key"]
     diagnostics: list[dict] = []
 
+    seen_stage_names: set[str] = set()
     for stage, report in (reports or {}).items():
         safe_stage = str(stage).strip()
-        if not safe_stage:
-            raise CohortAssemblyError("Stage name cannot be blank")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", safe_stage):
+            raise CohortAssemblyError(f"Invalid stage name {stage!r}; use letters, digits, and underscores")
+        if safe_stage in seen_stage_names:
+            raise CohortAssemblyError(f"Duplicate stage name after normalization: {safe_stage}")
+        seen_stage_names.add(safe_stage)
         coverage_col = f"{safe_stage}__CoverageStatus"
         if report is None:
             base[coverage_col] = "NOT_EVALUATED"
