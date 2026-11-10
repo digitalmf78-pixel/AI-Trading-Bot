@@ -1,7 +1,8 @@
 name: 5-Day Delivery Above 60% Watchlist (Reuse V8 Cache)
 
-# This is a separate shortlist-only workflow. It does not edit or run the main V8 scanner.
-# A symbol passes only when its Delivery % is strictly greater than 60 on EACH of 5 valid sessions.
+# Separate Delivery-only shortlist. Uses the same official stock universe as V8,
+# but applies no RVOL, liquidity, fundamental, technical, or risk filters.
+# A stock passes only when Delivery % is >=60.00% on EACH of 5 valid sessions.
 on:
   workflow_dispatch:
   schedule:
@@ -19,7 +20,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Keep the exact cache paths/key prefix used by the main NSE V8 workflow.
+      # Restore the same Bhavcopy, delivery, and official universe caches as V8.
       - name: Restore existing NSE V8 data cache
         uses: actions/cache@v5
         with:
@@ -27,9 +28,10 @@ jobs:
             data/bhavcopy/
             data/cache/delivery/
             data/cache/sector_index_daily/
+            data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv
-          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
 
@@ -50,24 +52,30 @@ jobs:
           from pathlib import Path
           from zoneinfo import ZoneInfo
           import pandas as pd
+          import requests
           from delivery_filter import get_delivery_sessions
+          from delivery_60_each_of_5_sessions import (
+              AUDIT_COLUMNS,
+              filter_five_session_delivery,
+          )
+          from main_board_filter import load_official_board_lists, apply_main_board_filter
           from nse_trading_calendar import is_trading_session
+          from sector_data import _download_official_etf_symbols
 
           OUTPUT = Path("delivery_60_each_of_5_sessions_watchlist.csv")
+          AUDIT = Path("delivery_60_each_of_5_sessions_audit.csv")
           REQUIRED_SESSIONS = 5
-          MIN_DELIVERY_INCLUSIVE = 60.0
           MAX_ASOF_LOOKBACK_DAYS = 10
 
           def write_empty(reason):
               pd.DataFrame(columns=["SYMBOL"]).to_csv(OUTPUT, index=False)
-              print(f"[RESULT] {reason}; empty SYMBOL-only CSV written")
+              pd.DataFrame(columns=AUDIT_COLUMNS).to_csv(AUDIT, index=False)
+              print(f"[RESULT] {reason}; empty SYMBOL-only shortlist and audit written")
 
           today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
           sessions = None
           asof = None
           last_error = None
-          # If today's EOD report is not published yet, locate the most recent date
-          # that has a valid report, then obtain five distinct valid sessions ending there.
           for offset in range(MAX_ASOF_LOOKBACK_DAYS + 1):
               candidate_date = today_ist - timedelta(days=offset)
               if not is_trading_session(candidate_date):
@@ -90,51 +98,118 @@ jobs:
 
           sessions = sorted(sessions, key=lambda item: item[0])
           print("[SESSIONS] oldest-to-newest: " + ", ".join(day.isoformat() for day, _ in sessions))
-          daily_maps = []
-          for day, raw in sessions:
-              frame = raw.copy()
-              frame.columns = [str(c).strip().upper().replace(" ", "_") for c in frame.columns]
-              required = {"SYMBOL", "SERIES", "DELIV_PER"}
-              if not required.issubset(frame.columns):
-                  write_empty(f"WAIT_FOR_DATA: required columns missing for {day}")
+
+          # Resolve the same official Main Board / SME classification used by V8.
+          http = requests.Session()
+          try:
+              main_symbols, sme_symbols, board_sources = load_official_board_lists(session=http)
+          except Exception as exc:
+              write_empty(f"WAIT_FOR_DATA: official Main Board/SME universe unavailable: {type(exc).__name__}: {exc}")
+              raise SystemExit(0)
+          board_source_label = (
+              f"NSE_MAIN={board_sources['main_board_source']};"
+              f"NSE_SME={board_sources['sme_source']}"
+          )
+
+          # Official ETF symbols are preferred. Bhavcopy ISIN and instrument-name
+          # checks remain active as the same conservative fallback used by V8.
+          official_etf_symbols = _download_official_etf_symbols(http) or set()
+          print(
+              f"[UNIVERSE] official_main_board={len(main_symbols)} "
+              f"official_sme={len(sme_symbols)} official_etf={len(official_etf_symbols)} "
+              f"sources={board_source_label}"
+          )
+
+          eligible_symbols_by_date = {}
+          for day, _ in sessions:
+              bhav_path = Path("data/bhavcopy") / f"bhavcopy_{day:%Y%m%d}.csv"
+              if not bhav_path.is_file():
+                  write_empty(f"WAIT_FOR_DATA: cached official Bhavcopy missing for {day}")
                   raise SystemExit(0)
-              frame["SYMBOL"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
-              frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
-              frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
-              frame = frame[(frame["SERIES"] == "EQ") & frame["DELIV_PER"].between(0, 100)]
-              # Duplicate SYMBOL rows are ambiguous and are excluded for that session.
-              counts = frame.groupby("SYMBOL").size()
+
+              bhav = pd.read_csv(bhav_path, dtype=str)
+              bhav.columns = [str(c).strip() for c in bhav.columns]
+              required = {"TckrSymb", "SctySrs", "ClsPric", "TtlTradgVol"}
+              if not required.issubset(bhav.columns):
+                  write_empty(f"WAIT_FOR_DATA: Bhavcopy schema incomplete for {day}: missing={sorted(required - set(bhav.columns))}")
+                  raise SystemExit(0)
+
+              date_col = next((c for c in ("BizDt", "TradDt", "TRADDT", "BUSINESS_DATE", "DATE") if c in bhav.columns), None)
+              if date_col is None:
+                  write_empty(f"WAIT_FOR_DATA: Bhavcopy has no internal business date for {day}")
+                  raise SystemExit(0)
+              parsed_dates = pd.to_datetime(bhav[date_col], errors="coerce").dt.date.dropna().unique().tolist()
+              if set(parsed_dates) != {day}:
+                  write_empty(f"WAIT_FOR_DATA: Bhavcopy date mismatch for {day}: {parsed_dates}")
+                  raise SystemExit(0)
+
+              bhav["TckrSymb"] = bhav["TckrSymb"].astype(str).str.strip().str.upper()
+              bhav["SctySrs"] = bhav["SctySrs"].astype(str).str.strip().str.upper()
+              bhav["ClsPric"] = pd.to_numeric(bhav["ClsPric"], errors="coerce")
+              bhav["TtlTradgVol"] = pd.to_numeric(bhav["TtlTradgVol"], errors="coerce")
+              bhav = bhav[
+                  bhav["SctySrs"].eq("EQ")
+                  & bhav["ClsPric"].gt(0)
+                  & bhav["TtlTradgVol"].ge(0)
+              ].copy()
+
+              etf_mask = bhav["TckrSymb"].isin(official_etf_symbols)
+              if "ISIN" in bhav.columns:
+                  etf_mask |= bhav["ISIN"].fillna("").astype(str).str.strip().str.upper().str.startswith("INF")
+              if "FinInstrmNm" in bhav.columns:
+                  etf_mask |= bhav["FinInstrmNm"].fillna("").astype(str).str.contains(
+                      r"\bAMC\s*-\s*", case=False, regex=True, na=False
+                  )
+              excluded_etfs = set(bhav.loc[etf_mask, "TckrSymb"])
+              bhav = bhav.loc[~etf_mask].copy()
+
+              counts = bhav.groupby("TckrSymb").size()
               ambiguous = set(counts[counts != 1].index)
               if ambiguous:
-                  frame = frame[~frame["SYMBOL"].isin(ambiguous)]
-              daily_maps.append(frame.set_index("SYMBOL")["DELIV_PER"].to_dict())
-              print(f"[SESSION] {day}: valid EQ symbols={len(daily_maps[-1])}; threshold is >= {MIN_DELIVERY_INCLUSIVE:.2f}%")
+                  bhav = bhav.loc[~bhav["TckrSymb"].isin(ambiguous)].copy()
 
-          common_symbols = set(daily_maps[0])
-          for day_map in daily_maps[1:]:
-              common_symbols.intersection_update(day_map)
+              board_frame, board_audit = apply_main_board_filter(
+                  bhav,
+                  main_symbols,
+                  sme_symbols,
+                  source_status=board_source_label,
+              )
+              eligible_symbols_by_date[day] = set(board_frame["TckrSymb"].astype(str).str.upper())
+              print(
+                  f"[UNIVERSE] {day}: EQ={len(bhav)}; excluded_etf_mf={len(excluded_etfs)}; "
+                  f"ambiguous={len(ambiguous)}; official_main_board_eligible={len(eligible_symbols_by_date[day])}"
+              )
 
-          # Strictly greater than 60.00 on every single one of the five sessions.
-          qualifying = sorted(
-              symbol for symbol in common_symbols
-              if all(day_map[symbol] >= MIN_DELIVERY_INCLUSIVE for day_map in daily_maps)
-          )
-          print(f"[DELIVERY] qualifying_symbols_all_5_days_at_least_60={len(qualifying)}")
-          print(f"[DELIVERY] symbols_missing_any_session={len(set.union(*(set(m) for m in daily_maps)) - common_symbols)}")
-          OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+          try:
+              qualifying, audit, summary = filter_five_session_delivery(
+                  sessions,
+                  eligible_symbols_by_date=eligible_symbols_by_date,
+                  minimum_delivery=60.0,
+              )
+          except (ValueError, KeyError) as exc:
+              write_empty(f"WAIT_FOR_DATA: five-session Delivery audit failed: {type(exc).__name__}: {exc}")
+              raise SystemExit(0)
+
           pd.DataFrame({"SYMBOL": qualifying}).to_csv(OUTPUT, index=False)
+          audit.to_csv(AUDIT, index=False)
+          print(f"[DELIVERY] qualifying_symbols_all_5_days_at_least_60={len(qualifying)}")
+          print(f"[DELIVERY] common_eligible_symbols={summary['common_symbols']}")
+          print(f"[DELIVERY] symbols_missing_any_session={summary['symbols_missing_any_session']}")
+          print(f"[DONE] wrote {OUTPUT} rows={len(qualifying)} asof={asof}")
+          print(f"[DONE] wrote {AUDIT} rows={len(audit)} with exact daily percentages")
           if qualifying:
               print("\n===== FINAL SHORTLIST: SYMBOLS ONLY =====")
               print("\n".join(qualifying))
           else:
-              print("No symbols passed the >=60% rule on all five sessions.")
-          print(f"[DONE] wrote {OUTPUT} rows={len(qualifying)} asof={asof}")
+              print("No official Main Board stock passed the >=60% rule on all five sessions.")
           PY
 
-      - name: Upload shortlist CSV
+      - name: Upload shortlist and daily audit
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: delivery-60-each-of-5-sessions-${{ github.run_id }}
-          path: delivery_60_each_of_5_sessions_watchlist.csv
+          path: |
+            delivery_60_each_of_5_sessions_watchlist.csv
+            delivery_60_each_of_5_sessions_audit.csv
           if-no-files-found: warn
