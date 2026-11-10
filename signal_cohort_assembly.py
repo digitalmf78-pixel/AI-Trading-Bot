@@ -165,6 +165,12 @@ def assemble_mainboard_cohort(
         })
 
         payload_columns = [c for c in keyed_report.columns if c not in {"_cohort_symbol_key", "_cohort_series_key"}]
+        reserved_payload_columns = {"CoverageStatus", "CoverageReason"}
+        reserved_payload_collisions = sorted(reserved_payload_columns.intersection(map(str, payload_columns)))
+        if reserved_payload_collisions:
+            raise CohortAssemblyError(
+                f"{safe_stage}: report payload uses reserved coverage field names: {reserved_payload_collisions}"
+            )
         renamed = keyed_report[["_cohort_symbol_key"] + payload_columns].rename(
             columns={c: f"{safe_stage}__{c}" for c in payload_columns}
         )
