@@ -628,6 +628,7 @@ def _premarket_news_status(official_count: int, secondary_count: int, api_covere
 UPCOMING_EVENT_COLUMNS = [
     "EODDate", "TckrSymb", "EventType", "EventDate", "AnnouncementDate",
     "Headline", "Source", "SourceType", "URL", "Status", "LookbackDays",
+    "DaysToEvent", "EventHorizonStatus",
 ]
 
 _EVENT_KEYWORDS = re.compile(
@@ -728,9 +729,27 @@ def _upcoming_event_rows_for_item(
         "LookbackDays": str(int(lookback_days)),
     }
     if future_dates:
-        return [{**base, "EventDate": d.isoformat(), "Status": "OFFICIAL_DATE_CONFIRMED"} for d in future_dates]
+        rows = []
+        for event_date in future_dates:
+            days_to_event = (event_date - ref).days
+            horizon_status = (
+                "NEXT_20_CALENDAR_DAYS"
+                if 1 <= days_to_event <= 20
+                else "FUTURE_OUTSIDE_20_DAY_HORIZON"
+            )
+            rows.append({
+                **base,
+                "EventDate": event_date.isoformat(),
+                "Status": "OFFICIAL_DATE_CONFIRMED",
+                "DaysToEvent": str(days_to_event),
+                "EventHorizonStatus": horizon_status,
+            })
+        return rows
     # Keep an explicit diagnostic row, but do not claim the event is upcoming.
-    return [{**base, "EventDate": "", "Status": "DATE_NOT_FOUND_OR_NO_FUTURE_DATE"}]
+    return [{
+        **base, "EventDate": "", "Status": "DATE_NOT_FOUND_OR_NO_FUTURE_DATE",
+        "DaysToEvent": "", "EventHorizonStatus": "NOT_CLASSIFIED_NO_FUTURE_DATE",
+    }]
 
 
 def _write_upcoming_events_report(
@@ -761,6 +780,7 @@ def _write_upcoming_events_report(
                 "Headline": "", "Source": "NSE India", "SourceType": "PRIMARY_OFFICIAL",
                 "URL": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
                 "Status": "NO_MATCHING_UPCOMING_EVENT_FOUND", "LookbackDays": "90",
+                "DaysToEvent": "", "EventHorizonStatus": "NO_MATCHING_EVENT_FOUND",
             })
         else:
             final_rows.append({
@@ -768,6 +788,7 @@ def _write_upcoming_events_report(
                 "EventType": "", "EventDate": "", "AnnouncementDate": "",
                 "Headline": "", "Source": "", "SourceType": "",
                 "URL": "", "Status": "WAIT_FOR_DATA", "LookbackDays": "90",
+                "DaysToEvent": "", "EventHorizonStatus": "WAIT_FOR_DATA",
             })
     out = pd.DataFrame(final_rows, columns=UPCOMING_EVENT_COLUMNS)
     out.to_csv("outputs/v8_upcoming_corporate_events.csv", index=False)
