@@ -1,5 +1,6 @@
 # NSE V8.0 — Phase-wise Implementation Map
 **Date:** 10-Nov-2026  
+**EOD baseline date:** 2026-11-09  
 **Source plan:** `NSE_V8_Master_Implementation_Log_News_Events_2026-11-09.txt` (Version 1.1)  
 **Repository:** digitalmf78-pixel/AI-Trading-Bot  
 **Base:** main  
@@ -32,6 +33,16 @@
 - Working branch created: `audit/implementation-roadmap-2026-11-10`.
 - This roadmap was committed on the working branch only. No production source or main-branch file was changed.
 - Main source flow, cohort construction and the 09-Nov EOD artifact have been inspected. Workflow scheduler details and a full Track 1 regression replay remain to be verified.
+
+## Step 1 — Signal Log + Shadow Run Foundation
+**Priority: FIRST IMPLEMENTATION STEP; OBSERVATIONAL ONLY**
+1. Persist every daily candidate and its complete point-in-time evidence snapshot.
+2. Record each stage transition, entry/stop/target proposal, source, status, rejection and WAIT reason.
+3. Link signals to subsequent 5/10/20-session outcomes, including MFE/MAE when the future horizon is complete.
+4. Run alongside the current production scanner; do not change Track 1 or Track 2 selection gates.
+5. Record strategy/code version, EOD date, data coverage, fees/slippage assumptions and missing-data flags.
+6. Prevent look-ahead bias; do not use future values in signal-time decisions.
+**Exit criteria:** append-only daily signal history, reproducible shadow outcomes and regression tests for duplicate EOD runs and point-in-time isolation.
 
 ## Phase 1 — Data contracts and canonical schemas
 **Status: AUDIT IN PROGRESS; schema design documented**
@@ -125,13 +136,13 @@
 7. Verify actual Telegram delivery and message content; code payload alone is not proof.
 **Exit criteria:** actual Telegram messages show all four sections with correct order and data provenance.
 
-## Phase 10 — Backtest / Shadow Run
-**Status: PLANNED**
+## Later validation extension — Historical Backtest and Performance Analysis
+**Status: PLANNED; builds on Step 1 signal history**
 1. Use point-in-time historical inputs; prevent look-ahead bias.
 2. Record survivorship bias, fees, slippage, corporate actions, event timing and data gaps.
-3. Evaluate early watchlist progression and 5/10/20-session MFE/MAE.
+3. Evaluate early watchlist progression, 5/10/20-session MFE/MAE, win rate, average R and drawdown.
 4. Do not describe scanner output as a profit guarantee.
-**Exit criteria:** reproducible historical and shadow reports with assumptions and limitations.
+**Exit criteria:** reproducible historical reports with assumptions and limitations.
 
 ## Phase 11 — Release and Verification
 **Status: PLANNED**
@@ -142,12 +153,27 @@
 - Cache persistence and secret safety verified.
 - Only then prepare a PR for user review; no automatic merge.
 
+## Updated decision register — user review required
+1. Fundamental hard-fail: which exact fields/statuses, if any, can reject a stock?
+2. Sector veto vs informational tag/priority input.
+3. Core Technical as Trade Entry gate vs rejection from all stock research/watchlists.
+4. Distribution handling: hard reject, priority downgrade, risk alert or informational tag.
+5. 52-week-high / price-discovery target rule when no overhead resistance exists.
+6. Stop formula, setup-specific invalidation level, ATR buffer and maximum stop-distance cap.
+7. Target hierarchy and R:R treatment for breakout, pullback and range-bound setups.
+8. Entry-zone anchors and tolerances separately for breakout and pullback/retest.
+9. Relative Strength role: tag, priority score or hard gate; benchmark and lookback.
+10. Approved Module B intraday provider, interval, rate limits, cost, timestamp and fallback.
+
+These are open decisions, not approved implementation rules. No new gate or formula may be introduced before approval.
+
 ## Decisions that must not be guessed
 - Numeric weights/scores and P1–P6 priority thresholds.
 - Sideways/Dip numeric thresholds and minimum evidence requirements beyond those already in the source plan.
 - Exact fixed-base width/duration and VCP contraction count/depth.
 - Pocket Pivot formula/lookback, false-breakout buffer and retest window.
 - Event materiality ranking and source/provider quotas.
+- All items in the updated decision register above.
 - Any change to Delivery A/B, RVOL, Liquidity, Fundamentals boundary, EMA44 gate, 3+1 confirmation or risk controls.
 
 ## Working protocol
