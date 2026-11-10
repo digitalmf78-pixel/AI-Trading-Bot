@@ -33,3 +33,11 @@ After this correction, all 34 focused tests passed in the isolated harness.
 2. Review the complete repository test suite for integration interactions.
 3. Keep both observational modules unwired until full validation and explicit production-integration approval.
 4. Keep main branch unchanged; continue work only on `audit/implementation-roadmap-2026-11-10`.
+
+
+## Subsequent hardening after the 34-test run
+After the isolated 34-test execution above, additional cohort validation was added:
+- Optional series metadata absence is now recorded as a diagnostic rather than universally rejecting otherwise unique symbol joins; supplied series mismatches still fail closed.
+- Reserved internal columns, generated cohort fields, generated stage payload/coverage fields, and one-to-many evidence coverage fields are protected against silent overwrites.
+- Duplicate evidence columns are rejected.
+- New cohort tests were added for these cases. **These newly added tests have not yet been executed**, so the previously reported 34-pass result applies only to the exact source revision tested before these subsequent additions. The current test files contain 24 cohort test functions and 16 shadow-store test functions (46 total); current full focused re-run is pending.
