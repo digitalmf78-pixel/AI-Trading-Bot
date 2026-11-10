@@ -33,14 +33,17 @@ The four separate outputs are:
 - No Top-20 or Top-50 shortlist cap.
 - Use the official NSE trading calendar, including notified special sessions. Missing data on an actual session is `WAIT_FOR_DATA`.
 
-### Delivery A/B — current authoritative eligibility rule
+### Delivery A/B — clarified authoritative eligibility rule (10-Nov-2026)
 - Lookback: the 30 calendar days ending on and including the EOD as-of date.
-- Count only distinct, valid NSE Delivery report dates not later than the as-of date.
-- Require at least 5 valid distinct reports; otherwise `WAIT_FOR_DATA`.
-- **Category A:** arithmetic average Delivery % across all valid reports in that 30-calendar-day window is **>=60.00%**. Exactly 60.00% passes.
-- **Category B:** every valid report's Delivery % in that same window is **>=60.00%**. Exactly 60.00% passes.
-- Evaluate A and B independently. Eligibility is **A OR B**. Preserve A_ONLY and A_AND_B membership/status and avoid duplicate symbols.
-- Keep the existing 5D/10D/20D consistency fields observational; they must not silently replace the 30-calendar-day A/B rule.
+- Count **all** valid, distinct, candidate-specific NSE Delivery report sessions in that window, never after the as-of date. Do not limit the production calculation to the latest five reports.
+- Minimum: at least 5 valid distinct reports; fewer means `WAIT_FOR_DATA`, never PASS/FAIL on incomplete evidence.
+- If more than 5 valid sessions exist, use **every valid session in the 30-day window** for both A and B; do not stop at five or discard earlier in-window valid reports.
+- **Category A — Average Delivery Strength:** arithmetic average Delivery % across all valid sessions is **>=60.00%**. Exactly 60.00% passes. A daily value below 60% does not independently fail A when the full-window average remains >=60%.
+- **Category B — Consistent Daily Delivery Strength:** every valid session in the same window must be **>=60.00%**. Exactly 60.00% passes. One valid session below 60% fails B, but A is evaluated independently.
+- Evaluate A and B independently. Eligibility is **A OR B**. Preserve `A_ONLY`, `A_AND_B` membership/status and de-duplicate symbols. B is a stronger consistency classification, not a BUY signal.
+- Required report fields per stock: as-of date; window start/end; valid session count; coverage where determinable; every session date and daily Delivery %; average, minimum and maximum daily Delivery %; A status; B status; membership; and PASS/FAIL/WAIT_FOR_DATA reason. Show actual valid-session count (e.g. 5, 12, 20), not an assumed 30 trading sessions.
+- 5D/10D/20D fields remain additional observations only; they do not replace the 30-calendar-day A/B rule.
+- The separate strict five-session Delivery-only watchlist remains a distinct artifact and is not the production 30-calendar-day A/B pipeline.
 
 ### RVOL — calculate only after Delivery A/B union
 - Baseline: average volume of exactly the previous 20 complete, distinct NSE trading sessions for each symbol. Exclude the current EOD session. Missing/duplicate/invalid symbol-session data means `WAIT_FOR_DATA`; do not substitute older sessions.
