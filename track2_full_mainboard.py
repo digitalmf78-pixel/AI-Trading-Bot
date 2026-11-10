@@ -69,16 +69,20 @@ def _left_join_observer(base: pd.DataFrame, report: pd.DataFrame, status_col: st
     if report.empty:
         base[status_col] = "WAIT_FOR_DATA"
         return base
-    overlap = (set(base.columns) & set(report.columns)) - {"TckrSymb"}
-    # Source cohort columns are authoritative; observer output may only enrich.
-    report = report.drop(columns=sorted(overlap), errors="ignore")
-    merged = base.merge(report, on="TckrSymb", how="left", validate="one_to_one", sort=False)
-    if native_status_col in merged.columns:
-        merged[status_col] = merged[native_status_col].map(
+    report = report.copy()
+    if native_status_col in report.columns:
+        report[status_col] = report[native_status_col].map(
             lambda value: _empty_status(str(value).strip()) if pd.notna(value) else "WAIT_FOR_DATA"
         )
     else:
-        merged[status_col] = merged[status_col].fillna("WAIT_FOR_DATA") if status_col in merged else "WAIT_FOR_DATA"
+        report[status_col] = "WAIT_FOR_DATA"
+    overlap = (set(base.columns) & set(report.columns)) - {"TckrSymb", status_col}
+    # Source cohort columns are authoritative; observer output may only enrich.
+    report = report.drop(columns=sorted(overlap), errors="ignore")
+    merged = base.drop(columns=[status_col], errors="ignore").merge(
+        report, on="TckrSymb", how="left", validate="one_to_one", sort=False
+    )
+    merged[status_col] = merged[status_col].fillna("WAIT_FOR_DATA")
     return merged
 
 
@@ -193,6 +197,10 @@ def build_track2_full_mainboard_report(
         "potential_accumulation": out_dir / f"v8_track2_potential_accumulation_observations_{stamp}.csv",
         "vcp": out_dir / f"v8_track2_vcp_observations_{stamp}.csv",
     }
+    # Avoid treating a stale same-day observer artifact as output from this run.
+    for stale_path in observer_paths.values():
+        if stale_path.exists():
+            stale_path.unlink()
 
     if eligible_symbols:
         try:
