@@ -32,7 +32,7 @@ def test_cached_delivery_requires_matching_internal_date_and_valid_rows(tmp_path
         "DELIV_PER": [65.0 + (i % 10) for i in range(60)],
     }).to_csv(path, index=False)
     ok, rows, digest = backfill._valid_cached_report(path, date(2026, 11, 6))
-    assert ok and rows == 2 and len(digest) == 64
+    assert ok and rows == 60 and len(digest) == 64
 
 
 def test_cached_delivery_rejects_mismatched_internal_date(tmp_path):
