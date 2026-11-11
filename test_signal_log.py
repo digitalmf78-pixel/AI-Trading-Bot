@@ -41,3 +41,10 @@ def test_signal_log_preserves_existing_rows_and_writes_header_once(tmp_path):
     contents = path.read_text(encoding="utf-8")
     assert contents.startswith(original)
     assert contents.count("EODDate,") == 1
+
+
+def test_signal_log_creates_header_when_watchlist_is_empty(tmp_path):
+    path = tmp_path / "empty" / "signal_log.csv"
+    assert append_signal_log(pd.DataFrame(), "2026-11-11", path) == 0
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        assert next(csv.reader(handle)) == SIGNAL_LOG_COLUMNS
