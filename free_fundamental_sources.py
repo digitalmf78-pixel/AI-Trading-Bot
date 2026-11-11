@@ -268,7 +268,7 @@ def fetch_free_fundamental_sources(
                     ("cash_flow", lambda: client.get_cash_flow_mini_statement(ticker_id, statement_type="consolidated")),
                 ]
             else:
-                sid, raw_hits = client.get_ticker(symbol, search_place="stocks")
+                sid, raw_hits = client.get_ticker(symbol, search_place="stock")
                 if not sid:
                     raise RuntimeError("symbol lookup returned no Tickertape SID")
                 matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
@@ -301,9 +301,17 @@ def fetch_free_fundamental_sources(
                 if pause_seconds:
                     time.sleep(max(0.0, float(pause_seconds)))
             row_counts = {name: int(len(frame)) for name, frame in frames.items() if not frame.empty}
+            table_schema = {
+                name: {
+                    "columns": [str(col) for col in frame.columns[:20]],
+                    "index_preview": [str(idx) for idx in frame.index[:15]],
+                }
+                for name, frame in frames.items() if not frame.empty
+            }
             result["providers"][source] = {
                 "status": "DATA_FOUND" if row_counts else "EMPTY",
                 "rows": row_counts,
+                "table_schema": table_schema,
                 "errors": errors,
                 "source_url": SOURCE_URLS[source],
             }
