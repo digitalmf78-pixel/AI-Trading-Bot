@@ -247,3 +247,26 @@ def test_rolling_range_observation_waits_for_invalid_price_or_candle_structure(t
     row = report.iloc[0]
     assert row["PriceRange20DStatus"] == "WAIT_FOR_DATA"
     assert pd.isna(row["PriceRange20DSessionCount"])
+
+
+
+def test_pivot_status_waits_for_invalid_open_or_candle_structure(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "OpnPric"] = float("inf")
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    assert report.iloc[0]["PivotStructureStatus"] == "WAIT_FOR_DATA"
+
+
+def test_pivot_status_waits_when_open_is_outside_candle_range(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "OpnPric"] = history.loc[history.index[-5], "HghPric"] + 1
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    assert report.iloc[0]["PivotStructureStatus"] == "WAIT_FOR_DATA"
