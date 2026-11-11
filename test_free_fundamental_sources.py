@@ -226,3 +226,16 @@ def test_moneycontrol_ratios_column_is_mapped_to_metric():
     assert _extract_ratio(frame, ALIASES["ROEPercent"]) == 18.5
     assert _extract_ratio(frame, ALIASES["ROCEPercent"]) == 22.0
     assert _extract_ratio(frame, ALIASES["DebtToEquity"]) == 0.5
+
+def test_moneycontrol_quarterly_and_annual_statement_heading_columns_are_mapped():
+    quarterly = pd.DataFrame({
+        "Quarterly": ["Total Revenue", "Net Profit"],
+        "Sep 2026": ["125.0", "18.0"],
+        "Jun 2026": ["110.0", "16.0"],
+    })
+    annual = pd.DataFrame({
+        "Annual": ["Total Revenue", "Net Profit"],
+        "Mar 2026": ["500.0", "70.0"],
+    })
+    assert _extract_ratio(quarterly, ("Total Revenue",)) == 125.0
+    assert _extract_ratio(annual, ("Net Profit",)) == 70.0
