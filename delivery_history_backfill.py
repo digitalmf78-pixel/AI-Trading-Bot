@@ -69,9 +69,9 @@ def _valid_cached_report(path: Path, expected: date) -> tuple[bool, int, str]:
         return False, 0, ""
 
 
-def _download_report(session: requests.Session, day: date) -> tuple[str, int, str, int]:
+def _download_report(session: requests.Session, day: date, cache_dir: Path = CACHE_DIR) -> tuple[str, int, str, int]:
     token = day.strftime("%d%m%Y")
-    path = CACHE_DIR / f"sec_bhavdata_full_{token}.csv"
+    path = cache_dir / f"sec_bhavdata_full_{token}.csv"
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     valid, rows, digest = _valid_cached_report(path, day)
     if valid:
@@ -129,16 +129,15 @@ def run_backfill(
     output_dir: Path = OUTPUT_DIR,
     target_sessions: int = DEFAULT_TARGET_SESSIONS,
 ) -> dict:
-    global CACHE_DIR
-    CACHE_DIR = cache_dir
     dates = price_session_dates(price_dir, target_sessions)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers.update(HEADERS)
     records = []
     try:
         for index, day in enumerate(dates, start=1):
-            status, rows, digest, size = _download_report(session, day)
+            status, rows, digest, size = _download_report(session, day, cache_dir)
             record = {
                 "SessionDate": day.isoformat(),
                 "Status": status,
