@@ -7,7 +7,7 @@ from signal_outcome_tracker import update_signal_outcomes
 from nse_trading_calendar import is_trading_session
 
 
-def test_outcomes_wait_until_each_horizon_is_complete_and_use_eod_close(tmp_path):
+def test_outcomes_wait_until_each_horizon_is_complete_and_use_next_session_open(tmp_path):
     log = tmp_path / "signal_log.csv"
     columns = ["EODDate", "TckrSymb", "ClsPric", "Result5D", "Result10D", "Result20D", "MFE", "MAE"]
     with log.open("w", newline="", encoding="utf-8") as handle:
