@@ -43,6 +43,7 @@ from fundamental_filter import apply_fundamental_filter, create_fundamental_temp
 from fundamental_data_provider import collect_missing_fundamentals
 from fii_dii_activity import attach_market_context, write_market_activity
 from datetime import datetime, timedelta, timezone
+from signal_log import append_signal_log
 from v8_layers_14_41 import (
     monitor_positions,
     run_eod_layers,
@@ -1058,7 +1059,8 @@ def prepare_primary_shortlist(result, eod_date):
     Production eligibility is Delivery Category A OR B over the 30-day report
     window. RVOL is classified after Delivery and does not reject <=1.5 rows.
     This helper only labels history completeness for its callers.
-    RVOL >1.5. Category A (five-session average >=60%) remains in audit reports.
+    RVOL is classification only; it is not an eligibility filter. Delivery A/B uses
+    all valid distinct reports in the 30-calendar-day window (minimum five).
     A 3-of-5 low-volume rule is NOT used as a filter. Five-session volume-pattern
     and prior-20-session baseline data are still validated for reliable analysis.
     Incomplete history remains WAIT_FOR_DATA.
@@ -1168,13 +1170,14 @@ def classify_rvol_for_delivery_candidates(result, eod_date, minimum_rvol=1.5):
 
 
 def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
-    """Keep every valid Main Board candidate with RVOL strictly greater than 1.5.
+    """Legacy diagnostic-only helper that exports the HIGH-RVOL subset.
 
-    There is deliberately no Top-20/Top-50 cap here. Missing 20-session baselines
-    stay WAIT_FOR_DATA and never qualify.
+    Production eligibility is the Delivery A/B union followed by Liquidity;
+    RVOL is classification only and this helper is not called as a production gate.
+    Missing 20-session baselines stay WAIT_FOR_DATA in the production cohort.
     """
     if result is None or result.empty:
-        print("[RVOL > 1.5] No candidates available.")
+        print("[RVOL HIGH-BAND AUDIT] No candidates available.")
         return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
     frame = result.copy()
     frame["RVOL"] = pd.to_numeric(frame.get("RVOL", pd.Series(index=frame.index, dtype=float)), errors="coerce")
@@ -1195,7 +1198,7 @@ def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
     selected = selected.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort")
     selected["RVOLRank"] = range(1, len(selected) + 1)
     selected.to_csv(os.path.join(audit_dir, "v8_rvol_gt_1_5_candidates.csv"), index=False)
-    print(f"[RVOL > 1.5] Candidates={len(selected)}; no Top-50 cap. Audit: {audit_path}")
+    print(f"[RVOL HIGH-BAND AUDIT] Rows={len(selected)}; diagnostic subset only, not a production eligibility gate. Audit: {audit_path}")
     return selected
 
 
@@ -2865,8 +2868,9 @@ def select_top20_analysis_candidates(result, eod_date):
     Delivery eligibility is the complete 30-calendar-day Category A OR B union:
     A = average Delivery >=60.00%; B = every valid report day >=60.00%, with at
     least five valid distinct reports. The strict five-session watchlist is separate.
-    RVOL is classified on the A/B union; only the liquidity-qualified cohort
-    proceeds into this technical analysis. Negative relative strength is retained
+    RVOL is classification only and does not reject low-RVOL candidates. There is
+    no Top-N cap; the complete liquidity-qualified cohort proceeds into this analysis.
+    Negative relative strength is retained
     as a scoring/ranking warning, not a standalone hard rejection.
     Final sector/news/3+1, risk/reward and chase gates remain in run_eod_layers().
     """
@@ -2961,7 +2965,7 @@ def select_top20_analysis_candidates(result, eod_date):
         })
 
     audit = pd.DataFrame(audit_rows)
-    # Keep every RVOL > 1.5 row flowing through sector/news/3+1 evidence collection.
+    # Keep the full liquidity-qualified cohort flowing through sector/news/3+1 evidence collection.
     # The technical screen is recorded as a hard final eligibility gate, not an early data-collection gate.
     audit["TckrSymb"] = audit["TckrSymb"].astype(str).str.strip().str.upper()
     frame["TckrSymb"] = frame["TckrSymb"].astype(str).str.strip().str.upper()
@@ -2998,17 +3002,18 @@ def select_top20_analysis_candidates(result, eod_date):
     counts = audit["CandidateScreenStatus"].value_counts().to_dict()
     passed = int(audit["CandidateScreenStatus"].eq("PASS").sum())
     print("[CANDIDATE SCREEN] Audit: " + audit_path)
-    print(f"[CANDIDATE SCREEN] Core technical pass among RVOL > 1.5 candidates: {passed}/{len(frame)}")
-    print(f"[CANDIDATE SCREEN] Continuing all RVOL > 1.5 candidates into news/sector/EOD evidence analysis: {len(frame)} (no Top-20/Top-50 cap)")
+    print(f"[CANDIDATE SCREEN] Core technical pass among liquidity-qualified Delivery A/B candidates: {passed}/{len(frame)}")
+    print(f"[CANDIDATE SCREEN] Continuing all liquidity-qualified Delivery A/B candidates into news/sector/EOD evidence analysis: {len(frame)} (RVOL classification only; no Top-N cap)")
     print(f"[CANDIDATE SCREEN] Status counts: {counts}")
     return frame
 
 
 # ============================================================
-# DISPLAY ALL QUALIFYING RVOL CANDIDATES
+# DISPLAY ALL LIQUIDITY-QUALIFIED DELIVERY A/B CANDIDATES
 # ============================================================
 
 def display_top20(result):
+    """Legacy function name retained for compatibility; displays the full cohort without a Top-N cap."""
 
     print(
         "\n"
@@ -3016,7 +3021,7 @@ def display_top20(result):
     )
 
     print(
-        "V8 TECHNICAL CANDIDATES (RVOL > 1.5; NO RVOL CAP)"
+        "V8 LIQUIDITY-QUALIFIED DELIVERY A/B CANDIDATES (RVOL CLASSIFICATION ONLY; NO TOP-N CAP)"
     )
 
     print(
@@ -3331,7 +3336,7 @@ def main():
     )
 
     print(
-        "NSE MAINBOARD + RVOL > 1.5 + DUAL DELIVERY + LIQUIDITY + FUNDAMENTALS + 5D "
+        "NSE MAINBOARD + DUAL DELIVERY A/B + RVOL CLASSIFICATION + LIQUIDITY + FUNDAMENTALS + 5D "
         "+ PRICE/VOLUME + CLV "
         "+ TREND "
         "+ BREAKOUT/PULLBACK "
@@ -3933,6 +3938,10 @@ def main():
         nifty_history,
         eod_date,
     )
+
+    # Observation-only append: does not mutate result or affect any scanner output.
+    signal_rows_written = append_signal_log(result, eod_date)
+    print(f"[SIGNAL LOG] Appended {signal_rows_written} new date/symbol rows (existing rows preserved).")
 
     # Later-stage watchlists are independent copies; no output feeds back into
     # result or changes the existing EOD selection gates.
