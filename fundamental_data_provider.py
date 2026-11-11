@@ -67,7 +67,7 @@ BASE_COLUMNS = [
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
-    "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
+    "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON", "FreeSourcesAlternatesJSON",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 AUXILIARY_FUNDAMENTAL_COLUMNS = [
     "GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct", "CurrentRatio",
@@ -757,13 +757,16 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                     free_source_metrics.append(metric)
             provider_diagnostics["Free-source providers"] = free_source_result.get("providers", {})
             record["FreeSourcesAttemptedAtUTC"] = free_source_result.get("attempted_at_utc", datetime.now(timezone.utc).isoformat())
-            record["FreeSourcesStatus"] = "DATA_FOUND" if free_source_metrics else (
+            record["FreeSourcesStatus"] = "DATA_FOUND" if free_source_observed else (
                 "EMPTY_OR_UNMAPPED" if free_source_result.get("providers") else "NO_SOURCE_AVAILABLE"
             )
             record["FreeSourcesDiagnosticsJSON"] = json.dumps(free_source_result.get("providers", {}), sort_keys=True)
+            record["FreeSourcesAlternatesJSON"] = json.dumps(free_source_result.get("metric_alternates", {}), sort_keys=True)
+            free_source_observed = list(free_source_result.get("metrics", {}))
             diagnostic["FreeSourcesAttempted"] = True
             diagnostic["FreeSourcesStatus"] = record["FreeSourcesStatus"]
             diagnostic["FreeSourcesMetricsFilled"] = ";".join(free_source_metrics)
+            diagnostic["FreeSourcesMetricsObserved"] = ";".join(free_source_observed)
             diagnostic["FreeSourcesProviders"] = json.dumps(free_source_result.get("providers", {}), sort_keys=True)
             if free_source_metrics:
                 all_names = sorted(set(metric_sources[m] for m in free_source_metrics))
@@ -782,6 +785,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
             record["FreeSourcesAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
             record["FreeSourcesStatus"] = "PROVIDER_ERROR"
             record["FreeSourcesDiagnosticsJSON"] = json.dumps({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+            record["FreeSourcesAlternatesJSON"] = "{}"
             diagnostic["FreeSourcesAttempted"] = True
             diagnostic["FreeSourcesStatus"] = "PROVIDER_ERROR"
             diagnostic["FreeSourcesReason"] = f"{type(exc).__name__}: {str(exc)[:300]}"
