@@ -91,3 +91,30 @@ def test_outcomes_append_once_and_reject_conflicting_rewrite(tmp_path):
     assert result["outcomes_appended"] == 0
     saved = list(csv.DictReader((tmp_path / "outcomes-history.csv").open(newline="", encoding="utf-8")))
     assert saved[0]["CloseReturnPct"] == ""
+
+def test_durable_signal_byte_limit_is_checked_before_append(tmp_path):
+    history = tmp_path / "history.csv"
+    schema = tmp_path / "schema.txt"
+    schema.write_text(SCHEMA_VERSION)
+    old = _signal("2026-11-10", "ABC")
+    # A large legacy outcome field must not let the durable file exceed its cap
+    # merely because the restored run copy has that outcome field blank.
+    old["Result5D"] = "9" * 500
+    _write(history, SIGNAL_COLUMNS, [old])
+
+    source = tmp_path / "run.csv"
+    _write(source, SIGNAL_COLUMNS, [dict(old, Result5D=""), _signal("2026-11-11", "XYZ")])
+    limit = source.stat().st_size + 10
+    try:
+        persist_history(
+            source, tmp_path / "outcomes.csv", history,
+            tmp_path / "outcomes-history.csv", schema,
+            max_signal_bytes=limit,
+        )
+    except ValueError as exc:
+        assert "size limit" in str(exc)
+    else:
+        raise AssertionError("durable signal byte limit was not enforced")
+    saved = list(csv.DictReader(history.open(newline="", encoding="utf-8")))
+    assert len(saved) == 1
+    assert saved[0]["TckrSymb"] == "ABC"
