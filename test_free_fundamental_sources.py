@@ -12,8 +12,8 @@ class FakeMoneyControl:
 
     def get_ratios_mini_statement(self, ticker, statement_type="consolidated"):
         self.calls.append(("moneycontrol", "ratios", ticker))
-        return pd.DataFrame({"Latest": [18.5, 22.0, 0.5, 4.2]},
-                            index=["Return on Equity", "ROCE", "Debt Equity", "Interest Coverage"])
+        return pd.DataFrame({"Latest": [18.5, 22.0, 0.5, 4.2, 35.0, 14.0]},
+                            index=["Return on Equity", "ROCE", "Debt Equity", "Interest Coverage", "Gross Margin", "Net Profit Margin"])
 
     def get_income_mini_statement(self, ticker, statement_type="consolidated", statement_frequency=3):
         self.calls.append(("moneycontrol", "income", ticker))
@@ -56,7 +56,7 @@ class FakeTickertape:
 
     def get_share_holding_pattern(self, sid):
         self.calls.append(("tickertape", "shareholding", sid))
-        return pd.DataFrame({"Promoter": [52.0]})
+        return pd.DataFrame({"category": ["Promoter", "FII"], "percentage": [52.0, 12.5]})
 
 
 def test_fetches_all_free_sources_and_records_per_metric_provenance():
@@ -64,7 +64,7 @@ def test_fetches_all_free_sources_and_records_per_metric_provenance():
     FakeTickertape.calls = []
     result = fetch_free_fundamental_sources(
         "RELIANCE",
-        missing_metrics={"ROEPercent", "ROCEPercent", "DebtToEquity", "InterestCoverage"},
+        missing_metrics={"ROEPercent", "ROCEPercent", "DebtToEquity", "InterestCoverage", "GrossMarginPct", "NetProfitMarginPct", "PromoterHoldingPct", "FIIHoldingPct"},
         pause_seconds=0,
         source_factories={
             "moneycontrol": FakeMoneyControl,
@@ -75,6 +75,10 @@ def test_fetches_all_free_sources_and_records_per_metric_provenance():
     assert result["metrics"]["ROCEPercent"] == 22.0
     assert result["metrics"]["DebtToEquity"] == 0.5
     assert result["metrics"]["InterestCoverage"] == 4.2
+    assert result["metrics"]["GrossMarginPct"] == 35.0
+    assert result["metrics"]["NetProfitMarginPct"] == 14.0
+    assert result["metrics"]["PromoterHoldingPct"] == 52.0
+    assert result["metrics"]["FIIHoldingPct"] == 12.5
     assert result["metric_sources"]["ROEPercent"] == "Moneycontrol"
     assert result["providers"]["Moneycontrol"]["status"] == "DATA_FOUND"
     assert result["providers"]["Tickertape"]["status"] == "DATA_FOUND"
