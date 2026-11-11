@@ -21,7 +21,7 @@ SOURCE_URLS = {
     "Tickertape": "https://www.tickertape.in/",
 }
 NSE_SHAREHOLDING_METRICS = {
-    "PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct",
+    "PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct",
 }
 
 ALIASES = {
