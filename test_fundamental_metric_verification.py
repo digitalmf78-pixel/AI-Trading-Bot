@@ -36,7 +36,7 @@ def _filings():
     }])
 
 
-def _xml(path: Path, value='12.5', dimensions='', cash_change=None, decimals=None):
+def _xml(path: Path, value='12.5', dimensions='', cash_change=None, decimals=None, entity_scheme='https://www.nseindia.com'):
     cash_change = float(value) + 7.0 if cash_change is None else float(cash_change)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
