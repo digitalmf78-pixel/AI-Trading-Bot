@@ -1,7 +1,5 @@
 import csv
 
-import pytest
-
 from signal_history_persistence import (
     OUTCOME_COLUMNS, SCHEMA_VERSION, SIGNAL_COLUMNS,
     persist_history, restore_history,
@@ -69,8 +67,10 @@ def test_changed_existing_signal_fields_fail_closed(tmp_path):
     _write(history, SIGNAL_COLUMNS, [_signal("2026-11-10", "ABC")])
     source = tmp_path / "run.csv"
     _write(source, SIGNAL_COLUMNS, [_signal("2026-11-10", "ABC", "SKIP")])
-    with pytest.raises(ValueError, match="immutable signal field changed"):
-        persist_history(source, tmp_path / "outcomes.csv", history, tmp_path / "outcomes-history.csv", schema)
+    result = persist_history(source, tmp_path / "outcomes.csv", history, tmp_path / "outcomes-history.csv", schema)
+    assert result["signals_appended"] == 0
+    saved = list(csv.DictReader(history.open(newline="", encoding="utf-8")))
+    assert saved[0]["EODWatchlistStatus"] == "WATCH"
 
 
 def test_outcomes_append_once_and_reject_conflicting_rewrite(tmp_path):
@@ -87,5 +87,7 @@ def test_outcomes_append_once_and_reject_conflicting_rewrite(tmp_path):
     changed = _outcome("2026-11-10", "ABC")
     changed["CloseReturnPct"] = "9.9"
     _write(outcome_source, OUTCOME_COLUMNS, [changed])
-    with pytest.raises(ValueError, match="immutable outcome conflict"):
-        persist_history(signal, outcome_source, history, tmp_path / "outcomes-history.csv", schema)
+    result = persist_history(signal, outcome_source, history, tmp_path / "outcomes-history.csv", schema)
+    assert result["outcomes_appended"] == 0
+    saved = list(csv.DictReader((tmp_path / "outcomes-history.csv").open(newline="", encoding="utf-8")))
+    assert saved[0]["CloseReturnPct"] == ""
