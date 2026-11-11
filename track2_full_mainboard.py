@@ -1,6 +1,6 @@
 """Independent, non-gating Track 2 research report over the full Mainboard cohort.
 
-This orchestration is intentionally NOT wired into the production scanner.
+The production scanner invokes this orchestration as an isolated observer.
 It reuses existing observation engines, writes to a separate artifact
 namespace, and never changes Track 1 candidate eligibility or ranking.
 """
