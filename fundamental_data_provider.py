@@ -824,7 +824,7 @@ def _free_source_cooldown_active(last_attempt, last_status, retry_days: int, *, 
     the next EOD pass; otherwise one failed attempt could suppress enrichment
     for the full cooldown window.
     """
-    status = str(last_status or "").strip().upper()
+    status = str(last_status).strip().upper() if _present(last_status) else ""
     if status == "PROVIDER_ERROR":
         return False
     attempted = pd.to_datetime(last_attempt, errors="coerce", utc=True)
@@ -1019,6 +1019,7 @@ def collect_missing_fundamentals(
             continue
         last_free_attempt = pd.to_datetime(current.get("FreeSourcesAttemptedAtUTC"), errors="coerce", utc=True)
         last_free_status = current.get("FreeSourcesStatus", "")
+        last_free_status_text = str(last_free_status).strip().upper() if _present(last_free_status) else ""
         in_free_cooldown = _free_source_cooldown_active(
             last_free_attempt, last_free_status, free_source_retry_days,
         )
@@ -1039,7 +1040,7 @@ def collect_missing_fundamentals(
             else "COOLDOWN" if in_free_cooldown
             else "DEFERRED_BUDGET" if free_source_attempts >= free_source_budget
             else "NOT_NEEDED" if not free_source_missing
-            else "RETRY_AFTER_PROVIDER_ERROR" if str(last_free_status or "").strip().upper() == "PROVIDER_ERROR"
+            else "RETRY_AFTER_PROVIDER_ERROR" if last_free_status_text == "PROVIDER_ERROR"
             else "READY"
         )
         fetch_kwargs = {"ticker_factory": ticker_factory}
