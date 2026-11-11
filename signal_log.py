@@ -103,8 +103,6 @@ def _signal_record(row, eod_date) -> dict[str, str]:
 def append_signal_log(result: pd.DataFrame, eod_date, path="outputs/signal_log.csv") -> int:
     """Append one row per EOD date/symbol; warn and continue on all write failures."""
     try:
-        if result is None or result.empty:
-            return 0
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         exists = target.exists() and target.stat().st_size > 0
@@ -125,13 +123,14 @@ def append_signal_log(result: pd.DataFrame, eod_date, path="outputs/signal_log.c
                 continue
             seen.add(key)
             new_rows.append(record)
-        if not new_rows:
+        if not new_rows and exists:
             return 0
         with target.open("a", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=SIGNAL_LOG_COLUMNS, extrasaction="ignore")
             if not exists:
                 writer.writeheader()
-            writer.writerows(new_rows)
+            if new_rows:
+                writer.writerows(new_rows)
         return len(new_rows)
     except Exception as exc:
         print(f"[SIGNAL LOG] WARNING: could not append outputs/signal_log.csv; scan continues: {exc}")
