@@ -940,7 +940,9 @@ def collect_missing_fundamentals(
                                          "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
                                          "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
                                          "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
-                                         "ProviderFetchedMetrics", "ProviderFetchedAtUTC"]:
+                                         "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
+                                         "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
+                                         "TwelveDataAttemptedAtUTC"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
