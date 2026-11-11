@@ -282,7 +282,12 @@ def fetch_free_fundamental_sources(
                         value = _extract_ratio(frame, ALIASES[metric])
                     if value is not None:
                         break
-                if value is None or metric in result["metrics"]:
+                if value is None:
+                    continue
+                if metric in result["metrics"]:
+                    result["metric_alternates"].setdefault(metric, []).append({
+                        "source": source, "value": value, "source_url": SOURCE_URLS[source],
+                    })
                     continue
                 result["metrics"][metric] = value
                 result["metric_sources"][metric] = source
