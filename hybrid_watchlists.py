@@ -1,7 +1,8 @@
-"""Independent stage watchlists for NSE V8 Hybrid Strategy.
+"""Independent observation reports for NSE V8 Hybrid Strategy.
 
-These CSVs are reporting outputs only. They never filter, score, rank, or mutate
-the main scanner candidate dataframe.
+These CSVs are observation-only labels, not measured accumulation proof or
+trade-entry instructions. They never filter, score, rank, or mutate the main
+scanner candidate dataframe.
 """
 from pathlib import Path
 import pandas as pd
@@ -59,7 +60,7 @@ def write_early_hybrid_watchlists(accumulation_report, vcp_report):
     accumulation = _with_watchlist_status(
         accumulation_report,
         lambda row: (
-            ("ACCUMULATION_WATCH", "DELIVERY_A_B_ELIGIBLE; VCP_AND_BREAKOUT_NOT_REQUIRED")
+            ("ACCUMULATION_WATCH", "OBSERVATION_ONLY_NOT_MEASURED; DELIVERY_A_B_ELIGIBLE; VCP_AND_BREAKOUT_NOT_REQUIRED")
             if str(row.get("DeliveryEvidenceStatus", "")).upper() == "OBSERVATIONS_AVAILABLE"
             else ("WAIT_FOR_DATA", "DELIVERY_QUANTITY_OR_PRICE_EVIDENCE_INCOMPLETE")
         ),
@@ -99,11 +100,11 @@ def write_breakout_ready_watchlist(candidates):
         if chase in {"CHASE", "CHASED"}:
             return "CHASED", "EXISTING_CHASE_FILTER_MARKED_CHASE"
         if breakout in {"Strong Breakout", "Breakout"}:
-            return "BREAKOUT_CONFIRMED", "EXISTING_BREAKOUT_RULES_PASSED"
+            return "BREAKOUT_OBSERVATION_CONFIRMED", "OBSERVATION_ONLY_NOT_A_TRADE_ENTRY; EXISTING_BREAKOUT_RULES_PASSED"
         if pullback == "Strong Pullback":
-            return "PULLBACK_CONFIRMED", "EXISTING_PULLBACK_RULES_PASSED"
+            return "PULLBACK_OBSERVATION_CONFIRMED", "OBSERVATION_ONLY_NOT_A_TRADE_ENTRY; EXISTING_PULLBACK_RULES_PASSED"
         if breakout == "Near Breakout" or pullback == "Possible Pullback":
-            return "ENTRY_CANDIDATE", "NEAR_BREAKOUT_OR_POSSIBLE_PULLBACK_OBSERVATION"
+            return "BREAKOUT_PULLBACK_OBSERVATION", "OBSERVATION_ONLY_NOT_A_TRADE_ENTRY; NEAR_BREAKOUT_OR_POSSIBLE_PULLBACK"
         if breakout == "WAIT_FOR_DATA" or pullback == "WAIT_FOR_DATA":
             return "WAIT_FOR_DATA", "BREAKOUT_OR_PULLBACK_INPUTS_INCOMPLETE"
         return "NO_SETUP", "NO_BREAKOUT_OR_PULLBACK_SETUP"
