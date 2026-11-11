@@ -63,9 +63,12 @@ def restore_history(
         _assert_unique(rows, ("EODDate", "TckrSymb"), "signal history")
         shutil.copy2(history, output / "signal_log.csv")
         if outcomes.exists():
-            outcome_rows = _read_csv(outcomes, OUTCOME_COLUMNS)
-            _assert_unique(outcome_rows, ("EODDate", "TckrSymb", "HorizonSessions"), "signal outcomes")
-            shutil.copy2(outcomes, output / "signal_outcomes.csv")
+            try:
+                outcome_rows = _read_csv(outcomes, OUTCOME_COLUMNS)
+                _assert_unique(outcome_rows, ("EODDate", "TckrSymb", "HorizonSessions"), "signal outcomes")
+                shutil.copy2(outcomes, output / "signal_outcomes.csv")
+            except Exception as exc:
+                print(f"[SIGNAL OUTCOMES] WARNING: durable outcome store not restored; scanner continues: {exc}")
         print(f"[SIGNAL HISTORY] Restored {len(rows)} immutable signal rows.")
     else:
         schema.parent.mkdir(parents=True, exist_ok=True)
@@ -131,33 +134,36 @@ def persist_history(
 
     outcomes_appended = 0
     if outcome_src.exists() and outcome_src.stat().st_size:
-        current_outcomes = _read_csv(outcome_src, OUTCOME_COLUMNS)
-        old_outcomes = _read_csv(outcomes_history, OUTCOME_COLUMNS)
-        _assert_unique(current_outcomes, ("EODDate", "TckrSymb", "HorizonSessions"), "per-run outcomes")
-        _assert_unique(old_outcomes, ("EODDate", "TckrSymb", "HorizonSessions"), "durable outcomes")
-        old_outcome_map = {
-            (row["EODDate"], row["TckrSymb"], row["HorizonSessions"]): row
-            for row in old_outcomes
-        }
-        outcome_additions = []
-        for row in current_outcomes:
-            key = (row["EODDate"], row["TckrSymb"], row["HorizonSessions"])
-            if key in old_outcome_map:
-                if old_outcome_map[key] != row:
-                    raise ValueError(f"immutable outcome conflict for {key}")
-            else:
-                old_outcome_map[key] = row
-                outcome_additions.append(row)
-        if len(old_outcomes) + len(outcome_additions) > max_outcome_rows or outcome_src.stat().st_size > max_outcome_bytes:
-            raise ValueError("signal outcome history size limit reached; archive policy review required")
-        if outcome_additions:
-            outcomes_history.parent.mkdir(parents=True, exist_ok=True)
-            if not outcomes_history.exists():
-                with outcomes_history.open("w", newline="", encoding="utf-8") as handle:
-                    csv.writer(handle).writerow(OUTCOME_COLUMNS)
-            with outcomes_history.open("a", newline="", encoding="utf-8") as handle:
-                csv.DictWriter(handle, fieldnames=OUTCOME_COLUMNS).writerows(outcome_additions)
-        outcomes_appended = len(outcome_additions)
+        try:
+            current_outcomes = _read_csv(outcome_src, OUTCOME_COLUMNS)
+            old_outcomes = _read_csv(outcomes_history, OUTCOME_COLUMNS)
+            _assert_unique(current_outcomes, ("EODDate", "TckrSymb", "HorizonSessions"), "per-run outcomes")
+            _assert_unique(old_outcomes, ("EODDate", "TckrSymb", "HorizonSessions"), "durable outcomes")
+            old_outcome_map = {
+                (row["EODDate"], row["TckrSymb"], row["HorizonSessions"]): row
+                for row in old_outcomes
+            }
+            outcome_additions = []
+            for row in current_outcomes:
+                key = (row["EODDate"], row["TckrSymb"], row["HorizonSessions"])
+                if key in old_outcome_map:
+                    if old_outcome_map[key] != row:
+                        raise ValueError(f"immutable outcome conflict for {key}")
+                else:
+                    old_outcome_map[key] = row
+                    outcome_additions.append(row)
+            if len(old_outcomes) + len(outcome_additions) > max_outcome_rows or outcome_src.stat().st_size > max_outcome_bytes:
+                raise ValueError("signal outcome history size limit reached; archive policy review required")
+            if outcome_additions:
+                outcomes_history.parent.mkdir(parents=True, exist_ok=True)
+                if not outcomes_history.exists():
+                    with outcomes_history.open("w", newline="", encoding="utf-8") as handle:
+                        csv.writer(handle).writerow(OUTCOME_COLUMNS)
+                with outcomes_history.open("a", newline="", encoding="utf-8") as handle:
+                    csv.DictWriter(handle, fieldnames=OUTCOME_COLUMNS).writerows(outcome_additions)
+            outcomes_appended = len(outcome_additions)
+        except Exception as exc:
+            print(f"[SIGNAL OUTCOMES] WARNING: outcome persistence skipped; scanner continues: {exc}")
 
     print(f"[SIGNAL HISTORY] Appended {len(additions)} new immutable signal rows.")
     print(f"[SIGNAL HISTORY] Appended {outcomes_appended} new immutable outcome rows.")
