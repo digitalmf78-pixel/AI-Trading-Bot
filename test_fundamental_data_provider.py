@@ -389,3 +389,79 @@ def test_p2_ttm_enrichment_does_not_overwrite_manual_metrics(tmp_path, monkeypat
     assert row["TTMQuarterlyAlignmentStatus"] == "VERIFIED"
     assert row["MetricCalculationBasis"] == "LEGACY_CACHE_BASIS_UNKNOWN"
 
+def test_free_source_observed_metrics_set_status_without_provider_error(monkeypatch):
+    import sys
+    import types
+    import fundamental_data_provider as provider
+
+    result = {
+        "metrics": {"GrossMarginPct": 35.0},
+        "metric_sources": {"GrossMarginPct": "Moneycontrol"},
+        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/"},
+        "metric_periods": {"GrossMarginPct": "Mar 2026"},
+        "metric_currencies": {"GrossMarginPct": ""},
+        "metric_alternates": {},
+        "providers": {"Moneycontrol": {"status": "DATA_FOUND"}},
+        "attempted_at_utc": "2026-11-11T10:00:00+00:00",
+    }
+    adapter = types.ModuleType("free_fundamental_sources")
+    adapter.fetch_free_fundamental_sources = lambda *args, **kwargs: result
+    monkeypatch.setitem(sys.modules, "free_fundamental_sources", adapter)
+    monkeypatch.setattr(provider, "_aligned_quarterly_ttm_metrics", lambda _ticker: {
+        "ok": False, "values": {}, "audit": {}, "diagnostics": {},
+        "reason": "NO_ALIGNED_QUARTERLY_STATEMENTS",
+    })
+    monkeypatch.setattr(provider, "_aligned_annual_metrics", lambda _ticker: {
+        "ok": False, "values": {}, "reason": "NO_ALIGNED_ANNUAL_STATEMENTS",
+    })
+
+    record, diagnostic = provider._fetch_one(
+        "AAA",
+        ticker_factory=FakeTicker,
+        missing_metrics={"GrossMarginPct"},
+        allow_free_sources=True,
+    )
+
+    assert float(record["GrossMarginPct"]) == 35.0
+    assert record["FreeSourcesStatus"] == "DATA_FOUND"
+    assert diagnostic["FreeSourcesStatus"] == "DATA_FOUND"
+    assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct"
+    assert diagnostic["FreeSourcesMetricsFilled"] == "GrossMarginPct"
+    assert diagnostic["ProviderStatus"] == "DATA_FOUND"
+    assert "PROVIDER_ERROR" not in record["FreeSourcesStatus"]
+
+
+def test_free_source_empty_result_is_reported_without_unbound_status_error(monkeypatch):
+    import sys
+    import types
+    import fundamental_data_provider as provider
+
+    result = {
+        "metrics": {}, "metric_sources": {}, "metric_urls": {},
+        "metric_periods": {}, "metric_currencies": {}, "metric_alternates": {},
+        "providers": {"Moneycontrol": {"status": "EMPTY"}, "Tickertape": {"status": "NO_SEARCH_RESULTS"}},
+        "attempted_at_utc": "2026-11-11T10:00:00+00:00",
+    }
+    adapter = types.ModuleType("free_fundamental_sources")
+    adapter.fetch_free_fundamental_sources = lambda *args, **kwargs: result
+    monkeypatch.setitem(sys.modules, "free_fundamental_sources", adapter)
+    monkeypatch.setattr(provider, "_aligned_quarterly_ttm_metrics", lambda _ticker: {
+        "ok": False, "values": {}, "audit": {}, "diagnostics": {},
+        "reason": "NO_ALIGNED_QUARTERLY_STATEMENTS",
+    })
+    monkeypatch.setattr(provider, "_aligned_annual_metrics", lambda _ticker: {
+        "ok": False, "values": {}, "reason": "NO_ALIGNED_ANNUAL_STATEMENTS",
+    })
+
+    record, diagnostic = provider._fetch_one(
+        "AAA",
+        ticker_factory=FakeTicker,
+        missing_metrics={"GrossMarginPct"},
+        allow_free_sources=True,
+    )
+
+    assert record["FreeSourcesStatus"] == "EMPTY_OR_UNMAPPED"
+    assert diagnostic["FreeSourcesStatus"] == "EMPTY_OR_UNMAPPED"
+    assert diagnostic["FreeSourcesMetricsObserved"] == ""
+    assert diagnostic["FreeSourcesMetricsFilled"] == ""
+    assert diagnostic["FreeSourcesStatus"] != "PROVIDER_ERROR"

@@ -757,6 +757,10 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                     free_source_metrics.append(metric)
             provider_diagnostics["Free-source providers"] = free_source_result.get("providers", {})
             record["FreeSourcesAttemptedAtUTC"] = free_source_result.get("attempted_at_utc", datetime.now(timezone.utc).isoformat())
+            # Compute observed keys before using them in status/diagnostics.
+            # "Observed" means a source returned a mapped figure; "filled" below
+            # means it was missing in cache and therefore newly stored.
+            free_source_observed = list(free_source_result.get("metrics", {}))
             record["FreeSourcesStatus"] = "DATA_FOUND" if free_source_observed else (
                 "EMPTY_OR_UNMAPPED" if free_source_result.get("providers") else "NO_SOURCE_AVAILABLE"
             )
@@ -771,7 +775,6 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 source_value_rows.extend(free_source_result.get("metric_alternates", {}).get(observed_metric, []))
                 free_source_values[observed_metric] = source_value_rows
             record["FreeSourcesAlternatesJSON"] = json.dumps(free_source_values, sort_keys=True)
-            free_source_observed = list(free_source_result.get("metrics", {}))
             diagnostic["FreeSourcesAttempted"] = True
             diagnostic["FreeSourcesStatus"] = record["FreeSourcesStatus"]
             diagnostic["FreeSourcesMetricsFilled"] = ";".join(free_source_metrics)
