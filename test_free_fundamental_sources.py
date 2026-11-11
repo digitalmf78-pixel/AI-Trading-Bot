@@ -130,6 +130,27 @@ def test_tickertape_fallback_fills_missing_ratio_when_moneycontrol_empty():
     assert result["metric_sources"]["RevenueGrowthPct"] == "Tickertape"
 
 
+def test_wrong_company_search_result_is_rejected_before_fundamentals_fetch():
+    class WrongMoneyControl:
+        def get_ticker(self, search_text):
+            return "MC999", {"symbol": "OTHER", "stock_name": "Other Company Ltd"}
+
+        def get_ratios_mini_statement(self, *args, **kwargs):
+            raise AssertionError("wrong-company data must never be fetched")
+
+    class NoTickertape:
+        def get_ticker(self, symbol, search_place="stock"):
+            return "", []
+
+    result = fetch_free_fundamental_sources(
+        "RELIANCE", company_name="Reliance Industries Limited",
+        missing_metrics={"ROEPercent"}, pause_seconds=0,
+        source_factories={"moneycontrol": WrongMoneyControl, "tickertape": NoTickertape},
+    )
+    assert result["metrics"] == {}
+    assert result["providers"]["Moneycontrol"]["status"] == "IDENTITY_UNVERIFIED"
+
+
 def test_no_key_free_source_adapter_handles_unavailable_library():
     result = fetch_free_fundamental_sources(
         "TCS", missing_metrics={"ROEPercent"}, pause_seconds=0,
