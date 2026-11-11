@@ -491,3 +491,6 @@ def test_free_source_provider_error_is_not_suppressed_by_retry_cooldown():
     assert not _free_source_cooldown_active(
         pd.NaT, "PROVIDER_ERROR", 7, now=now,
     )
+    assert _free_source_cooldown_active(
+        recent_attempt, pd.NA, 7, now=now,
+    )
