@@ -60,6 +60,24 @@ class FundamentalFilterTests(unittest.TestCase):
         self.assertEqual(self.run_filter([good_record()])["FundamentalStatus"], "COMPLETE")
         self.assertEqual(self.run_filter([good_record()])["Fundamental65PlusStatus"], "SCORE_GE_65")
 
+    def test_auxiliary_free_source_fields_pass_through_without_changing_score(self):
+        baseline = self.run_filter([good_record()])
+        record = good_record()
+        record.update({
+            "GrossMarginPct": 35.5,
+            "OperatingMarginPct": 18.2,
+            "CurrentRatio": 1.8,
+            "PromoterHoldingPct": 52.0,
+            "FIIHoldingPct": 12.5,
+            "FreeSourcesStatus": "DATA_FOUND",
+        })
+        enriched = self.run_filter([record])
+        self.assertEqual(float(enriched["GrossMarginPct"]), 35.5)
+        self.assertEqual(float(enriched["PromoterHoldingPct"]), 52.0)
+        self.assertEqual(float(enriched["FIIHoldingPct"]), 12.5)
+        self.assertEqual(enriched["FreeSourcesStatus"], "DATA_FOUND")
+        self.assertEqual(float(enriched["FundamentalScore"]), float(baseline["FundamentalScore"]))
+
     def test_missing_record_waits(self):
         row = self.run_filter([])
         self.assertEqual(row["FundamentalStatus"], "MISSING_DATA")

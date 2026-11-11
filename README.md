@@ -18,14 +18,16 @@ Automated NSE EOD research and swing-trading analysis pipeline. The scanner prod
 - All A/B candidates continue to the 20-session liquidity check; hard minimum average traded value ₹1.5 crore.
 - Approved sequence (confirmed 06-Nov-2026): the complete Delivery A OR B union, including HIGH/LOW/WAIT RVOL bands, proceeds to Liquidity; Fundamentals are collected for every Liquidity-qualified candidate. Fundamental scoring remains enrichment/priority context, not a rejection gate.
 
-## Optional multi-source fundamental enrichment
+## Free, no-key multi-source fundamental enrichment
 
-- Yahoo Finance via `yfinance` remains the existing secondary provider path.
-- Twelve Data is an optional additional fallback for NSE/XNSE quarterly statements. It is called only when `TWELVE_DATA_API_KEY` is configured as a GitHub Actions secret; without the key, the existing run path is unchanged.
-- Twelve Data fundamentals require an account plan that includes the Fundamentals endpoints. The integration makes up to three statement requests per candidate when fallback is needed. To control API usage, it attempts at most five previously-unattempted symbols per run by default and cools down each attempted symbol for 30 days; tune `TWELVE_DATA_MAX_SYMBOLS_PER_RUN` and `TWELVE_DATA_RETRY_DAYS` only after reviewing the provider's credit/usage terms.
-- The adapter verifies the returned instrument metadata is NSE/XNSE, requires consecutive quarterly periods for TTM calculations, and only stores absolute cash-flow amounts when the provider currency is INR. Currency-invariant ratios may be collected in the provider-reported currency.
-- Each metric's provider, source URL, period and currency are persisted separately in the Fundamental Cache. Mixed-source rows are marked `MULTI_SOURCE_METRIC_LEVEL` / `UNVERIFIED`; they are not promoted to official verification or an eligible Fundamental Score until separately reconciled. Provider values never overwrite existing manual/cache values.
-- This is data enrichment only. It does not change NSE Mainboard membership, RVOL, Delivery A/B, liquidity, technical filters, ranking thresholds, or candidate retention. Provider failure leaves the candidate in the pipeline with a diagnostic status.
+- Yahoo Finance via `yfinance` remains enabled without an API key. It supplies the existing statement, ratio, cash-flow and valuation snapshot fields where available.
+- The no-key fallback queries **both Moneycontrol and Tickertape** through the Apache-2.0 `Bharat-sm-data` open-source client. It attempts each provider rather than stopping at first success, and requests quarterly/annual income statements, balance sheet, cash flow, ratios, margins, scorecard, shareholding, dividend history, mutual-fund holdings and smallcase holdings where the source exposes them.
+- Free-source collection is enabled in the scheduled EOD workflow with a conservative budget of **10 symbols per run** and a **7-day per-symbol retry cooldown**. Tune `FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN` and `FREE_FUNDAMENTAL_RETRY_DAYS` only after reviewing rate limits and the upstream sites' terms.
+- The Moneycontrol/Tickertape client uses public website endpoints, not supported official public APIs. Upstream sites can change, block automated requests, or restrict scraping/redistribution. Use only where permitted for personal research; no raw third-party statement payloads are committed by this adapter.
+- NSE Integrated Filing / XBRL remains the official verification source. Yahoo, Moneycontrol and Tickertape values remain provider evidence until reconciled with an official filing and matching financial period/basis.
+- Mapped additional fields include gross/operating/net margins, current/quick ratios, asset turnover, EPS, book value per share and promoter/FII/DII/public holding/pledge percentages. They are passed through to the fundamental report but are not added to the existing Fundamental Score or threshold gates. Each filled metric records its source and URL. Existing/manual values are never overwritten. When metrics come from different providers, the row is marked `MULTI_SOURCE_METRIC_LEVEL` / `UNVERIFIED`; no mixed-source statement is treated as a single aligned filing or promoted to official verification.
+- No paid API, API key, subscription or provider login is required for the enabled sources. Investing.com and Screener scraping are not enabled: their current connectors require extra browser/login handling and need separate stability/terms validation.
+- This is data enrichment only. It does not change NSE Mainboard membership, RVOL, Delivery A/B, liquidity, technical filters, ranking thresholds, or candidate retention. Provider failure never rejects a candidate.
 
 ## Hybrid watchlists
 

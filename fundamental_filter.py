@@ -29,7 +29,7 @@ SOURCE_COLUMNS = [
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
     "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
-    "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
+    "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON", "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
     "ValuationAsOfDate", "ValuationRequestedEODDate", "ValuationQuoteTimestampUTC",
     "ValuationDateBasis", "ValuationRetrievedAtUTC", "ValuationSource",
     "ValuationSourceURL", "ValuationDataStatus", "ValuationPointInTimeStatus",
@@ -45,7 +45,15 @@ TTM_AUDIT_COLUMNS = [
     "PreviousNetProfitTTMINR", "EBITTTMINR", "InterestExpenseTTMINR",
     "TTMQuarterPeriods", "TTMQuarterlyAlignmentStatus", "TTMCalculationReason",
 ]
-INPUT_COLUMNS = SOURCE_COLUMNS + TTM_AUDIT_COLUMNS + METRIC_COLUMNS + VALUATION_COLUMNS
+AUXILIARY_FUNDAMENTAL_COLUMNS = [
+    "GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct", "CurrentRatio",
+    "QuickRatio", "AssetTurnover", "EPS", "BookValuePerShare",
+    "PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct",
+]
+INPUT_COLUMNS = list(dict.fromkeys(
+    SOURCE_COLUMNS + TTM_AUDIT_COLUMNS + METRIC_COLUMNS + VALUATION_COLUMNS
+    + AUXILIARY_FUNDAMENTAL_COLUMNS
+))
 STATUS_COLUMNS = [
     "FundamentalStatus", "FundamentalReason", "FundamentalAsOfDate",
     "FundamentalSource", "FundamentalSourceURL",
@@ -287,7 +295,7 @@ def apply_fundamental_filter(
         enriched_rows.append(row)
 
     audit = pd.DataFrame(enriched_rows)
-    for col in STATUS_COLUMNS + METRIC_COLUMNS + SOURCE_COLUMNS + TTM_AUDIT_COLUMNS:
+    for col in STATUS_COLUMNS + METRIC_COLUMNS + SOURCE_COLUMNS + TTM_AUDIT_COLUMNS + AUXILIARY_FUNDAMENTAL_COLUMNS:
         if col not in audit.columns:
             audit[col] = pd.NA
 
