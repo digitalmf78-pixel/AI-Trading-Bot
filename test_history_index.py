@@ -26,7 +26,7 @@ def test_history_index_matches_symbol_series_and_merges_current_candidate():
 
     assert dates == [pd.Timestamp("2026-11-05").date(), pd.Timestamp("2026-11-06").date()]
     assert result["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2026-11-05", "2026-11-06"]
-    assert result["ClsPric"].tolist() == [10, 12, 14]
+    assert result["ClsPric"].tolist() == [10, 14]
     assert result.iloc[-1]["PriceChangePct"] == 2.0
     assert set(result["SctySrs"]) == {"EQ"}
 
