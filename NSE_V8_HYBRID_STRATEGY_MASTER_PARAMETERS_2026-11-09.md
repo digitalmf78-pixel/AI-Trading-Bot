@@ -466,7 +466,7 @@ Before taking action on this repository:
 - These fields describe the observed price path after the most recent breakout found in the available historical cache. They do not define success/failure, false breakout, retest confirmation, re-entry, or an entry signal.
 - No forward observation horizon, failure buffer, minimum close count, or retest deadline has been introduced. False-breakout classification remains NOT_EVALUATED_NO_APPROVED_FORWARD_HORIZON.
 - Existing 20D/50D breakout definitions and all selection, risk, ranking, and entry gates remain unchanged.
-- Added regression coverage for excursion and close-position observations. CI validation is pending for this commit sequence.
+- Added regression coverage for excursion and close-position observations. **CI validation completed:** main-branch run `42986244437` on commit `553ff12e144d95ce3547b42a67142bd4dd50a5fc` passed the full pytest suite (**468 passed**), V8 regression script, and sector/news/official-index tests. The `test_breakout_retest_observation.py` module was included in the pytest invocation. This verifies automated tests only; it does not claim a separate live EOD artifact/parity validation for the retest report.
 
 
 ## 31. Approved 10-session post-breakout observation horizon (09-Nov-2026)
