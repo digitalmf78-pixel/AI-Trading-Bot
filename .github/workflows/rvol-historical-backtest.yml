@@ -1,0 +1,99 @@
+name: RVOL Historical Backtest (Research Only)
+
+on:
+  pull_request:
+    paths:
+      - "rvol_strategy_backtest.py"
+      - "rsi_retest_existing_cache.py"
+      - "test_rvol_strategy_backtest.py"
+      - ".github/workflows/rvol-historical-backtest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rvol-historical-backtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  historical-backtest:
+    name: Compare RVOL strategies on restored NSE cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v5
+
+      - name: Restore existing NSE Bhavcopy and Delivery cache
+        uses: actions/cache/restore@v5
+        with:
+          # Keep this path list identical to nse-test-scheduled.yml so the
+          # Actions cache version matches the cache saved by the NSE scan.
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/xbrl_samples/
+            outputs/v8_official_financial_results_filings.csv
+          key: rvol-backtest-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-main-
+            nse-bhavcopy-${{ runner.os }}-research/rvol-strategy-backtest-
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install backtest dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pytest
+
+      - name: Inventory restored historical cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRICE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | wc -l || true)
+          DELIVERY_COUNT=$(find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | wc -l || true)
+          echo "PRICE_CACHE_FILES=$PRICE_COUNT"
+          echo "DELIVERY_CACHE_FILES=$DELIVERY_COUNT"
+          echo "===== PRICE CACHE DATE RANGE ====="
+          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
+          echo "===== DELIVERY CACHE DATE RANGE ====="
+          find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
+          if [ "$PRICE_COUNT" -eq 0 ] || [ "$DELIVERY_COUNT" -eq 0 ]; then
+            echo "::error::NSE cache was not restored. Do not report a backtest result until cache restore is fixed."
+            exit 1
+          fi
+
+      - name: Run RVOL backtest unit tests
+        run: python -m pytest -q test_rvol_strategy_backtest.py
+
+      - name: Run 3-strategy historical RVOL backtest (cache only)
+        run: |
+          set -euo pipefail
+          python -u rvol_strategy_backtest.py
+          echo "===== STRATEGY COMPARISON ====="
+          cat outputs/rvol_strategy_backtest/comparison.csv
+          echo "===== CACHE COVERAGE ====="
+          cat outputs/rvol_strategy_backtest/cache_coverage.csv
+          echo "===== STAGE REJECTION COUNTS ====="
+          cat outputs/rvol_strategy_backtest/rejection_counts.csv
+          echo "===== SIGNAL SAMPLE ====="
+          head -11 outputs/rvol_strategy_backtest/signals.csv
+
+      - name: Upload historical RVOL backtest reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rvol-historical-backtest-${{ github.run_id }}
+          path: outputs/rvol_strategy_backtest/
+          if-no-files-found: warn
+          retention-days: 30
