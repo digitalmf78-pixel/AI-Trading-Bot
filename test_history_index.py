@@ -15,7 +15,7 @@ def test_history_index_matches_symbol_series_and_merges_current_candidate():
             {"TckrSymb": "ABC", "SctySrs": "EQ", "Date": "2026-11-10", "ClsPric": 999, "HghPric": 999, "LwPric": 999, "TtlTradgVol": 999},
         ]),
     ]
-    index, dates = build_price_history_index(historical, pd.Timestamp("2026-11-09").date())
+    index, dates = build_price_history_index(historical, pd.Timestamp("2026-11-06").date())
     candidate = pd.Series({
         "TckrSymb": "ABC", "SctySrs": "EQ", "Date": "2026-11-09",
         "ClsPric": 14, "HghPric": 15, "LwPric": 13, "TtlTradgVol": 120,
@@ -24,7 +24,7 @@ def test_history_index_matches_symbol_series_and_merges_current_candidate():
 
     result = candidate_price_history(index, candidate, "2026-11-09")
 
-    assert dates == [pd.Timestamp("2026-11-05").date(), pd.Timestamp("2026-11-06").date(), pd.Timestamp("2026-11-09").date()]
+    assert dates == [pd.Timestamp("2026-11-05").date(), pd.Timestamp("2026-11-06").date()]
     assert result["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2026-11-05", "2026-11-06", "2026-11-09"]
     assert result["ClsPric"].tolist() == [10, 12, 14]
     assert result.iloc[-1]["PriceChangePct"] == 2.0
@@ -55,3 +55,16 @@ def test_history_index_supports_sources_without_security_series_column():
     )
 
     assert result["ClsPric"].iloc[0] == 10
+
+
+
+def test_history_index_uses_official_special_sessions_and_fails_closed_for_unknown_year():
+    special = pd.DataFrame([
+        {"TckrSymb": "ABC", "SctySrs": "EQ", "Date": "2026-11-06", "ClsPric": 10},
+    ])
+    _, dates = build_price_history_index([special], "2026-11-09")
+    # 8-Nov-2026 is an official Muhurat session despite being a Sunday.
+    assert pd.Timestamp("2026-11-08").date() in dates
+
+    _, unknown_year_dates = build_price_history_index([special], "2027-01-04")
+    assert unknown_year_dates == []
