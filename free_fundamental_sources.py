@@ -178,21 +178,32 @@ def fetch_free_fundamental_sources(
                     raise RuntimeError("symbol lookup returned no Moneycontrol ticker")
                 calls = [
                     ("ratios", lambda: client.get_ratios_mini_statement(ticker_id, statement_type="consolidated")),
+                    ("overview", lambda: client.get_overview_mini_statement(ticker_id, statement_type="consolidated", statement_frequency=12)),
                     ("income", lambda: client.get_income_mini_statement(ticker_id, statement_type="consolidated", statement_frequency=3)),
+                    ("income_annual", lambda: client.get_income_mini_statement(ticker_id, statement_type="consolidated", statement_frequency=12)),
                     ("balance_sheet", lambda: client.get_balance_sheet_mini_statement(ticker_id, statement_type="consolidated")),
                     ("cash_flow", lambda: client.get_cash_flow_mini_statement(ticker_id, statement_type="consolidated")),
                 ]
             else:
-                sid, raw_hits = client.get_ticker(symbol)
+                sid, raw_hits = client.get_ticker(symbol, search_place="stock")
                 if not sid:
                     raise RuntimeError("symbol lookup returned no Tickertape SID")
+                hit = next((item for item in raw_hits if str(item.get("ticker", "")).upper() == symbol), raw_hits[0] if raw_hits else {})
+                slug = str(hit.get("slug", "") or "").strip()
                 calls = [
-                    ("ratios", lambda: client.get_score_card(sid)),
+                    ("ratios", lambda: client.get_key_ratios(slug)) if slug else ("ratios", lambda: pd.DataFrame()),
+                    ("scorecard", lambda: client.get_score_card(sid)),
                     ("income", lambda: client.get_income_data(sid, time_horizon="interim", num_time_periods=12, view_type="normal")),
                     ("income_growth", lambda: client.get_income_data(sid, time_horizon="interim", num_time_periods=12, view_type="growth")),
+                    ("income_margin", lambda: client.get_income_data(sid, time_horizon="interim", num_time_periods=12, view_type="margin")),
+                    ("income_annual", lambda: client.get_income_data(sid, time_horizon="annual", num_time_periods=10, view_type="normal")),
+                    ("income_annual_growth", lambda: client.get_income_data(sid, time_horizon="annual", num_time_periods=10, view_type="growth")),
                     ("balance_sheet", lambda: client.get_balance_sheet_data(sid, num_time_periods=10)),
                     ("cash_flow", lambda: client.get_cash_flow_data(sid, num_time_periods=10)),
-                    ("shareholding", lambda: client.get_share_holding_pattern(sid)),
+                    ("shareholding", lambda: client.get_share_holding_pattern(slug)) if slug else ("shareholding", lambda: pd.DataFrame()),
+                    ("dividends", lambda: client.get_dividends_history(slug)) if slug else ("dividends", lambda: pd.DataFrame()),
+                    ("mutual_fund_holdings", lambda: client.get_mutual_fund_holdings(slug)) if slug else ("mutual_fund_holdings", lambda: pd.DataFrame()),
+                    ("smallcase_holdings", lambda: client.get_smallcase_holdings(slug)) if slug else ("smallcase_holdings", lambda: pd.DataFrame()),
                 ]
             for name, call in calls:
                 try:
@@ -209,9 +220,20 @@ def fetch_free_fundamental_sources(
                 "source_url": SOURCE_URLS[source],
             }
             for metric in wanted:
-                candidate_frames = [frames.get("ratios", pd.DataFrame())]
+                candidate_frames = [
+                    frames.get("ratios", pd.DataFrame()),
+                    frames.get("overview", pd.DataFrame()),
+                    frames.get("scorecard", pd.DataFrame()),
+                    frames.get("income", pd.DataFrame()),
+                    frames.get("income_annual", pd.DataFrame()),
+                    frames.get("balance_sheet", pd.DataFrame()),
+                    frames.get("cash_flow", pd.DataFrame()),
+                ]
                 if metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
                     candidate_frames.insert(0, frames.get("income_growth", pd.DataFrame()))
+                    candidate_frames.insert(1, frames.get("income_annual_growth", pd.DataFrame()))
+                if metric in {"GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct"}:
+                    candidate_frames.insert(0, frames.get("income_margin", pd.DataFrame()))
                 if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
                     candidate_frames.insert(0, frames.get("shareholding", pd.DataFrame()))
                 value = None
