@@ -273,3 +273,132 @@ def test_xbrl_inf_decimals_requires_exact_provider_fact_match(tmp_path, monkeypa
     detail, _, _ = build_metric_verification(metric, _filings(), evidence, tmp_path)
     row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
     assert row['MetricValueVerificationStatus'] == 'PROVIDER_VALUE_MISMATCH'
+
+
+def _annual_growth_xml(path: Path, period_end: str, revenue_ops: float,
+                       other_income: float, profit_continuing: float,
+                       discontinued: float = 0.0, associates: float = 0.0):
+    year = int(period_end[:4])
+    period_start = f"{year - 1}-04-01"
+    total_income = revenue_ops + other_income
+    total_profit = profit_continuing + discontinued + associates
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
+<xbrl xmlns="{NS}" xmlns:xbrli="http://www.xbrl.org/2003/instance">
+  <xbrli:context id="FY">
+    <xbrli:entity><xbrli:identifier scheme="https://www.nseindia.com">INE000A01000</xbrli:identifier></xbrli:entity>
+    <xbrli:period><xbrli:startDate>{period_start}</xbrli:startDate><xbrli:endDate>{period_end}</xbrli:endDate></xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="INR"><xbrli:measure>INR</xbrli:measure></xbrli:unit>
+  <RevenueFromOperations contextRef="FY" unitRef="INR">{revenue_ops}</RevenueFromOperations>
+  <OtherIncome contextRef="FY" unitRef="INR">{other_income}</OtherIncome>
+  <Income contextRef="FY" unitRef="INR">{total_income}</Income>
+  <ProfitLossForPeriodFromContinuingOperations contextRef="FY" unitRef="INR">{profit_continuing}</ProfitLossForPeriodFromContinuingOperations>
+  <ProfitLossFromDiscontinuedOperationsAfterTax contextRef="FY" unitRef="INR">{discontinued}</ProfitLossFromDiscontinuedOperationsAfterTax>
+  <ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod contextRef="FY" unitRef="INR">{associates}</ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod>
+  <ProfitLossForPeriod contextRef="FY" unitRef="INR">{total_profit}</ProfitLossForPeriod>
+</xbrl>''', encoding="utf-8")
+    return path
+
+
+def test_generated_annual_growth_evidence_reconciles_two_official_fy_filings(tmp_path, monkeypatch):
+    import nse_xbrl_fetch
+    from fundamental_metric_verification import _generated_growth_evidence
+
+    current_url = URL
+    prior_url = "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_PRIOR_TEST_WEB.xml"
+    current_xml = _annual_growth_xml(
+        tmp_path / "source_current.xml", "2026-03-31",
+        revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
+        discontinued=1.0, associates=2.0,
+    )
+    prior_xml = _annual_growth_xml(
+        tmp_path / "source_prior.xml", "2025-03-31",
+        revenue_ops=100.0, other_income=5.0, profit_continuing=20.0,
+        discontinued=0.0, associates=0.0,
+    )
+    source_by_url = {current_url: current_xml, prior_url: prior_xml}
+    fetches = []
+
+    def fake_fetch(url, destination):
+        fetches.append(url)
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source_by_url[url].read_bytes())
+        return destination
+
+    monkeypatch.setattr(nse_xbrl_fetch, "fetch_official_xbrl_xml", fake_fetch)
+    metrics = pd.DataFrame([_metric(RevenueGrowthPct=20.0, ProfitGrowthPct=40.0)])
+    filings = pd.DataFrame([
+        {
+            "TckrSymb": "AAA", "FinancialPeriodEnd": "2026-03-31",
+            "PublicationDate": "2026-05-20", "PublicationDateStatus": "VERIFIED",
+            "OfficialFilingURL": current_url, "FilingDescription": "Audited Standalone Financial Results",
+        },
+        {
+            "TckrSymb": "AAA", "FinancialPeriodEnd": "2025-03-31",
+            "PublicationDate": "2025-05-22", "PublicationDateStatus": "VERIFIED",
+            "OfficialFilingURL": prior_url, "FilingDescription": "Audited Standalone Financial Results",
+        },
+    ])
+    generated, diagnostics = _generated_growth_evidence(
+        metrics, filings, pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path, {"AAA"}
+    )
+
+    assert set(generated["MetricName"]) == {"RevenueGrowthPct", "ProfitGrowthPct"}
+    assert set(generated["VerificationMethod"]) == {"DERIVED_COMPONENT_FACTS"}
+    assert generated.set_index("MetricName").loc["RevenueGrowthPct", "OfficialMetricValue"] == "20.0"
+    assert generated.set_index("MetricName").loc["ProfitGrowthPct", "OfficialMetricValue"] == "40.0"
+    assert diagnostics.empty
+    assert set(fetches) == {current_url, prior_url}
+
+    detail, _, _ = build_metric_verification(metrics, filings, generated, repo_root=tmp_path)
+    growth = detail[detail["MetricName"].isin(["RevenueGrowthPct", "ProfitGrowthPct"])]
+    assert set(growth["MetricValueVerificationStatus"]) == {"OFFICIAL_XBRL_VERIFIED"}
+
+
+def test_generated_annual_growth_evidence_keeps_provider_mismatch_unverified(tmp_path, monkeypatch):
+    import nse_xbrl_fetch
+    from fundamental_metric_verification import _generated_growth_evidence
+
+    current_url = URL
+    prior_url = "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_PRIOR_TEST_WEB.xml"
+    current_xml = _annual_growth_xml(
+        tmp_path / "source_current.xml", "2026-03-31",
+        revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
+    )
+    prior_xml = _annual_growth_xml(
+        tmp_path / "source_prior.xml", "2025-03-31",
+        revenue_ops=100.0, other_income=5.0, profit_continuing=20.0,
+    )
+    source_by_url = {current_url: current_xml, prior_url: prior_xml}
+
+    def fake_fetch(url, destination):
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source_by_url[url].read_bytes())
+        return destination
+
+    monkeypatch.setattr(nse_xbrl_fetch, "fetch_official_xbrl_xml", fake_fetch)
+    metrics = pd.DataFrame([_metric(RevenueGrowthPct=21.0, ProfitGrowthPct=25.0)])
+    filings = pd.DataFrame([
+        {
+            "TckrSymb": "AAA", "FinancialPeriodEnd": "2026-03-31",
+            "PublicationDate": "2026-05-20", "PublicationDateStatus": "VERIFIED",
+            "OfficialFilingURL": current_url, "FilingDescription": "Audited Standalone Financial Results",
+        },
+        {
+            "TckrSymb": "AAA", "FinancialPeriodEnd": "2025-03-31",
+            "PublicationDate": "2025-05-22", "PublicationDateStatus": "VERIFIED",
+            "OfficialFilingURL": prior_url, "FilingDescription": "Audited Standalone Financial Results",
+        },
+    ])
+    generated, diagnostics = _generated_growth_evidence(
+        metrics, filings, pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path, {"AAA"}
+    )
+    detail, _, _ = build_metric_verification(metrics, filings, generated, repo_root=tmp_path)
+    revenue = detail[detail["MetricName"].eq("RevenueGrowthPct")].iloc[0]
+    profit = detail[detail["MetricName"].eq("ProfitGrowthPct")].iloc[0]
+    assert revenue["MetricValueVerificationStatus"] == "PROVIDER_VALUE_MISMATCH"
+    assert profit["MetricValueVerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
+    assert diagnostics.empty
