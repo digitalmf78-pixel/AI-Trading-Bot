@@ -786,7 +786,7 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
             diagnostic["TwelveDataAttempted"] = True
             record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
             diagnostic["TwelveDataStatus"] = "PROVIDER_ERROR"
-            diagnostic["TwelveDataReason" = f"{type(exc).__name__}: {exc}"[:300]
+            diagnostic["TwelveDataReason"] = f"{type(exc).__name__}: {exc}"[:300]
     record["ProviderSourceChain"] = ";".join(dict.fromkeys(metric_sources.values()))
     record["MetricSourcesJSON"] = json.dumps(metric_sources, sort_keys=True)
     record["MetricSourceURLsJSON"] = json.dumps(metric_urls, sort_keys=True)
@@ -985,23 +985,20 @@ def collect_missing_fundamentals(
         fetch_kwargs = {"ticker_factory": ticker_factory}
         try:
             fetch_parameters = inspect.signature(_fetch_one).parameters
-            if (
-                "asof_date" in fetch_parameters
-                or any(
-                    parameter.kind == inspect.Parameter.VAR_KEYWORD
-                    for parameter in fetch_parameters.values()
-                )
-            ):
+            accepts_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in fetch_parameters.values()
+            )
+            if "asof_date" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["asof_date"] = cutoff_text
-        except (TypeError, ValueError):
-            fetch_kwargs["asof_date"] = cutoff_text
-            if "missing_metrics" in fetch_parameters or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in fetch_parameters.values()):
+            if "missing_metrics" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["missing_metrics"] = missing
-            if "allow_twelve_data" in fetch_parameters or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in fetch_parameters.values()):
+            if "allow_twelve_data" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["allow_twelve_data"] = allow_twelve
                 fetch_kwargs["twelve_data_defer_reason"] = defer_reason
         except (TypeError, ValueError):
-            fetch_kwargs["asof_date"] = cutoff_text
+            # Legacy injected test fetchers may expose no inspectable signature.
+            pass
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
         if diagnostic.get("TwelveDataAttempted"):
             twelve_data_attempts += 1
