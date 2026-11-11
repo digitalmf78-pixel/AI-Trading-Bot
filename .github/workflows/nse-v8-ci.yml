@@ -39,7 +39,7 @@ jobs:
         run: >-
           python -m py_compile track2_full_mainboard.py history_index.py bottom_detection.py delivery_consistency.py delivery_quantity_analysis.py potential_accumulation_analysis.py vcp_observation_analysis.py breakout_retest_observation.py hybrid_watchlists.py delivery_categories.py volume_gainer.py main_board_filter.py delivery_60_each_of_5_sessions.py v8_layers_14_41.py news_catalyst.py
           sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py liquidity_filter.py fundamental_filter.py
-          fundamental_data_provider.py free_fundamental_sources.py twelve_data_fundamentals.py fundamental_shortlist.py fundamental_official_filings.py
+          fundamental_data_provider.py free_fundamental_sources.py fundamental_shortlist.py fundamental_official_filings.py
           fundamental_metric_verification.py fii_dii_activity.py risk_controls.py nse_xbrl_fetch.py
           sanitize_public_artifacts.py rvol_strategy_backtest.py signal_log.py signal_shadow_store.py signal_cohort_assembly.py signal_history_persistence.py signal_outcome_tracker.py signal_shadow_run.py
           nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py
@@ -51,7 +51,7 @@ jobs:
           python -m pytest -q
           test_history_index.py test_main_board_filter.py test_delivery_rule.py test_delivery_filter_fallback.py test_delivery_60_each_of_5_sessions.py test_nse_trading_calendar.py
           test_bhavcopy_date_integrity.py test_bhavcopy_history_cache_reuse.py test_delivery_categories.py test_delivery_quantity_analysis.py test_delivery_report_date_integrity.py test_potential_accumulation_analysis.py test_vcp_observation_analysis.py test_breakout_retest_observation.py test_breakout_pullback_data_integrity.py test_support_resistance_data_integrity.py test_trend_data_integrity.py test_eod_required_data_status.py test_eod_accumulation_window_integrity.py test_rvol_data_integrity.py test_hybrid_watchlists.py
-          test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_twelve_data_fundamentals.py test_free_fundamental_sources.py test_telegram_delivery.py
+          test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_free_fundamental_sources.py test_telegram_delivery.py
           test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
           test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_audit_risk_fixes.py
           test_risk_config_consistency.py test_volume_gainer_entrypoint_order.py
