@@ -268,7 +268,7 @@ def fetch_free_fundamental_sources(
                     ("cash_flow", lambda: client.get_cash_flow_mini_statement(ticker_id, statement_type="consolidated")),
                 ]
             else:
-                sid, raw_hits = client.get_ticker(symbol, search_place="stock")
+                sid, raw_hits = client.get_ticker(symbol, search_place="stocks")
                 if not sid:
                     raise RuntimeError("symbol lookup returned no Tickertape SID")
                 matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
