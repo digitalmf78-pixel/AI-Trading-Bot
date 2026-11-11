@@ -48,6 +48,27 @@ def _norm(value: Any) -> str:
 
 
 
+def _configure_bounded_session(client):
+    """Bound each third-party request and disable aggressive upstream retries."""
+    session = getattr(client, "session", None)
+    if session is None:
+        return
+    try:
+        from requests.adapters import HTTPAdapter
+        session.mount("https://", HTTPAdapter(max_retries=0))
+        session.mount("http://", HTTPAdapter(max_retries=0))
+        original_get = session.get
+
+        def bounded_get(url, *args, **kwargs):
+            kwargs.setdefault("timeout", (4, 8))
+            return original_get(url, *args, **kwargs)
+
+        session.get = bounded_get
+    except Exception:
+        # Keep source-specific failures isolated; the caller records diagnostics.
+        return
+
+
 def _identity_matches(symbol: str, company_name: str | None, raw: Any) -> bool:
     """Fail closed unless the search result identifies this exact NSE symbol/company."""
     items = raw if isinstance(raw, list) else [raw]
@@ -194,6 +215,7 @@ def fetch_free_fundamental_sources(
         errors = []
         try:
             client = factory()
+            _configure_bounded_session(client)
             if source == "Moneycontrol":
                 lookup_term = str(company_name or symbol).strip()
                 ticker_id, raw_hits = client.get_ticker(lookup_term)
@@ -234,15 +256,11 @@ def fetch_free_fundamental_sources(
                     ("scorecard", lambda: client.get_score_card(sid)),
                     ("income", lambda: client.get_income_data(sid, time_horizon="interim", num_time_periods=12, view_type="normal")),
                     ("income_growth", lambda: client.get_income_data(sid, time_horizon="interim", num_time_periods=12, view_type="growth")),
-                    ("income_margin", lambda: client.get_income_data(sid, time_horizon="interim", num_time_periods=12, view_type="margin")),
                     ("income_annual", lambda: client.get_income_data(sid, time_horizon="annual", num_time_periods=10, view_type="normal")),
                     ("income_annual_growth", lambda: client.get_income_data(sid, time_horizon="annual", num_time_periods=10, view_type="growth")),
                     ("balance_sheet", lambda: client.get_balance_sheet_data(sid, num_time_periods=10)),
                     ("cash_flow", lambda: client.get_cash_flow_data(sid, num_time_periods=10)),
                     ("shareholding", lambda: client.get_share_holding_pattern(slug)) if slug else ("shareholding", lambda: pd.DataFrame()),
-                    ("dividends", lambda: client.get_dividends_history(slug)) if slug else ("dividends", lambda: pd.DataFrame()),
-                    ("mutual_fund_holdings", lambda: client.get_mutual_fund_holdings(slug)) if slug else ("mutual_fund_holdings", lambda: pd.DataFrame()),
-                    ("smallcase_holdings", lambda: client.get_smallcase_holdings(slug)) if slug else ("smallcase_holdings", lambda: pd.DataFrame()),
                 ]
             for name, call in calls:
                 try:
@@ -271,8 +289,6 @@ def fetch_free_fundamental_sources(
                 if metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
                     candidate_frames.insert(0, frames.get("income_growth", pd.DataFrame()))
                     candidate_frames.insert(1, frames.get("income_annual_growth", pd.DataFrame()))
-                if metric in {"GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct"}:
-                    candidate_frames.insert(0, frames.get("income_margin", pd.DataFrame()))
                 if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
                     candidate_frames.insert(0, frames.get("shareholding", pd.DataFrame()))
                 value = None
