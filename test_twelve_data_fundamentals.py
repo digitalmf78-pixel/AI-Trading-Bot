@@ -88,7 +88,7 @@ def test_twelve_data_calculates_aligned_quarterly_fundamentals_for_nse():
 def test_twelve_data_rejects_non_nse_listing_even_if_symbol_matches():
     payloads = _payloads(exchange="BSE")
     session = FakeSession(payloads)
-    with pytest.raises(ValueError, match="not confirmed as NSE"):
+    with pytest.raises(ValueError, match="not NSE"):
         fetch_twelve_data_fundamentals("TEST", "test-key", session=session)
 
 
