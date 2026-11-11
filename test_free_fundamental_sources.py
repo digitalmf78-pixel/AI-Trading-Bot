@@ -35,9 +35,15 @@ class FakeMoneyControl:
 class FakeTickertape:
     calls = []
 
-    def get_ticker(self, symbol, search_place="stock"):
-        self.calls.append(("tickertape", "lookup", symbol, search_place))
-        return "TT123", [{"ticker": symbol, "sid": "TT123", "slug": "stocks/example-EXAM"}]
+    _base_url = "https://api.tickertape.in"
+
+    def hit_and_get_data(self, url, params=None):
+        self.calls.append(("tickertape", "search", params["text"], params["types"]))
+        return {"data": {"items": [{
+            "ticker": str(params["text"]).upper(),
+            "sid": "TT123",
+            "slug": "stocks/example-EXAM",
+        }]}}
 
     def get_key_ratios(self, slug):
         self.calls.append(("tickertape", "ratios", slug))
@@ -109,7 +115,7 @@ def test_fetches_all_free_sources_and_records_per_metric_provenance():
     assert result["providers"]["Tickertape"]["status"] == "DATA_FOUND"
     assert any(call[0] == "tickertape" for call in FakeTickertape.calls)
     assert len([call for call in FakeMoneyControl.calls if call[1] != "lookup"]) == 6
-    assert len([call for call in FakeTickertape.calls if call[1] != "lookup"]) == 9
+    assert len([call for call in FakeTickertape.calls if call[1] != "search"]) == 9
 
 
 def test_tickertape_fallback_fills_missing_ratio_when_moneycontrol_empty():
@@ -141,8 +147,10 @@ def test_wrong_company_search_result_is_rejected_before_fundamentals_fetch():
             raise AssertionError("wrong-company data must never be fetched")
 
     class NoTickertape:
-        def get_ticker(self, symbol, search_place="stock"):
-            return "", []
+        _base_url = "https://api.tickertape.in"
+
+        def hit_and_get_data(self, url, params=None):
+            return {"data": {"items": []}}
 
     result = fetch_free_fundamental_sources(
         "RELIANCE", company_name="Reliance Industries Limited",
