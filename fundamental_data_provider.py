@@ -761,7 +761,16 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 "EMPTY_OR_UNMAPPED" if free_source_result.get("providers") else "NO_SOURCE_AVAILABLE"
             )
             record["FreeSourcesDiagnosticsJSON"] = json.dumps(free_source_result.get("providers", {}), sort_keys=True)
-            record["FreeSourcesAlternatesJSON"] = json.dumps(free_source_result.get("metric_alternates", {}), sort_keys=True)
+            free_source_values = {}
+            for observed_metric, observed_value in free_source_result.get("metrics", {}).items():
+                source_value_rows = [{
+                    "source": free_source_result.get("metric_sources", {}).get(observed_metric, ""),
+                    "value": observed_value,
+                    "source_url": free_source_result.get("metric_urls", {}).get(observed_metric, ""),
+                }]
+                source_value_rows.extend(free_source_result.get("metric_alternates", {}).get(observed_metric, []))
+                free_source_values[observed_metric] = source_value_rows
+            record["FreeSourcesAlternatesJSON"] = json.dumps(free_source_values, sort_keys=True)
             free_source_observed = list(free_source_result.get("metrics", {}))
             diagnostic["FreeSourcesAttempted"] = True
             diagnostic["FreeSourcesStatus"] = record["FreeSourcesStatus"]
