@@ -72,7 +72,7 @@ def test_delivery_quantity_missing_is_not_misreported_as_malformed(tmp_path):
 
 
 def test_vcp_reports_missing_symbol_session_reason(tmp_path):
-    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-04-30", freq="D") if is_trading_session(day.date())][:60]
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates[1:])
 
     row = _vcp_report(tmp_path, rows, dates)
