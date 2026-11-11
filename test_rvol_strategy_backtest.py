@@ -1,6 +1,6 @@
 import math
 import pandas as pd
-from rvol_strategy_backtest import (classify_delivery, strategy_membership, _metric, delivery_window_dates, forward_session_dates)
+from rvol_strategy_backtest import (classify_delivery, strategy_membership, _metric, delivery_window_dates, forward_session_dates, official_market_session_dates)
 
 
 def test_delivery_categories_use_all_valid_reports_and_minimum_five():
@@ -62,3 +62,20 @@ def test_delivery_window_includes_official_muhurat_special_session():
     dates = pd.to_datetime(["2026-11-07", "2026-11-08", "2026-11-09"])
     got = delivery_window_dates(dates, "2026-11-09", max_calendar_days=30)
     assert [d.strftime("%Y-%m-%d") for d in got] == ["2026-11-08", "2026-11-09"]
+
+
+def test_official_market_calendar_includes_muhurat_and_excludes_holiday_weekend():
+    dates = official_market_session_dates("2026-11-06", "2026-11-10")
+    assert [d.strftime("%Y-%m-%d") for d in dates] == [
+        "2026-11-06", "2026-11-08", "2026-11-09"
+    ]
+
+
+def test_official_calendar_session_missing_from_price_files_is_not_skipped():
+    dates = official_market_session_dates("2026-11-06", "2026-11-09")
+    assert [d.strftime("%Y-%m-%d") for d in dates] == [
+        "2026-11-06", "2026-11-08", "2026-11-09"
+    ]
+    # The full official calendar includes Muhurat even if a specific symbol or
+    # whole-market file is absent; horizon logic must preserve that date.
+    assert forward_session_dates(dates, "2026-11-06", 2) == dates[1:3]
