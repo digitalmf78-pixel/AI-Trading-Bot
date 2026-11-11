@@ -319,10 +319,14 @@ def _load_or_fetch_filing(
     current = now or datetime.now(timezone.utc)
 
     if cache_path.is_file():
-        age_seconds = current.timestamp() - cache_path.stat().st_mtime
-        if 0 <= age_seconds < max(1, max_age_days) * 86400:
-            try:
-                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            checked_raw = cached.get("checked_at_utc", "")
+            checked_at = datetime.fromisoformat(str(checked_raw).replace("Z", "+00:00"))
+            if checked_at.tzinfo is None:
+                checked_at = checked_at.replace(tzinfo=timezone.utc)
+            age_seconds = (current - checked_at.astimezone(timezone.utc)).total_seconds()
+            if 0 <= age_seconds < max(1, max_age_days) * 86400:
                 raw_filing = cached.get("latest_filing")
                 filing = _compact_filing(raw_filing, symbol) if isinstance(raw_filing, dict) else {}
                 if filing and filing.get("period_end"):
@@ -335,8 +339,8 @@ def _load_or_fetch_filing(
                         "index_status": "REUSED_EMPTY_CACHE",
                         "index_checked_at_utc": cached.get("checked_at_utc", ""),
                     }
-            except (OSError, ValueError, TypeError):
-                pass
+        except (OSError, ValueError, TypeError):
+            pass
 
     session = session_factory() if session_factory else _build_session()
     warmup_status = "NOT_ATTEMPTED"
