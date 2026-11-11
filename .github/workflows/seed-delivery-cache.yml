@@ -2,6 +2,11 @@ name: Seed Persistent NSE Delivery Cache
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/seed-delivery-cache.yml"
 
 permissions:
   contents: read
