@@ -47,9 +47,11 @@ def test_fundamental_history_snapshot_is_dated_and_preserves_csv(tmp_path):
 def test_fundamental_assessment_uses_metric_verification_before_selection():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
-    fundamentals = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
+    fundamentals = source.index("STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES")
     technical = source.index("Calculate technical features for every stock that passed Delivery and Liquidity")
     assert liquidity < fundamentals < technical
+    assert "fundamental_collection_candidates = current.loc[" in source
+    assert "collect_missing_fundamentals(\n                    fundamental_collection_candidates" in source
     assert "run_fundamental_metric_audit(symbols=evidence_symbols)" in source
     assert "Fundamental score/status is enrichment only and never removes a candidate" in source
     assert "fundamental_pass_mask" not in source
