@@ -436,6 +436,10 @@ jobs:
                   return list(reader)
           current = read(source, expected)
           old = read(history, expected)
+          if not history.exists():
+              history.parent.mkdir(parents=True, exist_ok=True)
+              with history.open("w", newline="", encoding="utf-8") as f:
+                  csv.writer(f).writerow(expected)
           old_by_key = {(r["EODDate"], r["TckrSymb"]): r for r in old}
           current_by_key = {}
           for row in current:
@@ -463,8 +467,6 @@ jobs:
               history.parent.mkdir(parents=True, exist_ok=True)
               with history.open("a", newline="", encoding="utf-8") as f:
                   writer = csv.DictWriter(f, fieldnames=expected)
-                  if not old:
-                      writer.writeheader()
                   writer.writerows(additions)
           print(f"SIGNAL_HISTORY_EXISTING_ROWS={len(old)}")
           print(f"SIGNAL_HISTORY_APPENDED_ROWS={len(additions)}")
@@ -476,6 +478,10 @@ jobs:
                       raise SystemExit("SIGNAL_OUTCOME_SCHEMA_MISMATCH")
                   outcome_rows = list(reader)
               existing = read(outcomes_history, outcome_header)
+              if not outcomes_history.exists():
+                  outcomes_history.parent.mkdir(parents=True, exist_ok=True)
+                  with outcomes_history.open("w", newline="", encoding="utf-8") as f:
+                      csv.writer(f).writerow(outcome_header)
               existing_by_key = {(x["EODDate"], x["TckrSymb"], x["HorizonSessions"]): x for x in existing}
               append = []
               for row in outcome_rows:
@@ -490,8 +496,6 @@ jobs:
                   outcomes_history.parent.mkdir(parents=True, exist_ok=True)
                   with outcomes_history.open("a", newline="", encoding="utf-8") as f:
                       writer = csv.DictWriter(f, fieldnames=outcome_header)
-                      if not existing:
-                          writer.writeheader()
                       writer.writerows(append)
               print(f"SIGNAL_OUTCOMES_APPENDED_ROWS={len(append)}")
           PY
