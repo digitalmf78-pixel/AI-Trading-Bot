@@ -388,7 +388,7 @@ def _load_or_fetch_filing(
         tmp_path.write_text(json.dumps(stored, indent=2, sort_keys=True), encoding="utf-8")
         tmp_path.replace(cache_path)
         return latest, {
-            "index_status": "FETCHED",
+            "index_status": "FETCHED" if latest else "NO_FILING_FOUND",
             "index_checked_at_utc": current.isoformat(),
             "index_filing_count": len(filings),
             "homepage_warmup_status": warmup_status,
