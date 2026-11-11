@@ -84,7 +84,7 @@ def test_vcp_reports_missing_symbol_session_reason(tmp_path):
 
 
 def test_vcp_reports_duplicate_symbol_session_reason(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates, duplicate_first=True)
 
     row = _vcp_report(tmp_path, rows, dates)
@@ -96,7 +96,7 @@ def test_vcp_reports_duplicate_symbol_session_reason(tmp_path):
 
 
 def test_vcp_reports_invalid_ohlc_reason(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates, invalid_ohlc=True)
 
     row = _vcp_report(tmp_path, rows, dates)
@@ -107,7 +107,7 @@ def test_vcp_reports_invalid_ohlc_reason(tmp_path):
 
 
 def test_vcp_reports_missing_volume_separately_from_range(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates, missing_volume=True)
 
     row = _vcp_report(tmp_path, rows, dates)
