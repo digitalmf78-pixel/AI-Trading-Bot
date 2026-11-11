@@ -83,7 +83,7 @@ def _build_watchlist(result, news, eod_date):
     tags = []
     for _, row in watch.iterrows():
         labels = []
-        for col, label in (("_AccumulationWatchlistStatus", "ACCUMULATION"), ("_BaseVCPWatchlistStatus", "BASE_VCP"), ("_SetupWatchlistStatus", "BREAKOUT_PULLBACK"), ("_EntryWatchlistStatus", "FINAL_ENTRY")):
+        for col, label in (("WatchlistStatus_Accumulation", "ACCUMULATION"), ("WatchlistStatus_BaseVCP", "BASE_VCP"), ("WatchlistStatus_Setup", "BREAKOUT_PULLBACK"), ("WatchlistStatus_Entry", "FINAL_ENTRY")):
             if str(row.get(col, "")).upper() not in {"", "NAN", "NONE", "NO_SETUP", "WAIT_FOR_DATA"}:
                 labels.append(label)
         tags.append("|".join(labels) if labels else "RESEARCH_ONLY")
