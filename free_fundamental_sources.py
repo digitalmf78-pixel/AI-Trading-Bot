@@ -168,7 +168,7 @@ def fetch_free_fundamental_sources(
     result = {
         "symbol": symbol, "metrics": {}, "metric_sources": {},
         "metric_urls": {}, "metric_periods": {}, "metric_currencies": {},
-        "providers": {}, "attempted_at_utc": datetime.now(timezone.utc).isoformat(),
+        "metric_alternates": {}, "providers": {}, "attempted_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     factories = source_factories or {}
     clients = []
