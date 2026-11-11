@@ -45,7 +45,6 @@ from fii_dii_activity import attach_market_context, write_market_activity
 from datetime import datetime, timedelta, timezone
 from signal_log import append_signal_log
 from signal_outcome_tracker import update_signal_outcomes
-from signal_shadow_run import build_mainboard_signal_shadow
 from v8_layers_14_41 import (
     monitor_positions,
     run_eod_layers,
@@ -3960,29 +3959,10 @@ def main():
     except Exception as outcome_exc:
         print(f"[SIGNAL OUTCOMES] WARNING: observation update skipped; scanner continues: {outcome_exc}")
 
-    # Full Mainboard shadow cohort + immutable point-in-time snapshots. This
-    # sidecar is strictly observational and cannot feed back into Track 1.
-    try:
-        strategy_sha = os.getenv("GITHUB_SHA", "")
-        if len(strategy_sha) != 40:
-            raise ValueError("GITHUB_SHA is unavailable; immutable snapshot strategy version cannot be verified")
-        shadow_manifest = build_mainboard_signal_shadow(
-            track2_mainboard_candidates,
-            reports={
-                "delivery": delivery_audit,
-                "liquidity": liquidity_audit,
-                "fundamental": fundamental_audit,
-                "technical": result,
-                "final_eod": result,
-            },
-            eod_date=eod_date,
-            strategy_version=strategy_sha,
-            workflow_run_id=os.getenv("GITHUB_RUN_ID", ""),
-            workflow_run_attempt=os.getenv("GITHUB_RUN_ATTEMPT", ""),
-        )
-        print("[SIGNAL SHADOW] " + str(shadow_manifest))
-    except Exception as shadow_exc:
-        print(f"[SIGNAL SHADOW] WARNING: observation snapshot skipped; scanner continues: {shadow_exc}")
+    # Shadow snapshot/stage-event persistence is intentionally not invoked
+    # from the live scanner: the append-only JSONL writer has no enforced
+    # row/byte ceiling. It remains available for isolated offline use until a
+    # bounded retention policy is approved and tested.
 
     # Later-stage watchlists are independent copies; no output feeds back into
     # result or changes the existing EOD selection gates.
