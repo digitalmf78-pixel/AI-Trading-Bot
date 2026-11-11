@@ -75,15 +75,10 @@ def _atr14(history):
     if len(history) < 15 or not {"HghPric", "LwPric", "ClsPric"}.issubset(history.columns):
         return float("nan")
     recent = history.tail(15).copy()
+    if not _valid_ohlc_frame(recent):
+        return float("nan")
     for column in ("HghPric", "LwPric", "ClsPric"):
         recent[column] = pd.to_numeric(recent[column], errors="coerce")
-    if recent[["HghPric", "LwPric", "ClsPric"]].isna().any().any():
-        return float("nan")
-    if (
-        (recent["HghPric"] < recent["LwPric"]).any()
-        or (recent[["HghPric", "LwPric", "ClsPric"]] <= 0).any().any()
-    ):
-        return float("nan")
     previous = recent["ClsPric"].shift(1)
     true_range = pd.concat(
         [
