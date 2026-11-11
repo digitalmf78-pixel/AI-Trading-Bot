@@ -128,6 +128,9 @@ def test_tickertape_fallback_fills_missing_ratio_when_moneycontrol_empty():
         def get_ratios_mini_statement(self, ticker, statement_type="consolidated"):
             return pd.DataFrame()
 
+        def get_overview_mini_statement(self, ticker, statement_type="consolidated", statement_frequency=12):
+            return pd.DataFrame()
+
     result = fetch_free_fundamental_sources(
         "INFY",
         missing_metrics={"RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent"},
