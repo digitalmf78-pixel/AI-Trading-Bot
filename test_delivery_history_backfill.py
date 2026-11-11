@@ -50,7 +50,7 @@ def test_cached_delivery_rejects_mismatched_internal_date(tmp_path):
 def test_backfill_summary_is_partial_if_some_reports_unavailable(tmp_path, monkeypatch):
     dates = [date(2026, 11, 5), date(2026, 11, 6)]
     monkeypatch.setattr(backfill, "price_session_dates", lambda *a, **k: dates)
-    monkeypatch.setattr(backfill, "_download_report", lambda session, day: (
+    monkeypatch.setattr(backfill, "_download_report", lambda session, day, cache_dir=None: (
         ("DOWNLOADED", 2, "a" * 64, 2048) if day == dates[0] else ("HTTP_404_NOT_AVAILABLE", 0, "", 0)
     ))
     summary = backfill.run_backfill(
