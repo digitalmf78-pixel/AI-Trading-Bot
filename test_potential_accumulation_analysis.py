@@ -2,10 +2,11 @@ from datetime import date, timedelta
 import pandas as pd
 
 from potential_accumulation_analysis import build_potential_accumulation_report
+from nse_trading_calendar import is_trading_session
 
 
 def _history(symbol="AAA", periods=60):
-    dates = pd.bdate_range("2026-08-01", periods=periods)
+    dates = [day for day in pd.date_range("2025-01-01", "2026-10-22", freq="D") if is_trading_session(day.date())][-periods:]
     lows = [100.0 + (i % 5) for i in range(periods)]
     highs = [v + 4 for v in lows]
     closes = [v + 2 for v in lows]
@@ -122,7 +123,7 @@ def test_future_price_rows_are_excluded_from_asof_range(tmp_path, monkeypatch):
     future["ClsPric"] = 999998
     history = pd.concat([history, future], ignore_index=True)
     report = build_potential_accumulation_report(
-        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": float(history.loc[history["Date"].dt.date <= date(2026, 10, 23), "ClsPric"].iloc[-1])}]),
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "OpnPric": 119, "HghPric": 122, "LwPric": 118, "ClsPric": 120}]),
         [history], _delivery_sessions(), "2026-10-23"
     )
     assert report.iloc[0]["PriceRange20DHigh"] < 999999
@@ -150,7 +151,7 @@ def test_delivery_percent_without_price_fields_does_not_claim_price_response(tmp
 def test_ema200_is_available_only_with_200_complete_asof_sessions(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     history = _history(periods=200)
-    history["Date"] = pd.bdate_range(end="2026-10-22", periods=200)
+    history["Date"] = [day for day in pd.date_range("2025-12-01", "2026-10-22", freq="D") if is_trading_session(day.date())][-200:]
     report = build_potential_accumulation_report(
         pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
         [history], _delivery_sessions(), "2026-10-23"
@@ -216,7 +217,7 @@ def test_atr_waits_when_a_required_close_is_missing_in_its_14_true_range_window(
         [history], _delivery_sessions(), "2026-10-23"
     )
     row = report.iloc[0]
-    assert row["PivotStructureStatus"] == "COMPLETE"
+    assert row["PivotStructureStatus"] == "WAIT_FOR_DATA"
     assert pd.isna(row["ATR14"])
     assert row["PivotLowSeparationStatus"] == "WAIT_FOR_DATA"
 
@@ -247,3 +248,26 @@ def test_rolling_range_observation_waits_for_invalid_price_or_candle_structure(t
     row = report.iloc[0]
     assert row["PriceRange20DStatus"] == "WAIT_FOR_DATA"
     assert pd.isna(row["PriceRange20DSessionCount"])
+
+
+
+def test_pivot_status_waits_for_invalid_open_or_candle_structure(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "OpnPric"] = float("inf")
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    assert report.iloc[0]["PivotStructureStatus"] == "WAIT_FOR_DATA"
+
+
+def test_pivot_status_waits_when_open_is_outside_candle_range(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history = _history()
+    history.loc[history.index[-5], "OpnPric"] = history.loc[history.index[-5], "HghPric"] + 1
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [history], _delivery_sessions(), "2026-10-23"
+    )
+    assert report.iloc[0]["PivotStructureStatus"] == "WAIT_FOR_DATA"

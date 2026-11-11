@@ -4,6 +4,7 @@ import pandas as pd
 
 from delivery_quantity_analysis import build_delivery_quantity_report
 from vcp_observation_analysis import build_vcp_observation_report
+from nse_trading_calendar import is_trading_session
 
 
 def _history_rows(symbol, dates, duplicate_first=False, missing_volume=False, invalid_ohlc=False):
@@ -71,7 +72,7 @@ def test_delivery_quantity_missing_is_not_misreported_as_malformed(tmp_path):
 
 
 def test_vcp_reports_missing_symbol_session_reason(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates[1:])
 
     row = _vcp_report(tmp_path, rows, dates)
@@ -83,7 +84,7 @@ def test_vcp_reports_missing_symbol_session_reason(tmp_path):
 
 
 def test_vcp_reports_duplicate_symbol_session_reason(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates, duplicate_first=True)
 
     row = _vcp_report(tmp_path, rows, dates)
@@ -95,7 +96,7 @@ def test_vcp_reports_duplicate_symbol_session_reason(tmp_path):
 
 
 def test_vcp_reports_invalid_ohlc_reason(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates, invalid_ohlc=True)
 
     row = _vcp_report(tmp_path, rows, dates)
@@ -106,7 +107,7 @@ def test_vcp_reports_invalid_ohlc_reason(tmp_path):
 
 
 def test_vcp_reports_missing_volume_separately_from_range(tmp_path):
-    dates = list(pd.bdate_range("2026-01-01", periods=60).date)
+    dates = [day.date() for day in pd.date_range("2026-01-01", "2026-06-30", freq="D") if is_trading_session(day.date())][:60]
     rows = _history_rows("AAA", dates, missing_volume=True)
 
     row = _vcp_report(tmp_path, rows, dates)

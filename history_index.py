@@ -7,6 +7,7 @@ WAIT_FOR_DATA instead of silently accepting ambiguous source data.
 from __future__ import annotations
 
 import pandas as pd
+from nse_trading_calendar import CalendarCoverageError, is_trading_session
 
 
 def build_price_history_index(historical, asof):
@@ -31,7 +32,22 @@ def build_price_history_index(historical, asof):
             part["_HISTORY_SERIES"] = "*"
         frames.append(part)
 
-    market_dates.add(asof_day)
+    if market_dates:
+        first_observed = min(market_dates)
+        try:
+            expected_dates = [
+                day.date()
+                for day in pd.date_range(first_observed, asof_day, freq="D")
+                if is_trading_session(day.date())
+            ]
+        except CalendarCoverageError:
+            # Unknown/missing calendar coverage must never be inferred from
+            # observed Bhavcopy dates. Empty dates force all windows to WAIT.
+            expected_dates = []
+        market_dates = set(expected_dates)
+    else:
+        market_dates = set()
+
     if not frames:
         return {}, sorted(market_dates)
 
