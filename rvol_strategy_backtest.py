@@ -1,10 +1,12 @@
 """Research-only comparison of three RVOL gates on cached NSE EOD data.
 
-Strategies are compared on the same historical universe and gates:
-5-session Delivery Category A (average >=60%) + prior-20-session liquidity
-(average traded value >= INR 1.5 crore), then:
+Strategies are compared on the same historical cohort and gates:
+all valid candidate-specific Delivery reports in the inclusive 30-calendar-day
+window (minimum five), Category A average >=60%, plus prior-20-official-session
+average traded value >= INR 1.5 crore, then:
 A) RVOL > 1.5; B) RVOL > 1.2; C) no hard RVOL threshold.
-Category B (all five Delivery sessions >=60%) is reported as a stricter subgroup.
+Category B requires every valid report in that 30-day window to be >=60%.
+Forward horizons use exact official NSE sessions and require complete symbol OHLC.
 No network calls, no live scanner changes, no fundamental claims.
 """
 from __future__ import annotations
