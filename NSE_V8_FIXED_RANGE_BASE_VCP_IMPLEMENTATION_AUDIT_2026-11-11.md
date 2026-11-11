@@ -2,7 +2,7 @@
 
 **Date:** 11-Nov-2026  
 **Audited branch:** `main`  
-**Main commit:** `e3c749b5eed3ae2a5b3315052c16f5d4f55f2e0d`  
+**Main commit verified after PR #62:** `a1018f5c9ec0f8bb49b5f16cbe1c34cff01cd858`  
 **Scope:** Read-only code and test audit of Fixed-Range Base and VCP observations, including Track 2 wiring. No trading rules or production code changed in this audit.
 
 ## 1. Executive result
@@ -49,23 +49,26 @@ The 0.5x marker is observational only. It is not a filter, score, confirmation, 
 
 PR #45 (`3c72add025ccad3f5aaa41506e0bbb9e70abbd39`) snapshots the official Mainboard frame before Delivery A/B and calls `build_track2_full_mainboard_report` after the shared Delivery fetch. Track 2 writes to its isolated `outputs/track2_full_mainboard/` namespace and its errors do not gate or mutate Track 1. The register's earlier statement that no scanner/workflow integration existed is historical and no longer current.
 
-## 3. New data-integrity finding requiring a safe follow-up
+## 3. Data-integrity follow-up — resolved by PR #62
 
-### Global official-session coverage is not independently proven by the shared history index
+The two data-integrity findings recorded in the original audit were implemented and merged to `main` by PR #62 (`a1018f5c9ec0f8bb49b5f16cbe1c34cff01cd858`).
 
-`history_index.build_price_history_index` currently builds its `market_dates` set from dates found in the supplied Bhavcopy frames and then adds the requested as-of date. It does not construct the expected date sequence from `nse_trading_calendar.py`.
+### Official NSE session parity — implemented
 
-Consequently, if an entire official NSE session is absent from all supplied/cached Bhavcopy frames, the global date list can omit that session. A symbol can then appear complete relative to the observed date list even though the official session is missing from the cache. The current per-symbol exact-date checks protect against a symbol-specific missing row only when the date exists in the global date list; they cannot independently detect a globally absent date.
+`history_index.build_price_history_index` now builds the expected session sequence from the official NSE Capital Market calendar, from the earliest observed Bhavcopy date through the as-of date. This preserves official special sessions (including Muhurat Trading) and makes a missing official session within that observed coverage interval visible to completeness checks. Unknown/missing calendar-year coverage fails closed and produces an empty expected-session set, which keeps downstream windows in `WAIT_FOR_DATA`.
 
-This affects the interpretation of both the 60-date VCP window and rolling range windows. Until official-calendar parity is added, logs and reports should not overstate the observed date set as independently verified official-session coverage.
+**Known boundary:** the sequence begins at the earliest date present in the supplied Bhavcopy frames. It cannot independently prove that the cache contains every official session before that earliest observed date. A future cache-coverage metadata contract would be needed to verify the entire requested lookback from a declared coverage start; do not silently infer or backfill that coverage.
 
-**Recommended safe code follow-up:** build the expected session sequence from the existing official NSE calendar for the requested as-of date and compare it with the available Bhavcopy date set before declaring any 20/50/100/200 or 60-session window complete. Missing calendar coverage or a missing expected Bhavcopy session must return `WAIT_FOR_DATA`; do not reach farther back to replace it. Preserve special sessions such as Muhurat Trading.
+### Pivot OHLC integrity — implemented
 
-### Pivot observation integrity in Potential Accumulation
+`potential_accumulation_analysis.py` now validates finite, positive Open/High/Low/Close values and candle structure before marking Pivot Structure complete. Invalid Open values and candles whose Open/Close lie outside Low/High return `WAIT_FOR_DATA`. The pivot selection formula is unchanged. Existing Rolling Range validation behavior is preserved; no new scanner filter or trading threshold was added.
 
-The rolling range branch validates finite positive OHLC structure. The separate pivot-completeness branch currently checks date coverage and non-null High/Low values, but does not apply the same full finite-positive and candle-structure validation before marking `PivotStructureStatus=COMPLETE`. The ATR helper has its own partial checks, but that does not make the pivot status itself a complete OHLC integrity assertion.
+### Validation evidence
 
-**Recommended safe code follow-up:** reuse one shared per-session OHLC validator for rolling ranges, pivot detection and ATR inputs. Invalid or non-finite values must make the affected observation `WAIT_FOR_DATA`, not a completed pivot observation. This is a data-integrity correction only; no pivot formula or signal threshold should change.
+- PR #62 changed the official-session index and pivot OHLC completeness checks, plus focused calendar and OHLC regression fixtures.
+- NSE V8 PR Checks run #439: compilation, unit/data-audit tests, V8 regression, and sector/news/official-index tests all **PASS**.
+- News Matching and Parser Tests run #714: **PASS**.
+- PR #62 was squash-merged to `main` as `a1018f5`.
 
 ## 4. Definitions that remain unapproved — do not guess
 
@@ -92,12 +95,11 @@ No numerical value or final classification should be added until the user approv
 
 ## 5. Safe implementation sequence
 
-1. Add official-calendar expected-session parity to the shared history-window contract, with tests for holidays, Muhurat/special sessions, globally missing Bhavcopy dates, duplicate dates, future dates and insufficient calendar-year coverage.
-2. Unify finite-positive OHLC and candle-structure validation across rolling range, pivot and ATR observations; preserve existing pivot selection logic.
-3. Keep the current rolling range and three-block VCP measurements descriptive while the above data-integrity fixes are validated.
-4. Implement fixed-range base boundary detection only after the start/end/duration/width definitions are explicitly approved.
-5. Implement final VCP classification only after the contraction and volume thresholds are explicitly approved.
-6. Validate Track 1 output parity and Track 2 full-Mainboard row coverage; no observer failure may alter Track 1 candidate membership.
+1. Treat PR #62 official-session parity and pivot OHLC validation as implemented; retain the documented earliest-observed-date coverage boundary and do not claim cache completeness before it.
+2. Keep current rolling-range and three-block VCP measurements descriptive and non-gating.
+3. Implement fixed-range base boundary detection only after the start/end/duration/width definitions are explicitly approved.
+4. Implement final VCP classification only after the contraction and volume thresholds are explicitly approved.
+5. Continue validating Track 1 output parity and Track 2 full-Mainboard row coverage; no observer failure may alter Track 1 candidate membership.
 
 ## 6. Change-control statement
 
