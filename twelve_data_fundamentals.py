@@ -161,6 +161,11 @@ def fetch_twelve_data_fundamentals(
     profit_aliases = {"netincome", "netincometocommon", "netincomecontinuousoperations"}
     ebit_aliases = {"ebit", "operatingincome"}
     interest_aliases = {"interestexpense", "nonoperatinginterestexpense"}
+    balance_currency = str((balance_payload.get("meta") or {}).get("currency") or "").strip().upper()
+    cash_currency = str((cash_payload.get("meta") or {}).get("currency") or "").strip().upper()
+    if any(code and currency and code != currency for code in (balance_currency, cash_currency)):
+        raise ValueError(f"statement currencies do not match: income={currency}, balance={balance_currency}, cash={cash_currency}")
+
     if _consecutive(income, 8):
         latest4, prior4 = income[:4], income[4:8]
         rev_now = [value(row, revenue_aliases) for row in latest4]
@@ -173,12 +178,19 @@ def fetch_twelve_data_fundamentals(
                 put("RevenueGrowthPct", (sum(rev_now) - denominator) / denominator * 100.0)
         if all(v is not None for v in profit_now + profit_prior):
             denominator = sum(profit_prior)
-            if denominator != 0:
-                put("ProfitGrowthPct", (sum(profit_now) - denominator) / abs(denominator) * 100.0)
+            if denominator > 0:
+                put("ProfitGrowthPct", (sum(profit_now) - denominator) / denominator * 100.0)
 
     ttm_income = income[:4] if _consecutive(income, 4) else []
     ttm_ebit = [value(row, ebit_aliases) for row in ttm_income]
-    ttm_interest = [value(row, interest_aliases) for row in ttm_income]
+    def interest_expense(row: dict) -> float | None:
+        direct = value(row, interest_aliases)
+        if direct is not None:
+            return direct
+        nested = row.get("non_operating_interest") or row.get("nonOperatingInterest") or {}
+        return _find_number(nested, {"expense"}) if isinstance(nested, dict) else None
+
+    ttm_interest = [interest_expense(row) for row in ttm_income]
     ttm_profit = [value(row, profit_aliases) for row in ttm_income]
     ebit_total = sum(ttm_ebit) if ttm_ebit and all(v is not None for v in ttm_ebit) else None
     interest_total = sum(abs(v) for v in ttm_interest) if ttm_interest and all(v is not None for v in ttm_interest) else None
@@ -189,7 +201,7 @@ def fetch_twelve_data_fundamentals(
         equity_aliases = {"totalshareholdersequity", "totalstockholdersequity", "shareholdersequity", "totalowners'equity", "totalowners equity"}
         asset_aliases = {"totalassets"}
         current_liability_aliases = {"totalcurrentliabilities", "currentliabilities"}
-        debt_aliases = {"totaldebt", "shorttermdebtandcurrentportionoflongtermdebt", "longtermdebt"}
+        debt_aliases = {"totaldebt"}
         equity_now = value(latest_bs, equity_aliases)
         equity_prior = value(prior_bs, equity_aliases)
         assets_now, assets_prior = value(latest_bs, asset_aliases), value(prior_bs, asset_aliases)
@@ -199,8 +211,8 @@ def fetch_twelve_data_fundamentals(
         if debt_now is None:
             short_debt = _find_number(latest_bs, {"shorttermdebt", "shorttermborrowings"})
             long_debt = _find_number(latest_bs, {"longtermdebt", "longtermborrowings"})
-            if short_debt is not None and long_debt is not None:
-                debt_now = short_debt + long_debt
+            if short_debt is not None or long_debt is not None:
+                debt_now = (short_debt or 0.0) + (long_debt or 0.0)
         if equity_now is not None and equity_now != 0 and debt_now is not None:
             put("DebtToEquity", debt_now / equity_now)
         if profit_total is not None and equity_now is not None and equity_prior is not None and (equity_now + equity_prior) != 0:
