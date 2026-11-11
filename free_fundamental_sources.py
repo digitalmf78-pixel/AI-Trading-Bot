@@ -326,13 +326,24 @@ def fetch_free_fundamental_sources(
                 if pause_seconds:
                     time.sleep(max(0.0, float(pause_seconds)))
             row_counts = {name: int(len(frame)) for name, frame in frames.items() if not frame.empty}
-            table_schema = {
-                name: {
+            table_schema = {}
+            for name, frame in frames.items():
+                if frame.empty:
+                    continue
+                label_columns = [col for col in frame.columns if _norm(col) in {
+                    "name", "ratio", "ratios", "metric", "particular", "particulars",
+                    "parameter", "key", "headers", "headings", "unnamed0",
+                }]
+                label_col = label_columns[0] if label_columns else (frame.columns[0] if len(frame.columns) else None)
+                label_preview = (
+                    [str(value) for value in frame[label_col].head(20).tolist()]
+                    if label_col is not None else []
+                )
+                table_schema[name] = {
                     "columns": [str(col) for col in frame.columns[:20]],
                     "index_preview": [str(idx) for idx in frame.index[:15]],
+                    "label_preview": label_preview,
                 }
-                for name, frame in frames.items() if not frame.empty
-            }
             result["providers"][source] = {
                 "status": "DATA_FOUND" if row_counts else "EMPTY",
                 "rows": row_counts,
