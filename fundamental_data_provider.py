@@ -710,8 +710,8 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, 
     yahoo_metrics = [col for col in METRIC_COLUMNS if _present(record.get(col))]
     metric_sources = {col: "Yahoo Finance via yfinance" for col in yahoo_metrics}
     metric_urls = {col: url for col in yahoo_metrics}
-    metric_periods = {col: str(record.get("FinancialPeriodEnd") or "") for col in yahoo_metrics}
-    metric_currencies = {col: str(record.get("ValuationCurrency") or "") for col in yahoo_metrics}
+    metric_periods = {col: str(record.get("FinancialPeriodEnd")) if _present(record.get("FinancialPeriodEnd")) else "" for col in yahoo_metrics}
+    metric_currencies = {col: str(record.get("ValuationCurrency")) if _present(record.get("ValuationCurrency")) else "" for col in yahoo_metrics}
     provider_diagnostics = {
         "Yahoo Finance via yfinance": {
             "status": diagnostic.get("ProviderStatus", "UNKNOWN"),
