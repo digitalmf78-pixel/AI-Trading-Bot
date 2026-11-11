@@ -12,9 +12,9 @@ def test_delivery_categories_use_all_valid_reports_and_minimum_five():
 
 
 def test_delivery_window_is_inclusive_30_calendar_days():
-    dates = pd.to_datetime(["2026-10-07", "2026-10-11", "2026-10-12", "2026-10-20", "2026-11-06", "2026-11-07"])
+    dates = pd.to_datetime(["2026-10-07", "2026-10-08", "2026-10-11", "2026-10-12", "2026-11-06", "2026-11-07"])
     got = delivery_window_dates(dates, "2026-11-06", max_calendar_days=30)
-    assert [d.strftime("%Y-%m-%d") for d in got] == ["2026-10-11", "2026-10-12", "2026-10-20", "2026-11-06"]
+    assert [d.strftime("%Y-%m-%d") for d in got] == ["2026-10-08", "2026-10-12", "2026-11-06"]
 
 
 def test_forward_horizons_use_next_market_sessions_and_require_full_horizon():
@@ -56,3 +56,9 @@ def test_missing_cache_writes_wait_for_data_reports(tmp_path):
     assert (tmp_path / "reports" / "signals.csv").exists()
     rejection = pd.read_csv(tmp_path / "reports" / "rejection_counts.csv")
     assert rejection.iloc[0]["Status"] == "WAIT_FOR_DATA"
+
+
+def test_delivery_window_includes_official_muhurat_special_session():
+    dates = pd.to_datetime(["2026-11-07", "2026-11-08", "2026-11-09"])
+    got = delivery_window_dates(dates, "2026-11-09", max_calendar_days=30)
+    assert [d.strftime("%Y-%m-%d") for d in got] == ["2026-11-08", "2026-11-09"]
