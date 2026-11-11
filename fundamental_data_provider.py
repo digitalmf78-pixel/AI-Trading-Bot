@@ -69,6 +69,13 @@ BASE_COLUMNS = [
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
     "TwelveDataAttemptedAtUTC", "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
+AUXILIARY_FUNDAMENTAL_COLUMNS = [
+    "GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct", "CurrentRatio",
+    "QuickRatio", "AssetTurnover", "TrailingPE", "PriceToBook", "DividendYieldPct",
+    "EPS", "BookValuePerShare", "PromoterHoldingPct", "FIIHoldingPct",
+    "DIIHoldingPct", "PublicHoldingPct", "PledgePct",
+]
+BASE_COLUMNS += AUXILIARY_FUNDAMENTAL_COLUMNS
 BASE_COLUMNS += VALUATION_COLUMNS
 
 
@@ -724,11 +731,15 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
     # from the Yahoo statement alignment path: mixed-source metrics stay UNVERIFIED.
     free_source_metrics = []
     free_source_result = {}
-    if allow_free_sources and requested_secondary:
+    free_source_requested = set(missing_metrics) if missing_metrics is not None else set()
+    if missing_metrics is None:
+        free_source_requested = set(AUXILIARY_FUNDAMENTAL_COLUMNS)
+    free_source_requested &= set(AUXILIARY_FUNDAMENTAL_COLUMNS) | set(requested_secondary)
+    if allow_free_sources and free_source_requested:
         try:
             from free_fundamental_sources import fetch_free_fundamental_sources
             free_source_result = fetch_free_fundamental_sources(
-                symbol, missing_metrics=requested_secondary, pause_seconds=0.5,
+                symbol, missing_metrics=free_source_requested, pause_seconds=0.5,
             )
             for metric, value in free_source_result.get("metrics", {}).items():
                 if metric in requested_secondary and not _present(record.get(metric)) and _present(value):
@@ -1044,14 +1055,10 @@ def collect_missing_fundamentals(
             else "DEFERRED_BUDGET" if twelve_key_configured and twelve_data_attempts >= twelve_data_budget
             else "NOT_CONFIGURED"
         )
-        last_free_attempt = pd.to_datetime(current.get("FreeSourcesAttemptedAtUTC"), errors="coerce", utc=True)
-        in_free_cooldown = (
-            pd.notna(last_free_attempt)
-            and (pd.Timestamp.now(tz="UTC") - last_free_attempt).days < free_source_retry_days
-        )
+        free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
         allow_free_sources = (
             free_sources_enabled and free_source_attempts < free_source_budget
-            and not in_free_cooldown and bool(missing)
+            and not in_free_cooldown
         )
         free_defer_reason = (
             "DISABLED" if not free_sources_enabled
@@ -1070,7 +1077,7 @@ def collect_missing_fundamentals(
             if "asof_date" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["asof_date"] = cutoff_text
             if "missing_metrics" in fetch_parameters or accepts_kwargs:
-                fetch_kwargs["missing_metrics"] = missing
+                fetch_kwargs["missing_metrics"] = free_source_missing
             if "allow_twelve_data" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["allow_twelve_data"] = allow_twelve
                 fetch_kwargs["twelve_data_defer_reason"] = defer_reason
@@ -1117,7 +1124,7 @@ def collect_missing_fundamentals(
                 newly_stored_metric_names.append(col)
             elif not _present(merged.get(col)) and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
-                if col in METRIC_COLUMNS:
+                if col in METRIC_COLUMNS or col in AUXILIARY_FUNDAMENTAL_COLUMNS:
                     newly_stored_metric_names.append(col)
         if newly_stored_metric_names:
             # Persist per-metric provenance independently; a mixed-provider row
