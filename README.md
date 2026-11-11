@@ -18,6 +18,15 @@ Automated NSE EOD research and swing-trading analysis pipeline. The scanner prod
 - All A/B candidates continue to the 20-session liquidity check; hard minimum average traded value ₹1.5 crore.
 - Approved sequence (confirmed 06-Nov-2026): the complete Delivery A OR B union, including HIGH/LOW/WAIT RVOL bands, proceeds to Liquidity; Fundamentals are collected for every Liquidity-qualified candidate. Fundamental scoring remains enrichment/priority context, not a rejection gate.
 
+## Optional multi-source fundamental enrichment
+
+- Yahoo Finance via `yfinance` remains the existing secondary provider path.
+- Twelve Data is an optional additional fallback for NSE/XNSE quarterly statements. It is called only when `TWELVE_DATA_API_KEY` is configured as a GitHub Actions secret; without the key, the existing run path is unchanged.
+- Twelve Data fundamentals require an account plan that includes the Fundamentals endpoints. The integration makes up to three statement requests per candidate when fallback is needed, so review the provider's credit/usage terms before enabling it for the full candidate cohort.
+- The adapter verifies the returned instrument metadata is NSE/XNSE, requires consecutive quarterly periods for TTM calculations, and only stores absolute cash-flow amounts when the provider currency is INR. Currency-invariant ratios may be collected in the provider-reported currency.
+- Each metric's provider, source URL, period and currency are persisted separately in the Fundamental Cache. Mixed-source rows are marked `MULTI_SOURCE_METRIC_LEVEL` / `UNVERIFIED`; they are not promoted to official verification or an eligible Fundamental Score until separately reconciled. Provider values never overwrite existing manual/cache values.
+- This is data enrichment only. It does not change NSE Mainboard membership, RVOL, Delivery A/B, liquidity, technical filters, ranking thresholds, or candidate retention. Provider failure leaves the candidate in the pipeline with a diagnostic status.
+
 ## Hybrid watchlists
 
 Four independent reports are maintained: Potential Accumulation, Base/VCP Forming, Breakout Ready, and Confirmed Entry. Early-stage watchlists are observational and are not BUY signals. Unapproved VCP, Pocket Pivot, retest, or false-breakout thresholds must not be invented.
