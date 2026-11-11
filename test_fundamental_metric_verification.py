@@ -36,13 +36,13 @@ def _filings():
     }])
 
 
-def _xml(path: Path, value='12.5', dimensions='', cash_change=None, decimals=None):
+def _xml(path: Path, value='12.5', dimensions='', cash_change=None, decimals=None, entity_scheme='https://www.nseindia.com'):
     cash_change = float(value) + 7.0 if cash_change is None else float(cash_change)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
 <xbrl xmlns="{NS}" xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:xbrldi="http://xbrl.org/2006/xbrldi">
   <xbrli:context id="FY2026">
-    <xbrli:entity><xbrli:identifier scheme="https://www.nseindia.com">INE000A01000</xbrli:identifier></xbrli:entity>
+    <xbrli:entity><xbrli:identifier scheme="{entity_scheme}">INE000A01000</xbrli:identifier></xbrli:entity>
     <xbrli:period><xbrli:startDate>2025-04-01</xbrli:startDate><xbrli:endDate>2026-03-31</xbrli:endDate></xbrli:period>
     {dimensions}
   </xbrli:context>
@@ -277,7 +277,8 @@ def test_xbrl_inf_decimals_requires_exact_provider_fact_match(tmp_path, monkeypa
 
 def _annual_growth_xml(path: Path, period_end: str, revenue_ops: float,
                        other_income: float, profit_continuing: float,
-                       discontinued: float = 0.0, associates: float = 0.0):
+                       discontinued: float = 0.0, associates: float = 0.0,
+                       entity_scheme: str = "https://www.nseindia.com"):
     year = int(period_end[:4])
     period_start = f"{year - 1}-04-01"
     total_income = revenue_ops + other_income
@@ -311,11 +312,13 @@ def test_generated_annual_growth_evidence_reconciles_two_official_fy_filings(tmp
         tmp_path / "source_current.xml", "2026-03-31",
         revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
         discontinued=1.0, associates=2.0,
+        entity_scheme="http://www.sebi.gov.in/in-capmkt/ScripCode",
     )
     prior_xml = _annual_growth_xml(
         tmp_path / "source_prior.xml", "2025-03-31",
         revenue_ops=100.0, other_income=5.0, profit_continuing=20.0,
         discontinued=0.0, associates=0.0,
+        entity_scheme="http://www.bseindia.com/in-capmkt/ScripCode",
     )
     source_by_url = {current_url: current_xml, prior_url: prior_xml}
     fetches = []
