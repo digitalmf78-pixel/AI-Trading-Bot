@@ -3627,6 +3627,24 @@ def main():
                 if col not in current.columns:
                     current[col] = pd.Series(dtype="object")
 
+    # Fundamental collection universe is the complete Delivery A/B union with RVOL > 1.5.
+    # Snapshot it before Liquidity narrows the downstream technical cohort; no
+    # Fundamental gate is applied and missing provider data never removes rows.
+    if not current.empty and "RVOLBand" in current.columns:
+        fundamental_collection_candidates = current.loc[
+            current["RVOLBand"].astype(str).eq("HIGH_RVOL_GT_1_5")
+        ].drop_duplicates("TckrSymb", keep="first").copy()
+    else:
+        fundamental_collection_candidates = current.iloc[0:0].copy()
+    os.makedirs("outputs", exist_ok=True)
+    fundamental_collection_candidates.to_csv(
+        "outputs/v8_fundamental_rvol_gt_1_5_candidates.csv", index=False
+    )
+    print(
+        "[FUNDAMENTAL UNIVERSE] Delivery A/B + RVOL > 1.5 candidates="
+        f"{len(fundamental_collection_candidates)}; captured before Liquidity."
+    )
+
     # Track 2 always observes the immutable full Mainboard cohort, even if
     # Track 1's current frame is empty or the shared Delivery fetch failed.
     # Missing Delivery evidence is passed as an empty session list and reported
@@ -3718,59 +3736,138 @@ def main():
     print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
 
     # --------------------------------------------------------
-    # STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY
+    # STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES
     # --------------------------------------------------------
-    print(f"\nSTEP 7: Collecting NSE/Yahoo fundamentals for {len(current)} liquidity-qualified stocks; score is informational, never a rejection gate...")
+    print(
+        "\\nSTEP 7: Collecting fundamentals for all "
+        f"{len(fundamental_collection_candidates)} Delivery A/B stocks with RVOL > 1.5; "
+        "score is informational and never a rejection gate..."
+    )
     create_fundamental_templates()
     liquidity_pass_candidates = current.copy()
     try:
-        if liquidity_pass_candidates.empty:
-            fundamental_audit = liquidity_pass_candidates.copy()
-            for report_name in ["v8_fundamental_report.csv", "v8_fundamental_complete_data.csv",
-                                "v8_fundamental_partial_data.csv", "v8_fundamental_missing_data.csv",
-                                "v8_liquidity_fundamental_candidates.csv"]:
+        if fundamental_collection_candidates.empty:
+            fundamental_audit = fundamental_collection_candidates.copy()
+            for report_name in [
+                "v8_fundamental_report.csv", "v8_fundamental_complete_data.csv",
+                "v8_fundamental_partial_data.csv", "v8_fundamental_missing_data.csv",
+            ]:
                 fundamental_audit.to_csv(os.path.join("outputs", report_name), index=False)
         else:
             try:
-                collect_missing_fundamentals(liquidity_pass_candidates, asof_date=eod_date)
+                collect_missing_fundamentals(
+                    fundamental_collection_candidates, asof_date=eod_date
+                )
             except Exception as provider_exc:
                 os.makedirs("outputs", exist_ok=True)
                 pd.DataFrame([{
                     "ProviderStatus": "PROVIDER_STAGE_ERROR",
                     "ProviderReason": f"{type(provider_exc).__name__}: {provider_exc}",
                 }]).to_csv("outputs/v8_fundamental_provider_diagnostics.csv", index=False)
-                print(f"[FUNDAMENTAL PROVIDER] Stage error; retain liquidity-passed stocks: {provider_exc}")
-            fundamental_audit, _ = apply_fundamental_filter(liquidity_pass_candidates, eod_date)
-            # Run NSE XBRL verification as an audit sidecar, never as an eligibility gate.
+                print(
+                    "[FUNDAMENTAL PROVIDER] Stage error; retain all RVOL > 1.5 "
+                    f"Delivery A/B candidates: {provider_exc}"
+                )
+            fundamental_audit, _ = apply_fundamental_filter(
+                fundamental_collection_candidates, eod_date
+            )
+            # Audit every collected high-RVOL candidate against official NSE
+            # XBRL evidence. This remains an audit sidecar, never an eligibility gate.
             try:
                 from fundamental_metric_verification import run_audit as run_fundamental_metric_audit
-                evidence_symbols = set(fundamental_audit["TckrSymb"].dropna().astype(str).str.upper())
+                evidence_symbols = set(
+                    fundamental_audit["TckrSymb"].dropna().astype(str).str.upper()
+                )
                 run_fundamental_metric_audit(symbols=evidence_symbols)
             except Exception as metric_audit_exc:
-                print(f"[NSE XBRL AUDIT] WAIT_FOR_DATA; liquidity-passed stocks are retained: {metric_audit_exc}")
+                print(
+                    "[NSE XBRL AUDIT] WAIT_FOR_DATA; all RVOL > 1.5 candidates "
+                    f"are retained: {metric_audit_exc}"
+                )
             os.makedirs("outputs", exist_ok=True)
             fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
-            fundamental_audit[fundamental_audit.get("FundamentalStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("COMPLETE")].to_csv("outputs/v8_fundamental_complete_data.csv", index=False)
-            fundamental_audit[fundamental_audit.get("FundamentalStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("PARTIAL_DATA")].to_csv("outputs/v8_fundamental_partial_data.csv", index=False)
-            fundamental_audit[fundamental_audit.get("FundamentalStatus", pd.Series("", index=fundamental_audit.index)).astype(str).eq("MISSING_DATA")].to_csv("outputs/v8_fundamental_missing_data.csv", index=False)
-            fundamental_audit.to_csv("outputs/v8_liquidity_fundamental_candidates.csv", index=False)
-        current = fundamental_audit.copy()
+            fundamental_audit[
+                fundamental_audit.get(
+                    "FundamentalStatus", pd.Series("", index=fundamental_audit.index)
+                ).astype(str).eq("COMPLETE")
+            ].to_csv("outputs/v8_fundamental_complete_data.csv", index=False)
+            fundamental_audit[
+                fundamental_audit.get(
+                    "FundamentalStatus", pd.Series("", index=fundamental_audit.index)
+                ).astype(str).eq("PARTIAL_DATA")
+            ].to_csv("outputs/v8_fundamental_partial_data.csv", index=False)
+            fundamental_audit[
+                fundamental_audit.get(
+                    "FundamentalStatus", pd.Series("", index=fundamental_audit.index)
+                ).astype(str).eq("MISSING_DATA")
+            ].to_csv("outputs/v8_fundamental_missing_data.csv", index=False)
+
+        # Technical analysis still follows the existing Liquidity path. Enrich
+        # those rows with fundamentals where their symbols belong to the RVOL
+        # > 1.5 collection universe; do not discard any Liquidity-passed row.
+        fundamental_columns = [
+            column for column in fundamental_audit.columns
+            if column not in fundamental_collection_candidates.columns
+            and column != "TckrSymb"
+        ]
+        if not liquidity_pass_candidates.empty and not fundamental_audit.empty:
+            fundamental_payload = fundamental_audit[
+                ["TckrSymb"] + fundamental_columns
+            ].copy()
+            current = liquidity_pass_candidates.merge(
+                fundamental_payload,
+                on="TckrSymb", how="left", validate="one_to_one",
+            )
+        else:
+            current = liquidity_pass_candidates.copy()
+            for column in fundamental_columns:
+                if column not in current.columns:
+                    current[column] = pd.NA
+
+        if "FundamentalStatus" in current.columns:
+            not_in_collection = current["FundamentalStatus"].isna()
+            current.loc[not_in_collection, "FundamentalStatus"] = "NOT_IN_RVOL_GT_1_5_COLLECTION"
+            if "FundamentalReason" in current.columns:
+                current.loc[not_in_collection, "FundamentalReason"] = (
+                    "RVOL_NOT_ABOVE_1_5; fundamental collection is scoped to the "
+                    "confirmed RVOL > 1.5 Delivery A/B universe."
+                )
+            if "Fundamental65PlusStatus" in current.columns:
+                current.loc[not_in_collection, "Fundamental65PlusStatus"] = "WAIT_FOR_DATA"
+
+        current.to_csv("outputs/v8_liquidity_fundamental_candidates.csv", index=False)
         observation_report = current.copy()
-        if "Fundamental65PlusStatus" in current.columns:
-            print(f"[FUNDAMENTAL SCORE] 65+/below/incomplete={current['Fundamental65PlusStatus'].value_counts().to_dict()}; no score-based rejection.")
+        if not fundamental_audit.empty and "Fundamental65PlusStatus" in fundamental_audit.columns:
+            print(
+                "[FUNDAMENTAL SCORE] 65+/below/incomplete="
+                f"{fundamental_audit['Fundamental65PlusStatus'].value_counts().to_dict()}; "
+                "no score-based rejection."
+            )
     except Exception as fund_exc:
-        print(f"[FUNDAMENTAL] Collection/score error; keeping all liquidity-qualified candidates: {fund_exc}")
-        fundamental_audit = liquidity_pass_candidates.copy()
+        print(
+            "[FUNDAMENTAL] Collection/score error; keeping all Liquidity-qualified "
+            f"candidates and preserving the RVOL > 1.5 report: {fund_exc}"
+        )
+        fundamental_audit = fundamental_collection_candidates.copy()
         if not fundamental_audit.empty:
             fundamental_audit["FundamentalStatus"] = "MISSING_DATA"
-            fundamental_audit["FundamentalReason"] = f"FUNDAMENTAL_COLLECTION_ERROR:{type(fund_exc).__name__}:{fund_exc}"
+            fundamental_audit["FundamentalReason"] = (
+                f"FUNDAMENTAL_COLLECTION_ERROR:{type(fund_exc).__name__}:{fund_exc}"
+            )
             fundamental_audit["Fundamental65PlusStatus"] = "WAIT_FOR_DATA"
             fundamental_audit["FundamentalScore"] = pd.NA
-            fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
-            fundamental_audit.to_csv("outputs/v8_liquidity_fundamental_candidates.csv", index=False)
-        current = fundamental_audit.copy()
+        fundamental_audit.to_csv("outputs/v8_fundamental_report.csv", index=False)
+        current = liquidity_pass_candidates.copy()
+        current["FundamentalStatus"] = "WAIT_FOR_DATA"
+        current["FundamentalReason"] = "FUNDAMENTAL_COLLECTION_STAGE_ERROR"
+        current["Fundamental65PlusStatus"] = "WAIT_FOR_DATA"
+        current.to_csv("outputs/v8_liquidity_fundamental_candidates.csv", index=False)
         observation_report = current.copy()
-    print(f"[FUNDAMENTAL] liquidity-qualified rows retained={len(current)}; fundamentals are enrichment only.")
+    print(
+        f"[FUNDAMENTAL] RVOL > 1.5 collection rows={len(fundamental_audit)}; "
+        f"Liquidity-qualified technical rows retained={len(current)}; "
+        "fundamentals are enrichment only."
+    )
 
 
     # Calculate technical features for every stock that passed Delivery and Liquidity.
