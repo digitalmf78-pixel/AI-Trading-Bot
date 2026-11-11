@@ -47,6 +47,27 @@ def _norm(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
 
 
+
+def _identity_matches(symbol: str, company_name: str | None, raw: Any) -> bool:
+    """Fail closed unless the search result identifies this exact NSE symbol/company."""
+    items = raw if isinstance(raw, list) else [raw]
+    expected_name = _norm(company_name or "")
+    expected_name = expected_name.replace("limited", "").replace("ltd", "")
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for key in ("ticker", "symbol", "nse_code", "nse_symbol", "nseCode", "symbol_code"):
+            if str(item.get(key, "")).strip().upper() == symbol:
+                return True
+        if expected_name:
+            for key in ("stock_name", "company_name", "company", "name", "security_name"):
+                observed = _norm(item.get(key, ""))
+                observed = observed.replace("limited", "").replace("ltd", "")
+                if observed and (observed == expected_name or observed in expected_name or expected_name in observed):
+                    return True
+    return False
+
+
 def _number(value: Any):
     if value is None:
         return None
@@ -130,6 +151,7 @@ def _safe_frame(value):
 def fetch_free_fundamental_sources(
     symbol: str,
     *,
+    company_name: str | None = None,
     missing_metrics=None,
     pause_seconds: float = 0.5,
     source_factories=None,
@@ -173,9 +195,17 @@ def fetch_free_fundamental_sources(
         try:
             client = factory()
             if source == "Moneycontrol":
-                ticker_id, raw_hits = client.get_ticker(symbol)
+                lookup_term = str(company_name or symbol).strip()
+                ticker_id, raw_hits = client.get_ticker(lookup_term)
                 if not ticker_id:
                     raise RuntimeError("symbol lookup returned no Moneycontrol ticker")
+                if not _identity_matches(symbol, company_name, raw_hits):
+                    result["providers"][source] = {
+                        "status": "IDENTITY_UNVERIFIED",
+                        "reason": "Moneycontrol search result could not be matched to the NSE symbol/company name",
+                        "source_url": SOURCE_URLS[source],
+                    }
+                    continue
                 calls = [
                     ("ratios", lambda: client.get_ratios_mini_statement(ticker_id, statement_type="consolidated")),
                     ("overview", lambda: client.get_overview_mini_statement(ticker_id, statement_type="consolidated", statement_frequency=12)),
@@ -188,7 +218,15 @@ def fetch_free_fundamental_sources(
                 sid, raw_hits = client.get_ticker(symbol, search_place="stock")
                 if not sid:
                     raise RuntimeError("symbol lookup returned no Tickertape SID")
-                hit = next((item for item in raw_hits if str(item.get("ticker", "")).upper() == symbol), raw_hits[0] if raw_hits else {})
+                matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
+                if not matching_hits:
+                    result["providers"][source] = {
+                        "status": "IDENTITY_UNVERIFIED",
+                        "reason": "Tickertape search result did not return an exact NSE ticker symbol",
+                        "source_url": SOURCE_URLS[source],
+                    }
+                    continue
+                hit = matching_hits[0]
                 slug = str(hit.get("slug", "") or "").strip()
                 calls = [
                     ("ratios", lambda: client.get_key_ratios(slug)) if slug else ("ratios", lambda: pd.DataFrame()),
