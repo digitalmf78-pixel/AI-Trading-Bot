@@ -1,8 +1,8 @@
 """Observation-only forward outcome tracker for NSE V8 signal snapshots.
 
-Entry reference is the signal EOD close (research reference, not a fill).
+Entry reference is the next official NSE session Open (research reference, not a fill).
 Returns are raw price movement; fees/slippage remain NOT_CONFIGURED.
-Only complete official-session horizons with valid OHLC are recorded.
+Only complete official-session horizons with valid Open/High/Low/Close are recorded.
 """
 from __future__ import annotations
 
