@@ -6,7 +6,7 @@ from nse_trading_calendar import is_trading_session
 
 
 def _history(symbol="AAA", periods=60):
-    dates = [day for day in pd.date_range("2026-08-01", periods=periods * 2, freq="D") if is_trading_session(day.date())][:periods]
+    dates = [day for day in pd.date_range("2025-01-01", "2026-10-22", freq="D") if is_trading_session(day.date())][-periods:]
     lows = [100.0 + (i % 5) for i in range(periods)]
     highs = [v + 4 for v in lows]
     closes = [v + 2 for v in lows]
