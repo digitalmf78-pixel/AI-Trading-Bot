@@ -67,7 +67,7 @@ BASE_COLUMNS = [
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
-    "TwelveDataAttemptedAtUTC", "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
+    "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 AUXILIARY_FUNDAMENTAL_COLUMNS = [
     "GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct", "CurrentRatio",
@@ -727,6 +727,13 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
             "reason": diagnostic.get("ProviderReason", ""),
         }
     }
+    secondary_supported = {
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
+    }
+    requested_secondary = set(missing_metrics) if missing_metrics is not None else set(secondary_supported)
+    requested_secondary &= secondary_supported
+    requested_secondary = {col for col in requested_secondary if not _present(record.get(col))}
     # Optional no-key Indian public-data fallback. It is deliberately separate
     # from the Yahoo statement alignment path: mixed-source metrics stay UNVERIFIED.
     free_source_metrics = []
@@ -787,73 +794,6 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
         diagnostic["MetricsAvailable"] = sum(_present(record.get(col)) for col in METRIC_COLUMNS)
         diagnostic["ProviderReason"] = f"metrics_available={diagnostic['MetricsAvailable']}/{len(METRIC_COLUMNS)}; free_source_filled={';'.join(free_source_metrics)}"
 
-    twelve_key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
-    secondary_supported = {
-        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
-    }
-    requested_secondary = set(missing_metrics) if missing_metrics is not None else set(secondary_supported)
-    requested_secondary &= secondary_supported
-    requested_secondary = {col for col in requested_secondary if not _present(record.get(col))}
-    if not twelve_key:
-        diagnostic["TwelveDataStatus"] = "NOT_CONFIGURED"
-    elif not allow_twelve_data:
-        diagnostic["TwelveDataStatus"] = twelve_data_defer_reason
-    elif not requested_secondary:
-        diagnostic["TwelveDataStatus"] = "NOT_NEEDED"
-    else:
-        try:
-            from twelve_data_fundamentals import fetch_twelve_data_fundamentals
-            secondary = fetch_twelve_data_fundamentals(symbol, twelve_key, asof_date=asof_date)
-            secondary_values = secondary.get("metrics", {})
-            stored_secondary = []
-            for metric, value in secondary_values.items():
-                if metric in requested_secondary and metric in METRIC_COLUMNS and not _present(record.get(metric)) and _present(value):
-                    record[metric] = value
-                    metric_sources[metric] = secondary.get("source", "Twelve Data")
-                    metric_urls[metric] = secondary.get("metric_urls", {}).get(metric, secondary.get("source_url", ""))
-                    metric_periods[metric] = secondary.get("metric_periods", {}).get(metric, secondary.get("financial_period_end", ""))
-                    metric_currencies[metric] = secondary.get("metric_currencies", {}).get(metric, secondary.get("currency", ""))
-                    stored_secondary.append(metric)
-            diagnostic["TwelveDataAttempted"] = True
-            record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
-            provider_diagnostics["Twelve Data"] = {
-                "status": "DATA_FOUND" if stored_secondary else "NO_MISSING_FIELDS_FILLED",
-                "metrics_filled": stored_secondary,
-                "currency": secondary.get("currency", ""),
-                "exchange": secondary.get("exchange", ""),
-                "mic_code": secondary.get("mic_code", ""),
-                "financial_period_end": secondary.get("financial_period_end", ""),
-            }
-            if stored_secondary:
-                record["Source"] = (
-                    "Multi-source fundamentals (Yahoo Finance via yfinance + Twelve Data)"
-                    if yahoo_metrics else "Twelve Data"
-                )
-                if not yahoo_metrics:
-                    record["SourceURL"] = secondary.get("source_url", "")
-                # Mixed provider rows are deliberately not treated as one aligned
-                # statement set; they remain ineligible for a verified score.
-                record["MetricCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
-                record["MetricPeriodAlignmentStatus"] = "UNVERIFIED"
-                record["QuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
-                record["ProviderFetchCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
-                record["ProviderFetchQuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
-                if not _present(record.get("FinancialPeriodEnd")):
-                    record["FinancialPeriodEnd"] = secondary.get("financial_period_end", "")
-                diagnostic["TwelveDataStatus"] = "DATA_FOUND"
-                diagnostic["TwelveDataMetricsFilled"] = ";".join(stored_secondary)
-            else:
-                diagnostic["TwelveDataStatus"] = "NO_MISSING_FIELDS_FILLED"
-        except Exception as exc:
-            provider_diagnostics["Twelve Data"] = {
-                "status": "PROVIDER_ERROR",
-                "reason": f"{type(exc).__name__}: {exc}"[:300],
-            }
-            diagnostic["TwelveDataAttempted"] = True
-            record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
-            diagnostic["TwelveDataStatus"] = "PROVIDER_ERROR"
-            diagnostic["TwelveDataReason"] = f"{type(exc).__name__}: {exc}"[:300]
     record["ProviderSourceChain"] = ";".join(dict.fromkeys(metric_sources.values()))
     record["MetricSourcesJSON"] = json.dumps(metric_sources, sort_keys=True)
     record["MetricSourceURLsJSON"] = json.dumps(metric_urls, sort_keys=True)
@@ -867,7 +807,7 @@ def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
     """Provider-sourced (never manual) records older than refresh_days are refetched."""
     raw_source = record.get("Source", "")
     source = str(raw_source) if _present(raw_source) else ""
-    if not source.startswith(("Yahoo Finance", "Twelve Data", "Multi-source fundamentals", "Free-source fundamentals")):
+    if not source.startswith(("Yahoo Finance", "Multi-source fundamentals", "Free-source fundamentals")):
         return False
     retrieved = pd.to_datetime(record.get("DataRetrievedAtUTC"), errors="coerce", utc=True)
     if pd.isna(retrieved):
@@ -986,10 +926,6 @@ def collect_missing_fundamentals(
         symbols = sorted({str(x).strip().upper() for x in candidates["TckrSymb"].dropna() if str(x).strip() and str(x).strip().lower() != "nan"})
     records = {str(row["TckrSymb"]): row.to_dict() for _, row in existing.iterrows() if str(row.get("TckrSymb", "")).strip() not in {"", "NAN", "nan"}}
     diagnostics = []
-    twelve_key_configured = bool(os.getenv("TWELVE_DATA_API_KEY", "").strip())
-    twelve_data_budget = max(0, int(os.getenv("TWELVE_DATA_MAX_SYMBOLS_PER_RUN", "5") or 5))
-    twelve_data_retry_days = max(1, int(os.getenv("TWELVE_DATA_RETRY_DAYS", "30") or 30))
-    twelve_data_attempts = 0
     free_sources_enabled = os.getenv("V8_FREE_FUNDAMENTAL_SOURCES", "false").strip().lower() in {"1", "true", "yes", "on"}
     free_source_budget = max(0, int(os.getenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "10") or 10))
     free_source_retry_days = max(1, int(os.getenv("FREE_FUNDAMENTAL_RETRY_DAYS", "7") or 7))
@@ -1013,7 +949,7 @@ def collect_missing_fundamentals(
                                          "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
                                          "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
                                          "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
-                                         "TwelveDataAttemptedAtUTC", "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"]:
+                                         "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
@@ -1054,17 +990,6 @@ def collect_missing_fundamentals(
             continue
         # Keep compatibility with injected fetchers that predate newer kwargs.
         # Secondary-provider requests are budgeted and cooled down per symbol.
-        last_twelve_attempt = pd.to_datetime(current.get("TwelveDataAttemptedAtUTC"), errors="coerce", utc=True)
-        in_twelve_cooldown = (
-            pd.notna(last_twelve_attempt)
-            and (pd.Timestamp.now(tz="UTC") - last_twelve_attempt).days < twelve_data_retry_days
-        )
-        allow_twelve = twelve_key_configured and twelve_data_attempts < twelve_data_budget and not in_twelve_cooldown
-        defer_reason = (
-            "COOLDOWN" if in_twelve_cooldown
-            else "DEFERRED_BUDGET" if twelve_key_configured and twelve_data_attempts >= twelve_data_budget
-            else "NOT_CONFIGURED"
-        )
         allow_free_sources = free_source_pending
         free_defer_reason = (
             "DISABLED" if not free_sources_enabled
@@ -1084,9 +1009,6 @@ def collect_missing_fundamentals(
                 fetch_kwargs["asof_date"] = cutoff_text
             if "missing_metrics" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["missing_metrics"] = free_source_missing
-            if "allow_twelve_data" in fetch_parameters or accepts_kwargs:
-                fetch_kwargs["allow_twelve_data"] = allow_twelve
-                fetch_kwargs["twelve_data_defer_reason"] = defer_reason
             if "allow_free_sources" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["allow_free_sources"] = allow_free_sources
                 fetch_kwargs["free_source_defer_reason"] = free_defer_reason
@@ -1094,8 +1016,6 @@ def collect_missing_fundamentals(
             # Legacy injected test fetchers may expose no inspectable signature.
             pass
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
-        if diagnostic.get("TwelveDataAttempted"):
-            twelve_data_attempts += 1
         if diagnostic.get("FreeSourcesAttempted"):
             free_source_attempts += 1
         # Never overwrite manually supplied metric values. Existing provider rows
