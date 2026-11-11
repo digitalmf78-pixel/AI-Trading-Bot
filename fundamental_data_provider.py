@@ -1070,7 +1070,7 @@ def collect_missing_fundamentals(
             "DISABLED" if not free_sources_enabled
             else "COOLDOWN" if in_free_cooldown
             else "DEFERRED_BUDGET" if free_source_attempts >= free_source_budget
-            else "NOT_NEEDED" if not missing
+            else "NOT_NEEDED" if not free_source_missing
             else "READY"
         )
         fetch_kwargs = {"ticker_factory": ticker_factory}
