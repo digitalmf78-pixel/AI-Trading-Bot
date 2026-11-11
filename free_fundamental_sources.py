@@ -177,7 +177,7 @@ def _extract_holding(frame: pd.DataFrame, aliases: tuple[str, ...]):
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return None
     wanted = {_norm(x) for x in aliases}
-    name_cols = [c for c in frame.columns if _norm(c) in {"category", "name", "holder", "investortype", "type", "shareholder"}]
+    name_cols = [c for c in frame.columns if _norm(c) in {"category", "name", "holder", "investortype", "type", "shareholder", "headers", "headings"}]
     value_cols = [c for c in frame.columns if _norm(c) in {"percentage", "holding", "value", "shareholding", "percent", "holdingpercentage"}]
     for name_col in name_cols:
         for _, row in frame.iterrows():
@@ -275,17 +275,25 @@ def fetch_free_fundamental_sources(
                     )
                     data = response.get("data", {}) if isinstance(response, dict) else {}
                     items = data.get("items", []) if isinstance(data, dict) else []
-                    return items if isinstance(items, list) else []
+                    schema = {
+                        "response_keys": list(response.keys()) if isinstance(response, dict) else [],
+                        "data_type": type(data).__name__,
+                        "data_keys": list(data.keys()) if isinstance(data, dict) else [],
+                        "items_type": type(items).__name__,
+                        "items_count": len(items) if isinstance(items, list) else 0,
+                    }
+                    return (items if isinstance(items, list) else []), schema
 
-                raw_hits = _tickertape_search(str(company_name or symbol).strip())
+                raw_hits, search_schema = _tickertape_search(str(company_name or symbol).strip())
                 matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
                 if not matching_hits and company_name:
-                    raw_hits = _tickertape_search(symbol)
+                    raw_hits, search_schema = _tickertape_search(symbol)
                     matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
                 if not matching_hits:
                     result["providers"][source] = {
                         "status": "IDENTITY_UNVERIFIED" if raw_hits else "NO_SEARCH_RESULTS",
                         "reason": "Tickertape did not return an exact NSE ticker symbol for the supplied company/symbol query",
+                        "search_response_schema": search_schema,
                         "source_url": SOURCE_URLS[source],
                     }
                     continue
