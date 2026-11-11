@@ -44,6 +44,8 @@ from fundamental_data_provider import collect_missing_fundamentals
 from fii_dii_activity import attach_market_context, write_market_activity
 from datetime import datetime, timedelta, timezone
 from signal_log import append_signal_log
+from signal_outcome_tracker import update_signal_outcomes
+from signal_shadow_run import build_mainboard_signal_shadow
 from v8_layers_14_41 import (
     monitor_positions,
     run_eod_layers,
@@ -1330,7 +1332,7 @@ def calculate_clv(result):
 
 
 # ============================================================
-# ACCUMULATION SCORE (descriptive scoring factor)
+# EXPERIMENTAL ACCUMULATION SCORE — NOT APPROVED, NOT BACKTESTED; NON-GATING
 # ============================================================
 
 def calculate_accumulation_score(result):
@@ -1363,11 +1365,15 @@ def calculate_accumulation_score(result):
         scores.append(round(score, 2))
 
     result = result.copy()
-    result["AccumulationScore"] = scores
+    result["AccumulationScore"] = scores  # legacy compatibility alias; experimental only
     result["AccumulationStatus"] = result["AccumulationScore"].apply(
         lambda s: "HIGH_ACCUMULATION" if s >= 70 else "MODERATE_ACCUMULATION" if s >= 40 else "LOW_ACCUMULATION"
     )
-    print("[ACCUMULATION SCORE] " + str(result["AccumulationStatus"].value_counts().to_dict()))
+    result["ExperimentalAccumulationScore"] = result["AccumulationScore"]
+    result["ExperimentalAccumulationStatus"] = result["AccumulationStatus"].map(
+        lambda value: f"EXPERIMENTAL_NOT_APPROVED_NOT_BACKTESTED_{value}"
+    )
+    print("[EXPERIMENTAL ACCUMULATION — NOT APPROVED, NOT BACKTESTED] " + str(result["ExperimentalAccumulationStatus"].value_counts().to_dict()))
     return result
 
 
@@ -3942,6 +3948,41 @@ def main():
     # Observation-only append: does not mutate result or affect any scanner output.
     signal_rows_written = append_signal_log(result, eod_date)
     print(f"[SIGNAL LOG] Appended {signal_rows_written} new date/symbol rows (existing rows preserved).")
+    # Forward outcomes are a separate observation-only sidecar. They use only
+    # validated official-session Bhavcopy records strictly after each signal.
+    try:
+        outcome_summary = update_signal_outcomes(
+            "outputs/signal_log.csv",
+            analysis_history,
+            outcome_store_path="outputs/signal_outcomes.csv",
+        )
+        print("[SIGNAL OUTCOMES] " + str(outcome_summary))
+    except Exception as outcome_exc:
+        print(f"[SIGNAL OUTCOMES] WARNING: observation update skipped; scanner continues: {outcome_exc}")
+
+    # Full Mainboard shadow cohort + immutable point-in-time snapshots. This
+    # sidecar is strictly observational and cannot feed back into Track 1.
+    try:
+        strategy_sha = os.getenv("GITHUB_SHA", "")
+        if len(strategy_sha) != 40:
+            raise ValueError("GITHUB_SHA is unavailable; immutable snapshot strategy version cannot be verified")
+        shadow_manifest = build_mainboard_signal_shadow(
+            track2_mainboard_candidates,
+            reports={
+                "delivery": delivery_audit,
+                "liquidity": liquidity_audit,
+                "fundamental": fundamental_audit,
+                "technical": result,
+                "final_eod": result,
+            },
+            eod_date=eod_date,
+            strategy_version=strategy_sha,
+            workflow_run_id=os.getenv("GITHUB_RUN_ID", ""),
+            workflow_run_attempt=os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        )
+        print("[SIGNAL SHADOW] " + str(shadow_manifest))
+    except Exception as shadow_exc:
+        print(f"[SIGNAL SHADOW] WARNING: observation snapshot skipped; scanner continues: {shadow_exc}")
 
     # Later-stage watchlists are independent copies; no output feeds back into
     # result or changes the existing EOD selection gates.
@@ -4103,7 +4144,7 @@ def main():
 
 
 # ============================================================
-# CONSOLIDATION DETECTION (descriptive, non-gating)
+# EXPERIMENTAL CONSOLIDATION SCORE — NOT APPROVED, NOT BACKTESTED; NON-GATING
 # ============================================================
 
 def calculate_consolidation_score(result, historical):
@@ -4155,9 +4196,13 @@ def calculate_consolidation_score(result, historical):
         statuses.append(status)
 
     result = result.copy()
-    result["ConsolidationScore"] = scores
+    result["ConsolidationScore"] = scores  # legacy compatibility alias; experimental only
     result["ConsolidationStatus"] = statuses
-    print("[CONSOLIDATION] " + str(result["ConsolidationStatus"].value_counts().to_dict()))
+    result["ExperimentalConsolidationScore"] = result["ConsolidationScore"]
+    result["ExperimentalConsolidationStatus"] = result["ConsolidationStatus"].map(
+        lambda value: f"EXPERIMENTAL_NOT_APPROVED_NOT_BACKTESTED_{value}"
+    )
+    print("[EXPERIMENTAL CONSOLIDATION — NOT APPROVED, NOT BACKTESTED] " + str(result["ExperimentalConsolidationStatus"].value_counts().to_dict()))
     return result
 
 

@@ -53,8 +53,8 @@ def test_breakout_ready_watchlist_uses_existing_statuses_and_chase_override(tmp_
         {"TckrSymb": "DDD", "BreakoutStatus": "WAIT_FOR_DATA", "PullbackStatus": "WAIT_FOR_DATA"},
     ])
     output = write_breakout_ready_watchlist(candidates).set_index("TckrSymb")
-    assert output.loc["AAA", "WatchlistStatus"] == "BREAKOUT_CONFIRMED"
-    assert output.loc["BBB", "WatchlistStatus"] == "ENTRY_CANDIDATE"
+    assert output.loc["AAA", "WatchlistStatus"] == "BREAKOUT_OBSERVATION_CONFIRMED"
+    assert output.loc["BBB", "WatchlistStatus"] == "BREAKOUT_PULLBACK_OBSERVATION"
     assert output.loc["CCC", "WatchlistStatus"] == "CHASED"
     assert output.loc["DDD", "WatchlistStatus"] == "WAIT_FOR_DATA"
 

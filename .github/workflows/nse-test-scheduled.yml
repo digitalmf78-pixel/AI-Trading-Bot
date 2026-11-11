@@ -200,6 +200,12 @@ jobs:
                   print(f"NSE_DNS_STATUS=FAIL HOST={host} ERROR={type(exc).__name__}:{exc}")
           PYDNS
 
+      - name: Restore durable signal history before EOD scan
+        if: github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
+        run: |
+          set -euo pipefail
+          python -u signal_history_persistence.py restore
+
       - name: Run NSE Volume Gainer
         id: nse_scan
         env:
@@ -361,6 +367,38 @@ jobs:
           fi
           echo "===== BHAVCOPY CACHE SAMPLE ====="
           if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print 2>/dev/null | head -20 || true; else echo "Bhavcopy cache directory does not exist"; fi
+
+      - name: Persist append-only signal history in repository
+        if: steps.nse_scan.outcome == 'success' && github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          HISTORY="data/signal_history/signal_log.csv"
+          SCHEMA="data/signal_history/schema_version.txt"
+          if [ ! -f "$SCHEMA" ] || [ "$(tr -d '\r\n' < "$SCHEMA")" != "1.0" ]; then
+            echo "[SIGNAL HISTORY] WARNING: schema marker mismatch; durable history not updated."
+            exit 0
+          fi
+          python -u signal_history_persistence.py persist
+          mkdir -p data/signal_history
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f -- "$SCHEMA"
+          if [ -f "$HISTORY" ]; then
+            git add -f -- "$HISTORY"
+          fi
+          if [ -f data/signal_history/signal_outcomes.csv ]; then
+            git add -f -- data/signal_history/signal_outcomes.csv
+          fi
+          if git diff --cached --quiet; then
+            echo "[SIGNAL HISTORY] No new rows to persist."
+            exit 0
+          fi
+          git commit -m "chore: persist append-only NSE signal history"
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase "origin/$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
 
       - name: Persist fundamental cache and dated history in repository
         if: steps.nse_scan.outcome == 'success'

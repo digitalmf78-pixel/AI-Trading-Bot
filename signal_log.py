@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pandas as pd
 
+SIGNAL_LOG_SCHEMA_VERSION = "1.0"
+
 SIGNAL_LOG_COLUMNS = [
     "EODDate", "TckrSymb", "EODWatchlistStatus", "DeliveryCategory",
     "LiquidityTier", "RVOL", "SetupType", "TrendClassification",
