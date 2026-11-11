@@ -548,7 +548,7 @@ def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date
 
 
 def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics=None,
-               allow_twelve_data=True, twelve_data_defer_reason="DEFERRED_BUDGET",\n               allow_free_sources=False, free_source_defer_reason="DISABLED") -> tuple[dict, dict]:
+               allow_free_sources=False, free_source_defer_reason="DISABLED") -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -714,8 +714,6 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
         diagnostic["ProviderStatus"] = "PROVIDER_ERROR"
         diagnostic["ProviderReason"] = f"{type(exc).__name__}: {exc}"[:500]
         diagnostic["MetricsAvailable"] = 0
-    # Optional secondary provider. It is activated only when a user supplies a
-    # Twelve Data API key; absent keys preserve the existing Yahoo-only path.
     yahoo_metrics = [col for col in METRIC_COLUMNS if _present(record.get(col))]
     metric_sources = {col: "Yahoo Finance via yfinance" for col in yahoo_metrics}
     metric_urls = {col: url for col in yahoo_metrics}
@@ -956,7 +954,7 @@ def collect_missing_fundamentals(
         provider_owned = not any(_present(current.get(col)) for col in METRIC_COLUMNS)
         source_value = current.get("Source", "")
         source_text = str(source_value) if _present(source_value) else ""
-        provider_sourced = source_text.startswith(("Yahoo Finance", "Twelve Data", "Multi-source fundamentals", "Free-source fundamentals"))
+        provider_sourced = source_text.startswith(("Yahoo Finance", "Multi-source fundamentals", "Free-source fundamentals"))
         # P2 backfill: P1 cache rows can be fresh and complete under the 30-day
         # refresh policy, yet have no quarterly TTM audit. Fetch once to enrich
         # those rows without forcing a full refresh or overwriting manual data.
