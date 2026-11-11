@@ -67,6 +67,7 @@ BASE_COLUMNS = [
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
+    "TwelveDataAttemptedAtUTC",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 BASE_COLUMNS += VALUATION_COLUMNS
 
@@ -539,7 +540,8 @@ def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date
     )
 
 
-def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, dict]:
+def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics=None,
+               allow_twelve_data=True, twelve_data_defer_reason="DEFERRED_BUDGET") -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -719,20 +721,35 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, 
         }
     }
     twelve_key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
-    if twelve_key:
+    secondary_supported = {
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
+    }
+    requested_secondary = set(missing_metrics) if missing_metrics is not None else set(secondary_supported)
+    requested_secondary &= secondary_supported
+    requested_secondary = {col for col in requested_secondary if not _present(record.get(col))}
+    if not twelve_key:
+        diagnostic["TwelveDataStatus"] = "NOT_CONFIGURED"
+    elif not allow_twelve_data:
+        diagnostic["TwelveDataStatus"] = twelve_data_defer_reason
+    elif not requested_secondary:
+        diagnostic["TwelveDataStatus"] = "NOT_NEEDED"
+    else:
         try:
             from twelve_data_fundamentals import fetch_twelve_data_fundamentals
             secondary = fetch_twelve_data_fundamentals(symbol, twelve_key, asof_date=asof_date)
             secondary_values = secondary.get("metrics", {})
             stored_secondary = []
             for metric, value in secondary_values.items():
-                if metric in METRIC_COLUMNS and not _present(record.get(metric)) and _present(value):
+                if metric in requested_secondary and metric in METRIC_COLUMNS and not _present(record.get(metric)) and _present(value):
                     record[metric] = value
                     metric_sources[metric] = secondary.get("source", "Twelve Data")
                     metric_urls[metric] = secondary.get("metric_urls", {}).get(metric, secondary.get("source_url", ""))
                     metric_periods[metric] = secondary.get("metric_periods", {}).get(metric, secondary.get("financial_period_end", ""))
                     metric_currencies[metric] = secondary.get("metric_currencies", {}).get(metric, secondary.get("currency", ""))
                     stored_secondary.append(metric)
+            diagnostic["TwelveDataAttempted"] = True
+            record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
             provider_diagnostics["Twelve Data"] = {
                 "status": "DATA_FOUND" if stored_secondary else "NO_MISSING_FIELDS_FILLED",
                 "metrics_filled": stored_secondary,
@@ -766,10 +783,10 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, 
                 "status": "PROVIDER_ERROR",
                 "reason": f"{type(exc).__name__}: {exc}"[:300],
             }
+            diagnostic["TwelveDataAttempted"] = True
+            record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
             diagnostic["TwelveDataStatus"] = "PROVIDER_ERROR"
-            diagnostic["TwelveDataReason"] = f"{type(exc).__name__}: {exc}"[:300]
-    else:
-        diagnostic["TwelveDataStatus"] = "NOT_CONFIGURED"
+            diagnostic["TwelveDataReason" = f"{type(exc).__name__}: {exc}"[:300]
     record["ProviderSourceChain"] = ";".join(dict.fromkeys(metric_sources.values()))
     record["MetricSourcesJSON"] = json.dumps(metric_sources, sort_keys=True)
     record["MetricSourceURLsJSON"] = json.dumps(metric_urls, sort_keys=True)
@@ -902,6 +919,10 @@ def collect_missing_fundamentals(
         symbols = sorted({str(x).strip().upper() for x in candidates["TckrSymb"].dropna() if str(x).strip() and str(x).strip().lower() != "nan"})
     records = {str(row["TckrSymb"]): row.to_dict() for _, row in existing.iterrows() if str(row.get("TckrSymb", "")).strip() not in {"", "NAN", "nan"}}
     diagnostics = []
+    twelve_key_configured = bool(os.getenv("TWELVE_DATA_API_KEY", "").strip())
+    twelve_data_budget = max(0, int(os.getenv("TWELVE_DATA_MAX_SYMBOLS_PER_RUN", "5") or 5))
+    twelve_data_retry_days = max(1, int(os.getenv("TWELVE_DATA_RETRY_DAYS", "30") or 30))
+    twelve_data_attempts = 0
     for symbol in symbols:
         current = records.get(symbol, {})
         if not current:
@@ -948,9 +969,19 @@ def collect_missing_fundamentals(
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
-        # Keep compatibility with injected fetchers that predate asof_date.
-        # The production fetcher accepts it so valuation snapshots remain tied
-        # to the requested EOD cutoff.
+        # Keep compatibility with injected fetchers that predate newer kwargs.
+        # Secondary-provider requests are budgeted and cooled down per symbol.
+        last_twelve_attempt = pd.to_datetime(current.get("TwelveDataAttemptedAtUTC"), errors="coerce", utc=True)
+        in_twelve_cooldown = (
+            pd.notna(last_twelve_attempt)
+            and (pd.Timestamp.now(tz="UTC") - last_twelve_attempt).days < twelve_data_retry_days
+        )
+        allow_twelve = twelve_key_configured and twelve_data_attempts < twelve_data_budget and not in_twelve_cooldown
+        defer_reason = (
+            "COOLDOWN" if in_twelve_cooldown
+            else "DEFERRED_BUDGET" if twelve_key_configured and twelve_data_attempts >= twelve_data_budget
+            else "NOT_CONFIGURED"
+        )
         fetch_kwargs = {"ticker_factory": ticker_factory}
         try:
             fetch_parameters = inspect.signature(_fetch_one).parameters
@@ -964,7 +995,16 @@ def collect_missing_fundamentals(
                 fetch_kwargs["asof_date"] = cutoff_text
         except (TypeError, ValueError):
             fetch_kwargs["asof_date"] = cutoff_text
+            if "missing_metrics" in fetch_parameters or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in fetch_parameters.values()):
+                fetch_kwargs["missing_metrics"] = missing
+            if "allow_twelve_data" in fetch_parameters or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in fetch_parameters.values()):
+                fetch_kwargs["allow_twelve_data"] = allow_twelve
+                fetch_kwargs["twelve_data_defer_reason"] = defer_reason
+        except (TypeError, ValueError):
+            fetch_kwargs["asof_date"] = cutoff_text
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
+        if diagnostic.get("TwelveDataAttempted"):
+            twelve_data_attempts += 1
         # Never overwrite manually supplied metric values. Existing provider rows
         # are refreshed to quarterly-derived metrics only when quarterly TTM is
         # fully aligned; missing fields can still be filled as before.
