@@ -404,7 +404,8 @@ jobs:
           git push origin "HEAD:$GITHUB_REF_NAME"
 
       - name: Persist fundamental cache and dated history in repository
-        if: steps.nse_scan.outcome == 'success'
+        # Run even if the separate signal-history push failed; scanner success remains required.
+        if: always() && steps.nse_scan.outcome == 'success'
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
