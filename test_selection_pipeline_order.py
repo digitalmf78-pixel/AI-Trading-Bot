@@ -11,7 +11,7 @@ def test_delivery_pass_union_is_retained_and_rvol_only_classifies_before_liquidi
     rvol_calculation = source.index("current = calculate_rvol(delivery_candidates, avg_volume)")
     rvol_classification = source.index("current = classify_rvol_for_delivery_candidates")
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
-    fundamental = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
+    fundamental = source.index("STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES")
     technical = source.index("STEP 7: PRICE + VOLUME")
     assert history_baseline < delivery < union < rvol_calculation < rvol_classification < liquidity < fundamental < technical
     assert "current = calculate_rvol(current, avg_volume)" not in source
@@ -48,10 +48,10 @@ def test_dual_delivery_categories_are_written_separately():
 
 def test_fundamental_score_is_informational_not_a_hard_gate():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
-    collection = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
+    collection = source.index("STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES")
     technical = source.index("STEP 7: PRICE + VOLUME")
     block = source[collection:technical]
-    assert "collect_missing_fundamentals(liquidity_pass_candidates" in block
+    assert "collect_missing_fundamentals(\n                    fundamental_collection_candidates" in block
     assert "no score-based rejection" in block
     assert "current = fundamental_audit.loc[fundamental_pass_mask]" not in source
     assert "fallback_pass_mask" not in source
@@ -98,12 +98,15 @@ def test_rvol_selector_keeps_all_qualifying_stocks_without_top_cap(tmp_path, mon
     assert selected["RVOLRank"].tolist() == list(range(1, 76))
 
 
-def test_fundamentals_only_fetch_after_liquidity_pass():
+def test_fundamentals_collect_all_rvol_gt_1_5_delivery_candidates():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     liquidity = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
-    collection = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-QUALIFIED STOCKS ONLY")
+    collection = source.index("STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES")
     assert liquidity < collection
-    assert "liquidity_pass_candidates = current.copy()" in source
+    assert "fundamental_collection_candidates = current.loc[" in source
+    assert '"HIGH_RVOL_GT_1_5"' in source
+    assert "collect_missing_fundamentals(\n                    fundamental_collection_candidates" in source
+    assert "v8_fundamental_rvol_gt_1_5_candidates.csv" in source
     assert "v8_liquidity_fundamental_candidates.csv" in source
     assert "never remove a row" in (ROOT / "fundamental_filter.py").read_text(encoding="utf-8")
 
