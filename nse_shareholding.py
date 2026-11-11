@@ -323,8 +323,9 @@ def _load_or_fetch_filing(
         if 0 <= age_seconds < max(1, max_age_days) * 86400:
             try:
                 cached = json.loads(cache_path.read_text(encoding="utf-8"))
-                filing = cached.get("latest_filing")
-                if isinstance(filing, dict) and filing.get("xbrl"):
+                raw_filing = cached.get("latest_filing")
+                filing = _compact_filing(raw_filing, symbol) if isinstance(raw_filing, dict) else {}
+                if filing and filing.get("period_end"):
                     return filing, {
                         "index_status": "REUSED_CACHE",
                         "index_checked_at_utc": cached.get("checked_at_utc", ""),
@@ -440,6 +441,14 @@ def fetch_nse_shareholding_metrics(
 
     filing_url = filing["xbrl"]
     period_end = filing.get("period_end", "")
+    if not period_end:
+        empty["provider"] = {
+            "status": "FILING_PERIOD_MISSING",
+            "reason": "NSE shareholding filing index did not supply a reporting period date",
+            "source_url": filing_url,
+            "index_diagnostics": index_diag,
+        }
+        return empty
     digest = hashlib.sha256(filing_url.encode("utf-8")).hexdigest()[:20]
     xml_dir = Path(cache_dir) / "xbrl"
     xml_dir.mkdir(parents=True, exist_ok=True)
