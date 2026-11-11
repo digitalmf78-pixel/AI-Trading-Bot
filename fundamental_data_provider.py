@@ -8,6 +8,7 @@ Collection failures are recorded per symbol and never reject a Delivery A/B row.
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import tempfile
 import time
@@ -64,6 +65,9 @@ BASE_COLUMNS = [
     "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
     "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
+    "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
+    "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
+    "TwelveDataAttemptedAtUTC",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 BASE_COLUMNS += VALUATION_COLUMNS
 
@@ -536,7 +540,8 @@ def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date
     )
 
 
-def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, dict]:
+def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics=None,
+               allow_twelve_data=True, twelve_data_defer_reason="DEFERRED_BUDGET") -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -702,6 +707,92 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, 
         diagnostic["ProviderStatus"] = "PROVIDER_ERROR"
         diagnostic["ProviderReason"] = f"{type(exc).__name__}: {exc}"[:500]
         diagnostic["MetricsAvailable"] = 0
+    # Optional secondary provider. It is activated only when a user supplies a
+    # Twelve Data API key; absent keys preserve the existing Yahoo-only path.
+    yahoo_metrics = [col for col in METRIC_COLUMNS if _present(record.get(col))]
+    metric_sources = {col: "Yahoo Finance via yfinance" for col in yahoo_metrics}
+    metric_urls = {col: url for col in yahoo_metrics}
+    metric_periods = {col: str(record.get("FinancialPeriodEnd")) if _present(record.get("FinancialPeriodEnd")) else "" for col in yahoo_metrics}
+    metric_currencies = {col: str(record.get("ValuationCurrency")) if _present(record.get("ValuationCurrency")) else "" for col in yahoo_metrics}
+    provider_diagnostics = {
+        "Yahoo Finance via yfinance": {
+            "status": diagnostic.get("ProviderStatus", "UNKNOWN"),
+            "reason": diagnostic.get("ProviderReason", ""),
+        }
+    }
+    twelve_key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+    secondary_supported = {
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
+    }
+    requested_secondary = set(missing_metrics) if missing_metrics is not None else set(secondary_supported)
+    requested_secondary &= secondary_supported
+    requested_secondary = {col for col in requested_secondary if not _present(record.get(col))}
+    if not twelve_key:
+        diagnostic["TwelveDataStatus"] = "NOT_CONFIGURED"
+    elif not allow_twelve_data:
+        diagnostic["TwelveDataStatus"] = twelve_data_defer_reason
+    elif not requested_secondary:
+        diagnostic["TwelveDataStatus"] = "NOT_NEEDED"
+    else:
+        try:
+            from twelve_data_fundamentals import fetch_twelve_data_fundamentals
+            secondary = fetch_twelve_data_fundamentals(symbol, twelve_key, asof_date=asof_date)
+            secondary_values = secondary.get("metrics", {})
+            stored_secondary = []
+            for metric, value in secondary_values.items():
+                if metric in requested_secondary and metric in METRIC_COLUMNS and not _present(record.get(metric)) and _present(value):
+                    record[metric] = value
+                    metric_sources[metric] = secondary.get("source", "Twelve Data")
+                    metric_urls[metric] = secondary.get("metric_urls", {}).get(metric, secondary.get("source_url", ""))
+                    metric_periods[metric] = secondary.get("metric_periods", {}).get(metric, secondary.get("financial_period_end", ""))
+                    metric_currencies[metric] = secondary.get("metric_currencies", {}).get(metric, secondary.get("currency", ""))
+                    stored_secondary.append(metric)
+            diagnostic["TwelveDataAttempted"] = True
+            record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
+            provider_diagnostics["Twelve Data"] = {
+                "status": "DATA_FOUND" if stored_secondary else "NO_MISSING_FIELDS_FILLED",
+                "metrics_filled": stored_secondary,
+                "currency": secondary.get("currency", ""),
+                "exchange": secondary.get("exchange", ""),
+                "mic_code": secondary.get("mic_code", ""),
+                "financial_period_end": secondary.get("financial_period_end", ""),
+            }
+            if stored_secondary:
+                record["Source"] = (
+                    "Multi-source fundamentals (Yahoo Finance via yfinance + Twelve Data)"
+                    if yahoo_metrics else "Twelve Data"
+                )
+                if not yahoo_metrics:
+                    record["SourceURL"] = secondary.get("source_url", "")
+                # Mixed provider rows are deliberately not treated as one aligned
+                # statement set; they remain ineligible for a verified score.
+                record["MetricCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
+                record["MetricPeriodAlignmentStatus"] = "UNVERIFIED"
+                record["QuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
+                record["ProviderFetchCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
+                record["ProviderFetchQuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
+                if not _present(record.get("FinancialPeriodEnd")):
+                    record["FinancialPeriodEnd"] = secondary.get("financial_period_end", "")
+                diagnostic["TwelveDataStatus"] = "DATA_FOUND"
+                diagnostic["TwelveDataMetricsFilled"] = ";".join(stored_secondary)
+            else:
+                diagnostic["TwelveDataStatus"] = "NO_MISSING_FIELDS_FILLED"
+        except Exception as exc:
+            provider_diagnostics["Twelve Data"] = {
+                "status": "PROVIDER_ERROR",
+                "reason": f"{type(exc).__name__}: {exc}"[:300],
+            }
+            diagnostic["TwelveDataAttempted"] = True
+            record["TwelveDataAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
+            diagnostic["TwelveDataStatus"] = "PROVIDER_ERROR"
+            diagnostic["TwelveDataReason"] = f"{type(exc).__name__}: {exc}"[:300]
+    record["ProviderSourceChain"] = ";".join(dict.fromkeys(metric_sources.values()))
+    record["MetricSourcesJSON"] = json.dumps(metric_sources, sort_keys=True)
+    record["MetricSourceURLsJSON"] = json.dumps(metric_urls, sort_keys=True)
+    record["MetricSourcePeriodsJSON"] = json.dumps(metric_periods, sort_keys=True)
+    record["MetricSourceCurrenciesJSON"] = json.dumps(metric_currencies, sort_keys=True)
+    record["ProviderSourceDiagnosticsJSON"] = json.dumps(provider_diagnostics, sort_keys=True)
     return record, diagnostic
 
 
@@ -709,7 +800,7 @@ def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
     """Provider-sourced (never manual) records older than refresh_days are refetched."""
     raw_source = record.get("Source", "")
     source = str(raw_source) if _present(raw_source) else ""
-    if not source.startswith("Yahoo Finance"):
+    if not source.startswith(("Yahoo Finance", "Twelve Data", "Multi-source fundamentals")):
         return False
     retrieved = pd.to_datetime(record.get("DataRetrievedAtUTC"), errors="coerce", utc=True)
     if pd.isna(retrieved):
@@ -828,6 +919,10 @@ def collect_missing_fundamentals(
         symbols = sorted({str(x).strip().upper() for x in candidates["TckrSymb"].dropna() if str(x).strip() and str(x).strip().lower() != "nan"})
     records = {str(row["TckrSymb"]): row.to_dict() for _, row in existing.iterrows() if str(row.get("TckrSymb", "")).strip() not in {"", "NAN", "nan"}}
     diagnostics = []
+    twelve_key_configured = bool(os.getenv("TWELVE_DATA_API_KEY", "").strip())
+    twelve_data_budget = max(0, int(os.getenv("TWELVE_DATA_MAX_SYMBOLS_PER_RUN", "5") or 5))
+    twelve_data_retry_days = max(1, int(os.getenv("TWELVE_DATA_RETRY_DAYS", "30") or 30))
+    twelve_data_attempts = 0
     for symbol in symbols:
         current = records.get(symbol, {})
         if not current:
@@ -845,14 +940,16 @@ def collect_missing_fundamentals(
                                          "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
                                          "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
                                          "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
-                                         "ProviderFetchedMetrics", "ProviderFetchedAtUTC"]:
+                                         "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
+                                         "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
+                                         "TwelveDataAttemptedAtUTC"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
         missing = [col for col in METRIC_COLUMNS if not _present(current.get(col))]
         provider_owned = not any(_present(current.get(col)) for col in METRIC_COLUMNS)
         source_value = current.get("Source", "")
         source_text = str(source_value) if _present(source_value) else ""
-        provider_sourced = source_text.startswith("Yahoo Finance")
+        provider_sourced = source_text.startswith(("Yahoo Finance", "Twelve Data", "Multi-source fundamentals"))
         # P2 backfill: P1 cache rows can be fresh and complete under the 30-day
         # refresh policy, yet have no quarterly TTM audit. Fetch once to enrich
         # those rows without forcing a full refresh or overwriting manual data.
@@ -874,23 +971,39 @@ def collect_missing_fundamentals(
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
-        # Keep compatibility with injected fetchers that predate asof_date.
-        # The production fetcher accepts it so valuation snapshots remain tied
-        # to the requested EOD cutoff.
+        # Keep compatibility with injected fetchers that predate newer kwargs.
+        # Secondary-provider requests are budgeted and cooled down per symbol.
+        last_twelve_attempt = pd.to_datetime(current.get("TwelveDataAttemptedAtUTC"), errors="coerce", utc=True)
+        in_twelve_cooldown = (
+            pd.notna(last_twelve_attempt)
+            and (pd.Timestamp.now(tz="UTC") - last_twelve_attempt).days < twelve_data_retry_days
+        )
+        allow_twelve = twelve_key_configured and twelve_data_attempts < twelve_data_budget and not in_twelve_cooldown
+        defer_reason = (
+            "COOLDOWN" if in_twelve_cooldown
+            else "DEFERRED_BUDGET" if twelve_key_configured and twelve_data_attempts >= twelve_data_budget
+            else "NOT_CONFIGURED"
+        )
         fetch_kwargs = {"ticker_factory": ticker_factory}
         try:
             fetch_parameters = inspect.signature(_fetch_one).parameters
-            if (
-                "asof_date" in fetch_parameters
-                or any(
-                    parameter.kind == inspect.Parameter.VAR_KEYWORD
-                    for parameter in fetch_parameters.values()
-                )
-            ):
+            accepts_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in fetch_parameters.values()
+            )
+            if "asof_date" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["asof_date"] = cutoff_text
+            if "missing_metrics" in fetch_parameters or accepts_kwargs:
+                fetch_kwargs["missing_metrics"] = missing
+            if "allow_twelve_data" in fetch_parameters or accepts_kwargs:
+                fetch_kwargs["allow_twelve_data"] = allow_twelve
+                fetch_kwargs["twelve_data_defer_reason"] = defer_reason
         except (TypeError, ValueError):
-            fetch_kwargs["asof_date"] = cutoff_text
+            # Legacy injected test fetchers may expose no inspectable signature.
+            pass
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
+        if diagnostic.get("TwelveDataAttempted"):
+            twelve_data_attempts += 1
         # Never overwrite manually supplied metric values. Existing provider rows
         # are refreshed to quarterly-derived metrics only when quarterly TTM is
         # fully aligned; missing fields can still be filled as before.
@@ -926,6 +1039,32 @@ def collect_missing_fundamentals(
                 if col in METRIC_COLUMNS:
                     newly_stored_metric_names.append(col)
         if newly_stored_metric_names:
+            # Persist per-metric provenance independently; a mixed-provider row
+            # must never imply that one source supplied every metric.
+            for field in ("MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON"):
+                try:
+                    prior_map = json.loads(str(merged.get(field) or "{}"))
+                    if not isinstance(prior_map, dict):
+                        prior_map = {}
+                except (TypeError, ValueError):
+                    prior_map = {}
+                try:
+                    incoming_map = json.loads(str(fetched.get(field) or "{}"))
+                    if not isinstance(incoming_map, dict):
+                        incoming_map = {}
+                except (TypeError, ValueError):
+                    incoming_map = {}
+                for metric in newly_stored_metric_names:
+                    if metric in incoming_map:
+                        prior_map[metric] = incoming_map[metric]
+                merged[field] = json.dumps(prior_map, sort_keys=True)
+            if _present(fetched.get("ProviderSourceChain")):
+                prior_chain = str(merged.get("ProviderSourceChain") or "")
+                merged["ProviderSourceChain"] = ";".join(dict.fromkeys(
+                    [item for item in (prior_chain + ";" + str(fetched.get("ProviderSourceChain"))).split(";") if item]
+                ))
+            if _present(fetched.get("ProviderSourceDiagnosticsJSON")):
+                merged["ProviderSourceDiagnosticsJSON"] = fetched.get("ProviderSourceDiagnosticsJSON")
             merged["ProviderFetchCalculationBasis"] = fetched.get("MetricCalculationBasis", "UNVERIFIED")
             merged["ProviderFetchQuarterlyAlignmentReason"] = fetched.get("QuarterlyAlignmentReason", "NOT_EVALUATED_P1_CACHE_PROVENANCE_ONLY")
             merged["ProviderFetchedMetrics"] = ";".join(sorted(set(newly_stored_metric_names)))
