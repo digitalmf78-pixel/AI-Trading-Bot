@@ -1038,7 +1038,17 @@ def collect_missing_fundamentals(
         if not enabled:
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
             continue
-        if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending:
+        last_free_attempt = pd.to_datetime(current.get("FreeSourcesAttemptedAtUTC"), errors="coerce", utc=True)
+        in_free_cooldown = (
+            pd.notna(last_free_attempt)
+            and (pd.Timestamp.now(tz="UTC") - last_free_attempt).days < free_source_retry_days
+        )
+        free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
+        free_source_pending = (
+            free_sources_enabled and free_source_attempts < free_source_budget
+            and not in_free_cooldown and bool(free_source_missing)
+        )
+        if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending and not free_source_pending:
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
@@ -1055,11 +1065,7 @@ def collect_missing_fundamentals(
             else "DEFERRED_BUDGET" if twelve_key_configured and twelve_data_attempts >= twelve_data_budget
             else "NOT_CONFIGURED"
         )
-        free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
-        allow_free_sources = (
-            free_sources_enabled and free_source_attempts < free_source_budget
-            and not in_free_cooldown
-        )
+        allow_free_sources = free_source_pending
         free_defer_reason = (
             "DISABLED" if not free_sources_enabled
             else "COOLDOWN" if in_free_cooldown
