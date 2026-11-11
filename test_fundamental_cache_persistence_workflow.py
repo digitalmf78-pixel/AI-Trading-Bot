@@ -70,7 +70,8 @@ def test_workflow_commits_fundamental_cache_and_history_to_repository():
     assert "git diff --cached --name-status" in workflow
     assert 'git push origin "HEAD:${GITHUB_REF_NAME}"' in workflow
     assert 'git fetch origin "${GITHUB_REF_NAME}"' in workflow
-    assert 'git rebase "origin/${GITHUB_REF_NAME}"' in workflow
+    assert 'git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}"' in workflow
+    assert "if: always() && steps.nse_scan.outcome == 'success'" in workflow
     assert "concurrency:" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "steps.nse_scan.outcome == 'success'" in workflow
