@@ -103,7 +103,15 @@ def _get_endpoint(session, endpoint: str, symbol: str, api_key: str, outputsize:
     meta = payload.get("meta") or {}
     exchange = str(meta.get("exchange") or "").strip().upper()
     mic_code = str(meta.get("mic_code") or meta.get("micCode") or "").strip().upper()
-    if exchange not in {"NSE", "NATIONAL STOCK EXCHANGE OF INDIA"} and mic_code != "XNSE":
+    provider_symbol = str(meta.get("symbol") or "").strip().upper()
+    if provider_symbol and provider_symbol != symbol:
+        raise ValueError(f"{endpoint}: provider symbol mismatch (requested={symbol!r}, returned={provider_symbol!r})")
+    allowed_exchanges = {"NSE", "NATIONAL STOCK EXCHANGE OF INDIA"}
+    if exchange and exchange not in allowed_exchanges:
+        raise ValueError(f"{endpoint}: provider exchange is not NSE (exchange={exchange!r}, mic={mic_code!r})")
+    if mic_code and mic_code != "XNSE":
+        raise ValueError(f"{endpoint}: provider MIC is not XNSE (exchange={exchange!r}, mic={mic_code!r})")
+    if not exchange and mic_code != "XNSE":
         raise ValueError(f"{endpoint}: provider instrument is not confirmed as NSE (exchange={exchange!r}, mic={mic_code!r})")
     return payload
 
