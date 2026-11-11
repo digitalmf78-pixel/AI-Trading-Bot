@@ -409,11 +409,17 @@ def _same_xbrl_entity_identity(current: dict, prior: dict) -> bool:
     prior_scheme = _clean(prior.get('EntityIdentifierScheme'))
     if current_scheme == prior_scheme:
         return True
-    known_scrip_code_schemes = {
-        'http://www.bseindia.com/in-capmkt/ScripCode',
-        'http://www.sebi.gov.in/in-capmkt/ScripCode',
+    known_scheme_pairs = {
+        frozenset({
+            'http://www.bseindia.com/in-capmkt/ScripCode',
+            'http://www.sebi.gov.in/in-capmkt/ScripCode',
+        }),
+        frozenset({
+            'http://www.bseindia.com/in-capmkt/Symbol',
+            'http://www.sebi.gov.in/in-capmkt/Symbol',
+        }),
     }
-    return current_scheme in known_scrip_code_schemes and prior_scheme in known_scrip_code_schemes
+    return frozenset({current_scheme, prior_scheme}) in known_scheme_pairs
 
 
 def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
