@@ -40,7 +40,12 @@ def _normalise_series(value) -> str:
     return "" if pd.isna(value) else str(value).strip().upper()
 
 
-def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
+def _keyed(
+    frame: pd.DataFrame,
+    label: str,
+    *,
+    exclude_invalid_series: bool = False,
+) -> pd.DataFrame:
     if not isinstance(frame, pd.DataFrame):
         raise CohortAssemblyError(f"{label}: expected a pandas DataFrame")
     if SYMBOL_COLUMN not in frame.columns:
@@ -56,13 +61,22 @@ def _keyed(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     out["_cohort_symbol_key"] = out[SYMBOL_COLUMN].map(_normalise_symbol)
     if (out["_cohort_symbol_key"] == "").any():
         raise CohortAssemblyError(f"{label}: blank/null symbol key")
+    invalid_series_count = 0
+    if "SctySrs" in out.columns:
+        out["_cohort_series_key"] = out["SctySrs"].map(_normalise_series)
+        invalid_series = out["_cohort_series_key"] == ""
+        invalid_series_count = int(invalid_series.sum())
+        if invalid_series_count and not exclude_invalid_series:
+            raise CohortAssemblyError(f"{label}: blank/null SctySrs for a symbol-keyed row")
+        if invalid_series_count:
+            # Invalid report rows cannot be safely aligned to the official
+            # Mainboard cohort. Exclude only those evidence rows; the base
+            # cohort remains untouched and their symbols stay NOT_EVALUATED.
+            out = out.loc[~invalid_series].copy()
     duplicates = sorted(out.loc[out["_cohort_symbol_key"].duplicated(keep=False), "_cohort_symbol_key"].unique())
     if duplicates:
         raise CohortAssemblyError(f"{label}: duplicate symbol keys are ambiguous: {duplicates[:20]}")
-    if "SctySrs" in out.columns:
-        out["_cohort_series_key"] = out["SctySrs"].map(_normalise_series)
-        if (out["_cohort_series_key"] == "").any():
-            raise CohortAssemblyError(f"{label}: blank/null SctySrs for a symbol-keyed row")
+    out.attrs["invalid_series_rows_excluded"] = invalid_series_count
     return out
 
 
@@ -149,7 +163,7 @@ def assemble_mainboard_cohort(
             diagnostics.append({"Stage": safe_stage, "Diagnostic": "SOURCE_REPORT_EMPTY", "Rows": 0})
             continue
 
-        keyed_report = _keyed(report, safe_stage)
+        keyed_report = _keyed(report, safe_stage, exclude_invalid_series=True)
         _validate_series_alignment(base, keyed_report, safe_stage)
         report_symbols = set(keyed_report["_cohort_symbol_key"])
         base_symbols = set(base["_cohort_symbol_key"])
@@ -164,7 +178,9 @@ def assemble_mainboard_cohort(
             "Stage": safe_stage,
             "Diagnostic": "LEFT_JOIN_COVERAGE",
             "SeriesAlignmentStatus": series_alignment,
-            "Rows": len(keyed_report),
+            "Rows": len(report),
+            "ValidRows": len(keyed_report),
+            "InvalidSeriesRowsExcluded": int(keyed_report.attrs.get("invalid_series_rows_excluded", 0)),
             "MatchedCohortRows": len(matched),
             "MissingCohortRows": len(base_symbols - report_symbols),
             "OutOfCohortRows": len(extras),
