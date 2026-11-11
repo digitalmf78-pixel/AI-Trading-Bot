@@ -11,13 +11,20 @@ on:
         options:
           - EOD
           - PREMARKET
-  # Run one EOD validation when this workflow itself changes (including an explicit post-merge EOD verification). Restricting the
-  # path prevents scanner/cache commits from recursively starting another scan.
+  # Run an EOD validation when the workflow or fundamental data-provider
+  # pipeline changes. Scanner/cache commits do not touch these source paths,
+  # so the persistence step cannot recursively start another scan.
   push:
     branches:
       - main
     paths:
       - ".github/workflows/nse-test-scheduled.yml"
+      - "fundamental_data_provider.py"
+      - "free_fundamental_sources.py"
+      - "nse_shareholding.py"
+      - "nse_xbrl_fetch.py"
+      - "fundamental_official_filings.py"
+      - "fundamental_metric_verification.py"
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
