@@ -12,6 +12,7 @@ No network calls, no live scanner changes, no fundamental claims.
 from __future__ import annotations
 
 from pathlib import Path
+from functools import lru_cache
 import math
 import pandas as pd
 import numpy as np
@@ -26,6 +27,12 @@ LIQUIDITY_MIN_INR = 15_000_000.0
 HORIZONS = (5, 10, 20)
 
 
+@lru_cache(maxsize=512)
+def _is_official_session(day_iso: str) -> bool:
+    """Cache calendar lookups; the official calendar JSON is otherwise read per call."""
+    return is_trading_session(day_iso)
+
+
 def delivery_window_dates(delivery_dates, asof_date, max_calendar_days: int = 30) -> list[pd.Timestamp]:
     """Return distinct delivery report dates inside the inclusive 30-calendar-day window."""
     asof = pd.Timestamp(asof_date).normalize()
@@ -34,7 +41,7 @@ def delivery_window_dates(delivery_dates, asof_date, max_calendar_days: int = 30
         pd.Timestamp(day).normalize()
         for day in delivery_dates
         if start <= pd.Timestamp(day).normalize() <= asof
-        and is_trading_session(pd.Timestamp(day).date())
+        and _is_official_session(pd.Timestamp(day).date().isoformat())
     })
 
 
@@ -47,7 +54,7 @@ def official_market_session_dates(start_date, end_date) -> list[pd.Timestamp]:
     return [
         pd.Timestamp(day).normalize()
         for day in pd.date_range(start, end, freq="D")
-        if is_trading_session(pd.Timestamp(day).date())
+        if _is_official_session(pd.Timestamp(day).date().isoformat())
     ]
 
 
