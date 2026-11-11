@@ -1,6 +1,6 @@
 import pandas as pd
 
-from free_fundamental_sources import fetch_free_fundamental_sources
+from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session, _instantiate_bounded_client
 
 
 class FakeMoneyControl:
@@ -35,7 +35,7 @@ class FakeMoneyControl:
 class FakeTickertape:
     calls = []
 
-    def get_ticker(self, symbol, search_place="stock"):
+    def get_ticker(self, symbol, search_place="stocks"):
         self.calls.append(("tickertape", "lookup", symbol, search_place))
         return "TT123", [{"ticker": symbol, "sid": "TT123", "slug": "stocks/example-EXAM"}]
 
@@ -109,7 +109,7 @@ def test_fetches_all_free_sources_and_records_per_metric_provenance():
     assert result["providers"]["Tickertape"]["status"] == "DATA_FOUND"
     assert any(call[0] == "tickertape" for call in FakeTickertape.calls)
     assert len([call for call in FakeMoneyControl.calls if call[1] != "lookup"]) == 6
-    assert len([call for call in FakeTickertape.calls if call[1] != "lookup"]) == 13
+    assert len([call for call in FakeTickertape.calls if call[1] != "lookup"]) == 9
 
 
 def test_tickertape_fallback_fills_missing_ratio_when_moneycontrol_empty():
@@ -164,3 +164,48 @@ def test_no_key_free_source_adapter_handles_unavailable_library():
     assert result["metrics"] == {}
     assert result["providers"]["Moneycontrol"]["status"] == "PROVIDER_ERROR"
     assert result["providers"]["Tickertape"]["status"] == "PROVIDER_ERROR"
+
+def test_free_source_http_session_has_bounded_timeout_and_no_retries():
+    class FakeSession:
+        def __init__(self):
+            self.mounts = {}
+            self.last_kwargs = None
+
+        def mount(self, prefix, adapter):
+            self.mounts[prefix] = adapter
+
+        def get(self, url, *args, **kwargs):
+            self.last_kwargs = kwargs
+            return "ok"
+
+    class FakeClient:
+        def __init__(self):
+            self.session = FakeSession()
+
+    client = FakeClient()
+    _configure_bounded_session(client)
+    assert client.session.mounts["https://"].max_retries.total == 0
+    assert client.session.mounts["http://"].max_retries.total == 0
+    assert client.session.get("https://example.invalid") == "ok"
+    assert client.session.last_kwargs["timeout"] == (4, 8)
+
+def test_constructor_requests_are_bounded_before_client_initialization(monkeypatch):
+    from types import SimpleNamespace
+    from requests import Session
+
+    observed = {}
+
+    def fake_get(session, url, *args, **kwargs):
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(Session, "get", fake_get)
+
+    def factory():
+        session = Session()
+        session.get("https://example.invalid")
+        return SimpleNamespace(session=session)
+
+    client = _instantiate_bounded_client(factory)
+    assert observed["timeout"] == (4, 8)
+    assert client.session.adapters["https://"].max_retries.total == 0
