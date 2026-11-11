@@ -15,6 +15,7 @@ import pandas as pd
 import numpy as np
 
 from rsi_retest_existing_cache import _read_price_cache, _read_delivery_cache
+from nse_trading_calendar import is_trading_session
 
 PRICE_DIR = Path("data/bhavcopy")
 DELIVERY_DIR = Path("data/cache/delivery")
@@ -31,6 +32,7 @@ def delivery_window_dates(delivery_dates, asof_date, max_calendar_days: int = 30
         pd.Timestamp(day).normalize()
         for day in delivery_dates
         if start <= pd.Timestamp(day).normalize() <= asof
+        and is_trading_session(pd.Timestamp(day).date())
     })
 
 
