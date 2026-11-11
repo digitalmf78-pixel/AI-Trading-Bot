@@ -21,7 +21,7 @@ def test_outcomes_wait_until_each_horizon_is_complete_and_use_eod_close(tmp_path
         if is_trading_session(day):
             frames.append(pd.DataFrame([{
                 "Date": pd.Timestamp(day), "TckrSymb": "ABC",
-                "HghPric": 110.0, "LwPric": 95.0, "ClsPric": 105.0,
+                "OpnPric": 102.0, "HghPric": 110.0, "LwPric": 95.0, "ClsPric": 105.0,
             }]))
             session_count += 1
         day += timedelta(days=1)
@@ -31,16 +31,17 @@ def test_outcomes_wait_until_each_horizon_is_complete_and_use_eod_close(tmp_path
     with store.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 3
-    assert all(row["EntryReferenceType"] == "SIGNAL_EOD_CLOSE" for row in rows)
+    assert all(row["EntryReferenceType"] == "NEXT_SESSION_OPEN" for row in rows)
+    assert all(float(row["EntryReference"]) == 102.0 for row in rows)
     assert all(row["FeesSlippageAssumption"] == "NOT_CONFIGURED" for row in rows)
     assert all(int(row["ObservedSessionCount"]) == int(row["HorizonSessions"]) for row in rows)
     with log.open(newline="", encoding="utf-8") as handle:
         enriched = next(csv.DictReader(handle))
-    assert enriched["Result5D"] == "5.00000000"
-    assert enriched["Result10D"] == "5.00000000"
-    assert enriched["Result20D"] == "5.00000000"
-    assert enriched["MFE"] == "10.00000000"
-    assert enriched["MAE"] == "-5.00000000"
+    assert enriched["Result5D"] == "2.94117647"
+    assert enriched["Result10D"] == "2.94117647"
+    assert enriched["Result20D"] == "2.94117647"
+    assert enriched["MFE"] == "7.84313725"
+    assert enriched["MAE"] == "-6.86274510"
     assert update_signal_outcomes(log, frames, outcome_store_path=store)["new_outcomes"] == 0
 
 
@@ -76,7 +77,7 @@ def test_missing_whole_market_bhavcopy_session_does_not_shift_horizon(tmp_path):
     for session_day in session_dates[1:]:
         frames.append(pd.DataFrame([{
             "Date": pd.Timestamp(session_day), "TckrSymb": "ABC",
-            "HghPric": 110.0, "LwPric": 95.0, "ClsPric": 105.0,
+            "OpnPric": 102.0, "HghPric": 110.0, "LwPric": 95.0, "ClsPric": 105.0,
         }]))
 
     store = tmp_path / "signal_outcomes.csv"
@@ -88,3 +89,70 @@ def test_missing_whole_market_bhavcopy_session_does_not_shift_horizon(tmp_path):
     assert row["Result5D"] == ""
     assert row["Result10D"] == ""
     assert row["Result20D"] == ""
+
+
+def test_signal_day_prices_are_excluded_and_entry_uses_next_session_open(tmp_path):
+    log = tmp_path / "signal_log.csv"
+    columns = ["EODDate", "TckrSymb", "ClsPric", "Result5D", "Result10D", "Result20D", "MFE", "MAE"]
+    with log.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerow({"EODDate": "2026-11-06", "TckrSymb": "ABC", "ClsPric": "100"})
+    # Signal-day extremes are deliberately enormous; they must never leak into
+    # entry, MFE, MAE, or forward returns.
+    frames = [pd.DataFrame([{
+        "Date": pd.Timestamp("2026-11-06"), "TckrSymb": "ABC",
+        "OpnPric": 100.0, "HghPric": 999.0, "LwPric": 1.0, "ClsPric": 100.0,
+    }])]
+    day = date(2026, 11, 7)
+    while sum(
+        1 for frame in frames
+        if frame.iloc[0]["Date"].date() > date(2026, 11, 6)
+        and is_trading_session(frame.iloc[0]["Date"])
+    ) < 5:
+        if is_trading_session(day):
+            frames.append(pd.DataFrame([{
+                "Date": pd.Timestamp(day), "TckrSymb": "ABC",
+                "OpnPric": 100.0, "HghPric": 105.0, "LwPric": 98.0, "ClsPric": 104.0,
+            }]))
+        day += timedelta(days=1)
+    store = tmp_path / "signal_outcomes.csv"
+    update_signal_outcomes(log, frames, outcome_store_path=store)
+    with store.open(newline="", encoding="utf-8") as handle:
+        first = next(csv.DictReader(handle))
+    assert first["EntryReferenceType"] == "NEXT_SESSION_OPEN"
+    assert float(first["EntryReference"]) == 100.0
+    assert float(first["MFE_Pct"]) == 5.0
+    assert float(first["MAE_Pct"]) == -2.0
+
+
+def test_official_special_session_counts_but_holiday_does_not(tmp_path):
+    log = tmp_path / "signal_log.csv"
+    columns = ["EODDate", "TckrSymb", "ClsPric", "Result5D", "Result10D", "Result20D", "MFE", "MAE"]
+    with log.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerow({"EODDate": "2026-11-06", "TckrSymb": "ABC", "ClsPric": "100"})
+    # 08-Nov-2026 is an official Muhurat session despite being Sunday; 10-Nov
+    # is an NSE holiday and must not consume a horizon session.
+    expected = []
+    day = date(2026, 11, 7)
+    while len(expected) < 5:
+        if is_trading_session(day):
+            expected.append(day)
+        day += timedelta(days=1)
+    assert expected == [
+        date(2026, 11, 8), date(2026, 11, 9), date(2026, 11, 11),
+        date(2026, 11, 12), date(2026, 11, 13),
+    ]
+    frames = [pd.DataFrame([{
+        "Date": pd.Timestamp(session_day), "TckrSymb": "ABC",
+        "OpnPric": 100.0, "HghPric": 103.0, "LwPric": 99.0, "ClsPric": 102.0,
+    }]) for session_day in expected]
+    store = tmp_path / "signal_outcomes.csv"
+    update_signal_outcomes(log, frames, outcome_store_path=store)
+    with store.open(newline="", encoding="utf-8") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["HorizonEndDate"] == "2026-11-13"
+    assert row["ObservedSessionCount"] == "5"
+    assert row["EntryReferenceType"] == "NEXT_SESSION_OPEN"
