@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 
 import pandas as pd
 import requests
+from telegram_research_digest import build_telegram_research_sections
 
 
 NEWS_COLUMNS = [
@@ -1500,6 +1501,7 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
              f"Liquidity/Fundamental pipeline rows: {len(result)} | Final WATCH: {counts.get('WATCH', 0)} | WAIT: {waiting}"]
     if scan_mode == "PREMARKET":
         lines.append("News refresh only • Technical status मागील EOD scan मधील आहे.")
+    lines.extend(build_telegram_research_sections(result, news, eod_date))
     lines.extend(_observation_digest_lines(observation_report, result, news))
     lines.append("News sentiment headline/description वर आधारित आहे; पूर्ण बातमी वाचल्याची किंवा स्वतंत्र पुष्टीची हमी नाही.")
     lines.append("रिकामी/unverified माहिती WAIT_FOR_DATA राहते. हा अहवाल BUY शिफारस नाही; automatic order नाही.")

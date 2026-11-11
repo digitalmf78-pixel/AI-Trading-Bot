@@ -106,3 +106,31 @@ def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation
         assert status in digest
     assert "CORE TECHNICAL PASS: STRONG1" in digest
 
+
+
+def test_research_digest_has_delivery_5_10_20_news_links_events_and_watchlist_export(tmp_path, monkeypatch):
+    import pandas as pd
+    import telegram_research_digest as research
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "outputs"
+    out.mkdir()
+    pd.DataFrame([{
+        "TckrSymb":"ABC","DeliveryQty5DStatus":"COMPLETE","DeliveryQty5DChangePct":20,
+        "DeliveryQty5DDeliveryPctAverage":64,"DeliveryQty5DCloseChangePct":3,
+        "DeliveryQty10DStatus":"WAIT_FOR_DATA","DeliveryQty20DStatus":"WAIT_FOR_DATA"
+    }]).to_csv(out/"v8_delivery_quantity_observations_20261111.csv",index=False)
+    pd.DataFrame([{"TckrSymb":"ABC","WatchlistStatus":"ACCUMULATION_WATCH",
+        "WatchlistReason":"OBSERVATION_ONLY_NOT_MEASURED","HighDeliverySessionCount":4,
+        "HighDeliveryUpDayCount":3,"HighDeliveryDownDayCount":1}]).to_csv(out/"v8_hybrid_potential_accumulation_watchlist.csv",index=False)
+    pd.DataFrame([{"TckrSymb":"ABC","EventDate":"2026-11-20","EventType":"BOARD_MEETING",
+        "Status":"OFFICIAL_DATE_CONFIRMED","Headline":"Board meeting","Source":"NSE",
+        "URL":"https://example.test/nse"}]).to_csv(out/"v8_upcoming_corporate_events.csv",index=False)
+    news=pd.DataFrame([{"TckrSymb":"ABC","PublishedAt":"2026-11-11T10:00:00Z",
+        "Headline":"ABC announces order","Impact":"positive","SourceType":"official",
+        "URL":"https://example.test/news"}])
+    digest="\\n".join(research.build_telegram_research_sections(pd.DataFrame([{"TckrSymb":"ABC"}]),news,"2026-11-11"))
+    assert "5D Qty Δ 20.0%" in digest and "10D WAIT_FOR_DATA" in digest
+    assert "ACCUMULATION_WATCH" in digest and "BOARD_MEETING" in digest
+    assert "https://example.test/news" in digest
+    saved=pd.read_csv(out/"v8_telegram_research_watchlist.csv")
+    assert saved.loc[0,"TckrSymb"]=="ABC" and "UpcomingEvents20D" in saved.columns
