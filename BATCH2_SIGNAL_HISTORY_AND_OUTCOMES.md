@@ -15,15 +15,14 @@ This is an observation-only sidecar. It does not feed data back into the scanner
 - No secrets, account-specific sizing, or risk-config values are included.
 
 ## Shadow cohort and snapshots (B2-2)
-- After the normal signal log call, `signal_cohort_assembly.py` left-joins Delivery, Liquidity, Fundamental, Technical, and final EOD evidence onto the full official Mainboard input cohort.
-- Missing report rows remain `NOT_EVALUATED`; they are not converted to PASS or REJECT.
-- `signal_shadow_store.py` creates immutable, schema-validated EOD snapshots under `outputs/signal_shadow/`. Snapshot fields are allow-listed. This report is artifact-only and cannot alter scanner selection.
-- Shadow cohort and snapshot failures print a warning and do not stop the scanner.
+- `signal_cohort_assembly.py` and `signal_shadow_store.py` remain independently tested observational helpers.
+- The live scanner does **not** invoke the snapshot/stage-event writer. Its append-only JSONL storage has no enforced row/byte ceiling, so it is intentionally skipped until a bounded retention policy is implemented.
+- These helpers are not part of scanner selection, ranking, scoring, Telegram output, or the order workflow.
 
 ### Outcome definitions
-- **Entry reference:** the signal's EOD `ClsPric`, stored as `SIGNAL_EOD_CLOSE`. This is a research reference price, not an assumed live fill.
-- **Result5D / Result10D / Result20D:** raw close-to-close percentage return from that EOD close to the close of the 5th / 10th / 20th distinct official NSE equity session strictly after the signal date.
-- **MFE / MAE:** stored in the per-run `outputs/signal_log.csv` only when the 20-session horizon is complete. MFE = (maximum forward-session High / entry reference - 1) × 100. MAE = (minimum forward-session Low / entry reference - 1) × 100. The outcome store retains MFE/MAE separately for each 5/10/20-session horizon.
+- **Entry reference:** the `OpnPric` (official NSE Bhavcopy Open) of the first official NSE equity session strictly after the signal date, stored as `NEXT_SESSION_OPEN`. This is a research reference price, not an assumed live fill.
+- **Result5D / Result10D / Result20D:** raw price return from that next-session Open to the Close of the 5th / 10th / 20th official NSE equity session strictly after the signal date. The entry session itself counts as session 1.
+- **MFE / MAE:** stored in the per-run `outputs/signal_log.csv` only when the 20-session horizon is complete. MFE = (maximum High / next-session Open - 1) × 100. MAE = (minimum Low / next-session Open - 1) × 100. The outcome store retains MFE/MAE separately for each 5/10/20-session horizon.
 - **Completeness:** every required official session must be present, and the symbol must have valid positive High, Low, and Close values for every session. Missing/duplicate/invalid data means no outcome is written for that horizon; it remains blank and can be evaluated on a later EOD run.
 - **Point-in-time:** snapshot fields are built only from the signal-time cohort and stage reports. Forward OHLC is used only in the separate outcome store, never in the original signal snapshot or scanner selection.
 - **Fees/slippage:** `NOT_CONFIGURED`. Reported returns are raw price movement only; no net performance is claimed.
