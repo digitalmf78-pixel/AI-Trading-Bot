@@ -51,6 +51,8 @@ def main():
                 "ProviderReason": detail.get("reason", ""),
                 "MetricsFoundJSON": json.dumps(result.get("metrics", {}), sort_keys=True),
                 "MetricSourcesJSON": json.dumps(result.get("metric_sources", {}), sort_keys=True),
+                "MetricPeriodsJSON": json.dumps(result.get("metric_periods", {}), sort_keys=True),
+                "MetricCurrenciesJSON": json.dumps(result.get("metric_currencies", {}), sort_keys=True),
                 "MetricAlternatesJSON": json.dumps(result.get("metric_alternates", {}), sort_keys=True),
             })
     pd.DataFrame(rows).to_csv(out_dir / "free_fundamental_live_smoke.csv", index=False)
