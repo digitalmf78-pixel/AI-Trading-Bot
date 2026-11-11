@@ -215,6 +215,8 @@ jobs:
           SEND_TELEGRAM: "true"
           RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
           TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          TWELVE_DATA_MAX_SYMBOLS_PER_RUN: "5"
+          TWELVE_DATA_RETRY_DAYS: "30"
           NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
         run: |
           set -e
