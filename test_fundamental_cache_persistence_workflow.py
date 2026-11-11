@@ -73,7 +73,7 @@ def test_workflow_commits_fundamental_cache_and_history_to_repository():
     assert 'git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}"' in workflow
     assert "if: always() && steps.nse_scan.outcome == 'success'" in workflow
     assert "concurrency:" in workflow
-    assert "cancel-in-progress: false" in workflow
+    assert "cancel-in-progress: ${{ github.event_name == 'push' }}" in workflow
     assert "steps.nse_scan.outcome == 'success'" in workflow
 
 
