@@ -27,6 +27,22 @@ ALIASES = {
     "ROCEPercent": ("return on capital employed", "roce", "roce %"),
     "DebtToEquity": ("debt equity", "debt to equity", "debt/equity", "debt equity ratio"),
     "InterestCoverage": ("interest coverage", "interest coverage ratio"),
+    "GrossMarginPct": ("gross margin", "gross margin %"),
+    "OperatingMarginPct": ("operating margin", "operating margin %", "ebit margin"),
+    "NetProfitMarginPct": ("net profit margin", "net margin", "net profit margin %"),
+    "CurrentRatio": ("current ratio",),
+    "QuickRatio": ("quick ratio", "acid test ratio"),
+    "AssetTurnover": ("asset turnover", "asset turnover ratio"),
+    "TrailingPE": ("price earnings", "p/e", "pe ratio", "trailing pe"),
+    "PriceToBook": ("price to book", "p/b", "price book ratio"),
+    "DividendYieldPct": ("dividend yield", "dividend yield %"),
+    "EPS": ("eps", "earnings per share", "basic eps"),
+    "BookValuePerShare": ("book value per share", "book value"),
+    "PromoterHoldingPct": ("promoter", "promoter holding", "promoters"),
+    "FIIHoldingPct": ("fii", "fii holding", "foreign institutional investors"),
+    "DIIHoldingPct": ("dii", "dii holding", "domestic institutional investors"),
+    "PublicHoldingPct": ("public", "public holding"),
+    "PledgePct": ("pledged", "promoter pledge", "pledge"),
 }
 
 
@@ -82,6 +98,23 @@ def _extract_ratio(frame: pd.DataFrame, aliases: tuple[str, ...]):
                 number = _number(value)
                 if number is not None:
                     return number
+    return None
+
+
+
+def _extract_holding(frame: pd.DataFrame, aliases: tuple[str, ...]):
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    wanted = {_norm(x) for x in aliases}
+    name_cols = [c for c in frame.columns if _norm(c) in {"category", "name", "holder", "investortype", "type", "shareholder"}]
+    value_cols = [c for c in frame.columns if _norm(c) in {"percentage", "holding", "value", "shareholding", "percent", "holdingpercentage"}]
+    for name_col in name_cols:
+        for _, row in frame.iterrows():
+            if _norm(row.get(name_col)) in wanted:
+                for value_col in value_cols:
+                    value = _number(row.get(value_col))
+                    if value is not None:
+                        return value
     return None
 
 
@@ -179,23 +212,26 @@ def fetch_free_fundamental_sources(
                 "source_url": SOURCE_URLS[source],
             }
             for metric in wanted:
-                # Prefer the ratios/scorecard table, then the explicit growth table.
                 candidate_frames = [frames.get("ratios", pd.DataFrame())]
                 if metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
                     candidate_frames.insert(0, frames.get("income_growth", pd.DataFrame()))
+                if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
+                    candidate_frames.insert(0, frames.get("shareholding", pd.DataFrame()))
+                value = None
                 for frame in candidate_frames:
-                    value = _extract_ratio(frame, ALIASES[metric])
-                    if value is None:
-                        continue
-                    if metric in result["metrics"]:
-                        # Keep the first source's value; retain the other source in diagnostics.
+                    if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
+                        value = _extract_holding(frame, ALIASES[metric])
+                    else:
+                        value = _extract_ratio(frame, ALIASES[metric])
+                    if value is not None:
                         break
-                    result["metrics"][metric] = value
-                    result["metric_sources"][metric] = source
-                    result["metric_urls"][metric] = SOURCE_URLS[source]
-                    result["metric_periods"][metric] = ""
-                    result["metric_currencies"][metric] = ""
-                    break
+                if value is None or metric in result["metrics"]:
+                    continue
+                result["metrics"][metric] = value
+                result["metric_sources"][metric] = source
+                result["metric_urls"][metric] = SOURCE_URLS[source]
+                result["metric_periods"][metric] = ""
+                result["metric_currencies"][metric] = ""
         except Exception as exc:
             result["providers"][source] = {
                 "status": "PROVIDER_ERROR",
