@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 from pathlib import Path
 import shutil
 
@@ -42,6 +43,15 @@ def _assert_unique(rows, key_fields, label):
             raise ValueError(f"{label}: duplicate or empty key {key}")
         seen.add(key)
     return seen
+
+
+def _serialized_csv_bytes(rows, columns, *, include_header=False) -> int:
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=columns)
+    if include_header:
+        writer.writeheader()
+    writer.writerows(rows)
+    return len(buffer.getvalue().encode("utf-8"))
 
 
 def restore_history(
@@ -130,7 +140,15 @@ def persist_history(
             for column in OUTCOME_VALUE_COLUMNS:
                 record[column] = ""
             additions.append(record)
-    if len(old) + len(additions) > max_signal_rows or source.stat().st_size > max_signal_bytes:
+    signal_append_bytes = _serialized_csv_bytes(
+        additions, SIGNAL_COLUMNS, include_header=not history.exists()
+    )
+    durable_signal_bytes = history.stat().st_size if history.exists() else 0
+    if (
+        len(old) + len(additions) > max_signal_rows
+        or durable_signal_bytes + signal_append_bytes > max_signal_bytes
+        or source.stat().st_size > max_signal_bytes
+    ):
         raise ValueError("signal history size limit reached; archive policy review required")
     if not history.exists():
         history.parent.mkdir(parents=True, exist_ok=True)
@@ -160,7 +178,15 @@ def persist_history(
                 else:
                     old_outcome_map[key] = row
                     outcome_additions.append(row)
-            if len(old_outcomes) + len(outcome_additions) > max_outcome_rows or outcome_src.stat().st_size > max_outcome_bytes:
+            outcome_append_bytes = _serialized_csv_bytes(
+                outcome_additions, OUTCOME_COLUMNS, include_header=not outcomes_history.exists()
+            )
+            durable_outcome_bytes = outcomes_history.stat().st_size if outcomes_history.exists() else 0
+            if (
+                len(old_outcomes) + len(outcome_additions) > max_outcome_rows
+                or durable_outcome_bytes + outcome_append_bytes > max_outcome_bytes
+                or outcome_src.stat().st_size > max_outcome_bytes
+            ):
                 raise ValueError("signal outcome history size limit reached; archive policy review required")
             if outcome_additions:
                 outcomes_history.parent.mkdir(parents=True, exist_ok=True)
