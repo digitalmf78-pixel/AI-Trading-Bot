@@ -23,11 +23,34 @@ LIQUIDITY_MIN_INR = 15_000_000.0
 HORIZONS = (5, 10, 20)
 
 
+def delivery_window_dates(delivery_dates, asof_date, max_calendar_days: int = 30) -> list[pd.Timestamp]:
+    """Return distinct delivery report dates inside the inclusive 30-calendar-day window."""
+    asof = pd.Timestamp(asof_date).normalize()
+    start = asof - pd.Timedelta(days=max_calendar_days - 1)
+    return sorted({
+        pd.Timestamp(day).normalize()
+        for day in delivery_dates
+        if start <= pd.Timestamp(day).normalize() <= asof
+    })
+
+
+def forward_session_dates(market_dates, signal_date, horizon: int) -> list[pd.Timestamp]:
+    """Return exactly the next N distinct market sessions, or [] if the horizon is incomplete."""
+    dates = sorted(pd.Timestamp(day).normalize() for day in market_dates)
+    signal = pd.Timestamp(signal_date).normalize()
+    try:
+        position = dates.index(signal)
+    except ValueError:
+        return []
+    future = dates[position + 1:position + 1 + int(horizon)]
+    return future if len(future) == int(horizon) else []
+
+
 def classify_delivery(values: list[float]) -> tuple[str, str]:
-    """Return Category A and B status for exactly five valid distinct sessions."""
-    if len(values) != 5 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 100 for v in values):
+    """Classify all valid candidate reports in the 30-day window; at least five are required."""
+    if len(values) < 5 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 100 for v in values):
         return "WAIT_FOR_DATA", "WAIT_FOR_DATA"
-    a = "PASS" if sum(values) / 5 >= 60.0 else "REJECT"
+    a = "PASS" if sum(values) / len(values) >= 60.0 else "REJECT"
     b = "PASS" if all(float(v) >= 60.0 for v in values) else "REJECT"
     return a, b
 
@@ -123,20 +146,20 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 continue
             rvol = float(current_volume) / avg_volume
 
-            eligible_delivery_dates = [d for d in delivery_dates if d <= date][-5:]
-            if len(eligible_delivery_dates) != 5:
-                rejection["insufficient_delivery_history"] += 1
-                continue
+            eligible_delivery_dates = delivery_window_dates(delivery_dates, date, max_calendar_days=30)
             dvalues = []
-            delivery_ok = True
+            candidate_delivery_dates = []
             for d in eligible_delivery_dates:
                 df = delivery_by_date[d]
                 hit = df.loc[df["SYMBOL"].eq(symbol), "DELIV_PER"]
                 if hit.empty or pd.isna(hit.iloc[-1]):
-                    delivery_ok = False
-                    break
-                dvalues.append(float(hit.iloc[-1]))
-            if not delivery_ok:
+                    continue
+                value = float(hit.iloc[-1])
+                if not math.isfinite(value) or not 0.0 <= value <= 100.0:
+                    continue
+                candidate_delivery_dates.append(d)
+                dvalues.append(value)
+            if len(dvalues) < 5:
                 rejection["insufficient_delivery_history"] += 1
                 continue
             cat_a, cat_b = classify_delivery(dvalues)
@@ -153,25 +176,32 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 "CurrentVolume": float(current_volume), "AvgVolume20D": avg_volume, "RVOL": rvol,
                 "AvgTradedValue20D_INR": avg_value, "Delivery5D_AveragePct": sum(dvalues)/5,
                 "Delivery5D_MinPct": min(dvalues), "DeliveryCategoryA": cat_a, "DeliveryCategoryB": cat_b,
-                "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in eligible_delivery_dates),
+                "DeliveryValidReportCount": len(dvalues),
+                "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in candidate_delivery_dates),
                 "Strategy_A_RVOL_GT_1_5": strict, "Strategy_B_RVOL_GT_1_2": relaxed,
                 "Strategy_C_No_RVOL_Hard_Gate": no_gate,
                 "UniverseStatus": "EQ_SERIES_ONLY_HISTORICAL_MAINBOARD_NOT_VERIFIED",
             }
-            future_rows = frame[frame["DATE"] > date].sort_values("DATE").head(max(HORIZONS))
             for horizon in HORIZONS:
-                future = future_rows.head(horizon)
-                complete = len(future) == horizon
+                expected_dates = forward_session_dates(market_dates, date, horizon)
+                future = frame[frame["DATE"].isin(expected_dates)].sort_values("DATE") if expected_dates else frame.iloc[0:0]
+                complete = (
+                    len(expected_dates) == horizon
+                    and len(future) == horizon
+                    and list(pd.to_datetime(future["DATE"]).dt.normalize()) == expected_dates
+                    and future["CLOSE"].notna().all()
+                    and future["CLOSE"].gt(0).all()
+                )
                 rec[f"ForwardReturn{horizon}D_Pct"] = (
                     (float(future.iloc[-1]["CLOSE"]) / float(current.CLOSE) - 1) * 100 if complete else np.nan
                 )
                 rec[f"MaxFavorable{horizon}D_Pct"] = (
                     (float(future["HIGH"].max()) / float(current.CLOSE) - 1) * 100
-                    if complete and future["HIGH"].notna().any() else np.nan
+                    if complete and future["HIGH"].notna().all() and future["HIGH"].gt(0).all() else np.nan
                 )
                 rec[f"MaxAdverse{horizon}D_Pct"] = (
                     (float(future["LOW"].min()) / float(current.CLOSE) - 1) * 100
-                    if complete and future["LOW"].notna().any() else np.nan
+                    if complete and future["LOW"].notna().all() and future["LOW"].gt(0).all() else np.nan
                 )
             records.append(rec)
 
@@ -194,7 +224,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             row = {"Strategy": label, "DeliveryCohort": category, "SignalCount": int(len(group)),
                    "RVOLThreshold": {"A_RVOL_GT_1_5": ">1.5", "B_RVOL_GT_1_2": ">1.2", "C_NO_RVOL_HARD_GATE": "none"}[label],
                    "LiquidityGate": "20 prior sessions average traded value >= INR 1.5 crore",
-                   "DeliveryGate": "5-session average >=60%" if category == "A" else "each of 5 sessions >=60%",
+                   "DeliveryGate": "all valid candidate reports in prior 30 calendar days; minimum 5; average >=60%" if category == "A" else "all valid candidate reports in prior 30 calendar days; minimum 5; each >=60%",
                    "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY"}
             for h in HORIZONS:
                 row.update(_metric(group[f"ForwardReturn{h}D_Pct"], f"Return{h}D"))
@@ -203,7 +233,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             comparison.append(row)
     comp = pd.DataFrame(comparison)
     comp["BacktestStatus"] = "RESEARCH_ONLY_NOT_PRODUCTION_VALIDATED"
-    comp["Caveat"] = "No transaction costs/slippage; EQ-only and current cache survivorship; historical official Main Board classification and point-in-time fundamentals unavailable."
+    comp["Caveat"] = "No transaction costs/slippage; EQ-only and current cache survivorship; historical official Main Board classification and point-in-time fundamentals unavailable. Forward outcomes require every symbol row on each of the next official market dates; incomplete horizons are excluded."
     comp.to_csv(output_dir / "comparison.csv", index=False)
     print(f"[RVOL BACKTEST] Cache dates={len(market_dates)}, symbols={len(price_groups)}, qualified signal rows={len(signals)}")
     print(f"[RVOL BACKTEST] Comparison: {output_dir / 'comparison.csv'}; signals: {output_dir / 'signals.csv'}")
