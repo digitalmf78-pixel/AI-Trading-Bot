@@ -61,7 +61,17 @@ def _configure_bounded_session(client):
 
         def bounded_get(url, *args, **kwargs):
             kwargs.setdefault("timeout", (4, 8))
-            return original_get(url, *args, **kwargs)
+            response = original_get(url, *args, **kwargs)
+            try:
+                client._free_source_last_http = {
+                    "status_code": getattr(response, "status_code", None),
+                    "content_type": getattr(response, "headers", {}).get("Content-Type", ""),
+                    "url": str(getattr(response, "url", ""))[:300],
+                    "content_length": len(getattr(response, "content", b"") or b""),
+                }
+            except Exception:
+                pass
+            return response
 
         session.get = bounded_get
     except Exception:
@@ -149,7 +159,7 @@ def _extract_ratio(frame: pd.DataFrame, aliases: tuple[str, ...]):
                 if number is not None:
                     return number
     # Common long layout: metric labels in a name/ratio/metric column.
-    for name_col in ("name", "ratio", "metric", "particulars", "parameter", "key"):
+    for name_col in ("name", "ratio", "ratios", "metric", "particular", "particulars", "parameter", "key", "headers", "headings", "quarterly", "annual", "unnamed: 0"):
         matches = [c for c in frame.columns if _norm(c) == _norm(name_col)]
         if not matches:
             continue
@@ -177,7 +187,7 @@ def _extract_holding(frame: pd.DataFrame, aliases: tuple[str, ...]):
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return None
     wanted = {_norm(x) for x in aliases}
-    name_cols = [c for c in frame.columns if _norm(c) in {"category", "name", "holder", "investortype", "type", "shareholder"}]
+    name_cols = [c for c in frame.columns if _norm(c) in {"category", "name", "holder", "investortype", "type", "shareholder", "headers", "headings"}]
     value_cols = [c for c in frame.columns if _norm(c) in {"percentage", "holding", "value", "shareholding", "percent", "holdingpercentage"}]
     for name_col in name_cols:
         for _, row in frame.iterrows():
@@ -247,6 +257,8 @@ def fetch_free_fundamental_sources(
         errors = []
         try:
             client = _instantiate_bounded_client(factory)
+            if hasattr(getattr(client, "session", None), "headers"):
+                client.session.headers.update({"Referer": SOURCE_URLS[source] + "/"})
             if source == "Moneycontrol":
                 lookup_term = str(company_name or symbol).strip()
                 ticker_id, raw_hits = client.get_ticker(lookup_term)
@@ -268,19 +280,45 @@ def fetch_free_fundamental_sources(
                     ("cash_flow", lambda: client.get_cash_flow_mini_statement(ticker_id, statement_type="consolidated")),
                 ]
             else:
-                sid, raw_hits = client.get_ticker(symbol, search_place="stocks")
-                if not sid:
-                    raise RuntimeError("symbol lookup returned no Tickertape SID")
+                def _tickertape_search(hint):
+                    response = client.hit_and_get_data(
+                        f"{client._base_url}/search",
+                        params={"text": hint, "types": "stock", "pageNumber": 0},
+                    )
+                    data = response.get("data", {}) if isinstance(response, dict) else {}
+                    items = data.get("items", []) if isinstance(data, dict) else []
+                    schema = {
+                        "response_keys": list(response.keys()) if isinstance(response, dict) else [],
+                        "data_type": type(data).__name__,
+                        "data_keys": list(data.keys()) if isinstance(data, dict) else [],
+                        "items_type": type(items).__name__,
+                        "items_count": len(items) if isinstance(items, list) else 0,
+                        "message": str(response.get("message", ""))[:240] if isinstance(response, dict) else "",
+                    }
+                    return (items if isinstance(items, list) else []), schema
+
+                raw_hits, search_schema = _tickertape_search(str(company_name or symbol).strip())
                 matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
+                if not matching_hits and company_name:
+                    raw_hits, search_schema = _tickertape_search(symbol)
+                    matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
                 if not matching_hits:
                     result["providers"][source] = {
-                        "status": "IDENTITY_UNVERIFIED",
-                        "reason": "Tickertape search result did not return an exact NSE ticker symbol",
+                        "status": "IDENTITY_UNVERIFIED" if raw_hits else "NO_SEARCH_RESULTS",
+                        "reason": "Tickertape did not return an exact NSE ticker symbol for the supplied company/symbol query",
+                        "search_response_schema": search_schema,
                         "source_url": SOURCE_URLS[source],
                     }
                     continue
                 hit = matching_hits[0]
-                sid = str(hit.get("sid", "") or sid)
+                sid = str(hit.get("sid", "") or "").strip()
+                if not sid:
+                    result["providers"][source] = {
+                        "status": "IDENTITY_UNVERIFIED",
+                        "reason": "Tickertape exact symbol result had no SID",
+                        "source_url": SOURCE_URLS[source],
+                    }
+                    continue
                 slug = str(hit.get("slug", "") or "").strip()
                 calls = [
                     ("ratios", lambda: client.get_key_ratios(slug)) if slug else ("ratios", lambda: pd.DataFrame()),
@@ -301,9 +339,28 @@ def fetch_free_fundamental_sources(
                 if pause_seconds:
                     time.sleep(max(0.0, float(pause_seconds)))
             row_counts = {name: int(len(frame)) for name, frame in frames.items() if not frame.empty}
+            table_schema = {}
+            for name, frame in frames.items():
+                if frame.empty:
+                    continue
+                label_columns = [col for col in frame.columns if _norm(col) in {
+                    "name", "ratio", "ratios", "metric", "particular", "particulars",
+                    "parameter", "key", "headers", "headings", "unnamed0",
+                }]
+                label_col = label_columns[0] if label_columns else (frame.columns[0] if len(frame.columns) else None)
+                label_preview = (
+                    [str(value) for value in frame[label_col].head(20).tolist()]
+                    if label_col is not None else []
+                )
+                table_schema[name] = {
+                    "columns": [str(col) for col in frame.columns[:20]],
+                    "index_preview": [str(idx) for idx in frame.index[:15]],
+                    "label_preview": label_preview,
+                }
             result["providers"][source] = {
                 "status": "DATA_FOUND" if row_counts else "EMPTY",
                 "rows": row_counts,
+                "table_schema": table_schema,
                 "errors": errors,
                 "source_url": SOURCE_URLS[source],
             }

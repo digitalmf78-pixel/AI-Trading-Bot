@@ -1,6 +1,6 @@
 import pandas as pd
 
-from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session, _instantiate_bounded_client
+from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session, _instantiate_bounded_client, _extract_ratio, ALIASES
 
 
 class FakeMoneyControl:
@@ -35,9 +35,15 @@ class FakeMoneyControl:
 class FakeTickertape:
     calls = []
 
-    def get_ticker(self, symbol, search_place="stocks"):
-        self.calls.append(("tickertape", "lookup", symbol, search_place))
-        return "TT123", [{"ticker": symbol, "sid": "TT123", "slug": "stocks/example-EXAM"}]
+    _base_url = "https://api.tickertape.in"
+
+    def hit_and_get_data(self, url, params=None):
+        self.calls.append(("tickertape", "search", params["text"], params["types"]))
+        return {"data": {"items": [{
+            "ticker": str(params["text"]).upper(),
+            "sid": "TT123",
+            "slug": "stocks/example-EXAM",
+        }]}}
 
     def get_key_ratios(self, slug):
         self.calls.append(("tickertape", "ratios", slug))
@@ -109,7 +115,7 @@ def test_fetches_all_free_sources_and_records_per_metric_provenance():
     assert result["providers"]["Tickertape"]["status"] == "DATA_FOUND"
     assert any(call[0] == "tickertape" for call in FakeTickertape.calls)
     assert len([call for call in FakeMoneyControl.calls if call[1] != "lookup"]) == 6
-    assert len([call for call in FakeTickertape.calls if call[1] != "lookup"]) == 9
+    assert len([call for call in FakeTickertape.calls if call[1] != "search"]) == 9
 
 
 def test_tickertape_fallback_fills_missing_ratio_when_moneycontrol_empty():
@@ -141,8 +147,10 @@ def test_wrong_company_search_result_is_rejected_before_fundamentals_fetch():
             raise AssertionError("wrong-company data must never be fetched")
 
     class NoTickertape:
-        def get_ticker(self, symbol, search_place="stock"):
-            return "", []
+        _base_url = "https://api.tickertape.in"
+
+        def hit_and_get_data(self, url, params=None):
+            return {"data": {"items": []}}
 
     result = fetch_free_fundamental_sources(
         "RELIANCE", company_name="Reliance Industries Limited",
@@ -209,3 +217,25 @@ def test_constructor_requests_are_bounded_before_client_initialization(monkeypat
     client = _instantiate_bounded_client(factory)
     assert observed["timeout"] == (4, 8)
     assert client.session.adapters["https://"].max_retries.total == 0
+
+def test_moneycontrol_ratios_column_is_mapped_to_metric():
+    frame = pd.DataFrame({
+        "ratios": ["Return on Equity", "ROCE", "Debt Equity"],
+        "Mar 2026": ["18.5%", "22.0%", "0.50"],
+    })
+    assert _extract_ratio(frame, ALIASES["ROEPercent"]) == 18.5
+    assert _extract_ratio(frame, ALIASES["ROCEPercent"]) == 22.0
+    assert _extract_ratio(frame, ALIASES["DebtToEquity"]) == 0.5
+
+def test_moneycontrol_quarterly_and_annual_statement_heading_columns_are_mapped():
+    quarterly = pd.DataFrame({
+        "Quarterly": ["Total Revenue", "Net Profit"],
+        "Sep 2026": ["125.0", "18.0"],
+        "Jun 2026": ["110.0", "16.0"],
+    })
+    annual = pd.DataFrame({
+        "Annual": ["Total Revenue", "Net Profit"],
+        "Mar 2026": ["500.0", "70.0"],
+    })
+    assert _extract_ratio(quarterly, ("Total Revenue",)) == 125.0
+    assert _extract_ratio(annual, ("Net Profit",)) == 70.0
