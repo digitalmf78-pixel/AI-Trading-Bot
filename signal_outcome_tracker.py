@@ -44,28 +44,33 @@ def _read_outcomes(path: Path) -> dict[tuple[str, str, int], dict]:
 
 def _history_index(history_frames) -> tuple[dict[date, dict[str, dict]], list[date]]:
     by_date: dict[date, dict[str, dict]] = {}
+    session_cache: dict[date, bool] = {}
+    required = ["Date", "TckrSymb", "HghPric", "LwPric", "ClsPric"]
     for frame in history_frames or []:
-        if frame is None or frame.empty:
+        if frame is None or frame.empty or not set(required).issubset(frame.columns):
             continue
-        if not {"Date", "TckrSymb", "HghPric", "LwPric", "ClsPric"}.issubset(frame.columns):
-            continue
-        for _, row in frame.iterrows():
-            day_value = pd.to_datetime(row.get("Date"), errors="coerce")
+        # Avoid re-reading the official calendar once per symbol; one check per
+        # distinct EOD date is sufficient for a full-market Bhavcopy frame.
+        selected = frame.loc[:, required]
+        for raw_date, raw_symbol, raw_high, raw_low, raw_close in selected.itertuples(index=False, name=None):
+            day_value = pd.to_datetime(raw_date, errors="coerce")
             if pd.isna(day_value):
                 continue
             day = day_value.date()
-            if not is_trading_session(day):
+            if day not in session_cache:
+                session_cache[day] = is_trading_session(day)
+            if not session_cache[day]:
                 continue
-            symbol = str(row.get("TckrSymb", "")).strip().upper()
+            symbol = str(raw_symbol).strip().upper()
             if not symbol:
                 continue
             bucket = by_date.setdefault(day, {})
             if symbol in bucket:
                 raise ValueError(f"duplicate Bhavcopy OHLC row for {day} {symbol}")
             values = {}
-            for col in ("HghPric", "LwPric", "ClsPric"):
+            for col, raw_value in (("HghPric", raw_high), ("LwPric", raw_low), ("ClsPric", raw_close)):
                 try:
-                    value = float(row[col])
+                    value = float(raw_value)
                 except (TypeError, ValueError):
                     value = float("nan")
                 values[col] = value
