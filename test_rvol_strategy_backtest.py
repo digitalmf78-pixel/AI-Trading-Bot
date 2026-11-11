@@ -35,7 +35,7 @@ def test_rvol_strategy_boundaries():
 
 def test_return_metrics_are_deterministic():
     result = _metric(pd.Series([10.0, -5.0, 0.0]), "R")
-    assert result["RTrades"] == 3
+    assert result["RObservations"] == 3
     assert result["RWinRatePct"] == 33.33
     assert result["RAverageReturnPct"] == 1.667
     assert result["RMedianReturnPct"] == 0.0
