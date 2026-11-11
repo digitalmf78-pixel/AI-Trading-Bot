@@ -268,19 +268,36 @@ def fetch_free_fundamental_sources(
                     ("cash_flow", lambda: client.get_cash_flow_mini_statement(ticker_id, statement_type="consolidated")),
                 ]
             else:
-                sid, raw_hits = client.get_ticker(symbol, search_place="stock")
-                if not sid:
-                    raise RuntimeError("symbol lookup returned no Tickertape SID")
+                def _tickertape_search(hint):
+                    response = client.hit_and_get_data(
+                        f"{client._base_url}/search",
+                        params={"text": hint, "types": "stock", "pageNumber": 0},
+                    )
+                    data = response.get("data", {}) if isinstance(response, dict) else {}
+                    items = data.get("items", []) if isinstance(data, dict) else []
+                    return items if isinstance(items, list) else []
+
+                raw_hits = _tickertape_search(str(company_name or symbol).strip())
                 matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
+                if not matching_hits and company_name:
+                    raw_hits = _tickertape_search(symbol)
+                    matching_hits = [item for item in raw_hits if str(item.get("ticker", "")).strip().upper() == symbol]
                 if not matching_hits:
                     result["providers"][source] = {
-                        "status": "IDENTITY_UNVERIFIED",
-                        "reason": "Tickertape search result did not return an exact NSE ticker symbol",
+                        "status": "IDENTITY_UNVERIFIED" if raw_hits else "NO_SEARCH_RESULTS",
+                        "reason": "Tickertape did not return an exact NSE ticker symbol for the supplied company/symbol query",
                         "source_url": SOURCE_URLS[source],
                     }
                     continue
                 hit = matching_hits[0]
-                sid = str(hit.get("sid", "") or sid)
+                sid = str(hit.get("sid", "") or "").strip()
+                if not sid:
+                    result["providers"][source] = {
+                        "status": "IDENTITY_UNVERIFIED",
+                        "reason": "Tickertape exact symbol result had no SID",
+                        "source_url": SOURCE_URLS[source],
+                    }
+                    continue
                 slug = str(hit.get("slug", "") or "").strip()
                 calls = [
                     ("ratios", lambda: client.get_key_ratios(slug)) if slug else ("ratios", lambda: pd.DataFrame()),
