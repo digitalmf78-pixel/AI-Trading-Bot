@@ -817,6 +817,25 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
     return record, diagnostic
 
 
+def _free_source_cooldown_active(last_attempt, last_status, retry_days: int, *, now=None) -> bool:
+    """Apply cooldown only after a completed source lookup, never after a provider error.
+
+    A transient network, parsing or upstream error must be eligible for retry on
+    the next EOD pass; otherwise one failed attempt could suppress enrichment
+    for the full cooldown window.
+    """
+    status = str(last_status or "").strip().upper()
+    if status == "PROVIDER_ERROR":
+        return False
+    attempted = pd.to_datetime(last_attempt, errors="coerce", utc=True)
+    if pd.isna(attempted):
+        return False
+    current = pd.Timestamp.now(tz="UTC") if now is None else pd.to_datetime(now, errors="coerce", utc=True)
+    if pd.isna(current):
+        return False
+    return (current - attempted) < pd.Timedelta(days=max(1, int(retry_days)))
+
+
 def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
     """Provider-sourced (never manual) records older than refresh_days are refetched."""
     raw_source = record.get("Source", "")
@@ -999,9 +1018,9 @@ def collect_missing_fundamentals(
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "DISABLED", "ProviderReason": "V8_AUTO_FETCH_FUNDAMENTALS disabled; manual CSV only", "ProviderSource": "", "ProviderSourceURL": "", "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS)})
             continue
         last_free_attempt = pd.to_datetime(current.get("FreeSourcesAttemptedAtUTC"), errors="coerce", utc=True)
-        in_free_cooldown = (
-            pd.notna(last_free_attempt)
-            and (pd.Timestamp.now(tz="UTC") - last_free_attempt).days < free_source_retry_days
+        last_free_status = current.get("FreeSourcesStatus", "")
+        in_free_cooldown = _free_source_cooldown_active(
+            last_free_attempt, last_free_status, free_source_retry_days,
         )
         free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
         free_source_pending = (
@@ -1020,6 +1039,7 @@ def collect_missing_fundamentals(
             else "COOLDOWN" if in_free_cooldown
             else "DEFERRED_BUDGET" if free_source_attempts >= free_source_budget
             else "NOT_NEEDED" if not free_source_missing
+            else "RETRY_AFTER_PROVIDER_ERROR" if str(last_free_status or "").strip().upper() == "PROVIDER_ERROR"
             else "READY"
         )
         fetch_kwargs = {"ticker_factory": ticker_factory}
