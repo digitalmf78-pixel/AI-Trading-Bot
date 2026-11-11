@@ -3747,7 +3747,9 @@ def main():
     liquidity_pass_candidates = current.copy()
     try:
         if fundamental_collection_candidates.empty:
-            fundamental_audit = fundamental_collection_candidates.copy()
+            fundamental_audit, _ = apply_fundamental_filter(
+                fundamental_collection_candidates, eod_date
+            )
             for report_name in [
                 "v8_fundamental_report.csv", "v8_fundamental_complete_data.csv",
                 "v8_fundamental_partial_data.csv", "v8_fundamental_missing_data.csv",
