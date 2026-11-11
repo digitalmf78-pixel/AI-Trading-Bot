@@ -1330,7 +1330,7 @@ def calculate_clv(result):
 
 
 # ============================================================
-# ACCUMULATION SCORE (descriptive scoring factor)
+# EXPERIMENTAL ACCUMULATION SCORE — NOT APPROVED, NOT BACKTESTED; NON-GATING
 # ============================================================
 
 def calculate_accumulation_score(result):
@@ -1363,11 +1363,15 @@ def calculate_accumulation_score(result):
         scores.append(round(score, 2))
 
     result = result.copy()
-    result["AccumulationScore"] = scores
+    result["AccumulationScore"] = scores  # legacy compatibility alias; experimental only
     result["AccumulationStatus"] = result["AccumulationScore"].apply(
         lambda s: "HIGH_ACCUMULATION" if s >= 70 else "MODERATE_ACCUMULATION" if s >= 40 else "LOW_ACCUMULATION"
     )
-    print("[ACCUMULATION SCORE] " + str(result["AccumulationStatus"].value_counts().to_dict()))
+    result["ExperimentalAccumulationScore"] = result["AccumulationScore"]
+    result["ExperimentalAccumulationStatus"] = result["AccumulationStatus"].map(
+        lambda value: f"EXPERIMENTAL_NOT_APPROVED_NOT_BACKTESTED_{value}"
+    )
+    print("[EXPERIMENTAL ACCUMULATION — NOT APPROVED, NOT BACKTESTED] " + str(result["ExperimentalAccumulationStatus"].value_counts().to_dict()))
     return result
 
 
@@ -4103,7 +4107,7 @@ def main():
 
 
 # ============================================================
-# CONSOLIDATION DETECTION (descriptive, non-gating)
+# EXPERIMENTAL CONSOLIDATION SCORE — NOT APPROVED, NOT BACKTESTED; NON-GATING
 # ============================================================
 
 def calculate_consolidation_score(result, historical):
@@ -4155,9 +4159,13 @@ def calculate_consolidation_score(result, historical):
         statuses.append(status)
 
     result = result.copy()
-    result["ConsolidationScore"] = scores
+    result["ConsolidationScore"] = scores  # legacy compatibility alias; experimental only
     result["ConsolidationStatus"] = statuses
-    print("[CONSOLIDATION] " + str(result["ConsolidationStatus"].value_counts().to_dict()))
+    result["ExperimentalConsolidationScore"] = result["ConsolidationScore"]
+    result["ExperimentalConsolidationStatus"] = result["ConsolidationStatus"].map(
+        lambda value: f"EXPERIMENTAL_NOT_APPROVED_NOT_BACKTESTED_{value}"
+    )
+    print("[EXPERIMENTAL CONSOLIDATION — NOT APPROVED, NOT BACKTESTED] " + str(result["ExperimentalConsolidationStatus"].value_counts().to_dict()))
     return result
 
 
