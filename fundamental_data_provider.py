@@ -1044,6 +1044,12 @@ def collect_missing_fundamentals(
         for col in BASE_COLUMNS:
             if col == "TckrSymb":
                 continue
+            if col in {"FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"} and _present(fetched.get(col)):
+                merged[col] = fetched.get(col)
+                continue
+            if col == "FreeSourcesAlternatesJSON" and _present(fetched.get(col)) and str(fetched.get(col)).strip() not in {"", "{}"}:
+                merged[col] = fetched.get(col)
+                continue
             if col in VALUATION_COLUMNS and _present(fetched.get("ValuationAsOfDate")):
                 # Valuation fields form one dated snapshot. Replace the whole
                 # snapshot together so stale ratios cannot inherit today's date.
