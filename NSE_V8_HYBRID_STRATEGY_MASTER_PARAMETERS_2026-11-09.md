@@ -570,3 +570,17 @@ The production scanner must follow this exact sequence:
 - Duplicate/invalid identity rows remain visible with WAIT_FOR_DATA; observer errors are isolated; full input membership is preserved.
 - SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION remain unclassified pending explicit approved rules. No new thresholds, scoring, filters or entry signals.
 - No scanner/workflow integration, no Track 1 change, no live EOD run, and no Master Specification change. Audit branch only.
+
+
+## 35. Fixed-Range Base / VCP implementation audit and Track 2 status correction (11-Nov-2026)
+
+- Added `NSE_V8_FIXED_RANGE_BASE_VCP_IMPLEMENTATION_AUDIT_2026-11-11.md` after a read-only review of `potential_accumulation_analysis.py`, `vcp_observation_analysis.py`, `hybrid_watchlists.py`, `history_index.py`, `track2_full_mainboard.py`, their tests, and the EOD scanner call sites.
+- **Fixed-Range Base is still not implemented as a detected base with algorithmic boundaries.** Existing 20/50/100/200 outputs are rolling range observations; their dates are mechanical lookback boundaries, not detected base start/end dates.
+- **VCP descriptive engine is implemented:** three consecutive 20-date blocks; price range widths, sequential ratios/depth and transition count; block-average volume and ratios; price/volume contraction relationship; and an informational <0.5x dry-up marker. Complete rows remain `VCPStatus=NOT_CLASSIFIED`; incomplete rows remain `WAIT_FOR_DATA`.
+- The interim `BASE_FORMING` watchlist status means only that two sequential range contractions were observed and explicitly carries `NOT_VCP_CONFIRMED`. It is not a fixed-range base, final VCP class, BUY signal, or scanner gate.
+- **PR #62 resolved the two data-integrity findings:** the shared history index now uses the official NSE Capital Market calendar from the earliest observed Bhavcopy date through as-of, preserves official special sessions, and fails closed for unknown calendar years; Pivot Structure now requires finite-positive, structurally valid OHLC candles. Pivot formula and existing Rolling Range validation behavior are preserved.
+- **Coverage boundary retained:** official-session parity starts at the earliest observed Bhavcopy date and does not independently prove cache coverage before that date. Do not infer earlier coverage or silently replace missing sessions.
+- **Track 2 correction:** the older Section 34 standalone-builder note saying scanner/workflow integration was not present is superseded. PR #45 (`3c72add025ccad3f5aaa41506e0bbb9e70abbd39`) wired the isolated full-Mainboard Track 2 observer into the EOD scanner; outputs remain separate and non-gating.
+- Fixed-base start/end/duration/width rules and final VCP contraction/volume thresholds remain pending explicit user approval. No numeric criteria or final VCP labels were invented.
+- PR #62 validation: NSE V8 PR Checks #439 and News Matching and Parser Tests #714 both passed; merged to `main` as `a1018f5c9ec0f8bb49b5f16cbe1c34cff01cd858`.
+- No production scanner behavior, thresholds, scoring, filters, entry/risk rules, or immutable Master Specification changed in this documentation update.
