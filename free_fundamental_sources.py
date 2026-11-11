@@ -23,18 +23,18 @@ SOURCE_URLS = {
 ALIASES = {
     "RevenueGrowthPct": ("revenue growth", "sales growth", "revenue growth %", "sales growth %"),
     "ProfitGrowthPct": ("net profit growth", "profit growth", "profit growth %", "pat growth"),
-    "ROEPercent": ("return on equity", "roe", "roe %", "return on net worth"),
+    "ROEPercent": ("return on equity", "roe", "roe %", "return on net worth", "return on networth / equity"),
     "ROCEPercent": ("return on capital employed", "roce", "roce %"),
-    "DebtToEquity": ("debt equity", "debt to equity", "debt/equity", "debt equity ratio"),
-    "InterestCoverage": ("interest coverage", "interest coverage ratio"),
-    "GrossMarginPct": ("gross margin", "gross margin %"),
+    "DebtToEquity": ("debt equity", "debt to equity", "debt/equity", "debt equity ratio", "debt to equity (x)"),
+    "InterestCoverage": ("interest coverage", "interest coverage ratio", "interest coverage ratios (x)"),
+    "GrossMarginPct": ("gross margin", "gross margin %", "gross profit margin"),
     "OperatingMarginPct": ("operating margin", "operating margin %", "ebit margin"),
     "NetProfitMarginPct": ("net profit margin", "net margin", "net profit margin %"),
-    "CurrentRatio": ("current ratio",),
-    "QuickRatio": ("quick ratio", "acid test ratio"),
-    "AssetTurnover": ("asset turnover", "asset turnover ratio"),
-    "EPS": ("eps", "earnings per share", "basic eps"),
-    "BookValuePerShare": ("book value per share", "book value"),
+    "CurrentRatio": ("current ratio", "current ratio (x)"),
+    "QuickRatio": ("quick ratio", "acid test ratio", "quick ratio (x)"),
+    "AssetTurnover": ("asset turnover", "asset turnover ratio", "asset turnover ratio (%)"),
+    "EPS": ("eps", "earnings per share", "basic eps", "basic eps (rs.)"),
+    "BookValuePerShare": ("book value per share", "book value", "book value [excl. reval reserve]/share (rs.)"),
     "PromoterHoldingPct": ("promoter", "promoter holding", "promoters"),
     "FIIHoldingPct": ("fii", "fii holding", "foreign institutional investors"),
     "DIIHoldingPct": ("dii", "dii holding", "domestic institutional investors"),
@@ -132,55 +132,112 @@ def _identity_matches(symbol: str, company_name: str | None, raw: Any) -> bool:
 
 
 def _number(value: Any):
+    """Parse a single displayed scalar without silently accepting ranges/text."""
     if value is None:
         return None
     try:
-        text = str(value).strip().replace(",", "").replace("%", "")
-        if text in {"", "-", "--", "nan", "None", "NA", "N/A"}:
+        text = str(value).strip()
+        if text.lower() in {"", "-", "--", "nan", "none", "na", "n/a", "nm"}:
+            return None
+        negative_parentheses = text.startswith("(") and text.endswith(")")
+        if negative_parentheses:
+            text = text[1:-1].strip()
+        text = text.replace(",", "").replace("%", "")
+        text = re.sub(r"(?i)(₹|rs\.?|inr|crores?|cr\.?|lakhs?|lacs?)", "", text)
+        text = re.sub(r"(?i)\s*x$", "", text).strip()
+        if not re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", text):
             return None
         result = float(text)
+        if negative_parentheses:
+            result = -result
         return result if pd.notna(result) else None
     except (TypeError, ValueError):
         return None
 
 
-def _extract_ratio(frame: pd.DataFrame, aliases: tuple[str, ...]):
-    """Extract only an exact normalized row/column label; no fuzzy guessing."""
+def _label_column(frame: pd.DataFrame):
+    accepted = {
+        "name", "ratio", "ratios", "metric", "particular", "particulars",
+        "parameter", "key", "headers", "headings", "quarterly", "annual",
+        "unnamed0",
+    }
+    return next((col for col in frame.columns if _norm(col) in accepted),
+                frame.columns[0] if len(frame.columns) else None)
+
+
+def _extract_ratio_observation(frame: pd.DataFrame, aliases: tuple[str, ...]):
+    """Return the first available exact-label value and its source period column."""
     if not isinstance(frame, pd.DataFrame) or frame.empty:
-        return None
+        return None, ""
     wanted = {_norm(x) for x in aliases}
-    # Common wide layout: metric labels in index, periods in columns.
     for idx in frame.index:
         if _norm(idx) in wanted:
             row = frame.loc[idx]
-            values = row.tolist() if isinstance(row, pd.Series) else [row]
-            for value in values:
+            if isinstance(row, pd.DataFrame):
+                return None, ""
+            for column, value in row.items():
                 number = _number(value)
                 if number is not None:
-                    return number
-    # Common long layout: metric labels in a name/ratio/metric column.
-    for name_col in ("name", "ratio", "ratios", "metric", "particular", "particulars", "parameter", "key", "headers", "headings", "quarterly", "annual", "unnamed: 0"):
-        matches = [c for c in frame.columns if _norm(c) == _norm(name_col)]
-        if not matches:
-            continue
-        name = matches[0]
+                    return number, str(column)
+    label_col = _label_column(frame)
+    if label_col is not None:
         for _, row in frame.iterrows():
-            if _norm(row.get(name)) in wanted:
-                for col in frame.columns:
-                    if col == name:
-                        continue
-                    number = _number(row.get(col))
-                    if number is not None:
-                        return number
-    # Some sources expose one metric per column.
-    for col in frame.columns:
-        if _norm(col) in wanted:
-            for value in frame[col].tolist():
+            if _norm(row.get(label_col)) not in wanted:
+                continue
+            for column in frame.columns:
+                if column == label_col:
+                    continue
+                number = _number(row.get(column))
+                if number is not None:
+                    return number, str(column)
+    for column in frame.columns:
+        if _norm(column) in wanted:
+            for value in frame[column].tolist():
                 number = _number(value)
                 if number is not None:
-                    return number
-    return None
+                    return number, str(column)
+    return None, ""
 
+
+def _extract_ratio(frame: pd.DataFrame, aliases: tuple[str, ...]):
+    """Compatibility wrapper returning only the numeric ratio."""
+    value, _period = _extract_ratio_observation(frame, aliases)
+    return value
+
+
+def _extract_annual_growth(frame: pd.DataFrame, aliases: tuple[str, ...]):
+    """Calculate YoY growth only from two consecutive, positive-base annual columns."""
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None, ""
+    wanted = {_norm(x) for x in aliases}
+    label_col = _label_column(frame)
+    if label_col is None:
+        return None, ""
+    matching = frame[frame[label_col].map(_norm).isin(wanted)]
+    if len(matching) != 1:
+        return None, ""
+    row = matching.iloc[0]
+    year_values = {}
+    for column in frame.columns:
+        if column == label_col:
+            continue
+        match = re.fullmatch(r"(?:fy)?(20\d{2})", _norm(column))
+        if not match:
+            continue
+        year = int(match.group(1))
+        number = _number(row.get(column))
+        if number is not None:
+            year_values[year] = number
+    if not year_values:
+        return None, ""
+    current_year = max(year_values)
+    previous_year = current_year - 1
+    current_value = year_values.get(current_year)
+    previous_value = year_values.get(previous_year)
+    if current_value is None or previous_value is None or previous_value <= 0:
+        return None, ""
+    growth = (current_value - previous_value) / previous_value * 100.0
+    return growth, f"FY{previous_year}->FY{current_year}"
 
 
 def _extract_holding(frame: pd.DataFrame, aliases: tuple[str, ...]):
@@ -380,24 +437,32 @@ def fetch_free_fundamental_sources(
                 if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
                     candidate_frames.insert(0, frames.get("shareholding", pd.DataFrame()))
                 value = None
+                observation_period = ""
+                if source == "Moneycontrol" and metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
+                    growth_aliases = ("revenue", "sales") if metric == "RevenueGrowthPct" else ("net profit", "profit after tax")
+                    value, observation_period = _extract_annual_growth(
+                        frames.get("overview", pd.DataFrame()), growth_aliases,
+                    )
                 for frame in candidate_frames:
-                    if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
-                        value = _extract_holding(frame, ALIASES[metric])
-                    else:
-                        value = _extract_ratio(frame, ALIASES[metric])
                     if value is not None:
                         break
+                    if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
+                        value = _extract_holding(frame, ALIASES[metric])
+                        observation_period = ""
+                    else:
+                        value, observation_period = _extract_ratio_observation(frame, ALIASES[metric])
                 if value is None:
                     continue
                 if metric in result["metrics"]:
                     result["metric_alternates"].setdefault(metric, []).append({
-                        "source": source, "value": value, "source_url": SOURCE_URLS[source],
+                        "source": source, "value": value, "period": observation_period,
+                        "source_url": SOURCE_URLS[source],
                     })
                     continue
                 result["metrics"][metric] = value
                 result["metric_sources"][metric] = source
                 result["metric_urls"][metric] = SOURCE_URLS[source]
-                result["metric_periods"][metric] = ""
+                result["metric_periods"][metric] = observation_period
                 result["metric_currencies"][metric] = ""
         except Exception as exc:
             result["providers"][source] = {
