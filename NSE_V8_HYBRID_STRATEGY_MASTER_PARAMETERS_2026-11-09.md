@@ -570,3 +570,16 @@ The production scanner must follow this exact sequence:
 - Duplicate/invalid identity rows remain visible with WAIT_FOR_DATA; observer errors are isolated; full input membership is preserved.
 - SIDEWAYS_ACCUMULATION and DIP_ACCUMULATION remain unclassified pending explicit approved rules. No new thresholds, scoring, filters or entry signals.
 - No scanner/workflow integration, no Track 1 change, no live EOD run, and no Master Specification change. Audit branch only.
+
+
+## 35. Fixed-Range Base / VCP implementation audit and Track 2 status correction (11-Nov-2026)
+
+- Added `NSE_V8_FIXED_RANGE_BASE_VCP_IMPLEMENTATION_AUDIT_2026-11-11.md` after a read-only review of `potential_accumulation_analysis.py`, `vcp_observation_analysis.py`, `hybrid_watchlists.py`, `history_index.py`, `track2_full_mainboard.py`, their tests, and the EOD scanner call sites.
+- **Fixed-Range Base is still not implemented as a detected base with algorithmic boundaries.** Existing 20/50/100/200 outputs are rolling range observations; their dates are mechanical lookback boundaries, not detected base start/end dates.
+- **VCP descriptive engine is implemented:** three consecutive 20-date blocks; price range widths, sequential ratios/depth and transition count; block-average volume and ratios; price/volume contraction relationship; and an informational <0.5x dry-up marker. Complete rows remain `VCPStatus=NOT_CLASSIFIED`; incomplete rows remain `WAIT_FOR_DATA`.
+- The interim `BASE_FORMING` watchlist status means only that two sequential range contractions were observed and explicitly carries `NOT_VCP_CONFIRMED`. It is not a fixed-range base, final VCP class, BUY signal, or scanner gate.
+- **New data-integrity finding:** `history_index.py` derives its market date set from dates present in cached Bhavcopy frames and adds the as-of date; it does not independently reconcile the full expected date sequence with the official NSE calendar. A globally absent official session could therefore be invisible to per-symbol missing-date checks. Recommended follow-up is official-calendar parity with fail-closed `WAIT_FOR_DATA` for missing expected sessions.
+- **New data-integrity finding:** Potential Accumulation's rolling-range path validates finite positive OHLC and candle structure, but its separate pivot-completeness path only checks non-null High/Low and date coverage before marking pivots COMPLETE. Recommended follow-up is one shared OHLC validator for range, pivot and ATR observations; do not alter the existing pivot formula.
+- Fixed-base start/end/duration/width rules and final VCP contraction/volume thresholds remain pending user approval. No numeric criteria or final VCP labels were invented.
+- **Track 2 correction:** the older Section 34 standalone-builder note saying scanner/workflow integration was not present is superseded. PR #45 (`3c72add025ccad3f5aaa41506e0bbb9e70abbd39`) wired the isolated full-Mainboard Track 2 observer into the EOD scanner; outputs remain separate and non-gating.
+- No production code, scanner behavior, thresholds, scoring, filters, entry/risk rules, or immutable Master Specification changed in this audit.
