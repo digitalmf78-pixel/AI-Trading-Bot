@@ -36,6 +36,19 @@ def delivery_window_dates(delivery_dates, asof_date, max_calendar_days: int = 30
     })
 
 
+def official_market_session_dates(start_date, end_date) -> list[pd.Timestamp]:
+    """Enumerate every official NSE equity session, including special sessions, in a date range."""
+    start = pd.Timestamp(start_date).normalize()
+    end = pd.Timestamp(end_date).normalize()
+    if end < start:
+        return []
+    return [
+        pd.Timestamp(day).normalize()
+        for day in pd.date_range(start, end, freq="D")
+        if is_trading_session(pd.Timestamp(day).date())
+    ]
+
+
 def forward_session_dates(market_dates, signal_date, horizon: int) -> list[pd.Timestamp]:
     """Return exactly the next N distinct market sessions, or [] if the horizon is incomplete."""
     dates = sorted(pd.Timestamp(day).normalize() for day in market_dates)
@@ -113,7 +126,10 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
         return {"status": "WAIT_FOR_DATA", "price_rows": len(prices), "delivery_dates": len(delivery_by_date)}
 
     prices = prices.sort_values(["DATE", "SYMBOL"]).reset_index(drop=True)
-    market_dates = sorted(pd.Timestamp(x).normalize() for x in prices["DATE"].dropna().unique())
+    # Build the full official session calendar, not merely dates with downloaded
+    # files. A missing whole-market Bhavcopy must not shift prior-20 or forward-N
+    # horizons to the next available file.
+    market_dates = official_market_session_dates(prices["DATE"].min(), prices["DATE"].max())
     date_to_pos = {d: i for i, d in enumerate(market_dates)}
     price_groups = {sym: frame.sort_values("DATE").reset_index(drop=True)
                     for sym, frame in prices.groupby("SYMBOL", sort=True)}
