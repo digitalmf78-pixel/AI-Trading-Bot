@@ -355,3 +355,37 @@ def test_assembly_does_not_mutate_any_input_frame():
     pd.testing.assert_frame_equal(main, before[0])
     pd.testing.assert_frame_equal(stage, before[1])
     pd.testing.assert_frame_equal(news, before[2])
+
+
+def test_invalid_series_rows_are_excluded_from_stage_evidence_with_diagnostics():
+    main = pd.DataFrame({
+        "TckrSymb": ["AAA", "BBB"],
+        "SctySrs": ["EQ", "EQ"],
+    })
+    report = pd.DataFrame({
+        "TckrSymb": ["AAA", "BBB", "CCC"],
+        "SctySrs": ["EQ", None, "EQ"],
+        "Status": ["PASS", "PASS", "PASS"],
+    })
+    result = assemble_mainboard_cohort(main, reports={"Delivery": report})
+    assert result.cohort["TckrSymb"].tolist() == ["AAA", "BBB"]
+    assert result.cohort.loc[0, "Delivery__CoverageStatus"] == "SOURCE_ROW_PRESENT"
+    assert result.cohort.loc[1, "Delivery__CoverageStatus"] == "NOT_EVALUATED"
+    diagnostic = result.diagnostics[result.diagnostics["Stage"] == "Delivery"].iloc[0]
+    assert diagnostic["Rows"] == 3
+    assert diagnostic["ValidRows"] == 2
+    assert diagnostic["InvalidSeriesRowsExcluded"] == 1
+    assert diagnostic["OutOfCohortRows"] == 1
+
+
+def test_duplicate_valid_symbols_still_fail_after_invalid_series_exclusion():
+    main = pd.DataFrame({"TckrSymb": ["AAA"], "SctySrs": ["EQ"]})
+    report = pd.DataFrame({
+        "TckrSymb": ["AAA", "AAA"],
+        "SctySrs": ["EQ", None],
+        "Status": ["PASS", "UNKNOWN"],
+    })
+    result = assemble_mainboard_cohort(main, reports={"Delivery": report})
+    assert result.cohort.loc[0, "Delivery__Status"] == "PASS"
+    diagnostic = result.diagnostics[result.diagnostics["Stage"] == "Delivery"].iloc[0]
+    assert diagnostic["InvalidSeriesRowsExcluded"] == 1
