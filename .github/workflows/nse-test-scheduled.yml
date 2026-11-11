@@ -126,7 +126,7 @@ jobs:
       - name: Check repository files
         run: |
           echo "===== REQUIRED PYTHON FILES ====="
-          for f in track2_full_mainboard.py potential_accumulation_analysis.py vcp_observation_analysis.py delivery_quantity_analysis.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py data/inputs/nse_trading_calendar.json delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py twelve_data_fundamentals.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
+          for f in track2_full_mainboard.py potential_accumulation_analysis.py vcp_observation_analysis.py delivery_quantity_analysis.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py data/inputs/nse_trading_calendar.json delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py; do
             if [ -f "$f" ]; then
               echo "FOUND: $f"
             else
