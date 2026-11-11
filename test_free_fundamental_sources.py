@@ -1,6 +1,6 @@
 import pandas as pd
 
-from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session
+from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session, _instantiate_bounded_client
 
 
 class FakeMoneyControl:
@@ -188,3 +188,24 @@ def test_free_source_http_session_has_bounded_timeout_and_no_retries():
     assert client.session.mounts["http://"].max_retries.total == 0
     assert client.session.get("https://example.invalid") == "ok"
     assert client.session.last_kwargs["timeout"] == (4, 8)
+
+def test_constructor_requests_are_bounded_before_client_initialization(monkeypatch):
+    from types import SimpleNamespace
+    from requests import Session
+
+    observed = {}
+
+    def fake_get(session, url, *args, **kwargs):
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(Session, "get", fake_get)
+
+    def factory():
+        session = Session()
+        session.get("https://example.invalid")
+        return SimpleNamespace(session=session)
+
+    client = _instantiate_bounded_client(factory)
+    assert observed["timeout"] == (4, 8)
+    assert client.session.adapters["https://"].max_retries.total == 0
