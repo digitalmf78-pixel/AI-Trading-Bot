@@ -747,7 +747,7 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
                 symbol, missing_metrics=free_source_requested, pause_seconds=0.5,
             )
             for metric, value in free_source_result.get("metrics", {}).items():
-                if metric in requested_secondary and not _present(record.get(metric)) and _present(value):
+                if metric in free_source_requested and not _present(record.get(metric)) and _present(value):
                     record[metric] = value
                     source_name = free_source_result.get("metric_sources", {}).get(metric, "Free-source fundamentals")
                     metric_sources[metric] = source_name
