@@ -694,6 +694,25 @@ def test_accumulation_distribution_keeps_incomplete_candidate_series_waiting():
     assert diagnostics.iloc[0]["Reason"] == "SESSION_ROW_COUNT_NOT_20"
     assert diagnostics.iloc[0]["MissingSessionDates"] == dates[-1].date().isoformat()
 
+
+
+def test_atr14_missing_uses_same_stock_20_session_fallback_without_crashing():
+    records = pd.DataFrame({
+        "HghPric": [101.0 + i for i in range(20)],
+        "LwPric": [99.0 + i for i in range(20)],
+        "ClsPric": [100.0 + i for i in range(20)],
+    })
+    expected = layers._atr_from_20_session_records(records, True)
+    assert pd.notna(expected) and expected > 0
+    # A supplied, valid ATR14 remains exactly unchanged.
+    assert layers._resolve_atr14(2.75, records, True) == 2.75
+    # A missing ATR14 resolves from the same-stock 20-session records.
+    assert layers._resolve_atr14(float("nan"), records, True) == expected
+    # If the 20-session records are unavailable/incomplete, keep NaN without raising.
+    assert pd.isna(layers._resolve_atr14(float("nan"), None, True))
+    assert pd.isna(layers._resolve_atr14(float("nan"), records.iloc[:19], True))
+
+
 if __name__ == "__main__":
     tests = [
         test_3_confirmations_plus_separate_primary_source_gate,
@@ -729,26 +748,10 @@ if __name__ == "__main__":
         test_negative_relative_strength_is_warning_not_standalone_rejection,
         test_mixed_improving_trend_does_not_confirm_core_setup,
         test_breakout_selector_rejects_clv_equal_to_075,
+        test_atr14_missing_uses_same_stock_20_session_fallback_without_crashing,
     ]
     for test in tests:
         test()
         print(f"PASS: {test.__name__}")
     print(f"PASS: all {len(tests)} V8 regression tests")
 
-
-
-def test_atr14_missing_uses_same_stock_20_session_fallback_without_crashing():
-    records = pd.DataFrame({
-        "HghPric": [101.0 + i for i in range(20)],
-        "LwPric": [99.0 + i for i in range(20)],
-        "ClsPric": [100.0 + i for i in range(20)],
-    })
-    expected = layers._atr_from_20_session_records(records, True)
-    assert pd.notna(expected) and expected > 0
-    # A supplied, valid ATR14 remains exactly unchanged.
-    assert layers._resolve_atr14(2.75, records, True) == 2.75
-    # A missing ATR14 resolves from the same-stock 20-session records.
-    assert layers._resolve_atr14(float("nan"), records, True) == expected
-    # If the 20-session records are unavailable/incomplete, keep NaN without raising.
-    assert pd.isna(layers._resolve_atr14(float("nan"), None, True))
-    assert pd.isna(layers._resolve_atr14(float("nan"), records.iloc[:19], True))
