@@ -103,6 +103,8 @@ def test_fetches_all_free_sources_and_records_per_metric_provenance():
     assert result["metrics"]["PromoterHoldingPct"] == 52.0
     assert result["metrics"]["FIIHoldingPct"] == 12.5
     assert result["metric_sources"]["ROEPercent"] == "Moneycontrol"
+    assert result["metric_alternates"]["ROEPercent"][0]["source"] == "Tickertape"
+    assert result["metric_alternates"]["ROEPercent"][0]["value"] == 19.0
     assert result["providers"]["Moneycontrol"]["status"] == "DATA_FOUND"
     assert result["providers"]["Tickertape"]["status"] == "DATA_FOUND"
     assert any(call[0] == "tickertape" for call in FakeTickertape.calls)
