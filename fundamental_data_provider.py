@@ -1155,6 +1155,16 @@ def collect_missing_fundamentals(
             if provider_owned or (provider_sourced and quarterly_verified):
                 merged["MetricCalculationBasis"] = fetched.get("MetricCalculationBasis", "UNVERIFIED")
                 merged["QuarterlyAlignmentReason"] = fetched.get("QuarterlyAlignmentReason", "NOT_EVALUATED_P1_CACHE_PROVENANCE_ONLY")
+            elif fetched.get("MetricCalculationBasis") == "MULTI_SOURCE_METRIC_LEVEL":
+                # New values came from a different provider/period basis. Preserve
+                # every existing value, but do not imply the combined row is aligned.
+                merged["MetricCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
+                merged["MetricPeriodAlignmentStatus"] = "UNVERIFIED"
+                merged["QuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
+                if provider_sourced:
+                    merged["Source"] = fetched.get("Source", merged.get("Source", ""))
+                    merged["SourceURL"] = fetched.get("SourceURL", merged.get("SourceURL", ""))
+                    merged["DataRetrievedAtUTC"] = fetched.get("DataRetrievedAtUTC", merged.get("DataRetrievedAtUTC", ""))
         if (provider_owned and any(_present(fetched.get(c)) for c in METRIC_COLUMNS)) or (provider_sourced and quarterly_verified):
             # For provider-owned data, the aligned quarterly statements now
             # describe the metric set as a whole. Manual/mixed rows are excluded.
