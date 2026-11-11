@@ -227,6 +227,7 @@ def fetch_free_fundamental_sources(
                     }
                     continue
                 hit = matching_hits[0]
+                sid = str(hit.get("sid", "") or sid)
                 slug = str(hit.get("slug", "") or "").strip()
                 calls = [
                     ("ratios", lambda: client.get_key_ratios(slug)) if slug else ("ratios", lambda: pd.DataFrame()),
