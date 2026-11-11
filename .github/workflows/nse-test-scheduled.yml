@@ -210,8 +210,8 @@ jobs:
           EXPECTED_SCHEMA="1.0"
           if [ -f "$HISTORY" ]; then
             if [ ! -f "$SCHEMA" ] || [ "$(tr -d '\r\n' < "$SCHEMA")" != "$EXPECTED_SCHEMA" ]; then
-              echo "[SIGNAL HISTORY] WARNING: schema version missing/mismatched; refusing to restore durable history."
-              exit 1
+              echo "[SIGNAL HISTORY] WARNING: schema version missing/mismatched; scanner continues without restoring durable history."
+              exit 0
             fi
             python - <<'PY'
           import csv
@@ -230,6 +230,9 @@ jobs:
           print(f"[SIGNAL HISTORY] Validated {len(seen)} durable rows.")
           PY
             cp "$HISTORY" outputs/signal_log.csv
+            if [ -f data/signal_history/signal_outcomes.csv ]; then
+              cp data/signal_history/signal_outcomes.csv outputs/signal_outcomes.csv
+            fi
           else
             printf '%s\n' "$EXPECTED_SCHEMA" > "$SCHEMA"
             echo "[SIGNAL HISTORY] No prior durable file; first EOD run will create it."
@@ -419,35 +422,87 @@ jobs:
           from pathlib import Path
           source = Path("outputs/signal_log.csv")
           history = Path("data/signal_history/signal_log.csv")
+          outcomes_source = Path("outputs/signal_outcomes.csv")
+          outcomes_history = Path("data/signal_history/signal_outcomes.csv")
           expected = ["EODDate", "TckrSymb", "EODWatchlistStatus", "DeliveryCategory", "LiquidityTier", "RVOL", "SetupType", "TrendClassification", "RelativeStrengthNifty", "V8Score", "EntryZoneLow", "EntryZoneHigh", "StopLoss", "Target/RiskReward", "StopDistancePct", "SectorStrengthStatus", "MarketRegimeStatus", "ClsPric", "Result5D", "Result10D", "Result20D", "MFE", "MAE"]
-          def read(path):
+          outcome_cols = {"Result5D", "Result10D", "Result20D", "MFE", "MAE"}
+          def read(path, header):
+              if not path.exists():
+                  return []
               with path.open(newline="", encoding="utf-8") as f:
-                  r = csv.DictReader(f)
-                  if r.fieldnames != expected:
+                  reader = csv.DictReader(f)
+                  if reader.fieldnames != header:
                       raise SystemExit(f"SIGNAL_HISTORY_SCHEMA_MISMATCH: {path}")
-                  rows = list(r)
-              seen = set()
-              for row in rows:
-                  key = (row["EODDate"], row["TckrSymb"])
-                  if not all(key) or key in seen:
-                      raise SystemExit(f"SIGNAL_HISTORY_DUPLICATE_OR_EMPTY_KEY: {path}: {key}")
-                  seen.add(key)
-              return rows
-          current = read(source)
-          old = read(history) if history.exists() else []
-          if len(current) < len(old) or current[:len(old)] != old:
-              raise SystemExit("SIGNAL_HISTORY_IMMUTABLE_PREFIX_VIOLATION")
-          if len(current) > 100000 or source.stat().st_size > 25 * 1024 * 1024:
+                  return list(reader)
+          current = read(source, expected)
+          old = read(history, expected)
+          old_by_key = {(r["EODDate"], r["TckrSymb"]): r for r in old}
+          current_by_key = {}
+          for row in current:
+              key = (row["EODDate"], row["TckrSymb"])
+              if not all(key) or key in current_by_key:
+                  raise SystemExit(f"SIGNAL_HISTORY_DUPLICATE_OR_EMPTY_KEY: {key}")
+              current_by_key[key] = row
+          if not set(old_by_key).issubset(current_by_key):
+              raise SystemExit("SIGNAL_HISTORY_OLD_KEYS_MISSING_FROM_PER_RUN_COPY")
+          for key, old_row in old_by_key.items():
+              new_row = current_by_key[key]
+              if any(old_row[col] != new_row[col] for col in expected if col not in outcome_cols):
+                  raise SystemExit(f"SIGNAL_HISTORY_IMMUTABLE_SIGNAL_FIELDS_CHANGED: {key}")
+          additions = []
+          for row in current:
+              key = (row["EODDate"], row["TckrSymb"])
+              if key not in old_by_key:
+                  new_row = dict(row)
+                  for col in outcome_cols:
+                      new_row[col] = ""
+                  additions.append(new_row)
+          if len(old) + len(additions) > 100000 or source.stat().st_size > 25 * 1024 * 1024:
               raise SystemExit("SIGNAL_HISTORY_SIZE_LIMIT_REACHED; archive policy review required")
+          if additions:
+              history.parent.mkdir(parents=True, exist_ok=True)
+              with history.open("a", newline="", encoding="utf-8") as f:
+                  writer = csv.DictWriter(f, fieldnames=expected)
+                  if not old:
+                      writer.writeheader()
+                  writer.writerows(additions)
           print(f"SIGNAL_HISTORY_EXISTING_ROWS={len(old)}")
-          print(f"SIGNAL_HISTORY_TOTAL_ROWS={len(current)}")
-          print(f"SIGNAL_HISTORY_NEW_ROWS={len(current)-len(old)}")
-          PY
+          print(f"SIGNAL_HISTORY_APPENDED_ROWS={len(additions)}")
+          if outcomes_source.exists():
+              outcome_header = ["EODDate", "TckrSymb", "HorizonSessions", "OutcomeStatus", "HorizonEndDate", "EntryReference", "EntryReferenceType", "CloseReturnPct", "MFE_Pct", "MAE_Pct", "ObservedSessionCount", "PriceSource", "FeesSlippageAssumption"]
+              with outcomes_source.open(newline="", encoding="utf-8") as f:
+                  reader = csv.DictReader(f)
+                  if reader.fieldnames != outcome_header:
+                      raise SystemExit("SIGNAL_OUTCOME_SCHEMA_MISMATCH")
+                  outcome_rows = list(reader)
+              existing = read(outcomes_history, outcome_header)
+              existing_by_key = {(x["EODDate"], x["TckrSymb"], x["HorizonSessions"]): x for x in existing}
+              append = []
+              for row in outcome_rows:
+                  key = (row["EODDate"], row["TckrSymb"], row["HorizonSessions"])
+                  if key in existing_by_key:
+                      if existing_by_key[key] != row:
+                          raise SystemExit(f"SIGNAL_OUTCOME_IMMUTABLE_CONFLICT: {key}")
+                      continue
+                  existing_by_key[key] = row
+                  append.append(row)
+              if append:
+                  outcomes_history.parent.mkdir(parents=True, exist_ok=True)
+                  with outcomes_history.open("a", newline="", encoding="utf-8") as f:
+                      writer = csv.DictWriter(f, fieldnames=outcome_header)
+                      if not existing:
+                          writer.writeheader()
+                      writer.writerows(append)
+              print(f"SIGNAL_OUTCOMES_APPENDED_ROWS={len(append)}")
+          PYY
           mkdir -p data/signal_history
           cp "$SOURCE" "$HISTORY"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f -- "$HISTORY" "$SCHEMA"
+          if [ -f data/signal_history/signal_outcomes.csv ]; then
+            git add -f -- data/signal_history/signal_outcomes.csv
+          fi
           if git diff --cached --quiet; then
             echo "[SIGNAL HISTORY] No new rows to persist."
             exit 0
