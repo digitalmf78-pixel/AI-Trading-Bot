@@ -2,10 +2,11 @@ from datetime import date, timedelta
 import pandas as pd
 
 from potential_accumulation_analysis import build_potential_accumulation_report
+from nse_trading_calendar import is_trading_session
 
 
 def _history(symbol="AAA", periods=60):
-    dates = pd.bdate_range("2026-08-01", periods=periods)
+    dates = [day for day in pd.date_range("2026-08-01", periods=periods * 2, freq="D") if is_trading_session(day.date())][:periods]
     lows = [100.0 + (i % 5) for i in range(periods)]
     highs = [v + 4 for v in lows]
     closes = [v + 2 for v in lows]
@@ -150,7 +151,7 @@ def test_delivery_percent_without_price_fields_does_not_claim_price_response(tmp
 def test_ema200_is_available_only_with_200_complete_asof_sessions(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     history = _history(periods=200)
-    history["Date"] = pd.bdate_range(end="2026-10-22", periods=200)
+    history["Date"] = [day for day in pd.date_range("2025-12-01", "2026-10-22", freq="D") if is_trading_session(day.date())][-200:]
     report = build_potential_accumulation_report(
         pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
         [history], _delivery_sessions(), "2026-10-23"
