@@ -547,7 +547,7 @@ def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date
     )
 
 
-def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics=None,
+def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=None, missing_metrics=None,
                allow_free_sources=False, free_source_defer_reason="DISABLED") -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
@@ -744,7 +744,7 @@ def _fetch_one(symbol: str, ticker_factory=None, asof_date=None, missing_metrics
         try:
             from free_fundamental_sources import fetch_free_fundamental_sources
             free_source_result = fetch_free_fundamental_sources(
-                symbol, missing_metrics=free_source_requested, pause_seconds=0.5,
+                symbol, company_name=company_name, missing_metrics=free_source_requested, pause_seconds=0.5,
             )
             for metric, value in free_source_result.get("metrics", {}).items():
                 if metric in free_source_requested and not _present(record.get(metric)) and _present(value):
@@ -920,8 +920,18 @@ def collect_missing_fundamentals(
     existing.loc[basis_blank, "MetricCalculationBasis"] = "LEGACY_CACHE_BASIS_UNKNOWN"
 
     symbols = []
+    candidate_company_names = {}
     if candidates is not None and not candidates.empty and "TckrSymb" in candidates.columns:
         symbols = sorted({str(x).strip().upper() for x in candidates["TckrSymb"].dropna() if str(x).strip() and str(x).strip().lower() != "nan"})
+        for _, candidate in candidates.iterrows():
+            symbol = str(candidate.get("TckrSymb", "")).strip().upper()
+            if not symbol:
+                continue
+            for name_col in ("FinInstrmNm", "CompanyName", "Company", "IssuerName", "SecurityName"):
+                value = candidate.get(name_col)
+                if _present(value):
+                    candidate_company_names[symbol] = str(value).strip()
+                    break
     records = {str(row["TckrSymb"]): row.to_dict() for _, row in existing.iterrows() if str(row.get("TckrSymb", "")).strip() not in {"", "NAN", "nan"}}
     diagnostics = []
     free_sources_enabled = os.getenv("V8_FREE_FUNDAMENTAL_SOURCES", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -1003,6 +1013,8 @@ def collect_missing_fundamentals(
                 parameter.kind == inspect.Parameter.VAR_KEYWORD
                 for parameter in fetch_parameters.values()
             )
+            if "company_name" in fetch_parameters or accepts_kwargs:
+                fetch_kwargs["company_name"] = candidate_company_names.get(symbol)
             if "asof_date" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["asof_date"] = cutoff_text
             if "missing_metrics" in fetch_parameters or accepts_kwargs:
