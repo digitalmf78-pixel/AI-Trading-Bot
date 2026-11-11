@@ -134,3 +134,5 @@ def test_research_digest_has_delivery_5_10_20_news_links_events_and_watchlist_ex
     assert "https://example.test/news" in digest
     saved=pd.read_csv(out/"v8_telegram_research_watchlist.csv")
     assert saved.loc[0,"TckrSymb"]=="ABC" and "UpcomingEvents20D" in saved.columns
+    assert saved.loc[0,"ResearchWatchlistCategories"] == "ACCUMULATION"
+    assert (out/"research_watchlists"/"v8_telegram_research_watchlist_20261111.csv").is_file()

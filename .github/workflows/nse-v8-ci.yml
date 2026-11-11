@@ -37,7 +37,7 @@ jobs:
 
       - name: Compile scanner and audit modules
         run: >-
-          python -m py_compile track2_full_mainboard.py history_index.py bottom_detection.py delivery_consistency.py delivery_quantity_analysis.py potential_accumulation_analysis.py vcp_observation_analysis.py breakout_retest_observation.py hybrid_watchlists.py delivery_categories.py volume_gainer.py main_board_filter.py delivery_60_each_of_5_sessions.py v8_layers_14_41.py news_catalyst.py
+          python -m py_compile track2_full_mainboard.py history_index.py bottom_detection.py delivery_consistency.py delivery_quantity_analysis.py potential_accumulation_analysis.py vcp_observation_analysis.py breakout_retest_observation.py hybrid_watchlists.py delivery_categories.py volume_gainer.py main_board_filter.py delivery_60_each_of_5_sessions.py v8_layers_14_41.py news_catalyst.py telegram_research_digest.py
           sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py liquidity_filter.py fundamental_filter.py
           fundamental_data_provider.py free_fundamental_sources.py fundamental_shortlist.py fundamental_official_filings.py
           fundamental_metric_verification.py fii_dii_activity.py risk_controls.py nse_xbrl_fetch.py
