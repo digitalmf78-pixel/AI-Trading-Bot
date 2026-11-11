@@ -61,7 +61,17 @@ def _configure_bounded_session(client):
 
         def bounded_get(url, *args, **kwargs):
             kwargs.setdefault("timeout", (4, 8))
-            return original_get(url, *args, **kwargs)
+            response = original_get(url, *args, **kwargs)
+            try:
+                client._free_source_last_http = {
+                    "status_code": getattr(response, "status_code", None),
+                    "content_type": getattr(response, "headers", {}).get("Content-Type", ""),
+                    "url": str(getattr(response, "url", ""))[:300],
+                    "content_length": len(getattr(response, "content", b"") or b""),
+                }
+            except Exception:
+                pass
+            return response
 
         session.get = bounded_get
     except Exception:
@@ -247,6 +257,8 @@ def fetch_free_fundamental_sources(
         errors = []
         try:
             client = _instantiate_bounded_client(factory)
+            if hasattr(getattr(client, "session", None), "headers"):
+                client.session.headers.update({"Referer": SOURCE_URLS[source] + "/"})
             if source == "Moneycontrol":
                 lookup_term = str(company_name or symbol).strip()
                 ticker_id, raw_hits = client.get_ticker(lookup_term)
@@ -281,6 +293,7 @@ def fetch_free_fundamental_sources(
                         "data_keys": list(data.keys()) if isinstance(data, dict) else [],
                         "items_type": type(items).__name__,
                         "items_count": len(items) if isinstance(items, list) else 0,
+                        "message": str(response.get("message", ""))[:240] if isinstance(response, dict) else "",
                     }
                     return (items if isinstance(items, list) else []), schema
 
