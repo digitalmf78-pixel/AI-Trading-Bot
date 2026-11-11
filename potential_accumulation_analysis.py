@@ -52,6 +52,25 @@ def _pivots(values, left=3, right=3, high=False):
     return points
 
 
+def _valid_ohlc_frame(frame):
+    """Validate finite positive OHLC values and candle structure for every row."""
+    required = ["OpnPric", "HghPric", "LwPric", "ClsPric"]
+    if not set(required).issubset(frame.columns) or frame.empty:
+        return False
+    values = frame[required].apply(pd.to_numeric, errors="coerce")
+    if values.isna().any().any():
+        return False
+    if not values.apply(lambda col: col.map(lambda value: math.isfinite(float(value)) and float(value) > 0)).all().all():
+        return False
+    return not (
+        (values["HghPric"] < values["LwPric"]).any()
+        or (values["OpnPric"] < values["LwPric"]).any()
+        or (values["OpnPric"] > values["HghPric"]).any()
+        or (values["ClsPric"] < values["LwPric"]).any()
+        or (values["ClsPric"] > values["HghPric"]).any()
+    )
+
+
 def _atr14(history):
     if len(history) < 15 or not {"HghPric", "LwPric", "ClsPric"}.issubset(history.columns):
         return float("nan")
@@ -284,7 +303,7 @@ def build_potential_accumulation_report(
                 and hist_dates.nunique() == len(ordered_market_sessions)
                 and set(hist_dates) == set(ordered_market_sessions)
             )
-            if pivot_history_complete and "LwPric" in hist.columns and "HghPric" in hist.columns and hist[["LwPric", "HghPric"]].notna().all().all():
+            if pivot_history_complete and _valid_ohlc_frame(hist):
                 row["PivotStructureStatus"] = "COMPLETE"
                 row["ATR14"] = _atr14(hist)
                 lows = hist["LwPric"].tolist()
@@ -322,16 +341,7 @@ def build_potential_accumulation_report(
                     len(window_dates) != window or len(part) != window
                     or part["Date"].dt.date.nunique() != window
                     or set(part["Date"].dt.date) != set(window_dates)
-                    or not {"HghPric", "LwPric", "ClsPric"}.issubset(part.columns)
-                    or part[["HghPric", "LwPric", "ClsPric"]].isna().any().any()
-                    or not part[["HghPric", "LwPric", "ClsPric"]].apply(
-                        lambda column: column.map(
-                            lambda value: math.isfinite(float(value)) and float(value) > 0
-                        )
-                    ).all().all()
-                    or (part["HghPric"] < part["LwPric"]).any()
-                    or (part["ClsPric"] < part["LwPric"]).any()
-                    or (part["ClsPric"] > part["HghPric"]).any()
+                    or not _valid_ohlc_frame(part)
                 ):
                     row[f"{prefix}Status"] = "WAIT_FOR_DATA"
                     for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
