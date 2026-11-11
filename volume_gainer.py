@@ -1170,13 +1170,14 @@ def classify_rvol_for_delivery_candidates(result, eod_date, minimum_rvol=1.5):
 
 
 def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
-    """Keep every valid Main Board candidate with RVOL strictly greater than 1.5.
+    """Legacy diagnostic-only helper that exports the HIGH-RVOL subset.
 
-    There is deliberately no Top-20/Top-50 cap here. Missing 20-session baselines
-    stay WAIT_FOR_DATA and never qualify.
+    Production eligibility is the Delivery A/B union followed by Liquidity;
+    RVOL is classification only and this helper is not called as a production gate.
+    Missing 20-session baselines stay WAIT_FOR_DATA in the production cohort.
     """
     if result is None or result.empty:
-        print("[RVOL > 1.5] No candidates available.")
+        print("[RVOL HIGH-BAND AUDIT] No candidates available.")
         return result.copy() if isinstance(result, pd.DataFrame) else pd.DataFrame()
     frame = result.copy()
     frame["RVOL"] = pd.to_numeric(frame.get("RVOL", pd.Series(index=frame.index, dtype=float)), errors="coerce")
@@ -1197,7 +1198,7 @@ def select_rvol_above_threshold(result, eod_date, minimum_rvol=1.5):
     selected = selected.sort_values("RVOL", ascending=False, na_position="last", kind="mergesort")
     selected["RVOLRank"] = range(1, len(selected) + 1)
     selected.to_csv(os.path.join(audit_dir, "v8_rvol_gt_1_5_candidates.csv"), index=False)
-    print(f"[RVOL > 1.5] Candidates={len(selected)}; no Top-50 cap. Audit: {audit_path}")
+    print(f"[RVOL HIGH-BAND AUDIT] Rows={len(selected)}; diagnostic subset only, not a production eligibility gate. Audit: {audit_path}")
     return selected
 
 
