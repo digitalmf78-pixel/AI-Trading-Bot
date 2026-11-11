@@ -4,6 +4,7 @@ import pandas as pd
 
 OUT = Path("outputs")
 WATCHLIST = OUT / "v8_telegram_research_watchlist.csv"
+SNAPSHOT_DIR = OUT / "research_watchlists"
 
 def _read(name):
     try:
@@ -79,9 +80,21 @@ def _build_watchlist(result, news, eod_date):
                 nm.setdefault(sym, []).append(f"{_v(row, 'Impact', 'unverified')} | {headline} | {_v(row, 'URL', '')}")
         watch["NewsEvidence"] = watch["TckrSymb"].map(lambda s: " || ".join(nm.get(s, [])[:3]))
     watch = watch.drop(columns=["AsOfDate"], errors="ignore")
+    tags = []
+    for _, row in watch.iterrows():
+        labels = []
+        for col, label in (("_AccumulationWatchlistStatus", "ACCUMULATION"), ("_BaseVCPWatchlistStatus", "BASE_VCP"), ("_SetupWatchlistStatus", "BREAKOUT_PULLBACK"), ("_EntryWatchlistStatus", "FINAL_ENTRY")):
+            if str(row.get(col, "")).upper() not in {"", "NAN", "NONE", "NO_SETUP", "WAIT_FOR_DATA"}:
+                labels.append(label)
+        tags.append("|".join(labels) if labels else "RESEARCH_ONLY")
+    watch["ResearchWatchlistCategories"] = tags
     watch.insert(0, "AsOfDate", str(eod_date))
     OUT.mkdir(parents=True, exist_ok=True)
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     watch.to_csv(WATCHLIST, index=False)
+    date_key = pd.to_datetime(eod_date, errors="coerce")
+    if pd.notna(date_key):
+        watch.to_csv(SNAPSHOT_DIR / f"v8_telegram_research_watchlist_{date_key:%Y%m%d}.csv", index=False)
     return watch
 
 def build_telegram_research_sections(result, news, eod_date):
@@ -135,8 +148,8 @@ def build_telegram_research_sections(result, news, eod_date):
         for _, row in fund.head(10).iterrows():
             metrics = [f"{label} {_n(row,col,suffix)}" for col,label,suffix in
                        (("RevenueGrowthPct","Revenue","%"),("ProfitGrowthPct","Profit","%"),
-                        ("ROE","ROE","%"),("ROCE","ROCE","%"),
-                        ("DebtToEquity","D/E","x"),("TrailingPE","P/E","x")) if col in fund.columns]
+                        ("ROEPercent","ROE","%"),("ROCEPercent","ROCE","%"),
+                        ("DebtToEquity","D/E","x"),("InterestCoverage","Interest Cov.","x"),("TrailingPE","P/E","x"),("PriceToBook","P/B","x"),("PromoterHoldingPct","Promoter","%"),("FIIHoldingPct","FII","%"),("DIIHoldingPct","DII","%")) if col in fund.columns]
             lines.append(f"• {_v(row,'TckrSymb','')}: {_v(row,'FundamentalStatus')} | Score {_n(row,'FundamentalScore','/100')} | " + " | ".join(metrics))
     events = _read("v8_upcoming_corporate_events.csv")
     ref = pd.to_datetime(eod_date, errors="coerce")
