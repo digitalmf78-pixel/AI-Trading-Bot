@@ -36,7 +36,7 @@ def _filings():
     }])
 
 
-def _xml(path: Path, value='12.5', dimensions='', cash_change=None):
+def _xml(path: Path, value='12.5', dimensions='', cash_change=None, decimals=None):
     cash_change = float(value) + 7.0 if cash_change is None else float(cash_change)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -47,7 +47,7 @@ def _xml(path: Path, value='12.5', dimensions='', cash_change=None):
     {dimensions}
   </xbrli:context>
   <xbrli:unit id="INR"><xbrli:measure>INR</xbrli:measure></xbrli:unit>
-  <CashFlowsFromUsedInOperatingActivities contextRef="FY2026" unitRef="INR">{value}</CashFlowsFromUsedInOperatingActivities>
+  <CashFlowsFromUsedInOperatingActivities contextRef="FY2026" unitRef="INR"{f' decimals="{decimals}"' if decimals is not None else ''}>{value}</CashFlowsFromUsedInOperatingActivities>
   <CashFlowsFromUsedInInvestingActivities contextRef="FY2026" unitRef="INR">3</CashFlowsFromUsedInInvestingActivities>
   <CashFlowsFromUsedInFinancingActivities contextRef="FY2026" unitRef="INR">4</CashFlowsFromUsedInFinancingActivities>
   <IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges contextRef="FY2026" unitRef="INR">{cash_change}</IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges>
@@ -238,3 +238,38 @@ def test_metric_verification_is_blocked_when_exact_filing_metadata_does_not_matc
     assert row['MetricValueVerificationStatus'] == 'FILING_METADATA_NOT_CONFIRMED'
 
 
+
+
+
+def test_provider_value_inside_xbrl_decimals_interval_is_not_false_mismatch(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
+    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml', value='12.5', decimals='0')
+    evidence = _evidence(xml_path, ProviderMetricValue='12.8', OfficialMetricValue='12.5')
+    metric = pd.DataFrame([_metric(OperatingCashFlowINR=12.8)])
+    detail, _, _ = build_metric_verification(metric, _filings(), evidence, tmp_path)
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['MetricValueVerificationStatus'] == 'PROVIDER_VALUE_WITHIN_XBRL_ACCURACY'
+    assert 'exact fact equality is not established' in row['MetricValueVerificationReason']
+
+
+def test_provider_value_outside_xbrl_decimals_interval_remains_mismatch(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
+    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml', value='12.5', decimals='0')
+    evidence = _evidence(xml_path, ProviderMetricValue='13.1', OfficialMetricValue='12.5')
+    metric = pd.DataFrame([_metric(OperatingCashFlowINR=13.1)])
+    detail, _, _ = build_metric_verification(metric, _filings(), evidence, tmp_path)
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['MetricValueVerificationStatus'] == 'PROVIDER_VALUE_MISMATCH'
+
+
+def test_xbrl_inf_decimals_requires_exact_provider_fact_match(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _approve_test_cashflow_mapping(monkeypatch)
+    xml_path = _xml(tmp_path / 'data/cache/xbrl_samples/aaa.xml', value='12.5', decimals='INF')
+    evidence = _evidence(xml_path, ProviderMetricValue='12.5001', OfficialMetricValue='12.5')
+    metric = pd.DataFrame([_metric(OperatingCashFlowINR=12.5001)])
+    detail, _, _ = build_metric_verification(metric, _filings(), evidence, tmp_path)
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['MetricValueVerificationStatus'] == 'PROVIDER_VALUE_MISMATCH'

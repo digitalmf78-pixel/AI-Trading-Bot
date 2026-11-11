@@ -139,6 +139,25 @@ def _fact_value(fact: ET.Element) -> float | None:
         return None
 
 
+def _xbrl_fact_accuracy_tolerance(fact: ET.Element) -> float | None:
+    """Return the half-unit interval implied by a numeric fact's XBRL decimals.
+
+    XBRL decimals describes the accuracy of the reported fact, not its scale.
+    INF means exact; a missing or malformed attribute supplies no tolerance.
+    """
+    raw = _clean(fact.attrib.get('decimals'))
+    if raw.upper() == 'INF':
+        return 0.0
+    if not raw:
+        return None
+    try:
+        decimals = int(raw)
+        tolerance = 0.5 * (10.0 ** (-decimals))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return tolerance if math.isfinite(tolerance) else None
+
+
 def _verify_cashflow_crossfoot(facts: list[ET.Element], context_ref: str,
                                unit_ref: str, unit_measure: str,
                                taxonomy_namespace: str) -> tuple[bool, str]:
@@ -794,8 +813,19 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
         return 'CACHE_VALUE_CHANGED_SINCE_EVIDENCE', 'Cached metric value differs from the evidence ledger', ev
     if abs(fact_value - official_value) > tolerance:
         return 'XBRL_FACT_VALUE_DIFFERS_FROM_LEDGER', 'XML fact value differs from OfficialMetricValue in ledger', ev
-    if abs(provider_value - fact_value) > tolerance:
-        return 'PROVIDER_VALUE_MISMATCH', 'Cached provider value does not match the official XBRL fact', ev
+    provider_fact_difference = abs(provider_value - fact_value)
+    if provider_fact_difference > 0:
+        # Evidence-ledger tolerance is used to validate the cached ledger
+        # values above; it must not turn a non-exact provider/XBRL comparison
+        # into an exact verification. XBRL decimals supplies the only declared
+        # accuracy interval for classifying a non-exact provider value.
+        accuracy_tolerance = _xbrl_fact_accuracy_tolerance(fact)
+        if accuracy_tolerance is not None and accuracy_tolerance > 0:
+            if provider_fact_difference <= accuracy_tolerance:
+                return ('PROVIDER_VALUE_WITHIN_XBRL_ACCURACY',
+                        f'Provider value is within the XBRL decimals accuracy interval (±{accuracy_tolerance:g}); exact fact equality is not established',
+                        ev)
+        return 'PROVIDER_VALUE_MISMATCH', 'Cached provider value does not exactly match the official XBRL fact or its declared accuracy interval', ev
     reason = 'Exact direct fact, context, entity, period, dimensions, unit, taxonomy and SHA-256 matched'
     if metric_name == 'OperatingCashFlowINR':
         reason += '; cash-flow statement cross-foot reconciled'
