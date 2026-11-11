@@ -27,7 +27,7 @@ on:
 concurrency:
   group: nse-data-test-${{ github.ref }}
   # Code pushes supersede a stale in-flight scan; scheduled runs do not cancel each other.
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: write
