@@ -1,6 +1,12 @@
 name: Free Fundamentals Live Smoke Test
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "free_fundamental_sources.py"
+      - "free_fundamental_live_smoke.py"
+      - ".github/workflows/free-fundamental-live-smoke.yml"
   push:
     branches: [main]
     paths:
