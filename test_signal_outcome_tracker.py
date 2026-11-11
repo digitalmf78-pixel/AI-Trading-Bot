@@ -55,3 +55,36 @@ def test_incomplete_horizon_is_not_written(tmp_path):
     result = update_signal_outcomes(log, frames, outcome_store_path=store)
     assert result["new_outcomes"] == 0
     assert not store.exists()
+
+def test_missing_whole_market_bhavcopy_session_does_not_shift_horizon(tmp_path):
+    log = tmp_path / "signal_log.csv"
+    columns = ["EODDate", "TckrSymb", "ClsPric", "Result5D", "Result10D", "Result20D", "MFE", "MAE"]
+    with log.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerow({"EODDate": "2026-11-11", "TckrSymb": "ABC", "ClsPric": "100"})
+
+    frames = []
+    day = date(2026, 11, 12)
+    session_dates = []
+    while len(session_dates) < 20:
+        if is_trading_session(day):
+            session_dates.append(day)
+        day += timedelta(days=1)
+
+    # Simulate a missing whole-market Bhavcopy for the first future session.
+    for session_day in session_dates[1:]:
+        frames.append(pd.DataFrame([{
+            "Date": pd.Timestamp(session_day), "TckrSymb": "ABC",
+            "HghPric": 110.0, "LwPric": 95.0, "ClsPric": 105.0,
+        }]))
+
+    store = tmp_path / "signal_outcomes.csv"
+    result = update_signal_outcomes(log, frames, outcome_store_path=store)
+    assert result["new_outcomes"] == 0
+    assert not store.exists()
+    with log.open(newline="", encoding="utf-8") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["Result5D"] == ""
+    assert row["Result10D"] == ""
+    assert row["Result20D"] == ""
