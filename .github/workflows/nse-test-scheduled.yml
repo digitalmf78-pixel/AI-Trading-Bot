@@ -214,6 +214,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: "true"
           RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
+          # Adapter uses bounded 4s connect / 8s read timeouts and disables retries.
           V8_FREE_FUNDAMENTAL_SOURCES: "true"
           FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN: "10"
           FREE_FUNDAMENTAL_RETRY_DAYS: "7"
