@@ -12,9 +12,9 @@ def test_delivery_categories_use_all_valid_reports_and_minimum_five():
 
 
 def test_delivery_window_is_inclusive_30_calendar_days():
-    dates = pd.to_datetime(["2026-10-11", "2026-10-12", "2026-10-20", "2026-11-06", "2026-11-07"])
+    dates = pd.to_datetime(["2026-10-07", "2026-10-11", "2026-10-12", "2026-10-20", "2026-11-06", "2026-11-07"])
     got = delivery_window_dates(dates, "2026-11-06", max_calendar_days=30)
-    assert [d.strftime("%Y-%m-%d") for d in got] == ["2026-10-12", "2026-10-20", "2026-11-06"]
+    assert [d.strftime("%Y-%m-%d") for d in got] == ["2026-10-11", "2026-10-12", "2026-10-20", "2026-11-06"]
 
 
 def test_forward_horizons_use_next_market_sessions_and_require_full_horizon():
