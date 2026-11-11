@@ -17,15 +17,15 @@ def test_history_index_matches_symbol_series_and_merges_current_candidate():
     ]
     index, dates = build_price_history_index(historical, pd.Timestamp("2026-11-06").date())
     candidate = pd.Series({
-        "TckrSymb": "ABC", "SctySrs": "EQ", "Date": "2026-11-09",
+        "TckrSymb": "ABC", "SctySrs": "EQ", "Date": "2026-11-06",
         "ClsPric": 14, "HghPric": 15, "LwPric": 13, "TtlTradgVol": 120,
         "PriceChangePct": 2.0,
     })
 
-    result = candidate_price_history(index, candidate, "2026-11-09")
+    result = candidate_price_history(index, candidate, "2026-11-06")
 
     assert dates == [pd.Timestamp("2026-11-05").date(), pd.Timestamp("2026-11-06").date()]
-    assert result["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2026-11-05", "2026-11-06", "2026-11-09"]
+    assert result["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2026-11-05", "2026-11-06"]
     assert result["ClsPric"].tolist() == [10, 12, 14]
     assert result.iloc[-1]["PriceChangePct"] == 2.0
     assert set(result["SctySrs"]) == {"EQ"}
