@@ -48,6 +48,7 @@ The correctly named pre-news cohort export is `outputs/v8_liquidity_qualified_pr
 
 - Official NSE integrated financial filings and XBRL are the primary verification source. A value is treated as officially verified only after it is reconciled with a dated filing and matching period/basis.
 - Yahoo Finance accessed through `yfinance` is a secondary, no-token provider for candidate metrics and valuation snapshots. It can be delayed, incomplete, revised, or inconsistent; provider values remain unverified until the NSE filing audit confirms them.
+- NSE's public Corporate Filings → Shareholding Patterns page publishes quarterly SHP XBRL filings. The no-key collector reads the filing index and parses the official XBRL for promoter, FII, DII and public ownership; source filing URL and reporting period are stored per metric. Pledge percentage remains unavailable until an exact, validated XBRL fact mapping is established.
 - No paid provider token or paid data API is required by the scanner. Missing, stale, or conflicting figures remain visible as `WAIT_FOR_DATA` or a mismatch instead of being guessed or promoted.
 - No shortlist threshold is weakened to compensate for missing source data. Review NSE XBRL and provider diagnostics when coverage is incomplete.
 

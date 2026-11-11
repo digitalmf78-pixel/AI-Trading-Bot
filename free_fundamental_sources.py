@@ -16,8 +16,12 @@ from typing import Any
 import pandas as pd
 
 SOURCE_URLS = {
+    "NSE Official Shareholding XBRL": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern/",
     "Moneycontrol": "https://www.moneycontrol.com/",
     "Tickertape": "https://www.tickertape.in/",
+}
+NSE_SHAREHOLDING_METRICS = {
+    "PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct",
 }
 
 ALIASES = {
@@ -276,11 +280,14 @@ def fetch_free_fundamental_sources(
     pause_seconds: float = 0.5,
     source_factories=None,
 ) -> dict:
-    """Query every installed no-key source; never stop after the first success.
+    """Query all enabled no-key sources; official NSE XBRL has first priority.
 
     source_factories is injectable for offline tests:
-      {"moneycontrol": callable returning a MoneyControl-like object,
+      {"nse_shareholding": callable(symbol) returning an NSE shareholding result,
+       "moneycontrol": callable returning a MoneyControl-like object,
        "tickertape": callable returning a Tickertape-like object}
+    When source_factories is supplied, the official NSE source is skipped unless
+    explicitly injected, so unit tests never perform unexpected network calls.
     """
     symbol = str(symbol).strip().upper()
     wanted = set(missing_metrics or ALIASES)
@@ -291,6 +298,58 @@ def fetch_free_fundamental_sources(
         "metric_alternates": {}, "providers": {}, "attempted_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     factories = source_factories or {}
+
+    # Official NSE quarterly SHP XBRL is the authoritative no-key source for
+    # promoter/FII/DII/public ownership. It is tried before third-party pages;
+    # any later provider values are retained as metric-level alternates.
+    shareholding_requested = wanted & NSE_SHAREHOLDING_METRICS
+    if shareholding_requested:
+        try:
+            if "nse_shareholding" in factories:
+                official_result = factories["nse_shareholding"](symbol)
+            elif source_factories is not None:
+                official_result = {
+                    "metrics": {},
+                    "provider": {
+                        "status": "NOT_INJECTED_TEST_SOURCE",
+                        "reason": "Offline source-factory test did not inject NSE shareholding",
+                        "source_url": SOURCE_URLS["NSE Official Shareholding XBRL"],
+                    },
+                }
+            else:
+                from nse_shareholding import fetch_nse_shareholding_metrics
+                official_result = fetch_nse_shareholding_metrics(symbol)
+
+            official_metrics = official_result.get("metrics", {})
+            official_provider = dict(official_result.get("provider", {}))
+            official_provider.setdefault("source_url", SOURCE_URLS["NSE Official Shareholding XBRL"])
+            official_provider.setdefault("status", "EMPTY")
+            result["providers"]["NSE Official Shareholding XBRL"] = official_provider
+            for metric, value in official_metrics.items():
+                if metric not in shareholding_requested or _number(value) is None:
+                    continue
+                if metric in result["metrics"]:
+                    result["metric_alternates"].setdefault(metric, []).append({
+                        "source": "NSE Official Shareholding XBRL",
+                        "value": value,
+                        "period": official_result.get("metric_periods", {}).get(metric, ""),
+                        "source_url": official_result.get("metric_urls", {}).get(metric, ""),
+                    })
+                    continue
+                result["metrics"][metric] = float(value)
+                result["metric_sources"][metric] = "NSE Official Shareholding XBRL"
+                result["metric_urls"][metric] = official_result.get("metric_urls", {}).get(
+                    metric, official_provider.get("source_url", SOURCE_URLS["NSE Official Shareholding XBRL"])
+                )
+                result["metric_periods"][metric] = official_result.get("metric_periods", {}).get(metric, "")
+                result["metric_currencies"][metric] = ""
+        except Exception as exc:
+            result["providers"]["NSE Official Shareholding XBRL"] = {
+                "status": "PROVIDER_ERROR",
+                "reason": f"{type(exc).__name__}: {str(exc)[:300]}",
+                "source_url": SOURCE_URLS["NSE Official Shareholding XBRL"],
+            }
+
     clients = []
     if "moneycontrol" in factories:
         clients.append(("Moneycontrol", factories["moneycontrol"]))

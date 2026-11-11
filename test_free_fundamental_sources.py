@@ -308,3 +308,70 @@ def test_number_parser_handles_display_units_but_rejects_ranges():
     assert _number("(1,234.5)") == -1234.5
     assert _number("1.25x") == 1.25
     assert _number("10-12") is None
+
+
+def test_nse_official_shareholding_has_priority_and_vendor_values_are_alternates():
+    def official_nse(symbol):
+        assert symbol == "RELIANCE"
+        return {
+            "metrics": {
+                "PromoterHoldingPct": 54.25,
+                "FIIHoldingPct": 12.0,
+                "DIIHoldingPct": 9.5,
+                "PublicHoldingPct": 45.75,
+            },
+            "metric_sources": {
+                "PromoterHoldingPct": "NSE Official Shareholding XBRL",
+                "FIIHoldingPct": "NSE Official Shareholding XBRL",
+                "DIIHoldingPct": "NSE Official Shareholding XBRL",
+                "PublicHoldingPct": "NSE Official Shareholding XBRL",
+            },
+            "metric_urls": {
+                "PromoterHoldingPct": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_TEST.xml",
+                "FIIHoldingPct": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_TEST.xml",
+                "DIIHoldingPct": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_TEST.xml",
+                "PublicHoldingPct": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_TEST.xml",
+            },
+            "metric_periods": {
+                "PromoterHoldingPct": "2026-09-30",
+                "FIIHoldingPct": "2026-09-30",
+                "DIIHoldingPct": "2026-09-30",
+                "PublicHoldingPct": "2026-09-30",
+            },
+            "provider": {"status": "DATA_FOUND", "filing_period_end": "2026-09-30"},
+        }
+
+    result = fetch_free_fundamental_sources(
+        "RELIANCE",
+        missing_metrics={"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct"},
+        pause_seconds=0,
+        source_factories={
+            "nse_shareholding": official_nse,
+            "moneycontrol": FakeMoneyControl,
+            "tickertape": FakeTickertape,
+        },
+    )
+
+    assert result["metrics"]["PromoterHoldingPct"] == 54.25
+    assert result["metrics"]["FIIHoldingPct"] == 12.0
+    assert result["metrics"]["DIIHoldingPct"] == 9.5
+    assert result["metrics"]["PublicHoldingPct"] == 45.75
+    assert result["metric_sources"]["PromoterHoldingPct"] == "NSE Official Shareholding XBRL"
+    assert result["metric_periods"]["PromoterHoldingPct"] == "2026-09-30"
+    assert result["metric_urls"]["PromoterHoldingPct"].endswith("SHP_TEST.xml")
+    assert result["providers"]["NSE Official Shareholding XBRL"]["status"] == "DATA_FOUND"
+    assert result["metric_alternates"]["PromoterHoldingPct"][0]["source"] == "Tickertape"
+    assert result["metric_alternates"]["PromoterHoldingPct"][0]["value"] == 52.0
+
+
+def test_nse_shareholding_provider_is_not_called_in_offline_factory_tests():
+    result = fetch_free_fundamental_sources(
+        "TCS",
+        missing_metrics={"PromoterHoldingPct"},
+        pause_seconds=0,
+        source_factories={
+            "moneycontrol": lambda: (_ for _ in ()).throw(ImportError("skip")),
+            "tickertape": lambda: (_ for _ in ()).throw(ImportError("skip")),
+        },
+    )
+    assert result["providers"]["NSE Official Shareholding XBRL"]["status"] == "NOT_INJECTED_TEST_SOURCE"
