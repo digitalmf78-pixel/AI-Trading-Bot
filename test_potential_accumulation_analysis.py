@@ -217,7 +217,7 @@ def test_atr_waits_when_a_required_close_is_missing_in_its_14_true_range_window(
         [history], _delivery_sessions(), "2026-10-23"
     )
     row = report.iloc[0]
-    assert row["PivotStructureStatus"] == "COMPLETE"
+    assert row["PivotStructureStatus"] == "WAIT_FOR_DATA"
     assert pd.isna(row["ATR14"])
     assert row["PivotLowSeparationStatus"] == "WAIT_FOR_DATA"
 
