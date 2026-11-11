@@ -44,6 +44,7 @@ from fundamental_data_provider import collect_missing_fundamentals
 from fii_dii_activity import attach_market_context, write_market_activity
 from datetime import datetime, timedelta, timezone
 from signal_log import append_signal_log
+from signal_outcome_tracker import update_signal_outcomes
 from v8_layers_14_41 import (
     monitor_positions,
     run_eod_layers,
@@ -3946,6 +3947,17 @@ def main():
     # Observation-only append: does not mutate result or affect any scanner output.
     signal_rows_written = append_signal_log(result, eod_date)
     print(f"[SIGNAL LOG] Appended {signal_rows_written} new date/symbol rows (existing rows preserved).")
+    # Forward outcomes are a separate observation-only sidecar. They use only
+    # validated official-session Bhavcopy records strictly after each signal.
+    try:
+        outcome_summary = update_signal_outcomes(
+            "outputs/signal_log.csv",
+            analysis_history,
+            outcome_store_path="outputs/signal_outcomes.csv",
+        )
+        print("[SIGNAL OUTCOMES] " + str(outcome_summary))
+    except Exception as outcome_exc:
+        print(f"[SIGNAL OUTCOMES] WARNING: observation update skipped; scanner continues: {outcome_exc}")
 
     # Later-stage watchlists are independent copies; no output feeds back into
     # result or changes the existing EOD selection gates.
