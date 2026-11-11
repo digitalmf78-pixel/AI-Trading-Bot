@@ -384,7 +384,10 @@ jobs:
           mkdir -p data/signal_history
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f -- "$HISTORY" "$SCHEMA"
+          git add -f -- "$SCHEMA"
+          if [ -f "$HISTORY" ]; then
+            git add -f -- "$HISTORY"
+          fi
           if [ -f data/signal_history/signal_outcomes.csv ]; then
             git add -f -- data/signal_history/signal_outcomes.csv
           fi
