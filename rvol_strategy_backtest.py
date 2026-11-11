@@ -163,25 +163,49 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                  "invalid_rvol": 0}
 
     for symbol, frame in price_groups.items():
-        by_date = {pd.Timestamp(row.DATE).normalize(): row for row in frame.itertuples(index=False)}
-        for date, current in by_date.items():
+        frame = frame.sort_values("DATE").reset_index(drop=True)
+        date_values = pd.to_datetime(frame["DATE"]).dt.normalize().to_numpy()
+        date_index = {
+            pd.Timestamp(raw_date).normalize(): idx
+            for idx, raw_date in enumerate(date_values)
+        }
+        volume_values = pd.to_numeric(frame["VOLUME"], errors="coerce").to_numpy(dtype=float)
+        traded_values = pd.to_numeric(frame["TRADED_VALUE"], errors="coerce").to_numpy(dtype=float)
+        close_values = pd.to_numeric(frame["CLOSE"], errors="coerce").to_numpy(dtype=float)
+        high_values = pd.to_numeric(frame["HIGH"], errors="coerce").to_numpy(dtype=float)
+        low_values = pd.to_numeric(frame["LOW"], errors="coerce").to_numpy(dtype=float)
+
+        for row_idx, raw_date in enumerate(date_values):
+            date = pd.Timestamp(raw_date).normalize()
             pos = date_to_pos.get(date, -1)
             if pos < 20:
                 rejection["insufficient_price_history"] += 1
                 continue
             prior_dates = market_dates[pos-20:pos]
-            prior_rows = [by_date.get(d) for d in prior_dates]
-            if any(row is None for row in prior_rows):
+            prior_indices = [date_index.get(day) for day in prior_dates]
+            if any(idx is None for idx in prior_indices):
                 rejection["insufficient_price_history"] += 1
                 continue
-            volumes = pd.to_numeric(pd.Series([r.VOLUME for r in prior_rows]), errors="coerce")
-            values = pd.to_numeric(pd.Series([r.TRADED_VALUE for r in prior_rows]), errors="coerce")
-            current_volume = pd.to_numeric(pd.Series([current.VOLUME]), errors="coerce").iloc[0]
-            if volumes.isna().any() or values.isna().any() or (volumes < 0).any() or (values < 0).any() or pd.isna(current_volume):
+
+            index_array = np.asarray(prior_indices, dtype=int)
+            volumes = volume_values[index_array]
+            values = traded_values[index_array]
+            current_volume = volume_values[row_idx]
+            current_close = close_values[row_idx]
+            if (
+                not np.isfinite(volumes).all()
+                or not np.isfinite(values).all()
+                or (volumes < 0).any()
+                or (values < 0).any()
+                or not math.isfinite(float(current_volume))
+                or current_volume < 0
+                or not math.isfinite(float(current_close))
+                or current_close <= 0
+            ):
                 rejection["invalid_rvol"] += 1
                 continue
-            avg_volume = float(volumes.mean())
-            avg_value = float(values.mean())
+            avg_volume = float(np.mean(volumes))
+            avg_value = float(np.mean(values))
             if avg_volume <= 0:
                 rejection["invalid_rvol"] += 1
                 continue
@@ -190,11 +214,11 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             eligible_delivery_dates = delivery_windows.get(date, [])
             dvalues = []
             candidate_delivery_dates = []
-            for d in eligible_delivery_dates:
-                value = delivery_lookup.get(d, {}).get(symbol)
+            for delivery_day in eligible_delivery_dates:
+                value = delivery_lookup.get(delivery_day, {}).get(symbol)
                 if value is None:
                     continue
-                candidate_delivery_dates.append(d)
+                candidate_delivery_dates.append(delivery_day)
                 dvalues.append(value)
             if len(dvalues) < 5:
                 rejection["insufficient_delivery_history"] += 1
@@ -209,7 +233,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
 
             strict, relaxed, no_gate = strategy_membership(rvol)
             rec = {
-                "Date": date.date().isoformat(), "Symbol": symbol, "Close": float(current.CLOSE),
+                "Date": date.date().isoformat(), "Symbol": symbol, "Close": current_close,
                 "CurrentVolume": float(current_volume), "AvgVolume20D": avg_volume, "RVOL": rvol,
                 "AvgTradedValue20D_INR": avg_value, "Delivery30D_AveragePct": sum(dvalues) / len(dvalues),
                 "Delivery30D_MinPct": min(dvalues), "DeliveryCategoryA": cat_a, "DeliveryCategoryB": cat_b,
@@ -221,24 +245,40 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             }
             for horizon in HORIZONS:
                 expected_dates = forward_session_dates(market_dates, date, horizon)
-                future = frame[frame["DATE"].isin(expected_dates)].sort_values("DATE") if expected_dates else frame.iloc[0:0]
+                future_indices = [date_index.get(day) for day in expected_dates] if expected_dates else []
                 complete = (
                     len(expected_dates) == horizon
-                    and len(future) == horizon
-                    and list(pd.to_datetime(future["DATE"]).dt.normalize()) == expected_dates
-                    and future["CLOSE"].notna().all()
-                    and future["CLOSE"].gt(0).all()
+                    and len(future_indices) == horizon
+                    and all(idx is not None for idx in future_indices)
                 )
+                if complete:
+                    future_index_array = np.asarray(future_indices, dtype=int)
+                    future_closes = close_values[future_index_array]
+                    complete = np.isfinite(future_closes).all() and (future_closes > 0).all()
+                else:
+                    future_index_array = np.asarray([], dtype=int)
+                    future_closes = np.asarray([], dtype=float)
+
                 rec[f"ForwardReturn{horizon}D_Pct"] = (
-                    (float(future.iloc[-1]["CLOSE"]) / float(current.CLOSE) - 1) * 100 if complete else np.nan
+                    (float(future_closes[-1]) / current_close - 1) * 100 if complete else np.nan
+                )
+                future_highs = high_values[future_index_array] if complete else np.asarray([], dtype=float)
+                future_lows = low_values[future_index_array] if complete else np.asarray([], dtype=float)
+                valid_future_ohlc = (
+                    complete
+                    and np.isfinite(future_highs).all()
+                    and np.isfinite(future_lows).all()
+                    and (future_highs > 0).all()
+                    and (future_lows > 0).all()
+                    and (future_lows <= future_highs).all()
                 )
                 rec[f"MaxFavorable{horizon}D_Pct"] = (
-                    (float(future["HIGH"].max()) / float(current.CLOSE) - 1) * 100
-                    if complete and future["HIGH"].notna().all() and future["HIGH"].gt(0).all() else np.nan
+                    (float(np.max(future_highs)) / current_close - 1) * 100
+                    if valid_future_ohlc else np.nan
                 )
                 rec[f"MaxAdverse{horizon}D_Pct"] = (
-                    (float(future["LOW"].min()) / float(current.CLOSE) - 1) * 100
-                    if complete and future["LOW"].notna().all() and future["LOW"].gt(0).all() else np.nan
+                    (float(np.min(future_lows) / current_close - 1) * 100)
+                    if valid_future_ohlc else np.nan
                 )
             records.append(rec)
 
