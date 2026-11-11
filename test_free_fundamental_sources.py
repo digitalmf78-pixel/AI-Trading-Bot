@@ -1,6 +1,6 @@
 import pandas as pd
 
-from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session, _instantiate_bounded_client
+from free_fundamental_sources import fetch_free_fundamental_sources, _configure_bounded_session, _instantiate_bounded_client, _extract_ratio, ALIASES
 
 
 class FakeMoneyControl:
@@ -217,3 +217,12 @@ def test_constructor_requests_are_bounded_before_client_initialization(monkeypat
     client = _instantiate_bounded_client(factory)
     assert observed["timeout"] == (4, 8)
     assert client.session.adapters["https://"].max_retries.total == 0
+
+def test_moneycontrol_ratios_column_is_mapped_to_metric():
+    frame = pd.DataFrame({
+        "ratios": ["Return on Equity", "ROCE", "Debt Equity"],
+        "Mar 2026": ["18.5%", "22.0%", "0.50"],
+    })
+    assert _extract_ratio(frame, ALIASES["ROEPercent"]) == 18.5
+    assert _extract_ratio(frame, ALIASES["ROCEPercent"]) == 22.0
+    assert _extract_ratio(frame, ALIASES["DebtToEquity"]) == 0.5
