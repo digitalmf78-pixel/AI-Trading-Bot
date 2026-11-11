@@ -35,7 +35,7 @@ class FakeMoneyControl:
 class FakeTickertape:
     calls = []
 
-    def get_ticker(self, symbol, search_place="stock"):
+    def get_ticker(self, symbol, search_place="stocks"):
         self.calls.append(("tickertape", "lookup", symbol, search_place))
         return "TT123", [{"ticker": symbol, "sid": "TT123", "slug": "stocks/example-EXAM"}]
 
