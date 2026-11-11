@@ -7,7 +7,7 @@ Only complete official-session horizons with valid OHLC are recorded.
 from __future__ import annotations
 
 import csv
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import math
 
@@ -103,6 +103,7 @@ def update_signal_outcomes(
 
     new_records = []
     completed = 0
+    latest_available_date = max(available_dates) if available_dates else None
     for row in rows:
         signal_day = date.fromisoformat(row["EODDate"])
         symbol = str(row["TckrSymb"]).strip().upper()
@@ -110,7 +111,16 @@ def update_signal_outcomes(
             entry = float(row.get("ClsPric", ""))
         except (TypeError, ValueError):
             entry = float("nan")
-        future_sessions = [day for day in available_dates if day > signal_day]
+        # Enumerate every official NSE session, not only dates represented by
+        # downloaded Bhavcopy files. A missing whole-market file must leave the
+        # affected horizon incomplete instead of shifting the horizon forward.
+        future_sessions = []
+        if latest_available_date is not None:
+            cursor = signal_day + timedelta(days=1)
+            while cursor <= latest_available_date:
+                if is_trading_session(cursor):
+                    future_sessions.append(cursor)
+                cursor += timedelta(days=1)
         for horizon in (5, 10, 20):
             key = (signal_day.isoformat(), symbol, horizon)
             if key in outcomes or len(future_sessions) < horizon:
