@@ -71,7 +71,7 @@ BASE_COLUMNS = [
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 AUXILIARY_FUNDAMENTAL_COLUMNS = [
     "GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct", "CurrentRatio",
-    "QuickRatio", "AssetTurnover", "TrailingPE", "PriceToBook", "DividendYieldPct",
+    "QuickRatio", "AssetTurnover",
     "EPS", "BookValuePerShare", "PromoterHoldingPct", "FIIHoldingPct",
     "DIIHoldingPct", "PublicHoldingPct", "PledgePct",
 ]
