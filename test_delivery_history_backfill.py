@@ -26,10 +26,10 @@ def test_price_session_dates_fails_if_existing_cache_is_short(tmp_path, monkeypa
 def test_cached_delivery_requires_matching_internal_date_and_valid_rows(tmp_path):
     path = tmp_path / "sec_bhavdata_full_06112026.csv"
     pd.DataFrame({
-        "DATE1": ["06-Nov-2026", "06-Nov-2026"],
-        "SYMBOL": ["AAA", "BBB"],
-        "SERIES": ["EQ", "EQ"],
-        "DELIV_PER": [65.0, 70.0],
+        "DATE1": ["06-Nov-2026"] * 60,
+        "SYMBOL": [f"SYM{i:03d}" for i in range(60)],
+        "SERIES": ["EQ"] * 60,
+        "DELIV_PER": [65.0 + (i % 10) for i in range(60)],
     }).to_csv(path, index=False)
     ok, rows, digest = backfill._valid_cached_report(path, date(2026, 11, 6))
     assert ok and rows == 2 and len(digest) == 64
@@ -38,10 +38,10 @@ def test_cached_delivery_requires_matching_internal_date_and_valid_rows(tmp_path
 def test_cached_delivery_rejects_mismatched_internal_date(tmp_path):
     path = tmp_path / "sec_bhavdata_full_06112026.csv"
     pd.DataFrame({
-        "DATE1": ["05-Nov-2026"],
-        "SYMBOL": ["AAA"],
-        "SERIES": ["EQ"],
-        "DELIV_PER": [65.0],
+        "DATE1": ["05-Nov-2026"] * 60,
+        "SYMBOL": [f"SYM{i:03d}" for i in range(60)],
+        "SERIES": ["EQ"] * 60,
+        "DELIV_PER": [65.0] * 60,
     }).to_csv(path, index=False)
     ok, rows, digest = backfill._valid_cached_report(path, date(2026, 11, 6))
     assert not ok and rows == 0 and digest == ""
