@@ -149,7 +149,7 @@ def _extract_ratio(frame: pd.DataFrame, aliases: tuple[str, ...]):
                 if number is not None:
                     return number
     # Common long layout: metric labels in a name/ratio/metric column.
-    for name_col in ("name", "ratio", "ratios", "metric", "particular", "particulars", "parameter", "key", "headers", "headings", "unnamed: 0"):
+    for name_col in ("name", "ratio", "ratios", "metric", "particular", "particulars", "parameter", "key", "headers", "headings", "quarterly", "annual", "unnamed: 0"):
         matches = [c for c in frame.columns if _norm(c) == _norm(name_col)]
         if not matches:
             continue
