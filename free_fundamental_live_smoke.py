@@ -46,6 +46,7 @@ def main():
                 "ProviderStatus": detail.get("status", ""),
                 "RowsByEndpointJSON": json.dumps(detail.get("rows", {}), sort_keys=True),
                 "TableSchemaJSON": json.dumps(detail.get("table_schema", {}), sort_keys=True),
+                "SearchResponseSchemaJSON": json.dumps(detail.get("search_response_schema", {}), sort_keys=True),
                 "ProviderReason": detail.get("reason", ""),
                 "MetricsFoundJSON": json.dumps(result.get("metrics", {}), sort_keys=True),
                 "MetricSourcesJSON": json.dumps(result.get("metric_sources", {}), sort_keys=True),
