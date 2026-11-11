@@ -51,6 +51,6 @@ def test_accumulation_watchlist_is_explicitly_unmeasured(monkeypatch, tmp_path):
         "TckrSymb": "ABC", "AsOfDate": "2026-11-11",
         "DeliveryEvidenceStatus": "OBSERVATIONS_AVAILABLE",
     }])
-    base, _ = hybrid_watchlists.write_early_hybrid_watchlists(accumulation, pd.DataFrame())
-    assert base.loc[0, "WatchlistStatus"] == "ACCUMULATION_WATCH"
-    assert "OBSERVATION_ONLY_NOT_MEASURED" in base.loc[0, "WatchlistReason"]
+    accumulation_out, _ = hybrid_watchlists.write_early_hybrid_watchlists(accumulation, pd.DataFrame())
+    assert accumulation_out.loc[0, "WatchlistStatus"] == "ACCUMULATION_WATCH"
+    assert "OBSERVATION_ONLY_NOT_MEASURED" in accumulation_out.loc[0, "WatchlistReason"]
