@@ -58,3 +58,23 @@ def test_consolidation_score_runs_on_synthetic_history():
 def test_consolidation_score_handles_empty_result():
     empty = pd.DataFrame(columns=["TckrSymb"])
     assert volume_gainer.calculate_consolidation_score(empty, []).empty
+
+
+
+def test_forward_outcomes_are_warning_only_and_never_gate_scanner_rows():
+    source = SOURCE.read_text(encoding="utf-8")
+    start = source.index("    signal_rows_written = append_signal_log")
+    end = source.index("    # Later-stage watchlists are independent copies;", start)
+    block = source[start:end]
+    assert "try:" in block
+    assert "update_signal_outcomes(" in block
+    assert "except Exception as outcome_exc:" in block
+    assert "[SIGNAL OUTCOMES] WARNING" in block
+    assert "result =" not in block
+    assert "return" not in block
+
+
+def test_unbounded_shadow_jsonl_writer_is_not_wired_into_live_scanner():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "build_mainboard_signal_shadow" not in source
+    assert "append_immutable_jsonl" not in source

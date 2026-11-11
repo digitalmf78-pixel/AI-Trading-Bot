@@ -1,8 +1,8 @@
 """Observation-only forward outcome tracker for NSE V8 signal snapshots.
 
-Entry reference is the signal EOD close (research reference, not a fill).
+Entry reference is the next official NSE session Open (research reference, not a fill).
 Returns are raw price movement; fees/slippage remain NOT_CONFIGURED.
-Only complete official-session horizons with valid OHLC are recorded.
+Only complete official-session horizons with valid Open/High/Low/Close are recorded.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ OUTCOME_COLUMNS = [
     "PriceSource", "FeesSlippageAssumption",
 ]
 SIGNAL_OUTCOME_COLUMNS = ("Result5D", "Result10D", "Result20D", "MFE", "MAE")
-ENTRY_REFERENCE_TYPE = "SIGNAL_EOD_CLOSE"
+ENTRY_REFERENCE_TYPE = "NEXT_SESSION_OPEN"
 FEES_SLIPPAGE_ASSUMPTION = "NOT_CONFIGURED"
 
 
@@ -45,14 +45,14 @@ def _read_outcomes(path: Path) -> dict[tuple[str, str, int], dict]:
 def _history_index(history_frames) -> tuple[dict[date, dict[str, dict]], list[date]]:
     by_date: dict[date, dict[str, dict]] = {}
     session_cache: dict[date, bool] = {}
-    required = ["Date", "TckrSymb", "HghPric", "LwPric", "ClsPric"]
+    required = ["Date", "TckrSymb", "OpnPric", "HghPric", "LwPric", "ClsPric"]
     for frame in history_frames or []:
         if frame is None or frame.empty or not set(required).issubset(frame.columns):
             continue
         # Avoid re-reading the official calendar once per symbol; one check per
         # distinct EOD date is sufficient for a full-market Bhavcopy frame.
         selected = frame.loc[:, required]
-        for raw_date, raw_symbol, raw_high, raw_low, raw_close in selected.itertuples(index=False, name=None):
+        for raw_date, raw_symbol, raw_open, raw_high, raw_low, raw_close in selected.itertuples(index=False, name=None):
             day_value = pd.to_datetime(raw_date, errors="coerce")
             if pd.isna(day_value):
                 continue
@@ -68,7 +68,7 @@ def _history_index(history_frames) -> tuple[dict[date, dict[str, dict]], list[da
             if symbol in bucket:
                 raise ValueError(f"duplicate Bhavcopy OHLC row for {day} {symbol}")
             values = {}
-            for col, raw_value in (("HghPric", raw_high), ("LwPric", raw_low), ("ClsPric", raw_close)):
+            for col, raw_value in (("OpnPric", raw_open), ("HghPric", raw_high), ("LwPric", raw_low), ("ClsPric", raw_close)):
                 try:
                     value = float(raw_value)
                 except (TypeError, ValueError):
@@ -107,10 +107,6 @@ def update_signal_outcomes(
     for row in rows:
         signal_day = date.fromisoformat(row["EODDate"])
         symbol = str(row["TckrSymb"]).strip().upper()
-        try:
-            entry = float(row.get("ClsPric", ""))
-        except (TypeError, ValueError):
-            entry = float("nan")
         # Enumerate every official NSE session, not only dates represented by
         # downloaded Bhavcopy files. A missing whole-market file must leave the
         # affected horizon incomplete instead of shifting the horizon forward.
@@ -127,12 +123,21 @@ def update_signal_outcomes(
                 continue
             horizon_days = future_sessions[:horizon]
             session_rows = [by_date.get(day, {}).get(symbol) for day in horizon_days]
-            if not math.isfinite(entry) or entry <= 0 or any(item is None for item in session_rows):
+            if any(item is None for item in session_rows):
                 continue
+            # Entry is the OPEN of the first official NSE session strictly
+            # after the signal date. Signal-day OHLC is excluded entirely.
+            try:
+                entry = float(session_rows[0]["OpnPric"])
+            except (TypeError, ValueError):
+                entry = float("nan")
             highs = [item["HghPric"] for item in session_rows]
             lows = [item["LwPric"] for item in session_rows]
             closes = [item["ClsPric"] for item in session_rows]
-            if any(not math.isfinite(x) or x <= 0 for x in highs + lows + closes):
+            if (
+                not math.isfinite(entry) or entry <= 0
+                or any(not math.isfinite(x) or x <= 0 for x in highs + lows + closes)
+            ):
                 continue
             if any(low > high for low, high in zip(lows, highs)):
                 continue
