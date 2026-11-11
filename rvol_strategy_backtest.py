@@ -143,6 +143,20 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
     price_groups = {sym: frame.sort_values("DATE").reset_index(drop=True)
                     for sym, frame in prices.groupby("SYMBOL", sort=True)}
     delivery_dates = sorted(pd.Timestamp(x).normalize() for x in delivery_by_date)
+    # Pre-index delivery rows and 30-day windows once. Re-filtering pandas
+    # frames for every symbol/session would make the 200-day cache needlessly slow.
+    delivery_lookup = {
+        day: {
+            str(symbol).strip().upper(): float(value)
+            for symbol, value in zip(frame["SYMBOL"], frame["DELIV_PER"])
+            if pd.notna(value) and math.isfinite(float(value)) and 0.0 <= float(value) <= 100.0
+        }
+        for day, frame in delivery_by_date.items()
+    }
+    delivery_windows = {
+        day: delivery_window_dates(delivery_dates, day, max_calendar_days=30)
+        for day in market_dates
+    }
     records = []
     rejection = {"insufficient_price_history": 0, "insufficient_delivery_history": 0,
                  "delivery_category_a_reject": 0, "liquidity_below_1_5cr": 0,
@@ -173,16 +187,12 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 continue
             rvol = float(current_volume) / avg_volume
 
-            eligible_delivery_dates = delivery_window_dates(delivery_dates, date, max_calendar_days=30)
+            eligible_delivery_dates = delivery_windows.get(date, [])
             dvalues = []
             candidate_delivery_dates = []
             for d in eligible_delivery_dates:
-                df = delivery_by_date[d]
-                hit = df.loc[df["SYMBOL"].eq(symbol), "DELIV_PER"]
-                if hit.empty or pd.isna(hit.iloc[-1]):
-                    continue
-                value = float(hit.iloc[-1])
-                if not math.isfinite(value) or not 0.0 <= value <= 100.0:
+                value = delivery_lookup.get(d, {}).get(symbol)
+                if value is None:
                     continue
                 candidate_delivery_dates.append(d)
                 dvalues.append(value)
