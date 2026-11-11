@@ -69,6 +69,38 @@ def _configure_bounded_session(client):
         return
 
 
+def _instantiate_bounded_client(factory):
+    """Apply timeout/no-retry policy even to requests made inside __init__."""
+    from requests import Session
+    from requests.adapters import HTTPAdapter
+
+    original_get = Session.get
+    original_adapter_init = HTTPAdapter.__init__
+
+    def bounded_get(session, url, *args, **kwargs):
+        kwargs.setdefault("timeout", (4, 8))
+        return original_get(session, url, *args, **kwargs)
+
+    def no_retry_adapter_init(adapter, *args, **kwargs):
+        args = list(args)
+        if len(args) >= 3:
+            args[2] = 0
+            kwargs.pop("max_retries", None)
+        else:
+            kwargs["max_retries"] = 0
+        return original_adapter_init(adapter, *args, **kwargs)
+
+    Session.get = bounded_get
+    HTTPAdapter.__init__ = no_retry_adapter_init
+    try:
+        client = factory()
+    finally:
+        Session.get = original_get
+        HTTPAdapter.__init__ = original_adapter_init
+    _configure_bounded_session(client)
+    return client
+
+
 def _identity_matches(symbol: str, company_name: str | None, raw: Any) -> bool:
     """Fail closed unless the search result identifies this exact NSE symbol/company."""
     items = raw if isinstance(raw, list) else [raw]
@@ -214,8 +246,7 @@ def fetch_free_fundamental_sources(
         frames = {}
         errors = []
         try:
-            client = factory()
-            _configure_bounded_session(client)
+            client = _instantiate_bounded_client(factory)
             if source == "Moneycontrol":
                 lookup_term = str(company_name or symbol).strip()
                 ticker_id, raw_hits = client.get_ticker(lookup_term)
