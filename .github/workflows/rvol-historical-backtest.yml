@@ -6,6 +6,8 @@ on:
       - "rvol_strategy_backtest.py"
       - "rsi_retest_existing_cache.py"
       - "test_rvol_strategy_backtest.py"
+      - "delivery_history_backfill.py"
+      - "test_delivery_history_backfill.py"
       - ".github/workflows/rvol-historical-backtest.yml"
   workflow_dispatch:
 
@@ -20,13 +22,13 @@ jobs:
   historical-backtest:
     name: Compare RVOL strategies on restored NSE cache
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout research branch
         uses: actions/checkout@v5
 
-      - name: Restore existing NSE Bhavcopy and Delivery cache
-        uses: actions/cache/restore@v5
+      - name: Restore and persist NSE Bhavcopy and Delivery cache
+        uses: actions/cache@v5
         with:
           # Keep this path list identical to nse-test-scheduled.yml so the
           # Actions cache version matches the cache saved by the NSE scan.
@@ -34,17 +36,19 @@ jobs:
             data/bhavcopy/
             data/cache/delivery/
             data/cache/sector_index_daily/
+            data/cache/sector_constituents/
             data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv
             data/inputs/fundamental_metrics.csv
             data/cache/fundamental_history/
             data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
             outputs/v8_official_financial_results_filings.csv
-          key: rvol-backtest-${{ runner.os }}-${{ github.run_id }}
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.head_ref || github.ref_name }}-${{ github.run_id }}
           restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.head_ref || github.ref_name }}-
             nse-bhavcopy-${{ runner.os }}-main-
-            nse-bhavcopy-${{ runner.os }}-research/rvol-strategy-backtest-
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -63,15 +67,25 @@ jobs:
           PRICE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | wc -l || true)
           DELIVERY_COUNT=$(find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | wc -l || true)
           echo "PRICE_CACHE_FILES=$PRICE_COUNT"
-          echo "DELIVERY_CACHE_FILES=$DELIVERY_COUNT"
-          echo "===== PRICE CACHE DATE RANGE ====="
+          echo "DELIVERY_CACHE_FILES_BEFORE_BACKFILL=$DELIVERY_COUNT"
+          echo "===== EXISTING PRICE CACHE DATE RANGE ====="
           find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
-          echo "===== DELIVERY CACHE DATE RANGE ====="
-          find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
-          if [ "$PRICE_COUNT" -eq 0 ] || [ "$DELIVERY_COUNT" -eq 0 ]; then
-            echo "::error::NSE cache was not restored. Do not report a backtest result until cache restore is fixed."
+          if [ "$PRICE_COUNT" -lt 200 ]; then
+            echo "::error::Existing Bhavcopy cache has fewer than 200 dates. Backfill will not download or alter price files."
             exit 1
           fi
+
+      - name: Test Delivery history backfill
+        run: python -m pytest -q test_delivery_history_backfill.py
+
+      - name: Backfill Delivery reports for existing 200 Bhavcopy sessions
+        run: |
+          set -euo pipefail
+          python -u delivery_history_backfill.py --sessions 200
+          echo "===== DELIVERY BACKFILL SUMMARY ====="
+          cat outputs/delivery_history_backfill/summary.json
+          echo "===== DELIVERY BACKFILL COVERAGE ====="
+          cat outputs/delivery_history_backfill/coverage.csv
 
       - name: Run RVOL backtest unit tests
         run: python -m pytest -q test_rvol_strategy_backtest.py
@@ -94,6 +108,8 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: rvol-historical-backtest-${{ github.run_id }}
-          path: outputs/rvol_strategy_backtest/
+          path: |
+            outputs/rvol_strategy_backtest/
+            outputs/delivery_history_backfill/
           if-no-files-found: warn
           retention-days: 30
