@@ -59,8 +59,12 @@ def restore_history(
         if not schema.exists() or schema.read_text(encoding="utf-8").strip() != SCHEMA_VERSION:
             print("[SIGNAL HISTORY] WARNING: schema version mismatch; durable history not restored.")
             return False
-        rows = _read_csv(history, SIGNAL_COLUMNS)
-        _assert_unique(rows, ("EODDate", "TckrSymb"), "signal history")
+        try:
+            rows = _read_csv(history, SIGNAL_COLUMNS)
+            _assert_unique(rows, ("EODDate", "TckrSymb"), "signal history")
+        except Exception as exc:
+            print(f"[SIGNAL HISTORY] WARNING: durable signal store invalid; scanner continues without restoring it: {exc}")
+            return False
         shutil.copy2(history, output / "signal_log.csv")
         if outcomes.exists():
             try:
@@ -100,19 +104,23 @@ def persist_history(
         print("[SIGNAL HISTORY] WARNING: schema version mismatch; persistence skipped.")
         return {"signals_appended": 0, "outcomes_appended": 0}
 
-    current = _read_csv(source, SIGNAL_COLUMNS)
-    old = _read_csv(history, SIGNAL_COLUMNS)
-    _assert_unique(current, ("EODDate", "TckrSymb"), "per-run signal log")
-    _assert_unique(old, ("EODDate", "TckrSymb"), "durable signal history")
-    old_by_key = {(row["EODDate"], row["TckrSymb"]): row for row in old}
-    current_by_key = {(row["EODDate"], row["TckrSymb"]): row for row in current}
-    if not set(old_by_key).issubset(current_by_key):
-        raise ValueError("per-run signal log is missing previously persisted keys")
-    for key, old_row in old_by_key.items():
-        new_row = current_by_key[key]
-        for column in SIGNAL_COLUMNS:
-            if column not in OUTCOME_VALUE_COLUMNS and old_row[column] != new_row[column]:
-                raise ValueError(f"immutable signal field changed for {key}: {column}")
+    try:
+        current = _read_csv(source, SIGNAL_COLUMNS)
+        old = _read_csv(history, SIGNAL_COLUMNS)
+        _assert_unique(current, ("EODDate", "TckrSymb"), "per-run signal log")
+        _assert_unique(old, ("EODDate", "TckrSymb"), "durable signal history")
+        old_by_key = {(row["EODDate"], row["TckrSymb"]): row for row in old}
+        current_by_key = {(row["EODDate"], row["TckrSymb"]): row for row in current}
+        if not set(old_by_key).issubset(current_by_key):
+            raise ValueError("per-run signal log is missing previously persisted keys")
+        for key, old_row in old_by_key.items():
+            new_row = current_by_key[key]
+            for column in SIGNAL_COLUMNS:
+                if column not in OUTCOME_VALUE_COLUMNS and old_row[column] != new_row[column]:
+                    raise ValueError(f"immutable signal field changed for {key}: {column}")
+    except Exception as exc:
+        print(f"[SIGNAL HISTORY] WARNING: immutable history validation failed; no signal rows appended: {exc}")
+        return {"signals_appended": 0, "outcomes_appended": 0}
 
     additions = []
     for row in current:
