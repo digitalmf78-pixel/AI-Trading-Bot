@@ -397,6 +397,25 @@ def _check_growth_components(metric_name: str, current: dict, prior: dict,
     return True, 'Annual revenue/profit component facts reconcile to the filing statement totals'
 
 
+def _same_xbrl_entity_identity(current: dict, prior: dict) -> bool:
+    """Match an issuer across the known BSE-to-SEBI ScripCode scheme migration.
+
+    The numeric ScripCode must remain identical. No other scheme changes or
+    identifier changes are treated as equivalent.
+    """
+    if _clean(current.get('EntityIdentifier')) != _clean(prior.get('EntityIdentifier')):
+        return False
+    current_scheme = _clean(current.get('EntityIdentifierScheme'))
+    prior_scheme = _clean(prior.get('EntityIdentifierScheme'))
+    if current_scheme == prior_scheme:
+        return True
+    known_scrip_code_schemes = {
+        'http://www.bseindia.com/in-capmkt/ScripCode',
+        'http://www.sebi.gov.in/in-capmkt/ScripCode',
+    }
+    return current_scheme in known_scrip_code_schemes and prior_scheme in known_scrip_code_schemes
+
+
 def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
                                manual_evidence: pd.DataFrame, repo_root: Path,
                                symbols: set[str] | None) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -504,10 +523,9 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
                 diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
                                     'Status': 'XBRL_ANNUAL_COMPONENT_UNRESOLVED', 'Reason': c_reason or p_reason})
                 continue
-            if (current_component['EntityIdentifier'] != prior_component['EntityIdentifier']
-                    or current_component['EntityIdentifierScheme'] != prior_component['EntityIdentifierScheme']):
+            if not _same_xbrl_entity_identity(current_component, prior_component):
                 diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
-                                    'Status': 'XBRL_ENTITY_MISMATCH', 'Reason': 'Current and prior year filings identify different entities'})
+                                    'Status': 'XBRL_ENTITY_MISMATCH', 'Reason': 'Current and prior year filings identify different entities or an unsupported identifier-scheme change'})
                 continue
             crossfoot, crossfoot_reason = _check_growth_components(
                 metric_name, current_component, prior_component,
@@ -658,8 +676,7 @@ def _verify_derived_growth_evidence(metric: pd.Series, metric_name: str,
             if value is None or abs(value - float(component['Value'])) > 0.01:
                 return 'XBRL_FACT_VALUE_DIFFERS_FROM_LEDGER', 'Official component value differs from evidence details', ev
             parsed.append((contexts, units, facts, component))
-        if (parsed[0][3]['EntityIdentifier'] != parsed[1][3]['EntityIdentifier']
-                or parsed[0][3]['EntityIdentifierScheme'] != parsed[1][3]['EntityIdentifierScheme']
+        if (not _same_xbrl_entity_identity(parsed[0][3], parsed[1][3])
                 or parsed[0][3]['UnitMeasure'] != parsed[1][3]['UnitMeasure']):
             return 'XBRL_ENTITY_MISMATCH', 'Current and prior filings do not describe the same entity and unit', ev
         ok, reason = _check_growth_components(metric_name, parsed[0][3], parsed[1][3],
