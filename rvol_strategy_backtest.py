@@ -83,13 +83,13 @@ def strategy_membership(rvol: float) -> tuple[bool, bool, bool]:
 def _metric(values: pd.Series, prefix: str) -> dict:
     vals = pd.to_numeric(values, errors="coerce").dropna()
     if vals.empty:
-        return {f"{prefix}Trades": 0, f"{prefix}WinRatePct": np.nan,
+        return {f"{prefix}Observations": 0, f"{prefix}WinRatePct": np.nan,
                 f"{prefix}AverageReturnPct": np.nan, f"{prefix}MedianReturnPct": np.nan,
                 f"{prefix}ProfitFactor": np.nan}
     gains = float(vals[vals > 0].sum())
     losses = float(-vals[vals < 0].sum())
     pf = gains / losses if losses > 0 else (np.inf if gains > 0 else np.nan)
-    return {f"{prefix}Trades": int(len(vals)),
+    return {f"{prefix}Observations": int(len(vals)),
             f"{prefix}WinRatePct": round(float((vals > 0).mean() * 100), 2),
             f"{prefix}AverageReturnPct": round(float(vals.mean()), 3),
             f"{prefix}MedianReturnPct": round(float(vals.median()), 3),
@@ -253,7 +253,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             comparison.append(row)
     comp = pd.DataFrame(comparison)
     comp["BacktestStatus"] = "RESEARCH_ONLY_NOT_PRODUCTION_VALIDATED"
-    comp["Caveat"] = "No transaction costs/slippage; EQ-only and current cache survivorship; historical official Main Board classification and point-in-time fundamentals unavailable. Forward outcomes require every symbol row on each of the next official market dates; incomplete horizons are excluded."
+    comp["Caveat"] = "No transaction costs/slippage or portfolio simulation; daily signals can repeat and overlap, so observations are not independent executed trades. EQ-only and current cache survivorship; historical official Main Board classification and point-in-time fundamentals unavailable. Forward outcomes require every symbol row on each of the next official market dates; incomplete horizons are excluded."
     comp.to_csv(output_dir / "comparison.csv", index=False)
     print(f"[RVOL BACKTEST] Cache dates={len(market_dates)}, symbols={len(price_groups)}, qualified signal rows={len(signals)}")
     print(f"[RVOL BACKTEST] Comparison: {output_dir / 'comparison.csv'}; signals: {output_dir / 'signals.csv'}")
