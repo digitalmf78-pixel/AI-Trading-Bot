@@ -91,6 +91,44 @@ def _text(value) -> str:
         return ""
     return str(value).strip()
 
+
+
+def _atr_from_20_session_records(records, eod_window_complete: bool) -> float:
+    """Return the existing 14-period mean true range from a complete 20-session stock window.
+
+    Missing/incomplete records intentionally produce NaN; this observer must
+    never make an EOD scan fail merely because ATR14 is unavailable.
+    """
+    required = {"HghPric", "LwPric", "ClsPric"}
+    if (
+        not eod_window_complete
+        or records is None
+        or len(records) != 20
+        or not required.issubset(records.columns)
+        or records[list(required)].isna().any().any()
+    ):
+        return float("nan")
+    high = pd.to_numeric(records["HghPric"], errors="coerce")
+    low = pd.to_numeric(records["LwPric"], errors="coerce")
+    close = pd.to_numeric(records["ClsPric"], errors="coerce")
+    if high.isna().any() or low.isna().any() or close.isna().any():
+        return float("nan")
+    previous_close = close.shift(1)
+    true_range = pd.concat(
+        [(high - low), (high - previous_close).abs(), (low - previous_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    return _num(true_range.tail(14).mean())
+
+
+def _resolve_atr14(atr_value, records, eod_window_complete: bool) -> float:
+    """Preserve a valid supplied ATR14; otherwise use the same-stock 20-session fallback."""
+    atr = _num(atr_value)
+    if pd.notna(atr) and atr > 0:
+        return atr
+    return _atr_from_20_session_records(records, eod_window_complete)
+
+
 def _flag(value) -> bool:
     """Parse boolean-like CSV values without treating NaN or 'False' as true."""
     if isinstance(value, bool):
@@ -928,28 +966,11 @@ def run_eod_layers(
     for _, row in output.iterrows():
         price = _num(row.get("ClsPric"))
         support = _num(row.get("SRSupport"))
-        atr = _num(row.get("ATR14"))
-        if pd.isna(atr) or atr <= 0:
-            records = ad_groups.get((
-                str(row.get("TckrSymb", "")).strip().upper(),
-                str(row.get("SctySrs", "")).strip().upper(),
-            ))
-            if (
-                eod_window_complete and records is not None and len(records) == 20
-                and {"HghPric", "LwPric", "ClsPric"}.issubset(records.columns)
-                and records[["HghPric", "LwPric", "ClsPric"]].notna().all().all()
-            ):
-                high = records["HghPric"]
-                low = records["LwPric"]
-                close = records["ClsPric"]
-                previous_close = close.shift(1)
-                true_range = pd.concat(
-                    [(high - low), (high - previous_close).abs(), (low - previous_close).abs()],
-                    axis=1,
-                ).max(axis=1)
-                atr = _num(true_range.tail(14).mean())
-            else:
-                atr = float("nan")
+        records = ad_groups.get((
+            str(row.get("TckrSymb", "")).strip().upper(),
+            str(row.get("SctySrs", "")).strip().upper(),
+        ))
+        atr = _resolve_atr14(row.get("ATR14"), records, eod_window_complete)
         stop_candidates = [value for value in [support, price - 1.5 * atr if pd.notna(atr) else float("nan")] if pd.notna(value) and pd.notna(price) and 0 < value < price]
         # Use the lower valid protective level. The nearest level can make the
         # stop artificially tight and inflate the displayed risk/reward ratio.
