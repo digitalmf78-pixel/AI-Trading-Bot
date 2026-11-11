@@ -75,10 +75,15 @@ def _atr14(history):
     if len(history) < 15 or not {"HghPric", "LwPric", "ClsPric"}.issubset(history.columns):
         return float("nan")
     recent = history.tail(15).copy()
-    if not _valid_ohlc_frame(recent):
-        return float("nan")
     for column in ("HghPric", "LwPric", "ClsPric"):
         recent[column] = pd.to_numeric(recent[column], errors="coerce")
+    if recent[["HghPric", "LwPric", "ClsPric"]].isna().any().any():
+        return float("nan")
+    if (
+        (recent["HghPric"] < recent["LwPric"]).any()
+        or (recent[["HghPric", "LwPric", "ClsPric"]] <= 0).any().any()
+    ):
+        return float("nan")
     previous = recent["ClsPric"].shift(1)
     true_range = pd.concat(
         [
@@ -336,7 +341,16 @@ def build_potential_accumulation_report(
                     len(window_dates) != window or len(part) != window
                     or part["Date"].dt.date.nunique() != window
                     or set(part["Date"].dt.date) != set(window_dates)
-                    or not _valid_ohlc_frame(part)
+                    or not {"HghPric", "LwPric", "ClsPric"}.issubset(part.columns)
+                    or part[["HghPric", "LwPric", "ClsPric"]].isna().any().any()
+                    or not part[["HghPric", "LwPric", "ClsPric"]].apply(
+                        lambda column: column.map(
+                            lambda value: math.isfinite(float(value)) and float(value) > 0
+                        )
+                    ).all().all()
+                    or (part["HghPric"] < part["LwPric"]).any()
+                    or (part["ClsPric"] < part["LwPric"]).any()
+                    or (part["ClsPric"] > part["HghPric"]).any()
                 ):
                     row[f"{prefix}Status"] = "WAIT_FOR_DATA"
                     for suffix in ("High", "Low", "WidthPct", "SessionsSinceLow", "SessionsSinceHigh", "ExactLowTouchCount", "ExactHighTouchCount"):
