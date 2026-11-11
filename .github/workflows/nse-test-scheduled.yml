@@ -262,7 +262,8 @@ jobs:
 
       - name: Fetch and inspect up to five official NSE XBRL samples (diagnostic only)
         id: xbrl_diagnostic
-        if: steps.nse_scan.outcome == 'success'
+        # Run even if the separate signal-history push failed; scanner success remains required.
+        if: always() && steps.nse_scan.outcome == 'success'
         continue-on-error: true
         run: |
           set -e
@@ -397,7 +398,9 @@ jobs:
           fi
           git commit -m "chore: persist append-only NSE signal history"
           git fetch origin "$GITHUB_REF_NAME"
-          git rebase "origin/$GITHUB_REF_NAME"
+          # The scanner updates tracked cache/report files in this checkout.
+          # Auto-stash those unrelated edits while rebasing the durable-history commit.
+          git -c rebase.autoStash=true rebase "origin/$GITHUB_REF_NAME"
           git push origin "HEAD:$GITHUB_REF_NAME"
 
       - name: Persist fundamental cache and dated history in repository
@@ -465,7 +468,8 @@ jobs:
           # Another workflow or audit-triggering commit may advance the branch
           # while this scan is running. Rebase the cache commit onto that head.
           git fetch origin "${GITHUB_REF_NAME}"
-          git rebase "origin/${GITHUB_REF_NAME}"
+          # Preserve scanner-generated tracked changes while rebasing the cache commit.
+          git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Redact account-derived position sizing from public report artifacts
