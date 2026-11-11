@@ -465,3 +465,32 @@ def test_free_source_empty_result_is_reported_without_unbound_status_error(monke
     assert diagnostic["FreeSourcesMetricsObserved"] == ""
     assert diagnostic["FreeSourcesMetricsFilled"] == ""
     assert diagnostic["FreeSourcesStatus"] != "PROVIDER_ERROR"
+
+
+def test_free_source_provider_error_is_not_suppressed_by_retry_cooldown():
+    import pandas as pd
+    from fundamental_data_provider import _free_source_cooldown_active
+
+    now = pd.Timestamp("2026-11-11T12:00:00+00:00")
+    recent_attempt = now - pd.Timedelta(hours=2)
+    recent_success = now - pd.Timedelta(hours=2)
+    old_attempt = now - pd.Timedelta(days=8)
+
+    assert not _free_source_cooldown_active(
+        recent_attempt, "PROVIDER_ERROR", 7, now=now,
+    )
+    assert _free_source_cooldown_active(
+        recent_success, "DATA_FOUND", 7, now=now,
+    )
+    assert _free_source_cooldown_active(
+        recent_success, "EMPTY_OR_UNMAPPED", 7, now=now,
+    )
+    assert not _free_source_cooldown_active(
+        old_attempt, "DATA_FOUND", 7, now=now,
+    )
+    assert not _free_source_cooldown_active(
+        pd.NaT, "PROVIDER_ERROR", 7, now=now,
+    )
+    assert _free_source_cooldown_active(
+        recent_attempt, pd.NA, 7, now=now,
+    )
