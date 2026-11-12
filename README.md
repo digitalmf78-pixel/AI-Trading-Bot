@@ -238,7 +238,7 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 
 ## NSE Delivery cache retention — 200 official sessions (12-Nov-2026)
 
-- Raw official NSE Delivery reports are retained for the latest **200 validated NSE Capital Market sessions** represented in the existing data/bhavcopy cache.
+- Raw official NSE Delivery reports are retained for the latest **200 consecutive validated NSE Capital Market sessions** represented in the existing data/bhavcopy cache; a missing/invalid Bhavcopy session fails closed rather than silently shifting the window backward.
 - delivery_history_backfill.py --sessions 200 validates each Bhavcopy file's internal EOD date and official-session status, then reuses valid Delivery CSVs and downloads only missing/invalid reports. It never downloads, edits, or prunes data/bhavcopy.
 - Before pruning, the workflow requires all 200 corresponding official Delivery reports to pass internal DATE1, required-column, and Delivery percentage validation. If coverage is incomplete, pruning and durable cache commit are refused.
 - Pruning removes only valid official Delivery report CSVs older than the oldest retained session. Non-session files, malformed files, streak state, and the derived A/B snapshot are preserved.
