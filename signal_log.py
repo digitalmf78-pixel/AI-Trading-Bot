@@ -48,8 +48,8 @@ def _delivery_category(row) -> str:
     explicit = _blank(row.get("DeliveryCategory"))
     if explicit:
         return explicit
-    a = _blank(row.get("DeliveryCategoryAStatus")).upper() == "PASS_AVG_GE_60_PERCENT"
-    b = _blank(row.get("DeliveryCategoryBStatus")).upper() == "PASS_EACH_DAY_GE_60_PERCENT"
+    a = _blank(row.get("DeliveryCategoryAStatus")).upper() == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+    b = _blank(row.get("DeliveryCategoryBStatus")).upper() == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     if a and b:
         return "A_AND_B"
     if a:
