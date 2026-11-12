@@ -2,10 +2,11 @@
 
 The production V8 eligibility rule uses all valid distinct NSE Delivery reports
 inside the 30-calendar-day window ending on the EOD as-of date. Category A
-passes when the candidate's average across its valid reports is >=60.00%;
-Category B passes only when every valid report is >=60.00%. The production
-scanner retains the union (A OR B). Each candidate needs at least five valid
-distinct reports; fewer reports or stale/unavailable data means WAIT_FOR_DATA.
+counts trailing five-valid-session rolling averages >=60.00% and passes at five
+or more qualifying windows. Category B counts individual daily Delivery values
+>=60.00% and passes at five or more qualifying days. The production scanner
+retains the union (A OR B). Each candidate needs at least five valid distinct
+reports; fewer reports or stale/unavailable data means WAIT_FOR_DATA.
 
 RVOL is not an eligibility gate for Delivery-qualified stocks. The scanner
 classifies RVOL >1.5, RVOL <=1.5, and unavailable RVOL separately after
