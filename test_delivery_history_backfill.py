@@ -83,3 +83,8 @@ def test_backfill_summary_is_partial_if_some_reports_unavailable(tmp_path, monke
     assert summary["ValidDeliveryReports"] == 1
     assert summary["MissingOrRejected"] == 1
     assert summary["Status"] == "PARTIAL_DELIVERY_HISTORY"
+
+
+def test_price_session_dates_rejects_nonpositive_target(tmp_path):
+    with pytest.raises(ValueError, match="at least 1"):
+        backfill.price_session_dates(tmp_path, 0)
