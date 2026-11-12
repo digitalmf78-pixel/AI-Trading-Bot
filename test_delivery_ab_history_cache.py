@@ -81,7 +81,9 @@ def test_persist_replaces_snapshot_idempotently(tmp_path):
 
 def test_internal_report_date_mismatch_is_rejected():
     requested = date(2026, 11, 11)
-    wrong = _report(date(2026, 11, 10), [("AAA", "EQ", "100", "65")])
+    # The cache key says Nov 11, but the official report's DATE1 says Nov 10.
+    _, wrong_frame = _report(date(2026, 11, 10), [("AAA", "EQ", "100", "65")])
+    wrong = (requested, wrong_frame)
     try:
         build_ab_qualified_history(_audit().iloc[[0]], [wrong], requested)
     except ValueError as exc:
