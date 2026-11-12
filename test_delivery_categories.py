@@ -17,32 +17,38 @@ def _sessions(values_by_symbol):
     return result
 
 
-def test_30d_average_category_uses_all_six_valid_reports(tmp_path, monkeypatch):
+def test_delivery_b_passes_after_five_daily_qualifying_reports(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     qualified, audit = apply_delivery_categories(
         candidates, "2026-10-23", sessions=_sessions({"AAA": [50, 62, 62, 62, 62, 62]})
     )
+    row = audit.iloc[0]
     assert len(qualified) == 1
-    assert audit.iloc[0]["DeliverySessions"] == 6
-    assert audit.iloc[0]["CategoryAStatus"] == "PASS"
-    assert audit.iloc[0]["CategoryBStatus"] == "FAIL"
-    assert audit.iloc[0]["AvgDelivery30D"] == 60
-    assert (tmp_path / "outputs/v8_delivery_category_a_avg60.csv").exists()
+    assert row["DeliverySessions"] == 6
+    assert row["DeliveryARolling5DPassCount30D"] == 1
+    assert row["DeliveryDailyPassCount"] == 5
+    assert row["CategoryAStatus"] == "FAIL"
+    assert row["CategoryBStatus"] == "PASS"
+    assert row["AvgDelivery30D"] == 60
+    assert (tmp_path / "outputs/v8_delivery_category_b_daily60_count5.csv").exists()
 
 
-def test_category_b_requires_every_valid_report_at_or_above_60(tmp_path, monkeypatch):
+def test_category_b_counts_daily_sessions_not_all_sessions(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "BBB", "SctySrs": "EQ"}])
     qualified, audit = apply_delivery_categories(
         candidates, "2026-10-23", sessions=_sessions({"BBB": [60, 65, 61, 70, 63, 62]})
     )
+    row = audit.iloc[0]
     assert len(qualified) == 1
-    assert audit.iloc[0]["CategoryAStatus"] == "PASS"
-    assert audit.iloc[0]["CategoryBStatus"] == "PASS"
+    assert row["DeliveryARolling5DPassCount30D"] == 2
+    assert row["DeliveryDailyPassCount"] == 6
+    assert row["CategoryAStatus"] == "FAIL"
+    assert row["CategoryBStatus"] == "PASS"
 
 
-def test_average_below_60_fails_both_categories(tmp_path, monkeypatch):
+def test_both_categories_fail_when_fewer_than_five_qualifying_counts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     candidates = pd.DataFrame([{"TckrSymb": "CCC", "SctySrs": "EQ"}])
     qualified, audit = apply_delivery_categories(
