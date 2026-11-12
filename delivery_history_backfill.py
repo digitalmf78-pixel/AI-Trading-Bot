@@ -31,6 +31,8 @@ MAX_RETRIES = 3
 
 def price_session_dates(price_dir: Path = PRICE_DIR, target_sessions: int = DEFAULT_TARGET_SESSIONS) -> list[date]:
     """Return the latest N consecutive official sessions with valid cached Bhavcopy files."""
+    if target_sessions < 1:
+        raise ValueError("target_sessions must be at least 1")
     found: dict[date, Path] = {}
     for path in price_dir.glob("bhavcopy_????????.csv"):
         match = re.fullmatch(r"bhavcopy_(\d{8})\.csv", path.name)
