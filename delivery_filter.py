@@ -294,11 +294,10 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         count = len(values)
         avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
-        # Reporting-only compact counts: for each valid NSE session in the 30-calendar-day
-        # window, count the trailing five-session average when all five symbol observations
-        # are present. Keep the existing production A/B eligibility rules unchanged.
-        session_values = pd.Series([by_date.get(day, float("nan")) for day in report_dates], dtype="float64")
-        rolling_5d = session_values.rolling(window=5, min_periods=5).mean()
+        # Category A: count every trailing five-valid-session average in the 30-calendar-day
+        # window that reaches the >=60% threshold. Missing symbol observations are not
+        # fabricated; rolling windows are formed from this symbol's valid distinct reports.
+        rolling_5d = pd.Series(values, dtype="float64").rolling(window=5, min_periods=5).mean()
         rolling_5d_pass_count = int(rolling_5d.ge(threshold).sum())
         daily_min = min(values) if count >= 5 else float("nan")
         daily_max = max(values) if count >= 5 else float("nan")
@@ -307,22 +306,23 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             category_a = category_b = overall = "WAIT_FOR_DATA"
             a_count_status = b_count_status = "WAIT_FOR_DATA"
         else:
-            category_a = (
-                "PASS_AVG_GE_60_PERCENT" if avg >= threshold
-                else "FILTERED_OUT_AVG_LT_60_PERCENT"
-            )
-            category_b = (
-                "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= threshold for v in values)
-                else "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
-            )
-            # The generic production status represents the Delivery A OR B
-            # union. Keep both category-specific statuses intact for reporting.
+            # Production A/B eligibility uses the user-confirmed minimum-five rule:
+            # A passes when at least five trailing five-valid-session averages reach 60%;
+            # B passes when at least five individual valid sessions reach 60%.
             a_count_status = "PASS" if rolling_5d_pass_count >= 5 else "FAIL"
             b_count_status = "PASS" if daily_pass_count >= 5 else "FAIL"
+            category_a = (
+                "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+                if a_count_status == "PASS" else "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+            )
+            category_b = (
+                "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
+                if b_count_status == "PASS" else "FILTERED_OUT_DAILY_DELIVERY_LT_5"
+            )
+            # Production eligibility remains the de-duplicated A OR B union.
             overall = (
                 "PASS_GE_60_PERCENT"
-                if category_a == "PASS_AVG_GE_60_PERCENT"
-                or category_b == "PASS_EACH_DAY_GE_60_PERCENT"
+                if a_count_status == "PASS" or b_count_status == "PASS"
                 else "FILTERED_OUT_LT_60_PERCENT"
             )
         if window_stale:
@@ -365,13 +365,13 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     audit_path = AUDIT_DIR / f"delivery_dual_category_audit_{asof.strftime('%Y%m%d')}.csv"
     audit.to_csv(audit_path, index=False)
-    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"].copy()
-    category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"].copy()
+    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"].copy()
+    category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
     category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_avg60.csv", index=False)
     category_b.to_csv(AUDIT_DIR / "v8_delivery_category_b_each_day60.csv", index=False)
     audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
-    print(f"[DELIVERY] 30D Category A average >= {threshold:.2f}%: {len(category_a)}")
-    print(f"[DELIVERY] 30D Category B every valid session >= {threshold:.2f}%: {len(category_b)}")
+    print(f"[DELIVERY] 30D Category A rolling 5-session averages >= {threshold:.2f}% at least 5 times: {len(category_a)}")
+    print(f"[DELIVERY] 30D Category B daily Delivery >= {threshold:.2f}% at least 5 days: {len(category_b)}")
     print(f"[DELIVERY] WAIT_FOR_DATA (<5 candidate sessions): {(audit['DeliveryStatus'].astype(str).str.startswith('WAIT_FOR_DATA')).sum()}")
     print(f"[DELIVERY] 30D dual-category audit saved: {audit_path}")
 
