@@ -7,10 +7,11 @@ import pytest
 import delivery_history_backfill as backfill
 
 
-def test_price_session_dates_uses_existing_price_cache_and_latest_n(tmp_path, monkeypatch):
+def test_price_session_dates_uses_existing_validated_price_cache_and_latest_n(tmp_path, monkeypatch):
     for token in ["20261102", "20261103", "20261104", "20261105", "20261106"]:
         (tmp_path / f"bhavcopy_{token}.csv").write_text("placeholder")
     monkeypatch.setattr(backfill, "is_trading_session", lambda day: day.weekday() < 5)
+    monkeypatch.setattr(backfill, "validate_bhavcopy_date", lambda frame, day, source=None: True)
     assert backfill.price_session_dates(tmp_path, 3) == [
         date(2026, 11, 4), date(2026, 11, 5), date(2026, 11, 6)
     ]
@@ -19,8 +20,21 @@ def test_price_session_dates_uses_existing_price_cache_and_latest_n(tmp_path, mo
 def test_price_session_dates_fails_if_existing_cache_is_short(tmp_path, monkeypatch):
     (tmp_path / "bhavcopy_20261106.csv").write_text("placeholder")
     monkeypatch.setattr(backfill, "is_trading_session", lambda day: True)
-    with pytest.raises(RuntimeError, match="Only 1 official price-cache sessions"):
+    monkeypatch.setattr(backfill, "validate_bhavcopy_date", lambda frame, day, source=None: True)
+    with pytest.raises(RuntimeError, match="Only 1 internally validated official price-cache sessions"):
         backfill.price_session_dates(tmp_path, 200)
+
+
+def test_price_session_dates_ignores_invalid_internal_bhavcopy_dates(tmp_path, monkeypatch):
+    for token in ["20261105", "20261106"]:
+        (tmp_path / f"bhavcopy_{token}.csv").write_text("placeholder")
+    monkeypatch.setattr(backfill, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(
+        backfill, "validate_bhavcopy_date",
+        lambda frame, day, source=None: (_ for _ in ()).throw(ValueError("bad internal date"))
+        if day == date(2026, 11, 5) else True,
+    )
+    assert backfill.price_session_dates(tmp_path, 1) == [date(2026, 11, 6)]
 
 
 def test_cached_delivery_requires_matching_internal_date_and_valid_rows(tmp_path):
