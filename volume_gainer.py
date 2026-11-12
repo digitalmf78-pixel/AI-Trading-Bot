@@ -25,6 +25,7 @@ def _perf_timed(stage_name):
 import requests
 import pandas as pd
 from delivery_filter import apply_delivery_filter, get_delivery_sessions
+from delivery_ab_history_cache import persist_ab_qualified_history
 from nse_trading_calendar import CalendarCoverageError, calendar_coverage_warnings, is_trading_session, official_session_reason
 from delivery_streak_tracker import update_delivery_scan_streak
 from delivery_consistency import build_delivery_consistency_report
@@ -3516,6 +3517,21 @@ def main():
                 axis=1,
             )
             delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
+
+            # Persist every available daily official Delivery observation for
+            # the exact A OR B qualified cohort. This derived rolling snapshot
+            # is separate from (and never mutates) the raw NSE cache.
+            if delivery_sessions and not delivery_audit.empty:
+                try:
+                    persist_ab_qualified_history(
+                        delivery_audit, delivery_sessions, eod_date
+                    )
+                except Exception as history_exc:
+                    print(
+                        "[DELIVERY A/B HISTORY] WAIT_FOR_DATA; derived cache was not "
+                        "updated; raw reports and A/B eligibility remain unchanged: "
+                        f"{type(history_exc).__name__}: {history_exc}"
+                    )
 
             # Delivery A/B minimum-five qualifying counts are the eligibility gate. Keep the full A OR B union.
             # RVOL only classifies the Delivery-qualified universe; it must not
