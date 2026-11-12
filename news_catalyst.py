@@ -1354,7 +1354,8 @@ def _top_ranked_observations_by_tier(selected: pd.DataFrame, limit_per_tier: int
 
 def _observation_digest_lines(report: pd.DataFrame | None,
                               result: pd.DataFrame | None = None,
-                              news_data: pd.DataFrame | None = None) -> list[str]:
+                              news_data: pd.DataFrame | None = None,
+                              company_names: dict[str, str] | None = None) -> list[str]:
     """Send every liquidity-passed stock with downstream confirmations and compact 30-day Delivery A/B counts."""
     rows = _telegram_observation_rows(report, result, limit=None)
     if rows.empty:
@@ -1429,7 +1430,7 @@ def _observation_digest_lines(report: pd.DataFrame | None,
     }
     # Official NSE equity master is the only source of displayed company names.
     # Missing/unavailable mapping must never be guessed from a ticker.
-    official_company_names = _read_equity_master()
+    official_company_names = company_names if company_names is not None else _read_equity_master()
     current_tier = None
     for _, row in rows.iterrows():
         symbol = value(row, "TckrSymb", "UNKNOWN")
@@ -1523,15 +1524,16 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
     counts = status_col.value_counts().to_dict()
     waiting = sum(v for k, v in counts.items() if k.startswith("WAIT"))
     # Generation time is not the same as the upstream market-data update time.
-    generated_at_ist = datetime.now(timezone.utc).astimezone(pd.Timestamp.now(tz="Asia/Kolkata").tzinfo)
+    generated_at_ist = pd.Timestamp.now(tz="Asia/Kolkata").to_pydatetime()
     lines = [f"{heading} • {eod_date}",
              f"📅 EOD Data Date: {eod_date} | 🕒 Report Generated: {generated_at_ist:%Y-%m-%d %H:%M:%S} IST",
              "🕒 Last Source Data Update: WAIT_FOR_VERIFIED_TIMESTAMP",
              f"Liquidity/Fundamental pipeline rows: {len(result)} | Final WATCH: {counts.get('WATCH', 0)} | WAIT: {waiting}"]
     if scan_mode == "PREMARKET":
         lines.append("News refresh only • Technical status मागील EOD scan मधील आहे.")
-    lines.extend(build_telegram_research_sections(result, news, eod_date))
-    lines.extend(_observation_digest_lines(observation_report, result, news))
+    official_company_names = _read_equity_master()
+    lines.extend(build_telegram_research_sections(result, news, eod_date, official_company_names))
+    lines.extend(_observation_digest_lines(observation_report, result, news, official_company_names))
     lines.append("News sentiment headline/description वर आधारित आहे; पूर्ण बातमी वाचल्याची किंवा स्वतंत्र पुष्टीची हमी नाही.")
     lines.append("रिकामी/unverified माहिती WAIT_FOR_DATA राहते. हा अहवाल BUY शिफारस नाही; automatic order नाही.")
     return lines
