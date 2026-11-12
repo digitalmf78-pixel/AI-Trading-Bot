@@ -96,10 +96,12 @@ def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation
             "RiskControlReason": "SECTOR_REQUIRED_FOR_CONCENTRATION_CHECK",
         },
     ])
+    monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {"STRONG1": "STRONG ONE LIMITED", "MEDIUM1": "MEDIUM ONE LIMITED", "LOW1": "LOW ONE LIMITED"})
     lines = news_catalyst.build_marathi_digest(result, "2026-11-06", None, {}, observation_report=report)
     digest = "\n".join(lines)
     for symbol in ("STRONG1", "MEDIUM1", "LOW1"):
         assert symbol in digest
+    assert "STRONG ONE LIMITED | NSE: STRONG1" in digest
     for status in ("Technical:PASS", "Technical:REJECT", "Sector:FAIL", "PRIMARY_CONFIRMED",
                    "3+1:True/PASS", "3+1:False/FAIL", "Risk:REJECT", "FINAL:WATCH",
                    "FINAL:SKIP", "FINAL:WAIT_FOR_DATA"):
@@ -128,7 +130,8 @@ def test_research_digest_has_delivery_5_10_20_news_links_events_and_watchlist_ex
     news=pd.DataFrame([{"TckrSymb":"ABC","PublishedAt":"2026-11-11T10:00:00Z",
         "Headline":"ABC announces order","Impact":"positive","SourceType":"official",
         "URL":"https://example.test/news"}])
-    digest="\\n".join(research.build_telegram_research_sections(pd.DataFrame([{"TckrSymb":"ABC"}]),news,"2026-11-11"))
+    digest="\\n".join(research.build_telegram_research_sections(pd.DataFrame([{"TckrSymb":"ABC"}]),news,"2026-11-11",{"ABC":"ABC INDUSTRIES LIMITED"}))
+    assert "ABC INDUSTRIES LIMITED | NSE: ABC" in digest
     assert "5D Qty Δ 20.0%" in digest and "10D WAIT_FOR_DATA" in digest
     assert "ACCUMULATION_WATCH" in digest and "BOARD_MEETING" in digest
     assert "https://example.test/news" in digest
