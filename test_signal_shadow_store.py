@@ -73,7 +73,7 @@ def test_stage_event_preserves_raw_status_and_is_deterministic():
     args = dict(
         signal_id=snapshot()["signal_id"], eod_date="2026-11-09", symbol="RELIANCE",
         strategy_version=SHA, stage_name="DELIVERY_30D_AB",
-        status="FILTERED_OUT_AVG_LT_60_PERCENT",
+        status="FILTERED_OUT_ROLLING_5D_AVG_LT_5",
         reason_code="AVG_BELOW_THRESHOLD", reason_text="Raw source reason",
         source_report="v8_delivery_dual_category_audit.csv",
         source_row_hash="c" * 64,
@@ -81,7 +81,7 @@ def test_stage_event_preserves_raw_status_and_is_deterministic():
     first = build_stage_event(**args, observed_at_utc="2026-11-10T10:00:00+00:00")
     second = build_stage_event(**args, observed_at_utc="2026-11-10T11:00:00+00:00")
     assert first["event_id"] == second["event_id"]
-    assert first["Status"] == "FILTERED_OUT_AVG_LT_60_PERCENT"
+    assert first["Status"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
 
 
 def test_append_exact_duplicate_is_noop(tmp_path: Path):
