@@ -12,7 +12,7 @@ Automated NSE EOD research and swing-trading analysis pipeline. The scanner prod
 
 - Eligible NSE Mainboard universe (Largecap, Midcap, Smallcap; existing SME/ETF/MF exclusions).
 - Prior 20 complete sessions are loaded to prepare the average-volume baseline.
-- Delivery Category A and B are calculated independently over **all** valid distinct reports in the full 30-calendar-day window (not just the latest five); minimum five valid reports. A = average >=60.00%; B = every available valid day >=60.00%. Reports show actual valid-session count, dates, average/min/max Delivery %, A/B status and WAIT_FOR_DATA when fewer than five reports exist.
+- Delivery Category A and B are calculated independently over **all available valid distinct reports** in the 30-calendar-day window (not just the latest five); minimum five valid reports. A = at least five trailing five-valid-session rolling averages >=60.00%; B = at least five individual daily Delivery observations >=60.00%. Production eligibility remains A OR B. Reports show actual valid-session count and compact A n/30, B n/30 counts; fewer than five valid reports means WAIT_FOR_DATA.
 - Form the complete de-duplicated A OR B union and preserve A_ONLY / B_ONLY / A_AND_B.
 - Calculate RVOL only for this union: >1.5 HIGH, <=1.5 LOW, invalid/missing WAIT_FOR_DATA. RVOL is classification only and never rejects a Delivery-qualified candidate.
 - All A/B candidates continue to the 20-session liquidity check; hard minimum average traded value ₹1.5 crore.
@@ -56,7 +56,7 @@ The correctly named pre-news cohort export is `outputs/v8_liquidity_qualified_pr
 
 ## Current authoritative rule addendum
 
-The active 30-calendar-day NSE Delivery A/B screening rules, clarified on 2026-11-10 to use every valid report in the window after a minimum of five, are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). The strict five-session Delivery-only watchlist remains a separate artifact. This addendum supplements the Master Specification; it does not replace or rewrite it.
+The active 30-calendar-day NSE Delivery A/B screening rules, updated on 2026-11-12 to require at least five qualifying rolling-average windows for A or five qualifying daily sessions for B, using all valid reports in the window, are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). The strict five-session Delivery-only watchlist remains a separate artifact. This addendum supplements the Master Specification; it does not replace or rewrite it.
 
 ## Current authoritative RSI rule addendum
 
@@ -69,8 +69,8 @@ The previous wording that RVOL is calculated for the full Mainboard universe is 
 
 1. Load the latest verified NSE EOD Bhavcopy and prepare the eligible NSE Mainboard universe (Largecap, Midcap and Smallcap; existing SME/ETF/MF exclusions remain).
 2. Load/reuse the prior 20 complete trading-session Bhavcopy history and prepare the average-volume baseline only. **Do not calculate RVOL for the Mainboard universe at this stage.**
-3. Apply the existing 30-calendar-day Delivery Category A rule (average Delivery >=60.00%; minimum five valid distinct reports).
-4. Apply the existing 30-calendar-day Delivery Category B rule (every valid report >=60.00%; minimum five valid distinct reports).
+3. Apply 30-calendar-day Delivery Category A: count trailing five-valid-session rolling averages >=60.00%; A passes at 5 or more qualifying windows.
+4. Apply 30-calendar-day Delivery Category B: count individual valid sessions with daily Delivery >=60.00%; B passes at 5 or more qualifying days. Fewer than five valid distinct reports means WAIT_FOR_DATA for both categories.
 5. Build the complete **A OR B** union; preserve `A_ONLY`, `B_ONLY`, and `A_AND_B` membership and de-duplicate by symbol.
 6. **Only now calculate RVOL** for every unique stock in the A/B union, using current EOD volume divided by the average volume of the previous 20 complete trading sessions (current session excluded).
 7. Classify RVOL: strictly >1.5 = `HIGH_RVOL_GT_1_5`; <=1.5 = `LOW_RVOL_LE_1_5`; missing/invalid baseline or current volume = `WAIT_FOR_DATA`.
