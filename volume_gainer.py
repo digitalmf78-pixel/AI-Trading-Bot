@@ -3734,7 +3734,7 @@ def main():
         "outputs/v8_fundamental_liquidity_pass_candidates.csv", index=False
     )
     print(
-        "\\nSTEP 7: Collecting fundamentals ONLY for "
+        "\nSTEP 7: Collecting fundamentals ONLY for "
         f"{len(fundamental_collection_candidates)} Liquidity-PASS stocks; "
         "Liquidity REJECT/WAIT stocks are excluded from provider collection."
     )
@@ -3760,8 +3760,8 @@ def main():
                     "ProviderReason": f"{type(provider_exc).__name__}: {provider_exc}",
                 }]).to_csv("outputs/v8_fundamental_provider_diagnostics.csv", index=False)
                 print(
-                    "[FUNDAMENTAL PROVIDER] Stage error; retain all RVOL > 1.5 "
-                    f"Delivery A/B candidates: {provider_exc}"
+                    "[FUNDAMENTAL PROVIDER] Stage error; retain all Liquidity-PASS "
+                    f"candidates: {provider_exc}"
                 )
             fundamental_audit, _ = apply_fundamental_filter(
                 fundamental_collection_candidates, eod_date
@@ -3832,7 +3832,7 @@ def main():
     except Exception as fund_exc:
         print(
             "[FUNDAMENTAL] Collection/score error; keeping all Liquidity-qualified "
-            f"candidates and preserving the RVOL > 1.5 report: {fund_exc}"
+            f"candidates and preserving the Liquidity-PASS report: {fund_exc}"
         )
         fundamental_audit = fundamental_collection_candidates.copy()
         if not fundamental_audit.empty:
