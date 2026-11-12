@@ -1,7 +1,7 @@
 """Fundamental data collection and provisional scoring for NSE V8.
 
 This stage is intentionally NOT a hard eligibility filter. Every stock that
-passes Delivery Category A or B remains in the fundamental collection reports,
+passes the Liquidity filter is included in the fundamental collection reports,
 even when its financial data is missing or incomplete. Strong-fundamental
 shortlisting is a later, separate decision.
 """
@@ -323,7 +323,7 @@ def apply_fundamental_filter(
     audit.loc[audit["FundamentalScore"].notna() & audit["FundamentalScore"].ge(65), "Fundamental65PlusStatus"] = "SCORE_GE_65"
     audit.loc[audit["FundamentalScore"].notna() & audit["FundamentalScore"].lt(65), "Fundamental65PlusStatus"] = "SCORE_BELOW_65"
     audit["FundamentalRank"] = audit["FundamentalScore"].rank(method="min", ascending=False).astype("Int64")
-    audit["FundamentalScoreMethod"] = "Equal-weight relative percentile mean within the current RVOL > 1.5 Delivery A/B collection cohort; informational only, only when six numeric metrics, official publication date, period end, and metric-period alignment are verified point-in-time"
+    audit["FundamentalScoreMethod"] = "Equal-weight relative percentile mean within the current Liquidity-PASS collection cohort; informational only, only when six numeric metrics, official publication date, period end, and metric-period alignment are verified point-in-time"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     audit.to_csv(OUTPUT_DIR / "v8_fundamental_report.csv", index=False)
