@@ -30,7 +30,7 @@ MAX_RETRIES = 3
 
 
 def price_session_dates(price_dir: Path = PRICE_DIR, target_sessions: int = DEFAULT_TARGET_SESSIONS) -> list[date]:
-    """Return latest N unique official sessions with internally valid cached Bhavcopy files."""
+    """Return the latest N consecutive official sessions with valid cached Bhavcopy files."""
     found: dict[date, Path] = {}
     for path in price_dir.glob("bhavcopy_????????.csv"):
         match = re.fullmatch(r"bhavcopy_(\d{8})\.csv", path.name)
@@ -47,14 +47,32 @@ def price_session_dates(price_dir: Path = PRICE_DIR, target_sessions: int = DEFA
             raise
         except Exception as exc:
             print(f"[DELIVERY BACKFILL] IGNORE_INVALID_PRICE_CACHE={path.name} reason={type(exc).__name__}")
-    ordered = sorted(found)
-    if len(ordered) < target_sessions:
-        raise RuntimeError(
-            f"Only {len(ordered)} internally validated official price-cache sessions are available; "
-            f"{target_sessions} are required. Price cache was not downloaded or modified."
-        )
-    return ordered[-target_sessions:]
 
+    if not found:
+        raise RuntimeError("No internally validated official price-cache sessions are available.")
+    latest = max(found)
+    expected: list[date] = []
+    cursor = latest
+    calendar_days_scanned = 0
+    while len(expected) < target_sessions and calendar_days_scanned <= target_sessions * 2 + 30:
+        if is_trading_session(cursor):
+            expected.append(cursor)
+        cursor -= pd.Timedelta(days=1)
+        calendar_days_scanned += 1
+    if len(expected) < target_sessions:
+        raise RuntimeError(
+            f"Official calendar coverage yielded only {len(expected)} sessions; "
+            f"{target_sessions} are required."
+        )
+    missing = [day for day in expected if day not in found]
+    if missing:
+        sample = ",".join(day.isoformat() for day in missing[:12])
+        raise RuntimeError(
+            f"Bhavcopy cache is not contiguous for the latest {target_sessions} official sessions; "
+            f"{len(missing)} session files are missing/invalid (sample: {sample}). "
+            "Price cache was not downloaded or modified."
+        )
+    return sorted(expected)
 
 def _valid_cached_report(path: Path, expected: date) -> tuple[bool, int, str]:
     if not path.exists() or path.stat().st_size <= 1000:
