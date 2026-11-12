@@ -144,9 +144,14 @@ def _delivery_status(symbol: str, signal_date: pd.Timestamp, delivery_by_date: d
                 "DeliveryMinimum30D_Pct": float(min(values)) if values else np.nan}
     avg = float(np.mean(values))
     minimum = float(min(values))
+    rolling = pd.Series(values, dtype="float64").rolling(window=5, min_periods=5).mean()
+    a_count = int(rolling.ge(MIN_DELIVERY_PCT).sum())
+    b_count = int(sum(v >= MIN_DELIVERY_PCT for v in values))
     return {
-        "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT" if avg >= MIN_DELIVERY_PCT else "REJECT_AVG_LT_60_PERCENT",
-        "DeliveryCategoryBStatus": "PASS_EACH_DAY_GE_60_PERCENT" if all(v >= MIN_DELIVERY_PCT for v in values) else "REJECT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
+        "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5" if a_count >= 5 else "FILTERED_OUT_ROLLING_5D_AVG_LT_5",
+        "DeliveryCategoryBStatus": "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5" if b_count >= 5 else "FILTERED_OUT_DAILY_DELIVERY_LT_5",
+        "DeliveryARolling5DPassCount30D": a_count,
+        "DeliveryDailyPassCount": b_count,
         "DeliverySessions": count, "DeliveryAverage30D_Pct": avg, "DeliveryMinimum30D_Pct": minimum,
     }
 
@@ -273,14 +278,14 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
     for setup in ("RSI30_RECOVERY", "RSI40_RETEST", "RSI50_RETEST"):
         raw = signals[signals["Setup"].eq(setup)].copy() if not signals.empty else signals.copy()
         for category, status_col, pass_status in (
-            ("A_AVERAGE_30D", "DeliveryCategoryAStatus", "PASS_AVG_GE_60_PERCENT"),
-            ("B_EVERY_SESSION_30D", "DeliveryCategoryBStatus", "PASS_EACH_DAY_GE_60_PERCENT"),
+            ("A_ROLLING_5D_WINDOWS_MIN_5", "DeliveryCategoryAStatus", "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"),
+            ("B_DAILY_DELIVERY_DAYS_MIN_5", "DeliveryCategoryBStatus", "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"),
         ):
             qualified = raw[raw[status_col].eq(pass_status)].copy() if not raw.empty else raw
             comparison.append(_summarize(f"{setup}_{category}", raw, qualified, status_col))
     comp = pd.DataFrame(comparison)
     comp["BacktestStatus"] = np.where(comp["TradesWith5DOutcome"].fillna(0).gt(0), "TECHNICAL_ONLY_PRELIMINARY", "WAIT_FOR_DATA")
-    comp["RiskNote"] = "Primary returns are technical-only and may include EMA50 warm-up bars; A and B delivery-qualified metrics are separate. Minimum 5 candidate-specific valid reports in 30 calendar days. No point-in-time fundamentals, transaction costs, or slippage."
+    comp["RiskNote"] = "Primary returns are technical-only and may include EMA50 warm-up bars; A and B delivery-qualified metrics are separate. Minimum 5 candidate-specific valid reports in 30 calendar days; A needs 5 qualifying rolling windows or B needs 5 qualifying daily sessions. No point-in-time fundamentals, transaction costs, or slippage."
     comp.to_csv(output_dir / "rsi_retest_comparison.csv", index=False)
     latest = prices["DATE"].max()
     current = signals[signals["Date"].eq(latest.date().isoformat())].copy() if not signals.empty else signals.copy()
