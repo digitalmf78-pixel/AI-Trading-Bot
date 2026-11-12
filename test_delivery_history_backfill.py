@@ -25,6 +25,15 @@ def test_price_session_dates_fails_if_existing_cache_is_short(tmp_path, monkeypa
         backfill.price_session_dates(tmp_path, 200)
 
 
+def test_price_session_dates_fails_closed_on_a_gap_in_latest_sessions(tmp_path, monkeypatch):
+    for token in ["20261104", "20261106"]:
+        (tmp_path / f"bhavcopy_{token}.csv").write_text("placeholder")
+    monkeypatch.setattr(backfill, "is_trading_session", lambda day: day.weekday() < 5)
+    monkeypatch.setattr(backfill, "validate_bhavcopy_date", lambda frame, day, source=None: True)
+    with pytest.raises(RuntimeError, match="not contiguous"):
+        backfill.price_session_dates(tmp_path, 3)
+
+
 def test_price_session_dates_ignores_invalid_internal_bhavcopy_dates(tmp_path, monkeypatch):
     for token in ["20261105", "20261106"]:
         (tmp_path / f"bhavcopy_{token}.csv").write_text("placeholder")
