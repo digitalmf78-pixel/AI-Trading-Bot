@@ -43,7 +43,7 @@ def test_telegram_retries_failed_delivery(monkeypatch):
     news_catalyst.send_marathi_telegram(None, "2026-11-05", None, {}, "token", "chat")
     assert len(calls) == 2
 
-def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation_layers():
+def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation_layers(monkeypatch):
     report = __import__("pandas").DataFrame([
         {
             "TckrSymb": "STRONG1", "LiquidityFilterStatus": "PASS", "LiquidityTier": "STRONG",
