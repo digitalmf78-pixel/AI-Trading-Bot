@@ -1427,6 +1427,9 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         "MEDIUM": "🟡 MEDIUM LIQUIDITY (₹2–5cr/day)",
         "LOW": "🔵 WEAK LIQUIDITY (₹1.5–2cr/day)",
     }
+    # Official NSE equity master is the only source of displayed company names.
+    # Missing/unavailable mapping must never be guessed from a ticker.
+    official_company_names = _read_equity_master()
     current_tier = None
     for _, row in rows.iterrows():
         symbol = value(row, "TckrSymb", "UNKNOWN")
@@ -1470,7 +1473,9 @@ def _observation_digest_lines(report: pd.DataFrame | None,
                 return "FAIL"
             return "NA"
 
-        lines.append("  " + symbol + " | " + tier + " " + turnover_text)
+        official_name = official_company_names.get(symbol)
+        lines.append("  Company: " + (official_name if official_name else "NAME_NOT_VERIFIED_IN_NSE_MASTER"))
+        lines.append("  NSE: " + symbol + " | " + tier + " " + turnover_text)
         rvol_raw = value(row, "RVOLStatus")
         a_count = value(row, "DeliveryARolling5DPassCount30D", "WAIT")
         b_count = value(row, "DeliveryDailyPassCount", "WAIT")
@@ -1517,7 +1522,11 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
     status_col = result.get("EODWatchlistStatus", pd.Series("WAIT_FOR_DATA", index=result.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper() if isinstance(result, pd.DataFrame) else pd.Series(dtype=str)
     counts = status_col.value_counts().to_dict()
     waiting = sum(v for k, v in counts.items() if k.startswith("WAIT"))
+    # Generation time is not the same as the upstream market-data update time.
+    generated_at_ist = datetime.now(timezone.utc).astimezone(pd.Timestamp.now(tz="Asia/Kolkata").tzinfo)
     lines = [f"{heading} • {eod_date}",
+             f"📅 EOD Data Date: {eod_date} | 🕒 Report Generated: {generated_at_ist:%Y-%m-%d %H:%M:%S} IST",
+             "🕒 Last Source Data Update: WAIT_FOR_VERIFIED_TIMESTAMP",
              f"Liquidity/Fundamental pipeline rows: {len(result)} | Final WATCH: {counts.get('WATCH', 0)} | WAIT: {waiting}"]
     if scan_mode == "PREMARKET":
         lines.append("News refresh only • Technical status मागील EOD scan मधील आहे.")
