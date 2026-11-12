@@ -212,3 +212,16 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 
 
 - Further atomic persistence tests passed in CI run 42826604469: simulated staged-file fsync failure leaves the old partition intact; simulated parent-directory fsync failure is recovered by an idempotent retry. New files default to mode 0600; existing permissions are preserved. This remains single-process helper validation, not multi-writer workflow validation.
+
+## EOD runtime audit — 12-Nov-2026
+- Latest completed scanner run: [43170198176](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43170198176) — SUCCESS, 20m20s. Previous measured baseline: 27m41s; improvement: 7m21s.
+- Largest measured stage: Fundamental Data Collection 8m09s; Sector Inputs Refresh 2m07s; News Catalyst Collection 1m16s. About 7m16s of scanner runtime is not yet attributed by current stage timers.
+- Liquidity PASS: 325 stocks; fundamentals: 287 DATA_FOUND + 38 EXISTING_RECORD_COMPLETE.
+- Delivery cache restored/audited at 21/21 expected reports, but persistence log reported WAIT_FOR_DATA because no validated Bhavcopy as-of date was found. Durable Delivery-cache commit is **not yet verified**; this remains open.
+- Runtime optimization findings, implementation status and next steps are tracked in [NSE V8 Hybrid Strategy Master Parameters](NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md), Section 11.
+
+## Delivery A/B count meaning (12-Nov-2026)
+- `A: n/30` = number of qualifying trailing five-valid-session rolling averages (each >=60.00%) in the 30-calendar-day window. A passes at **5 or more qualifying rolling windows**.
+- `B: n/30` = number of individual valid Delivery sessions with daily Delivery >=60.00% in the same 30-calendar-day window. B passes at **5 or more qualifying days**.
+- At least five valid distinct reports are required to evaluate either category; fewer means WAIT_FOR_DATA. Use all valid reports in the window, not only the latest five.
+- Production eligibility is A OR B. The compact denominator /30 means a 30-calendar-day lookback, not 30 expected trading sessions. The separate strict five-session watchlist is a different artifact.
