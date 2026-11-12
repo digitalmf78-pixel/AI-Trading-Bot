@@ -51,11 +51,11 @@ def test_delivery_audit_rejects_when_both_minimum_five_counts_fail(monkeypatch, 
     )
 
     row = audit.iloc[0]
-    assert qualified["TckrSymb"].tolist() == ["AAA"]  # Category A alone qualifies (A OR B).
-    assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
-    assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
-    assert row["DeliveryStatus"] == "PASS_GE_60_PERCENT"
-    assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
+    assert qualified.empty  # Neither category reaches five qualifying observations.
+    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+    assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
+    assert row["DeliveryStatus"] == "FILTERED_OUT_LT_60_PERCENT"
+    assert row["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
     assert row["DeliveryAsOfDate"] == "2026-10-23"
     assert bool(row["DeliveryAsOfReportAvailable"]) is False
     assert row["DeliveryWindowStartDate"] == "2026-09-24"
@@ -79,8 +79,8 @@ def test_every_day_delivery_passes_downstream_gate(monkeypatch, tmp_path):
     reports = [(day, _frame("BBB", (value,))) for day, value in zip(dates, [60, 65, 61, 70, 63])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     assert qualified["TckrSymb"].tolist() == ["BBB"]
-    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
-    assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"
+    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+    assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
 
 
