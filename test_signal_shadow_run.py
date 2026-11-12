@@ -12,8 +12,8 @@ def test_full_mainboard_shadow_is_left_joined_and_does_not_mutate_inputs(tmp_pat
     ])
     delivery = pd.DataFrame([{
         "TckrSymb": "ABC", "SctySrs": "EQ",
-        "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
-        "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
+        "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+        "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
         "DeliveryFilterStatus": "PASS_A_OR_B",
     }])
     original = mainboard.copy(deep=True)
