@@ -178,3 +178,30 @@ def test_category_a_requires_at_least_five_qualifying_rolling_windows(monkeypatc
     assert row["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
+
+
+def test_delivery_display_counts_do_not_change_eligibility(monkeypatch, tmp_path):
+    monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
+    dates = [date(2026, 10, 15), date(2026, 10, 16), date(2026, 10, 19),
+             date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, [60, 61, 62, 63, 64, 65])]
+    qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
+    row = audit.iloc[0]
+    assert row["DeliveryACount30DDisplay"] == "2/30"
+    assert row["DeliveryBCount30DDisplay"] == "6/30"
+    assert row["DeliveryARolling5DPassCount30D"] == 2
+    assert row["DeliveryDailyPassCount"] == 6
+    assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
+    assert qualified["TckrSymb"].tolist() == ["AAA"]
+
+
+def test_delivery_display_waits_when_fewer_than_five_reports(monkeypatch, tmp_path):
+    monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
+    candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
+    dates = [date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    reports = [(day, _frame("AAA", (65.0,))) for day in dates]
+    qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
+    assert qualified.empty
+    assert audit.iloc[0]["DeliveryACount30DDisplay"] == "WAIT_FOR_DATA/30"
+    assert audit.iloc[0]["DeliveryBCount30DDisplay"] == "WAIT_FOR_DATA/30"
