@@ -626,12 +626,13 @@ The production scanner must follow this exact sequence:
 
 ## 12. Delivery wording clarification + next runtime audit (12-Nov-2026)
 
-### Delivery rule clarification — awaiting one exact definition
-- User clarified the minimum-data rule remains: fewer than five valid distinct reports in the 30-calendar-day window = `WAIT_FOR_DATA`.
-- User further stated that a stock should PASS if it meets a five-consecutive-day condition OR has five qualifying days at/above 60%; otherwise it should be REJECTED once sufficient data exists.
-- The precise Category A meaning needs confirmation before code or authoritative rule text is changed: should A mean **at least one consecutive block of five valid sessions whose five-day average is >=60%**, or **five qualifying rolling five-session averages >=60%** (the current code)? Category B is understood as five individual sessions at >=60%, but please confirm whether those five days must be consecutive or can be any five valid days in the 30-day window.
-- Current committed implementation remains the existing 12-Nov rule: A counts qualifying trailing five-valid-session rolling averages and passes at >=5; B counts daily >=60% sessions and passes at >=5. Do not claim the new wording has been implemented until clarified and tested.
-- Current `delivery_filter.py` also contains an outdated function docstring describing full-window average / every-day logic, which should be corrected alongside the approved implementation after clarification. The calculation code and addendum must be kept in sync.
+### Delivery A/B rule reaffirmed; display-only count request (12-Nov-2026)
+- User explicitly reaffirmed that the existing production Delivery A/B eligibility rule must remain unchanged. Do not reinterpret it as a new consecutive-day rule.
+- Existing Category A: count each qualifying trailing five-valid-session rolling average >=60.00%; Category A passes at five or more qualifying rolling windows.
+- Existing Category B: count individual valid sessions with daily Delivery >=60.00%; Category B passes at five or more qualifying days, whether consecutive or not.
+- Existing minimum-data/freshness rules remain: fewer than five valid distinct reports = `WAIT_FOR_DATA`; stale latest report = WAIT; exactly 60.00% passes; production membership remains A OR B.
+- The user's requested change is report visibility only: show the number of qualifying A windows and B days as `n/30`. This denominator is 30 calendar days, not 30 trading sessions, and does not mean a consecutive streak or identify the first start date.
+- Do not change data sources, validity checks, report-date alignment, cache logic, eligibility thresholds or downstream scanner gates as part of this display-only request.
 
 ### Additional runtime findings from code review
 1. `fundamental_official_filings.py` currently queries a 730-day NSE Integrated Filing window and requests `totalCount + 50` records in a single bulk response. `apply_official_publication_dates()` only falls back to the existing filings cache when the live fetch is empty/failed; a successful bulk response replaces the cache. This means successful runs can repeatedly download/process a large historical filing set. Safe optimization candidate: load cached records, fetch a bounded recent overlap/delta, merge/deduplicate by exact symbol + period end + publication date/filing identity, and schedule periodic full reconciliation. Preserve point-in-time cutoff checks and targeted fallback for unmatched candidate pairs. Do not implement until tests cover delayed filings, corrections, duplicates, and failed/partial API responses.
@@ -647,3 +648,14 @@ The production scanner must follow this exact sequence:
 - Fix Delivery cache persistence as-of-date discovery and verify an actual repository commit.
 - Move independent post-scan diagnostics/backtests into parallel jobs only after artifact and persistence dependencies are mapped.
 - Do not change the 200-day Bhavcopy cache, thresholds, source verification, candidate retention or any other strategy gate during runtime optimization.
+
+
+## 13. Delivery A/B count display — implementation and CI (12-Nov-2026)
+
+- `delivery_filter.py` now emits `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay` formatted as `n/30`. Existing raw integer count and PASS/FAIL/WAIT fields are retained for audit.
+- The A numerator is the number of qualifying rolling five-valid-session averages; the B numerator is the number of individual valid sessions at >=60.00%. Fewer than five valid symbol reports or stale data displays WAIT_FOR_DATA/30.
+- Added regression coverage that count fields are display-only and do not alter the A OR B eligibility result, and that fewer than five reports remain fail-closed.
+- First CI attempt exposed a test-fixture defect: one supplied date (20-Oct-2026) was not an NSE trading session. The implementation correctly rejected that date. The test was corrected to expect counts from the five valid sessions only; no production calculation was weakened.
+- Corrected CI run [43176941834](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941834) SUCCESS: 496 pytest passed, compilation and V8 regression checks passed; one unrelated Pandas deprecation warning. Parser/news workflow [43176941753](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941753) SUCCESS.
+- EOD run [43175975998](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43175975998) is the integration run for this code and remains pending final scanner plus Delivery-cache persistence verification at the time of this entry.
+- Master Specification remains immutable.
