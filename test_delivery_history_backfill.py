@@ -21,7 +21,7 @@ def test_price_session_dates_fails_if_existing_cache_is_short(tmp_path, monkeypa
     (tmp_path / "bhavcopy_20261106.csv").write_text("placeholder")
     monkeypatch.setattr(backfill, "is_trading_session", lambda day: True)
     monkeypatch.setattr(backfill, "validate_bhavcopy_date", lambda frame, day, source=None: True)
-    with pytest.raises(RuntimeError, match="Only 1 internally validated official price-cache sessions"):
+    with pytest.raises(RuntimeError, match="not contiguous"):
         backfill.price_session_dates(tmp_path, 200)
 
 
