@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
+import time
 from typing import Callable
 
 import pandas as pd
@@ -169,6 +170,7 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 730, session_fac
     """
     import requests
 
+    fetch_started = time.perf_counter()
     cutoff = pd.to_datetime(asof_date, errors="coerce")
     if pd.isna(cutoff):
         raise ValueError(f"Invalid asof_date: {asof_date}")
@@ -198,6 +200,7 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 730, session_fac
     }
 
     def save_diagnostic():
+        diagnostic["FetchElapsedSeconds"] = round(time.perf_counter() - fetch_started, 3)
         path = Path(diagnostics_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame([diagnostic]).to_csv(path, index=False)
@@ -403,7 +406,7 @@ def fetch_nse_financial_results(asof_date, lookback_days: int = 730, session_fac
         f"api_status={diagnostic['APIStatusCode']} total_count={diagnostic['ReportedTotalCount']} "
         f"payload_items={diagnostic['PayloadItemCount']} financial_term_matches={diagnostic['FinancialTermMatches']} "
         f"periods_parsed={diagnostic['PeriodEndParsed']} accepted={diagnostic['AcceptedRows']} "
-        f"pagination={diagnostic['PaginationStopReason']} diagnostics={diagnostics_path}"
+        f"pagination={diagnostic['PaginationStopReason']} elapsed_seconds={diagnostic.get('FetchElapsedSeconds')} diagnostics={diagnostics_path}"
     )
     return pd.DataFrame(rows, columns=[
         "TckrSymb", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus",
@@ -718,11 +721,14 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
             )
         if unmatched:
             try:
+                targeted_started = time.perf_counter()
                 targeted = _fetch_targeted_nse_filings(
                     cutoff.date().isoformat(), unmatched,
                     diagnostics_path=TARGETED_LOOKUP_DIAGNOSTICS,
                     segments=targeted_segments, request_timeout=targeted_timeout,
                 )
+                targeted_elapsed = time.perf_counter() - targeted_started
+                print(f"[FUNDAMENTAL OFFICIAL TARGETED PERF] requested_pairs={len(unmatched)} elapsed_seconds={targeted_elapsed:.3f} returned_rows={len(targeted) if targeted is not None else 0}")
                 if targeted is not None and not targeted.empty:
                     filings = pd.concat([filings, targeted], ignore_index=True).drop_duplicates(
                         subset=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL"], keep="last"
