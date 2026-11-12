@@ -42,3 +42,9 @@
 
 ## 7. Change control
 This 12-Nov-2026 user-approved update supersedes the previous Category A full-window-average and Category B every-session rules for production Delivery eligibility. The original Master Specification file remains unchanged. No RVOL, liquidity, fundamentals, technical, risk, or unrelated production parameter is changed.
+## 8. Display-only count implementation (2026-11-12)
+- Scanner CSV now emits `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30` for eligible-to-evaluate, fresh symbol-specific reports.
+- Numerators use the existing Category A qualifying rolling five-session averages and Category B qualifying individual daily observations. The denominator means 30 **calendar** days, not 30 actual trading reports.
+- Fewer than five valid symbol reports or a stale window produces `WAIT_FOR_DATA/30`; raw count and status fields remain available for audit.
+- These fields do **not** measure a consecutive-day streak or establish the first start date of a trend. That requires a separate dated streak calculation; do not infer it from `n/30`.
+- No data source, eligibility condition, cache content, or strategy threshold was changed by this display-only patch. Test execution and end-to-end report verification are separate required checks.
