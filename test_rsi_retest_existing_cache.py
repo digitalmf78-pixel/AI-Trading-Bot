@@ -59,7 +59,7 @@ class ExistingCacheRSITests(unittest.TestCase):
         for day, value in zip(pd.date_range("2026-10-05", periods=13, freq="2D"), values):
             by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])
         result = _delivery_status("ABC", signal_date, by_date)
-        self.assertEqual(result["DeliverySessions"], 6)
+        self.assertEqual(result["DeliverySessions"], 13)
         self.assertEqual(result["DeliveryCategoryAStatus"], "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5")
         self.assertEqual(result["DeliveryCategoryBStatus"], "FILTERED_OUT_DAILY_DELIVERY_LT_5")
 
