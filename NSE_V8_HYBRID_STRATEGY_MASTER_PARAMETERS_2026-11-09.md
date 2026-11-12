@@ -583,3 +583,43 @@ The production scanner must follow this exact sequence:
 - Fixed-base start/end/duration/width rules and final VCP contraction/volume thresholds remain pending explicit user approval. No numeric criteria or final VCP labels were invented.
 - PR #62 validation: NSE V8 PR Checks #439 and News Matching and Parser Tests #714 both passed; merged to `main` as `a1018f5c9ec0f8bb49b5f16cbe1c34cff01cd858`.
 - No production scanner behavior, thresholds, scoring, filters, entry/risk rules, or immutable Master Specification changed in this documentation update.
+
+## 11. EOD workflow runtime audit and optimization register (12-Nov-2026)
+
+### Latest measured production run
+- Run: [GitHub Actions 43170198176](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43170198176)
+- Result: SUCCESS; scanner completed.
+- Scanner runtime: **1,220.082 seconds (20m20s)**, compared with previous baseline **1,661 seconds (27m41s)**; measured improvement **441 seconds (7m21s)**.
+- Liquidity PASS: **325 stocks**. This is a Liquidity-qualified collection cohort, not a final BUY list.
+- Fundamental collection: 325 symbols; provider summary showed 287 DATA_FOUND and 38 EXISTING_RECORD_COMPLETE.
+- Delivery cache audit: 21 valid reports / 21 expected NSE sessions in 2026-10-13..2026-11-11; latest report 2026-11-11; missing=0; invalid=0; stale=False.
+
+### Measured stage timings
+- Fundamental Data Collection: 488.613s (8m09s) — largest measured bottleneck.
+- Sector Inputs Refresh: 126.725s (2m07s).
+- News Catalyst Collection: 75.655s (1m16s).
+- Potential Accumulation Analysis: 37.849s.
+- VCP Observation Analysis: 18.994s.
+- Delivery Consistency Report: 18.568s.
+- Delivery Filter Calculation: 9.386s.
+- Liquidity Filter Calculation: 0.192s.
+- Bhavcopy cache load/gap fill: 2.675s.
+- Named stage timings do not account for the entire scanner runtime. Approximately 436 seconds (7m16s) remain outside the currently summarized stage timings; exact attribution is pending. Do not assign this time to a module without new instrumentation.
+
+### Confirmed optimization targets — not yet implemented by this audit
+1. **Incremental NSE official filing cache:** the run log shows the integrated filing API returned 30,343 records. Investigate safe incremental/delta retrieval and periodic full reconciliation. Preserve exact symbol, period-end, publication date, as-of cutoff, official source URL, deduplication and verification status. Never mark unverified values as verified.
+2. **Fundamental provider efficiency:** inspect per-symbol yfinance/free-source calls, sleeps, missing-metric fetches and existing-record reuse. Consider bounded concurrency only with rate-limit protection and deterministic results. Never refetch complete cached records unnecessarily.
+3. **Runtime instrumentation:** add clear timers around all currently unmeasured scanner sections and external calls; record cache hits/misses, request counts and elapsed time so the 436s gap is attributable.
+4. **Sector cache reuse:** fetch only missing/invalid dates and reuse complete cached sector history; retain exact-date verification and WAIT_FOR_DATA on unavailable official data.
+5. **Independent diagnostics:** assess whether post-scan XBRL audits, RSI retests and historical RVOL comparisons can run as independent parallel jobs after required scan outputs are safely persisted. Do not remove diagnostics or let them delay the critical scanner path unnecessarily.
+
+### Delivery cache persistence issue — OPEN
+- The restored cache audit showed 21/21 valid reports.
+- In the persistence step, the log emitted `DELIVERY_CACHE_PERSIST=WAIT_FOR_DATA; no validated Bhavcopy as-of date; no pruning or commit.`
+- A later audit again showed 21/21 valid reports, but that does not prove a new durable Git commit occurred.
+- **Action required:** trace why `latest_bhavcopy_date()` returned no validated as-of date in the persistence step, fix the as-of validation/ordering safely, then verify the resulting Git commit contains the rolling 30-day Delivery cache. Do not touch the 200-day Bhavcopy cache.
+
+### Change-control constraints
+- These are runtime/cache/workflow optimizations only. Do not change the Master Specification, Delivery A/B rules, RVOL classification/order, ₹1.5 crore Liquidity threshold, fundamental collection boundary, technical gates, 3+1 confirmation, risk controls or any other strategy rule.
+- Do not claim an optimization is implemented until code is committed and CI plus a completed EOD run verify it.
+- Update this register and the README after each approved rule, completed implementation, audit finding, test result or workflow benchmark. Keep the original Master Specification immutable.
