@@ -3,11 +3,15 @@ import pandas as pd
 from rvol_strategy_backtest import (classify_delivery, strategy_membership, _metric, delivery_window_dates, forward_session_dates, official_market_session_dates)
 
 
-def test_delivery_categories_use_all_valid_reports_and_minimum_five():
-    assert classify_delivery([60, 60, 60, 60, 60]) == ("PASS", "PASS")
-    assert classify_delivery([80, 80, 80, 80, 20]) == ("PASS", "REJECT")
-    assert classify_delivery([80, 80, 80, 80, 20, 60]) == ("PASS", "REJECT")
-    assert classify_delivery([59.99, 60, 60, 60, 60]) == ("REJECT", "REJECT")
+def test_delivery_categories_use_approved_rolling_window_and_daily_counts():
+    # Five valid reports create only one A rolling window, but five B days pass.
+    assert classify_delivery([60, 60, 60, 60, 60]) == ("REJECT", "PASS")
+    # Nine qualifying reports create five qualifying A windows and nine B days.
+    assert classify_delivery([60] * 9) == ("PASS", "PASS")
+    # B passes with five qualifying days even when no 5-session average passes.
+    assert classify_delivery([100, 0, 100, 0, 100, 0, 100, 0, 100]) == ("REJECT", "PASS")
+    # Exactly 60.00% is included in both qualifying counts.
+    assert classify_delivery([60] * 9) == ("PASS", "PASS")
     assert classify_delivery([60, 60, 60, 60]) == ("WAIT_FOR_DATA", "WAIT_FOR_DATA")
 
 
