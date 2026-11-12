@@ -380,22 +380,6 @@ jobs:
           echo "===== CACHE COVERAGE PREVIEW ====="
           if [ -f outputs/rsi_retest/cache_coverage.csv ]; then cat outputs/rsi_retest/cache_coverage.csv; fi
 
-      - name: Run historical RVOL strategy comparison from existing cache
-        if: always()
-        continue-on-error: true
-        run: |
-          set -e
-          echo "===== RVOL BACKTEST UNIT TESTS ====="
-          python -m pytest -q test_rvol_strategy_backtest.py
-          echo "===== RVOL STRATEGY BACKTEST (NO NETWORK) ====="
-          python -u rvol_strategy_backtest.py
-          echo "===== RVOL STRATEGY COMPARISON ====="
-          if [ -f outputs/rvol_strategy_backtest/comparison.csv ]; then cat outputs/rvol_strategy_backtest/comparison.csv; fi
-          echo "===== RVOL CACHE COVERAGE ====="
-          if [ -f outputs/rvol_strategy_backtest/cache_coverage.csv ]; then cat outputs/rvol_strategy_backtest/cache_coverage.csv; fi
-          echo "===== RVOL REJECTION COUNTS ====="
-          if [ -f outputs/rvol_strategy_backtest/rejection_counts.csv ]; then cat outputs/rvol_strategy_backtest/rejection_counts.csv; fi
-
       - name: Diagnose NSE V8 data files
         if: always()
         run: |
@@ -422,6 +406,7 @@ jobs:
           if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print 2>/dev/null | head -20 || true; else echo "Bhavcopy cache directory does not exist"; fi
 
       - name: Backfill and persist the latest 200 official NSE Delivery sessions
+        id: delivery_backfill
         if: steps.nse_scan.outcome == 'success' && github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -461,6 +446,22 @@ jobs:
           git fetch origin "${GITHUB_REF_NAME}"
           git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Run 200-session Delivery A/B 5D/10D/20D forward backtest
+        if: steps.delivery_backfill.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -e
+          echo "===== DELIVERY BACKTEST UNIT TESTS ====="
+          python -m pytest -q test_rvol_strategy_backtest.py
+          echo "===== DELIVERY A/B BACKTEST (NO NETWORK; 200-SESSION CACHE) ====="
+          python -u rvol_strategy_backtest.py
+          echo "===== DELIVERY A/B 5D/10D/20D COMPARISON ====="
+          if [ -f outputs/rvol_strategy_backtest/comparison.csv ]; then cat outputs/rvol_strategy_backtest/comparison.csv; fi
+          echo "===== DELIVERY BACKTEST CACHE COVERAGE ====="
+          if [ -f outputs/rvol_strategy_backtest/cache_coverage.csv ]; then cat outputs/rvol_strategy_backtest/cache_coverage.csv; fi
+          echo "===== DELIVERY BACKTEST REJECTION COUNTS ====="
+          if [ -f outputs/rvol_strategy_backtest/rejection_counts.csv ]; then cat outputs/rvol_strategy_backtest/rejection_counts.csv; fi
 
       - name: Persist append-only signal history in repository
         if: steps.nse_scan.outcome == 'success' && github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
