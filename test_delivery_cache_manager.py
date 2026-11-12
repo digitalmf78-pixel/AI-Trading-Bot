@@ -87,7 +87,7 @@ def test_pruning_keeps_latest_200_and_non_session_or_invalid_files(tmp_path, mon
     state = tmp_path / "v8_delivery_scan_streak_state.csv"
     state.write_text("TckrSymb,LastScanDate\nAAA,2026-11-12\n", encoding="utf-8")
     # A malformed/non-session file is preserved for inspection, not silently deleted.
-    non_session = date(2025, 12, 30)
+    non_session = date(2025, 12, 27)
     _write_report(tmp_path / f"sec_bhavdata_full_{non_session.strftime('%d%m%Y')}.csv", non_session)
     removed = prune_old_delivery_reports(tmp_path, Path("unused"), 200)
     assert removed == [f"sec_bhavdata_full_{old.strftime('%d%m%Y')}.csv"]
