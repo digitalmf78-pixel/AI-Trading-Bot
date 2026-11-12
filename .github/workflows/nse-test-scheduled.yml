@@ -32,6 +32,10 @@ on:
       - "test_rsi_retest_existing_cache.py"
       - "sector_data.py"
       - "test_nse_official_index_api.py"
+      - "news_catalyst.py"
+      - "test_news_catalyst_matching.py"
+      - "test_news_issuer_matching.py"
+      - "test_news_official_feed_diagnostics.py"
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
