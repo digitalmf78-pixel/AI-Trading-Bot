@@ -1356,7 +1356,7 @@ def _top_ranked_observations_by_tier(selected: pd.DataFrame, limit_per_tier: int
 def _observation_digest_lines(report: pd.DataFrame | None,
                               result: pd.DataFrame | None = None,
                               news_data: pd.DataFrame | None = None) -> list[str]:
-    """Send every liquidity-passed stock with all downstream filter confirmations."""
+    """Send every liquidity-passed stock with downstream confirmations and compact 30-day Delivery A/B counts."""
     rows = _telegram_observation_rows(report, result, limit=None)
     if rows.empty:
         return ["", "🔎 Liquidity filter नंतर Telegram साठी stock उपलब्ध नाही.",
