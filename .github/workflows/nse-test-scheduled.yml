@@ -30,6 +30,8 @@ on:
       - "test_delivery_cache_manager.py"
       - "test_v8_regression.py"
       - "test_rsi_retest_existing_cache.py"
+      - "sector_data.py"
+      - "test_nse_official_index_api.py"
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
