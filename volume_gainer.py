@@ -2712,11 +2712,11 @@ def write_technical_parameter_audit(candidates, eod_date):
                     "SetupType": setup,
                 })
 
-            delivery_ok = delivery.upper() in {"PASS_GE_60_PERCENT", "PASS_AVG_GE_60_PERCENT"}
+            delivery_ok = delivery.upper() in {"PASS_GE_60_PERCENT", "PASS_A_OR_B"}
             add(
                 "Delivery gate",
                 delivery,
-                "Delivery category A/B must already have PASS status; current pipeline normally requires category B.",
+                "Delivery A or B must already meet its minimum-five qualifying-count threshold.",
                 "PASS" if delivery_ok else ("WAIT_FOR_DATA" if "WAIT" in delivery.upper() else "FAIL"),
                 "Delivery passed." if delivery_ok else ("Delivery data/status missing." if "WAIT" in delivery.upper() else "Delivery status is not eligible."),
             )
@@ -2918,8 +2918,8 @@ def select_top20_analysis_candidates(result, eod_date):
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
         # Defensive audit check: the mandatory delivery gate must already have passed.
-        if delivery not in {"PASS_GE_60_PERCENT", "PASS_AVG_GE_60_PERCENT"}:
-            reasons.append("DELIVERY_CATEGORY_A_AVERAGE_NOT_GE_60_OR_DATA_MISSING")
+        if delivery not in {"PASS_GE_60_PERCENT", "PASS_A_OR_B"}:
+            reasons.append("DELIVERY_A_OR_B_MINIMUM_FIVE_QUALIFYING_COUNT_NOT_MET_OR_DATA_MISSING")
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
             reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
         if setup not in {"Breakout", "Pullback"}:
@@ -3507,8 +3507,8 @@ def main():
             delivery_audit["DeliveryFilterStatus"] = delivery_audit.apply(
                 lambda row: "PASS_A_OR_B"
                 if (
-                    str(row.get("DeliveryCategoryAStatus", "")).upper() == "PASS_AVG_GE_60_PERCENT"
-                    or str(row.get("DeliveryCategoryBStatus", "")).upper() == "PASS_EACH_DAY_GE_60_PERCENT"
+                    str(row.get("DeliveryCategoryAStatus", "")).upper() == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+                    or str(row.get("DeliveryCategoryBStatus", "")).upper() == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
                 )
                 else ("WAIT_FOR_DATA" if str(row.get("DeliveryCategoryAStatus", "")).upper().startswith("WAIT_FOR_DATA")
                       or str(row.get("DeliveryCategoryBStatus", "")).upper().startswith("WAIT_FOR_DATA")
@@ -3517,14 +3517,14 @@ def main():
             )
             delivery_audit.to_csv("outputs/v8_delivery_dual_category_audit.csv", index=False)
 
-            # Delivery is the eligibility gate. Keep the full A OR B union.
+            # Delivery A/B minimum-five qualifying counts are the eligibility gate. Keep the full A OR B union.
             # RVOL only classifies the Delivery-qualified universe; it must not
             # remove stocks at or below 1.5 or stocks whose RVOL is unavailable.
             category_a_all = delivery_audit[
-                delivery_audit["DeliveryCategoryAStatus"].eq("PASS_AVG_GE_60_PERCENT")
+                delivery_audit["DeliveryCategoryAStatus"].eq("PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5")
             ].copy()
             category_b_all = delivery_audit[
-                delivery_audit["DeliveryCategoryBStatus"].eq("PASS_EACH_DAY_GE_60_PERCENT")
+                delivery_audit["DeliveryCategoryBStatus"].eq("PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5")
             ].copy()
             category_a_all["DeliveryCategory"] = "A"
             category_b_all["DeliveryCategory"] = "B"
