@@ -26,10 +26,12 @@ on:
       - "fundamental_official_filings.py"
       - "fundamental_metric_verification.py"
       - "delivery_cache_manager.py"
+      - "delivery_history_backfill.py"
       - "delivery_filter.py"
       - "delivery_ab_history_cache.py"
       - "test_delivery_ab_history_cache.py"
       - "test_delivery_cache_manager.py"
+      - "test_delivery_history_backfill.py"
       - "test_v8_regression.py"
       - "test_rsi_retest_existing_cache.py"
       - "sector_data.py"
@@ -419,34 +421,43 @@ jobs:
           echo "===== BHAVCOPY CACHE SAMPLE ====="
           if [ -d data/bhavcopy ]; then find data/bhavcopy -maxdepth 1 -type f -name "*.csv" -print 2>/dev/null | head -20 || true; else echo "Bhavcopy cache directory does not exist"; fi
 
-      - name: Persist the rolling 30-day official NSE Delivery cache in repository
+      - name: Backfill and persist the latest 200 official NSE Delivery sessions
         if: steps.nse_scan.outcome == 'success' && github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # Uses only already-cached, internally validated Bhavcopy session dates.
+          # Fetches missing official Delivery reports; never downloads or edits price Bhavcopy.
+          python -u delivery_history_backfill.py --sessions 200
           python - <<'PY'
-          from delivery_cache_manager import latest_bhavcopy_date, audit_delivery_cache, prune_old_delivery_reports
+          from delivery_cache_manager import (
+              latest_bhavcopy_date, audit_delivery_cache,
+              audit_delivery_history_cache, prune_old_delivery_reports,
+          )
           asof = latest_bhavcopy_date()
           if asof is None:
-              print("DELIVERY_CACHE_PERSIST=WAIT_FOR_DATA; no validated Bhavcopy as-of date; no pruning or commit.")
-              raise SystemExit(0)
-          inventory = audit_delivery_cache(asof)
-          removed = prune_old_delivery_reports(asof)
-          print(f"DELIVERY_CACHE_PRUNED_OLDER_THAN_30D={len(removed)}")
-          print(f"DELIVERY_CACHE_VALID_REPORTS_TO_KEEP={len(inventory['valid_files'])}")
+              raise SystemExit("DELIVERY_CACHE_PERSIST=WAIT_FOR_DATA; no validated Bhavcopy as-of date.")
+          audit_delivery_cache(asof)  # scanner's independent 30-calendar-day window
+          history = audit_delivery_history_cache(target_sessions=200)
+          if not history["complete"]:
+              raise SystemExit("DELIVERY_HISTORY_PERSIST=WAIT_FOR_DATA; refusing to prune or commit incomplete 200-session history.")
+          removed = prune_old_delivery_reports(target_sessions=200)
+          print(f"DELIVERY_HISTORY_PRUNED_OUTSIDE_200_SESSIONS={len(removed)}")
+          print(f"DELIVERY_HISTORY_VALID_REPORTS_TO_KEEP={len(history['valid_files'])}/200")
+          print("DELIVERY_HISTORY_PRICE_BHAVCOPY_MODIFIED=False")
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Only date-stamped report CSVs are pruned; the separate streak state remains.
+          # Persist raw official reports and the independent derived A/B snapshot.
           git add -A -f -- data/cache/delivery/
-          echo "===== STAGED 30-DAY DELIVERY CACHE ====="
+          echo "===== STAGED 200-SESSION DELIVERY CACHE ====="
           git diff --cached --name-status -- data/cache/delivery/
           if git diff --cached --quiet -- data/cache/delivery/; then
-            echo "DELIVERY_CACHE_PERSIST=UNCHANGED"
+            echo "DELIVERY_HISTORY_PERSIST=UNCHANGED"
             exit 0
           fi
-          git commit -m "chore: persist rolling 30-day NSE delivery cache"
+          git commit -m "chore: persist 200-session NSE delivery cache"
           git fetch origin "${GITHUB_REF_NAME}"
           git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
