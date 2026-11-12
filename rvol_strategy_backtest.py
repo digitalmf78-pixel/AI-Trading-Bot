@@ -163,7 +163,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
     }
     records = []
     rejection = {"insufficient_price_history": 0, "insufficient_delivery_history": 0,
-                 "delivery_category_a_reject": 0, "liquidity_below_1_5cr": 0,
+                 "delivery_a_and_b_reject": 0, "liquidity_below_1_5cr": 0,
                  "invalid_rvol": 0}
 
     for symbol, frame in price_groups.items():
@@ -228,6 +228,11 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 rejection["insufficient_delivery_history"] += 1
                 continue
             cat_a, cat_b = classify_delivery(dvalues)
+            qualifying_a_windows = sum(
+                sum(float(v) for v in dvalues[index - 4:index + 1]) / 5.0 >= 60.0
+                for index in range(4, len(dvalues))
+            )
+            qualifying_b_days = sum(float(v) >= 60.0 for v in dvalues)
             if cat_a != "PASS" and cat_b != "PASS":
                 rejection["delivery_a_and_b_reject"] += 1
                 continue
@@ -245,8 +250,8 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 "AvgTradedValue20D_INR": avg_value, "Delivery30D_AveragePct": sum(dvalues) / len(dvalues),
                 "Delivery30D_MinPct": min(dvalues), "DeliveryCategoryA": cat_a, "DeliveryCategoryB": cat_b,
                 "DeliveryValidReportCount": len(dvalues),
-                "DeliveryQualifyingAWindows": max(0, len(dvalues) - 4),
-                "DeliveryQualifyingBDays": sum(float(v) >= 60.0 for v in dvalues),
+                "DeliveryQualifyingAWindows": qualifying_a_windows,
+                "DeliveryQualifyingBDays": qualifying_b_days,
                 "DeliveryCohort": delivery_cohort,
                 "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in candidate_delivery_dates),
                 "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
