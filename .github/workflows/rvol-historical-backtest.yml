@@ -1,4 +1,4 @@
-name: RVOL Historical Backtest (Research Only)
+name: Delivery A/B Historical Backtest (Research Only)
 
 on:
   pull_request:
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   historical-backtest:
-    name: Compare RVOL strategies on restored NSE cache
+    name: Backtest Delivery A/B cohorts on restored 200-session NSE cache
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -87,27 +87,27 @@ jobs:
           echo "===== DELIVERY BACKFILL COVERAGE ====="
           cat outputs/delivery_history_backfill/coverage.csv
 
-      - name: Run RVOL backtest unit tests
+      - name: Run Delivery A/B backtest unit tests
         run: python -m pytest -q test_rvol_strategy_backtest.py
 
-      - name: Run 3-strategy historical RVOL backtest (cache only)
+      - name: Run Delivery A/B 5D/10D/20D backtest (cache only)
         run: |
           set -euo pipefail
           python -u rvol_strategy_backtest.py
-          echo "===== STRATEGY COMPARISON ====="
+          echo "===== DELIVERY A/B COHORT COMPARISON ====="
           cat outputs/rvol_strategy_backtest/comparison.csv
           echo "===== CACHE COVERAGE ====="
           cat outputs/rvol_strategy_backtest/cache_coverage.csv
-          echo "===== STAGE REJECTION COUNTS ====="
+          echo "===== DELIVERY A/B REJECTION COUNTS ====="
           cat outputs/rvol_strategy_backtest/rejection_counts.csv
           echo "===== SIGNAL SAMPLE ====="
           head -11 outputs/rvol_strategy_backtest/signals.csv
 
-      - name: Upload historical RVOL backtest reports
+      - name: Upload historical Delivery A/B backtest reports
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: rvol-historical-backtest-${{ github.run_id }}
+          name: delivery-ab-historical-backtest-${{ github.run_id }}
           path: |
             outputs/rvol_strategy_backtest/
             outputs/delivery_history_backfill/
