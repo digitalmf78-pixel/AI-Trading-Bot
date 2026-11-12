@@ -46,8 +46,8 @@ def _truth(value) -> bool:
 
 
 def _category(row: pd.Series) -> tuple[bool, str]:
-    category_a = str(row.get("DeliveryCategoryAStatus", "")).strip().upper() == "PASS_AVG_GE_60_PERCENT"
-    category_b = str(row.get("DeliveryCategoryBStatus", "")).strip().upper() == "PASS_EACH_DAY_GE_60_PERCENT"
+    category_a = str(row.get("DeliveryCategoryAStatus", "")).strip().upper() == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+    category_b = str(row.get("DeliveryCategoryBStatus", "")).strip().upper() == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     if category_a and category_b:
         return True, "A_AND_B"
     if category_a:
