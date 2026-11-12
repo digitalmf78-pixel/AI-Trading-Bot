@@ -245,3 +245,11 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 - The production scanner's independent **30-calendar-day** A/B eligibility window is unchanged. The 200-session raw history is a source cache; it does not alter Delivery A/B rules or thresholds.
 - Traded volume remains sourced from the existing 200-session Bhavcopy cache (TtlTradgVol); no duplicate traded-volume cache is created.
 - Master Specification remains unchanged.
+
+
+### Historical Delivery A/B 5D/10D/20D Research Backtest
+- The scheduled research backtest runs only after the 200-session official NSE Delivery backfill and persistence step succeeds.
+- It uses the exact approved 30-calendar-day A/B rule: A requires at least five trailing five-valid-session averages >=60%; B requires at least five individual valid daily reports >=60%; the research cohort is A OR B.
+- RVOL is recorded descriptively and is not used as a hard eligibility gate. The prior-20-session average traded-value liquidity floor remains ₹1.5 crore.
+- Forward 5D/10D/20D close-to-close outcomes use official NSE sessions and require complete symbol OHLC. Incomplete horizons remain blank and are excluded from the corresponding metrics.
+- Research caveats remain: EQ-series cache, current-cache survivorship, no point-in-time historical Main Board classification/fundamentals, and no fees/slippage or portfolio simulation. Outputs do not alter scanner selection or the immutable Master Specification.
