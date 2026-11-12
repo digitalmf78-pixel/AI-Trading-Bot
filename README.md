@@ -226,5 +226,10 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 - At least five valid distinct reports are required to evaluate either category; fewer means WAIT_FOR_DATA. Use all valid reports in the window, not only the latest five.
 - Production eligibility is A OR B. The compact denominator /30 means a 30-calendar-day lookback, not 30 expected trading sessions. The separate strict five-session watchlist is a different artifact.
 
-## Delivery clarification pending — 12-Nov-2026
-The minimum five valid distinct Delivery reports rule remains active: fewer than five means WAIT_FOR_DATA. A further user clarification says PASS should require a five-consecutive-day condition or five qualifying days >=60%, otherwise reject. The exact Category A rolling-average definition and whether Category B days must be consecutive are awaiting confirmation. Until clarified, current production code remains the existing rule in the 12-Nov Delivery Addendum; no unconfirmed eligibility change has been applied. See Section 12 of the Hybrid Strategy Master Parameters for the code audit and workflow optimization plan.
+## Delivery A/B count display implementation — 12-Nov-2026
+- User reaffirmed: keep the existing production Delivery A/B eligibility logic unchanged; only expose its qualifying counts in the reports.
+- New CSV fields: `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30`. A counts qualifying trailing five-valid-session rolling averages >=60.00%; B counts individual valid sessions >=60.00%.
+- The denominator is 30 calendar days, not 30 trading sessions. The counts are not consecutive-day streaks and do not indicate the first date a condition began.
+- Fewer than five valid candidate-specific reports, or a stale window, displays WAIT_FOR_DATA and does not become PASS. Existing A OR B eligibility, threshold and source-validation rules are unchanged.
+- CI after correcting a test fixture's non-session date: [43176941834](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941834) SUCCESS — 496 pytest passed, V8 regression and compile checks passed; one existing Pandas deprecation warning. Parser/news test run [43176941753](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941753) SUCCESS.
+- Full EOD workflow [43175975998](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43175975998) is still running; final scanner and Delivery-cache persistence verification remain pending.
