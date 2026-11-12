@@ -36,6 +36,8 @@ on:
       - "test_news_catalyst_matching.py"
       - "test_news_issuer_matching.py"
       - "test_news_official_feed_diagnostics.py"
+      - "potential_accumulation_analysis.py"
+      - "test_potential_accumulation_analysis.py"
   schedule:
     # 16:40 UTC = 22:10 IST: EOD scan after NSE data is usually available.
     - cron: "40 16 * * 1-5"
