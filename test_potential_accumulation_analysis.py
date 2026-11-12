@@ -70,6 +70,20 @@ def test_report_keeps_candidate_and_emits_20d_50d_200d_range_observations(tmp_pa
     assert (tmp_path / "outputs/v8_potential_accumulation_observations_20261023.csv").exists()
 
 
+def test_duplicate_symbol_series_rows_in_one_delivery_report_are_not_counted(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sessions = _delivery_sessions(count=5)
+    day, frame = sessions[0]
+    duplicate = pd.concat([frame, frame.copy()], ignore_index=True)
+    sessions[0] = (day, duplicate)
+    report = build_potential_accumulation_report(
+        pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ", "ClsPric": 120}]),
+        [_history()], sessions, "2026-10-23"
+    )
+    assert len(report) == 1
+    assert report.iloc[0]["DeliveryEvidenceStatus"] == "WAIT_FOR_DATA"
+
+
 def test_missing_delivery_quantity_data_is_wait_not_zero_and_candidate_is_retained(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     sessions = [(day, pd.DataFrame([{
