@@ -623,3 +623,27 @@ The production scanner must follow this exact sequence:
 - These are runtime/cache/workflow optimizations only. Do not change the Master Specification, Delivery A/B rules, RVOL classification/order, ₹1.5 crore Liquidity threshold, fundamental collection boundary, technical gates, 3+1 confirmation, risk controls or any other strategy rule.
 - Do not claim an optimization is implemented until code is committed and CI plus a completed EOD run verify it.
 - Update this register and the README after each approved rule, completed implementation, audit finding, test result or workflow benchmark. Keep the original Master Specification immutable.
+
+## 12. Delivery wording clarification + next runtime audit (12-Nov-2026)
+
+### Delivery rule clarification — awaiting one exact definition
+- User clarified the minimum-data rule remains: fewer than five valid distinct reports in the 30-calendar-day window = `WAIT_FOR_DATA`.
+- User further stated that a stock should PASS if it meets a five-consecutive-day condition OR has five qualifying days at/above 60%; otherwise it should be REJECTED once sufficient data exists.
+- The precise Category A meaning needs confirmation before code or authoritative rule text is changed: should A mean **at least one consecutive block of five valid sessions whose five-day average is >=60%**, or **five qualifying rolling five-session averages >=60%** (the current code)? Category B is understood as five individual sessions at >=60%, but please confirm whether those five days must be consecutive or can be any five valid days in the 30-day window.
+- Current committed implementation remains the existing 12-Nov rule: A counts qualifying trailing five-valid-session rolling averages and passes at >=5; B counts daily >=60% sessions and passes at >=5. Do not claim the new wording has been implemented until clarified and tested.
+- Current `delivery_filter.py` also contains an outdated function docstring describing full-window average / every-day logic, which should be corrected alongside the approved implementation after clarification. The calculation code and addendum must be kept in sync.
+
+### Additional runtime findings from code review
+1. `fundamental_official_filings.py` currently queries a 730-day NSE Integrated Filing window and requests `totalCount + 50` records in a single bulk response. `apply_official_publication_dates()` only falls back to the existing filings cache when the live fetch is empty/failed; a successful bulk response replaces the cache. This means successful runs can repeatedly download/process a large historical filing set. Safe optimization candidate: load cached records, fetch a bounded recent overlap/delta, merge/deduplicate by exact symbol + period end + publication date/filing identity, and schedule periodic full reconciliation. Preserve point-in-time cutoff checks and targeted fallback for unmatched candidate pairs. Do not implement until tests cover delayed filings, corrections, duplicates, and failed/partial API responses.
+2. `fundamental_data_provider.py` processes symbols sequentially and calls `_fetch_one` for every candidate requiring any refresh, TTM diagnostic, valuation snapshot or free-source work. It may request Yahoo `info` and then three statements (income, balance sheet, cash flow) when fields are missing. Bounded concurrency is a candidate, but only after measuring request counts and verifying provider throttling, deterministic cache writes, and no overwrite of manual metrics.
+3. The scanner process is 20m20s, but the workflow also runs multiple post-scan XBRL audits and cache backtests sequentially in the same job. Those can be considered for independent parallel jobs after required scan outputs are persisted. Keep critical official verification and artifact completeness; do not remove diagnostics merely to shorten wall time.
+4. Current workflow runs compile/regression tests before the scanner in one job. Preserve required CI gating, but investigate splitting independent test groups into parallel jobs and using dependency caches so the scanner starts only after required checks pass.
+5. Add per-stage timers and per-provider request/cache-hit counters around the full fundamental loop, official bulk/targeted filing calls, sector refresh, news, XBRL audits and post-scan backtests. The measured ~436s unaccounted scanner runtime must be attributed before optimizing blindly.
+
+### Next safe execution sequence
+- First get explicit A/B consecutive-day semantics from user; then update the addendum, working register, README, code, tests and reports together.
+- Separately benchmark official filing fetch versus per-symbol Yahoo/free-source calls to identify the true split of the 488.613s fundamental stage.
+- Implement incremental filing cache behind regression tests; then consider bounded provider concurrency.
+- Fix Delivery cache persistence as-of-date discovery and verify an actual repository commit.
+- Move independent post-scan diagnostics/backtests into parallel jobs only after artifact and persistence dependencies are mapped.
+- Do not change the 200-day Bhavcopy cache, thresholds, source verification, candidate retention or any other strategy gate during runtime optimization.
