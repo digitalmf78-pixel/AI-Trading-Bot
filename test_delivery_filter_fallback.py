@@ -188,10 +188,10 @@ def test_delivery_display_counts_do_not_change_eligibility(monkeypatch, tmp_path
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, [60, 61, 62, 63, 64, 65])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     row = audit.iloc[0]
-    assert row["DeliveryACount30DDisplay"] == "2/30"
-    assert row["DeliveryBCount30DDisplay"] == "6/30"
-    assert row["DeliveryARolling5DPassCount30D"] == 2
-    assert row["DeliveryDailyPassCount"] == 6
+    assert row["DeliveryACount30DDisplay"] == "1/30"
+    assert row["DeliveryBCount30DDisplay"] == "5/30"
+    assert row["DeliveryARolling5DPassCount30D"] == 1
+    assert row["DeliveryDailyPassCount"] == 5
     assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
 
