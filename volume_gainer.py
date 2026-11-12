@@ -3627,23 +3627,9 @@ def main():
                 if col not in current.columns:
                     current[col] = pd.Series(dtype="object")
 
-    # Fundamental collection universe is the complete Delivery A/B union with RVOL > 1.5.
-    # Snapshot it before Liquidity narrows the downstream technical cohort; no
-    # Fundamental gate is applied and missing provider data never removes rows.
-    if not current.empty and "RVOLBand" in current.columns:
-        fundamental_collection_candidates = current.loc[
-            current["RVOLBand"].astype(str).eq("HIGH_RVOL_GT_1_5")
-        ].drop_duplicates("TckrSymb", keep="first").copy()
-    else:
-        fundamental_collection_candidates = current.iloc[0:0].copy()
-    os.makedirs("outputs", exist_ok=True)
-    fundamental_collection_candidates.to_csv(
-        "outputs/v8_fundamental_rvol_gt_1_5_candidates.csv", index=False
-    )
-    print(
-        "[FUNDAMENTAL UNIVERSE] Delivery A/B + RVOL > 1.5 candidates="
-        f"{len(fundamental_collection_candidates)}; captured before Liquidity."
-    )
+    # Fundamental collection is deliberately deferred until after Liquidity.
+    # No provider/cache lookup is allowed for a Liquidity REJECT or WAIT row.
+    fundamental_collection_candidates = current.iloc[0:0].copy()
 
     # Track 2 always observes the immutable full Mainboard cohort, even if
     # Track 1's current frame is empty or the shared Delivery fetch failed.
@@ -3736,15 +3722,22 @@ def main():
     print(f"[LIQUIDITY] Audit saved: outputs/v8_liquidity_first_audit.csv; qualified={len(current)}")
 
     # --------------------------------------------------------
-    # STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES
+    # STEP 7: FUNDAMENTALS FOR LIQUIDITY-PASS CANDIDATES
     # --------------------------------------------------------
-    print(
-        "\\nSTEP 7: Collecting fundamentals for all "
-        f"{len(fundamental_collection_candidates)} Delivery A/B stocks with RVOL > 1.5; "
-        "score is informational and never a rejection gate..."
-    )
     create_fundamental_templates()
     liquidity_pass_candidates = current.copy()
+    fundamental_collection_candidates = liquidity_pass_candidates.drop_duplicates(
+        "TckrSymb", keep="first"
+    ).copy()
+    os.makedirs("outputs", exist_ok=True)
+    fundamental_collection_candidates.to_csv(
+        "outputs/v8_fundamental_liquidity_pass_candidates.csv", index=False
+    )
+    print(
+        "\\nSTEP 7: Collecting fundamentals ONLY for "
+        f"{len(fundamental_collection_candidates)} Liquidity-PASS stocks; "
+        "Liquidity REJECT/WAIT stocks are excluded from provider collection."
+    )
     try:
         if fundamental_collection_candidates.empty:
             fundamental_audit, _ = apply_fundamental_filter(
@@ -3773,7 +3766,7 @@ def main():
             fundamental_audit, _ = apply_fundamental_filter(
                 fundamental_collection_candidates, eod_date
             )
-            # Audit every collected high-RVOL candidate against official NSE
+            # Audit every collected Liquidity-PASS candidate against official NSE
             # XBRL evidence. This remains an audit sidecar, never an eligibility gate.
             try:
                 from fundamental_metric_verification import run_audit as run_fundamental_metric_audit
@@ -3783,7 +3776,7 @@ def main():
                 run_fundamental_metric_audit(symbols=evidence_symbols)
             except Exception as metric_audit_exc:
                 print(
-                    "[NSE XBRL AUDIT] WAIT_FOR_DATA; all RVOL > 1.5 candidates "
+                    "[NSE XBRL AUDIT] WAIT_FOR_DATA; all Liquidity-PASS candidates "
                     f"are retained: {metric_audit_exc}"
                 )
             os.makedirs("outputs", exist_ok=True)
@@ -3804,9 +3797,8 @@ def main():
                 ).astype(str).eq("MISSING_DATA")
             ].to_csv("outputs/v8_fundamental_missing_data.csv", index=False)
 
-        # Technical analysis still follows the existing Liquidity path. Enrich
-        # those rows with fundamentals where their symbols belong to the RVOL
-        # > 1.5 collection universe; do not discard any Liquidity-passed row.
+        # Fundamental collection now covers the complete de-duplicated Liquidity-PASS
+        # cohort (all RVOL bands). It enriches rows only; it is not a rejection gate.
         fundamental_columns = [
             column for column in fundamental_audit.columns
             if column not in fundamental_collection_candidates.columns
@@ -3826,16 +3818,8 @@ def main():
                 if column not in current.columns:
                     current[column] = pd.NA
 
-        if "FundamentalStatus" in current.columns:
-            not_in_collection = current["FundamentalStatus"].isna()
-            current.loc[not_in_collection, "FundamentalStatus"] = "NOT_IN_RVOL_GT_1_5_COLLECTION"
-            if "FundamentalReason" in current.columns:
-                current.loc[not_in_collection, "FundamentalReason"] = (
-                    "RVOL_NOT_ABOVE_1_5; fundamental collection is scoped to the "
-                    "confirmed RVOL > 1.5 Delivery A/B universe."
-                )
-            if "Fundamental65PlusStatus" in current.columns:
-                current.loc[not_in_collection, "Fundamental65PlusStatus"] = "WAIT_FOR_DATA"
+        # Every Liquidity-PASS symbol is in the collection frame; no RVOL-band
+        # exclusion or fallback cohort is constructed here.
 
         current.to_csv("outputs/v8_liquidity_fundamental_candidates.csv", index=False)
         observation_report = current.copy()
@@ -3866,7 +3850,7 @@ def main():
         current.to_csv("outputs/v8_liquidity_fundamental_candidates.csv", index=False)
         observation_report = current.copy()
     print(
-        f"[FUNDAMENTAL] RVOL > 1.5 collection rows={len(fundamental_audit)}; "
+        f"[FUNDAMENTAL] Liquidity-PASS collection rows={len(fundamental_audit)}; "
         f"Liquidity-qualified technical rows retained={len(current)}; "
         "fundamentals are enrichment only."
     )
