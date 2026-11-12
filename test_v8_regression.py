@@ -122,21 +122,26 @@ def test_sector_mapping_uses_exact_official_nse_industry_fallbacks():
         finally:
             os.chdir(old_cwd)
 
-def test_delivery_average_category_passes_while_daily_category_fails():
+def test_delivery_a_requires_five_rolling_windows_while_b_requires_five_daily_passes():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
-        dates = [date(2026, 10, 9) - timedelta(days=i) for i in range(5)]
-        values = [50.0, 75.0, 65.0, 70.0, 80.0]
-        sessions = [(day, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])) for day, value in zip(dates, values)]
+        dates = []
+        day = date(2026, 10, 1)
+        while len(dates) < 13:
+            if delivery.is_trading_session(day):
+                dates.append(day)
+            day += timedelta(days=1)
+        values = [100.0, 59.0, 59.0, 59.0, 59.0, 100.0, 59.0, 59.0, 59.0, 59.0, 100.0, 59.0, 59.0]
+        sessions = [(d, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": v}])) for d, v in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
-        qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 1  # Category A alone qualifies under the production A OR B union.
-        assert qualified.iloc[0]["TckrSymb"] == "ABC"
-        assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
-        assert audit.iloc[0]["AvgDelivery5D"] >= 60.0
-        assert audit.iloc[0]["DeliveryMin5D"] == 50.0
+        qualified, audit = delivery.apply_delivery_filter(candidates, dates[-1], sessions=sessions)
+        row = audit.iloc[0]
+        assert len(qualified) == 1
+        assert row["DeliveryARolling5DPassCount30D"] >= 5
+        assert row["DeliveryDailyPassCount"] == 3
+        assert row["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+        assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
+        assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
 
 
 def test_delivery_exactly_60_each_day_passes():
@@ -149,8 +154,8 @@ def test_delivery_exactly_60_each_day_passes():
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
         assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_EACH_DAY_GE_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert audit.iloc[0]["DeliveryDailyPassCount"] == 5
 
 
@@ -164,8 +169,8 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 0  # Average is below 60%; both categories fail.
         assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_AVG_LT_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+        assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
         assert audit.iloc[0]["DeliveryFilterStatus"] == "WAIT_FOR_DATA"
@@ -176,8 +181,8 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
 def test_news_gate_preserves_category_a_only_candidates():
     candidates = pd.DataFrame([{
         "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
-        "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
-        "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
+        "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+        "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
         "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
     selected = news_catalyst._filter_catalyst_candidates(candidates)
