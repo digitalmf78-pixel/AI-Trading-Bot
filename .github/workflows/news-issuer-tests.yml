@@ -5,7 +5,10 @@ on:
   push:
     paths:
       - "news_catalyst.py"
+      - "delivery_filter.py"
       - "test_news_issuer_matching.py"
+      - "test_delivery_compact_metrics.py"
+      - "test_telegram_delivery.py"
       - ".github/workflows/news-issuer-tests.yml"
 
 permissions:
@@ -26,10 +29,13 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas
+          pip install requests pandas pytest
 
-      - name: Compile news module
-        run: python -m py_compile news_catalyst.py
+      - name: Compile changed modules
+        run: python -m py_compile news_catalyst.py delivery_filter.py
 
       - name: Run issuer matching regression tests
         run: python -m unittest -v test_news_issuer_matching.py
+
+      - name: Run compact Delivery and Telegram tests
+        run: python -m pytest -q test_delivery_compact_metrics.py test_telegram_delivery.py
