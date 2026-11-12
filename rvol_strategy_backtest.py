@@ -83,14 +83,6 @@ def classify_delivery(values: list[float]) -> tuple[str, str]:
     return a, b
 
 
-def strategy_membership(rvol: float) -> tuple[bool, bool, bool]:
-    """Return membership in strict >1.5, relaxed >1.2, and no-hard-gate strategies."""
-    if not math.isfinite(float(rvol)):
-        return False, False, False
-    value = float(rvol)
-    return value > 1.5, value > 1.2, True
-
-
 def _metric(values: pd.Series, prefix: str) -> dict:
     vals = pd.to_numeric(values, errors="coerce").dropna()
     if vals.empty:
@@ -135,7 +127,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
         pd.DataFrame([{"Status": "WAIT_FOR_DATA", "Reason": "Valid price and delivery cache files are both required; no network access is used."}]).to_csv(output_dir / "comparison.csv", index=False)
         pd.DataFrame().to_csv(output_dir / "signals.csv", index=False)
         pd.DataFrame([{"Stage": "backtest", "Rows": 0, "Status": "WAIT_FOR_DATA"}]).to_csv(output_dir / "rejection_counts.csv", index=False)
-        print("[RVOL BACKTEST] WAIT_FOR_DATA: cached price or delivery history is missing.")
+        print("[DELIVERY BACKTEST] WAIT_FOR_DATA: cached price or delivery history is missing.")
         return {"status": "WAIT_FOR_DATA", "price_rows": len(prices), "delivery_dates": len(delivery_by_date)}
 
     prices = prices.sort_values(["DATE", "SYMBOL"]).reset_index(drop=True)
