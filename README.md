@@ -225,3 +225,6 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 - `B: n/30` = number of individual valid Delivery sessions with daily Delivery >=60.00% in the same 30-calendar-day window. B passes at **5 or more qualifying days**.
 - At least five valid distinct reports are required to evaluate either category; fewer means WAIT_FOR_DATA. Use all valid reports in the window, not only the latest five.
 - Production eligibility is A OR B. The compact denominator /30 means a 30-calendar-day lookback, not 30 expected trading sessions. The separate strict five-session watchlist is a different artifact.
+
+## Delivery clarification pending — 12-Nov-2026
+The minimum five valid distinct Delivery reports rule remains active: fewer than five means WAIT_FOR_DATA. A further user clarification says PASS should require a five-consecutive-day condition or five qualifying days >=60%, otherwise reject. The exact Category A rolling-average definition and whether Category B days must be consecutive are awaiting confirmation. Until clarified, current production code remains the existing rule in the 12-Nov Delivery Addendum; no unconfirmed eligibility change has been applied. See Section 12 of the Hybrid Strategy Master Parameters for the code audit and workflow optimization plan.
