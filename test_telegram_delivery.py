@@ -101,7 +101,8 @@ def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation
     digest = "\n".join(lines)
     for symbol in ("STRONG1", "MEDIUM1", "LOW1"):
         assert symbol in digest
-    assert "STRONG ONE LIMITED | NSE: STRONG1" in digest
+    assert "Company: STRONG ONE LIMITED" in digest
+    assert "NSE: STRONG1" in digest
     for status in ("Technical:PASS", "Technical:REJECT", "Sector:FAIL", "PRIMARY_CONFIRMED",
                    "3+1:True/PASS", "3+1:False/FAIL", "Risk:REJECT", "FINAL:WATCH",
                    "FINAL:SKIP", "FINAL:WAIT_FOR_DATA"):
