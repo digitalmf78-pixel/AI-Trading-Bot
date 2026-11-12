@@ -1050,6 +1050,7 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
         )
 
     for symbol in ordered_symbols:
+        company = names.get(symbol, "").strip()
         combined_items, query_success, symbol_partial, query_diagnostics = secondary_results[symbol]
         for query, item_count, partial, error in query_diagnostics:
             if error:
