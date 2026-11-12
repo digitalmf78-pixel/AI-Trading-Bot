@@ -261,8 +261,7 @@ def _secondary_search_queries(symbol: str, company: str = "") -> list[str]:
 def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
     """Keep candidates that passed either upstream Delivery category.
 
-    Category A (five-session average >=60%) and Category B (each of five
-    sessions >=60%) are independent upstream routes. News enrichment must not
+    Category A (at least five trailing five-session averages >=60%) and Category B (at least five daily sessions >=60%) are independent upstream routes. News enrichment must not
     silently narrow the union to Category B only.
     """
     filtered = candidates.copy()
@@ -272,11 +271,11 @@ def _filter_catalyst_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
 
     if has_a or has_b:
         a_pass = (
-            filtered["DeliveryCategoryAStatus"].astype(str).str.upper().str.strip().eq("PASS_AVG_GE_60_PERCENT")
+            filtered["DeliveryCategoryAStatus"].astype(str).str.upper().str.strip().eq("PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5")
             if has_a else pd.Series(False, index=filtered.index)
         )
         b_pass = (
-            filtered["DeliveryCategoryBStatus"].astype(str).str.upper().str.strip().eq("PASS_EACH_DAY_GE_60_PERCENT")
+            filtered["DeliveryCategoryBStatus"].astype(str).str.upper().str.strip().eq("PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5")
             if has_b else pd.Series(False, index=filtered.index)
         )
         keep = a_pass | b_pass
