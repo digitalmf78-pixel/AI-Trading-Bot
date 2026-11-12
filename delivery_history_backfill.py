@@ -1,8 +1,8 @@
-"""Backfill NSE Full Bhavcopy (price + delivery) for existing cached price sessions.
+"""Backfill NSE Delivery reports for the latest sessions in the existing Bhavcopy cache.
 
-Research-only utility. It never downloads price Bhavcopy and never changes scanner
-selection. It uses the existing data/bhavcopy filenames to choose the most recent
-N official sessions, then fills only missing/invalid delivery cache reports.
+This utility never downloads or modifies price Bhavcopy. It validates each cached
+price file's internal EOD date, then fetches only missing/invalid official Delivery
+reports for those exact sessions.
 """
 from __future__ import annotations
 
@@ -12,14 +12,15 @@ import io
 import json
 import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import requests
 
 from delivery_filter import BASE_URL, CACHE_DIR, HEADERS, REQUIRED_COLUMNS, validate_delivery_report_date
-from nse_trading_calendar import is_trading_session
+from nse_trading_calendar import CalendarCoverageError, is_trading_session
+from volume_gainer import validate_bhavcopy_date
 
 PRICE_DIR = Path("data/bhavcopy")
 OUTPUT_DIR = Path("outputs/delivery_history_backfill")
@@ -29,26 +30,51 @@ MAX_RETRIES = 3
 
 
 def price_session_dates(price_dir: Path = PRICE_DIR, target_sessions: int = DEFAULT_TARGET_SESSIONS) -> list[date]:
-    """Return the latest N unique official sessions already represented in price cache."""
-    found: set[date] = set()
+    """Return the latest N consecutive official sessions with valid cached Bhavcopy files."""
+    if target_sessions < 1:
+        raise ValueError("target_sessions must be at least 1")
+    found: dict[date, Path] = {}
     for path in price_dir.glob("bhavcopy_????????.csv"):
         match = re.fullmatch(r"bhavcopy_(\d{8})\.csv", path.name)
         if not match:
             continue
         try:
             day = datetime.strptime(match.group(1), "%Y%m%d").date()
-        except ValueError:
-            continue
-        if is_trading_session(day):
-            found.add(day)
-    ordered = sorted(found)
-    if len(ordered) < target_sessions:
-        raise RuntimeError(
-            f"Only {len(ordered)} official price-cache sessions are available; "
-            f"{target_sessions} are required. Price cache was not downloaded or modified."
-        )
-    return ordered[-target_sessions:]
+            if not is_trading_session(day):
+                continue
+            frame = pd.read_csv(path, low_memory=False)
+            validate_bhavcopy_date(frame, day, source=f"Delivery backfill price cache {path}")
+            found[day] = path
+        except CalendarCoverageError:
+            raise
+        except Exception as exc:
+            print(f"[DELIVERY BACKFILL] IGNORE_INVALID_PRICE_CACHE={path.name} reason={type(exc).__name__}")
 
+    if not found:
+        raise RuntimeError("No internally validated official price-cache sessions are available.")
+    latest = max(found)
+    expected: list[date] = []
+    cursor = latest
+    calendar_days_scanned = 0
+    while len(expected) < target_sessions and calendar_days_scanned <= target_sessions * 2 + 30:
+        if is_trading_session(cursor):
+            expected.append(cursor)
+        cursor -= timedelta(days=1)
+        calendar_days_scanned += 1
+    if len(expected) < target_sessions:
+        raise RuntimeError(
+            f"Official calendar coverage yielded only {len(expected)} sessions; "
+            f"{target_sessions} are required."
+        )
+    missing = [day for day in expected if day not in found]
+    if missing:
+        sample = ",".join(day.isoformat() for day in missing[:12])
+        raise RuntimeError(
+            f"Bhavcopy cache is not contiguous for the latest {target_sessions} official sessions; "
+            f"{len(missing)} session files are missing/invalid (sample: {sample}). "
+            "Price cache was not downloaded or modified."
+        )
+    return sorted(expected)
 
 def _valid_cached_report(path: Path, expected: date) -> tuple[bool, int, str]:
     if not path.exists() or path.stat().st_size <= 1000:
@@ -72,7 +98,7 @@ def _valid_cached_report(path: Path, expected: date) -> tuple[bool, int, str]:
 def _download_report(session: requests.Session, day: date, cache_dir: Path = CACHE_DIR) -> tuple[str, int, str, int]:
     token = day.strftime("%d%m%Y")
     path = cache_dir / f"sec_bhavdata_full_{token}.csv"
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     valid, rows, digest = _valid_cached_report(path, day)
     if valid:
         return "REUSED_CACHE", rows, digest, path.stat().st_size
@@ -118,7 +144,6 @@ def _download_report(session: requests.Session, day: date, cache_dir: Path = CAC
         except Exception as exc:
             return f"VALIDATION_ERROR_{type(exc).__name__}", 0, "", 0
         finally:
-            # NSE archive requests are deliberately paced to avoid aggressive scraping.
             time.sleep(REQUEST_INTERVAL_SECONDS)
     return f"HTTP_{last_status or 'UNKNOWN'}", 0, "", 0
 
@@ -138,14 +163,10 @@ def run_backfill(
     try:
         for index, day in enumerate(dates, start=1):
             status, rows, digest, size = _download_report(session, day, cache_dir)
-            record = {
-                "SessionDate": day.isoformat(),
-                "Status": status,
-                "ValidEQDeliveryRows": rows,
-                "Bytes": size,
-                "SHA256": digest,
-            }
-            records.append(record)
+            records.append({
+                "SessionDate": day.isoformat(), "Status": status,
+                "ValidEQDeliveryRows": rows, "Bytes": size, "SHA256": digest,
+            })
             print(f"[DELIVERY BACKFILL] {index}/{len(dates)} {day} {status} rows={rows}", flush=True)
     finally:
         session.close()
@@ -153,17 +174,12 @@ def run_backfill(
     coverage = pd.DataFrame(records)
     coverage.to_csv(output_dir / "coverage.csv", index=False)
     valid_count = int(coverage["Status"].isin(["REUSED_CACHE", "DOWNLOADED"]).sum())
-    downloaded_count = int(coverage["Status"].eq("DOWNLOADED").sum())
-    reused_count = int(coverage["Status"].eq("REUSED_CACHE").sum())
     summary = {
-        "RequestedPriceSessions": len(dates),
-        "RequestedStartDate": dates[0].isoformat(),
-        "RequestedEndDate": dates[-1].isoformat(),
-        "ValidDeliveryReports": valid_count,
-        "Downloaded": downloaded_count,
-        "ReusedCache": reused_count,
-        "MissingOrRejected": len(dates) - valid_count,
-        "PriceCacheModified": False,
+        "RequestedPriceSessions": len(dates), "RequestedStartDate": dates[0].isoformat(),
+        "RequestedEndDate": dates[-1].isoformat(), "ValidDeliveryReports": valid_count,
+        "Downloaded": int(coverage["Status"].eq("DOWNLOADED").sum()),
+        "ReusedCache": int(coverage["Status"].eq("REUSED_CACHE").sum()),
+        "MissingOrRejected": len(dates) - valid_count, "PriceCacheModified": False,
         "DeliveryCacheDirectory": str(cache_dir),
         "Status": "COMPLETE" if valid_count == len(dates) else "PARTIAL_DELIVERY_HISTORY",
     }
@@ -178,8 +194,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.sessions < 5:
         parser.error("--sessions must be at least 5")
-    run_backfill(target_sessions=args.sessions)
-    return 0
+    summary = run_backfill(target_sessions=args.sessions)
+    return 0 if summary["Status"] == "COMPLETE" else 2
 
 
 if __name__ == "__main__":
