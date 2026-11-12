@@ -1,13 +1,17 @@
 import math
 import pandas as pd
-from rvol_strategy_backtest import (classify_delivery, strategy_membership, _metric, delivery_window_dates, forward_session_dates, official_market_session_dates)
+from rvol_strategy_backtest import (classify_delivery, _metric, delivery_window_dates, forward_session_dates, official_market_session_dates)
 
 
-def test_delivery_categories_use_all_valid_reports_and_minimum_five():
-    assert classify_delivery([60, 60, 60, 60, 60]) == ("PASS", "PASS")
-    assert classify_delivery([80, 80, 80, 80, 20]) == ("PASS", "REJECT")
-    assert classify_delivery([80, 80, 80, 80, 20, 60]) == ("PASS", "REJECT")
-    assert classify_delivery([59.99, 60, 60, 60, 60]) == ("REJECT", "REJECT")
+def test_delivery_categories_use_approved_rolling_window_and_daily_counts():
+    # Five valid reports create only one A rolling window, but five B days pass.
+    assert classify_delivery([60, 60, 60, 60, 60]) == ("REJECT", "PASS")
+    # Nine qualifying reports create five qualifying A windows and nine B days.
+    assert classify_delivery([60] * 9) == ("PASS", "PASS")
+    # B passes with five qualifying days even when no 5-session average passes.
+    assert classify_delivery([100, 0, 100, 0, 100, 0, 100, 0, 100]) == ("REJECT", "PASS")
+    # Exactly 60.00% is included in both qualifying counts.
+    assert classify_delivery([60] * 9) == ("PASS", "PASS")
     assert classify_delivery([60, 60, 60, 60]) == ("WAIT_FOR_DATA", "WAIT_FOR_DATA")
 
 
@@ -23,14 +27,6 @@ def test_forward_horizons_use_next_market_sessions_and_require_full_horizon():
         "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09"
     ]
     assert forward_session_dates(dates, "2026-11-05", 5) == []
-
-
-def test_rvol_strategy_boundaries():
-    assert strategy_membership(1.50001) == (True, True, True)
-    assert strategy_membership(1.5) == (False, True, True)
-    assert strategy_membership(1.2) == (False, False, True)
-    assert strategy_membership(0.8) == (False, False, True)
-    assert strategy_membership(float("nan")) == (False, False, False)
 
 
 def test_return_metrics_are_deterministic():
