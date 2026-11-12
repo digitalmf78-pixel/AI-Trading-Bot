@@ -46,17 +46,15 @@ def apply_delivery_categories(candidates: pd.DataFrame, asof_date, sessions=None
         _write_outputs(audit, audit, audit)
         return qualified, audit
 
-    a_pass = audit["DeliveryCategoryAStatus"].eq("PASS_AVG_GE_60_PERCENT")
-    b_pass = audit["DeliveryCategoryBStatus"].eq("PASS_EACH_DAY_GE_60_PERCENT")
+    a_pass = audit["DeliveryCategoryAStatus"].eq("PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5")
+    b_pass = audit["DeliveryCategoryBStatus"].eq("PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5")
     a_wait = audit["DeliveryCategoryAStatus"].astype(str).str.startswith("WAIT_FOR_DATA")
     b_wait = audit["DeliveryCategoryBStatus"].astype(str).str.startswith("WAIT_FOR_DATA")
-    audit["CategoryAStatus"] = audit["DeliveryCategoryAStatus"].map({
-        "PASS_AVG_GE_60_PERCENT": "PASS",
-        "FILTERED_OUT_AVG_LT_60_PERCENT": "FAIL",
+    audit["CategoryAStatus"] = audit["DeliveryACount30DStatus"].replace({
+        "PASS": "PASS", "FAIL": "FAIL",
     }).fillna("WAIT_FOR_DATA")
-    audit["CategoryBStatus"] = audit["DeliveryCategoryBStatus"].map({
-        "PASS_EACH_DAY_GE_60_PERCENT": "PASS",
-        "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT": "FAIL",
+    audit["CategoryBStatus"] = audit["DeliveryBCount30DStatus"].replace({
+        "PASS": "PASS", "FAIL": "FAIL",
     }).fillna("WAIT_FOR_DATA")
     audit["DeliveryCategoryA"] = a_pass
     audit["DeliveryCategoryB"] = b_pass
@@ -80,6 +78,6 @@ def _write_outputs(audit, category_a=None, category_b=None):
     category_a = category_a if category_a is not None else audit.iloc[0:0].copy()
     category_b = category_b if category_b is not None else audit.iloc[0:0].copy()
     audit.to_csv(OUTPUT_DIR / "v8_delivery_categories_audit.csv", index=False)
-    category_a.to_csv(OUTPUT_DIR / "v8_delivery_category_a_avg60.csv", index=False)
-    category_b.to_csv(OUTPUT_DIR / "v8_delivery_category_b_each_day60.csv", index=False)
+    category_a.to_csv(OUTPUT_DIR / "v8_delivery_category_a_rolling5d_60_count5.csv", index=False)
+    category_b.to_csv(OUTPUT_DIR / "v8_delivery_category_b_daily60_count5.csv", index=False)
     audit.to_csv(REPORT_DIR / "delivery_categories_audit.csv", index=False)
