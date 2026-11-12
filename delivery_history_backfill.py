@@ -12,7 +12,7 @@ import io
 import json
 import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -57,7 +57,7 @@ def price_session_dates(price_dir: Path = PRICE_DIR, target_sessions: int = DEFA
     while len(expected) < target_sessions and calendar_days_scanned <= target_sessions * 2 + 30:
         if is_trading_session(cursor):
             expected.append(cursor)
-        cursor -= pd.Timedelta(days=1)
+        cursor -= timedelta(days=1)
         calendar_days_scanned += 1
     if len(expected) < target_sessions:
         raise RuntimeError(
