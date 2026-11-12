@@ -8,7 +8,7 @@ from signal_log import SIGNAL_LOG_COLUMNS, append_signal_log
 
 def _rows():
     return pd.DataFrame([
-        {"TckrSymb": "abc", "EODWatchlistStatus": "WATCH", "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT", "DeliveryCategoryBStatus": "PASS_EACH_DAY_GE_60_PERCENT", "LiquidityTier": "STRONG", "RVOL": 1.8, "SetupType": "Breakout", "TrendClassification": "Bullish", "V8Score": 82, "EntryZoneLow": 100, "EntryZoneHigh": 102, "EntryPricePlan": 102, "StopLossPlan": 96, "TargetPricePlan": 114, "RiskReward": 2.0, "SectorStrengthStatus": "PASS", "MarketRegimeStatus": "PASS", "ClsPric": 101},
+        {"TckrSymb": "abc", "EODWatchlistStatus": "WATCH", "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5", "DeliveryCategoryBStatus": "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5", "LiquidityTier": "STRONG", "RVOL": 1.8, "SetupType": "Breakout", "TrendClassification": "Bullish", "V8Score": 82, "EntryZoneLow": 100, "EntryZoneHigh": 102, "EntryPricePlan": 102, "StopLossPlan": 96, "TargetPricePlan": 114, "RiskReward": 2.0, "SectorStrengthStatus": "PASS", "MarketRegimeStatus": "PASS", "ClsPric": 101},
         {"TckrSymb": "xyz", "EODWatchlistStatus": "WAIT_FOR_DATA", "RVOL": float("nan"), "V8Score": float("nan"), "EntryZoneLow": float("nan"), "StopLossPlan": float("nan"), "ClsPric": float("nan")},
     ])
 
