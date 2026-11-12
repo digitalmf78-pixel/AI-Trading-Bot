@@ -130,6 +130,22 @@ class ArchiveCacheRevalidationTests(unittest.TestCase):
             self.assertEqual(len(session.calls), 2)
             self.assertTrue((cache_dir / "ind_close_all_19102026.csv").exists())
 
+    def test_recent_failed_incomplete_cache_revalidation_uses_cooldown_without_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            day = pd.Timestamp("2026-10-19")
+            self._write_cache(cache_dir, self._frame(len(sector_data.SECTOR_INDICES) - 6), day)
+            failing = FakeArchiveSession([FakeArchiveResponse(403, b"blocked"), FakeArchiveResponse(403, b"blocked")])
+            with patch.object(sector_data, "CACHE_DIR", cache_dir):
+                first = sector_data._download_daily_index_file(failing, day)
+                second_session = FakeArchiveSession([])
+                second = sector_data._download_daily_index_file(second_session, day)
+            self.assertEqual(len(sector_data._archive_sector_coverage(first)), len(sector_data.SECTOR_INDICES) - 6)
+            self.assertEqual(len(sector_data._archive_sector_coverage(second)), len(sector_data.SECTOR_INDICES) - 6)
+            self.assertEqual(len(failing.calls), 2)
+            self.assertEqual(second_session.calls, [])
+            self.assertTrue((cache_dir / "ind_close_all_19102026.validation.json").exists())
+
     def test_incomplete_cache_is_revalidated_and_replaced_by_complete_official_csv(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_dir = Path(tmp)
