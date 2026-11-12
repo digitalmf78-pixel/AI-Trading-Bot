@@ -1464,8 +1464,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         b_count = value(row, "DeliveryDailyPassCount", "WAIT")
         a_count_status = value(row, "DeliveryACount30DStatus", "WAIT_FOR_DATA")
         b_count_status = value(row, "DeliveryBCount30DStatus", "WAIT_FOR_DATA")
-        a_count_tag = _s(a_count_status)
-        b_count_tag = _s(b_count_status)
+        a_count_tag = a_count_status if a_count_status in {"PASS", "FAIL"} else "WAIT"
+        b_count_tag = b_count_status if b_count_status in {"PASS", "FAIL"} else "WAIT"
         lines.append("  Delivery: A " + str(a_count) + "/30 " + a_count_tag + " | B " + str(b_count) + "/30 " + b_count_tag + " | RVOL: " + str(rvol) + " " + _s(rvol_raw))
         lines.append("  Fund: " + str(fund_status) + " " + str(fund_score) + " " + _s(fund_status) + " | Technical:" + str(technical) + " (" + _s(technical) + ") | Setup: " + str(setup))
         lines.append("  Trend: " + str(trend) + " (" + _s(trend) + ") | EMA44: " + str(ema_signal) + " " + _s(ema_signal) + " | RSI: " + str(number(row, "RSI14", "", 1)))
