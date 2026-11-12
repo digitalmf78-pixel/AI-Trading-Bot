@@ -28,6 +28,8 @@ CONSTITUENT_CACHE_DIR = Path("data") / "cache" / "sector_constituents"
 # Index constituent membership changes infrequently; reuse official CSVs for
 # 24 hours across EOD/premarket runs, then refresh from the official source.
 CONSTITUENT_CACHE_TTL_SECONDS = 24 * 60 * 60
+# EOD and premarket runs share this cooldown to avoid repeating failed NSE archive requests.
+ARCHIVE_REVALIDATION_COOLDOWN_SECONDS = 12 * 60 * 60
 MAP_PATH = INPUT_DIR / "sector_map.csv"
 HISTORY_PATH = INPUT_DIR / "sector_history.csv"
 MAP_COLUMNS = ["TckrSymb", "Sector", "SectorIndexSymbol"]
@@ -210,6 +212,7 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     date_key = day.strftime("%d%m%Y")
     cache_path = CACHE_DIR / f"ind_close_all_{date_key}.csv"
+    validation_path = CACHE_DIR / f"ind_close_all_{date_key}.validation.json"
     cached: pd.DataFrame | None = None
     if cache_path.exists():
         try:
@@ -232,6 +235,26 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
                 print(f"[SECTOR][ARCHIVE] CACHE_EMPTY date={day.date()} path={cache_path}")
         except Exception as exc:
             print(f"[SECTOR][ARCHIVE] CACHE_READ_ERROR date={day.date()} error={exc}")
+
+    # A recent failed revalidation is cached separately from the CSV. The CSV
+    # remains partial (or absent); this only suppresses duplicate network retries.
+    try:
+        validation = json.loads(validation_path.read_text(encoding="utf-8"))
+        attempted_at = float(validation.get("attempted_at_epoch", 0))
+        age_seconds = max(0.0, time.time() - attempted_at)
+        if (
+            validation.get("status") in {"REVALIDATION_FAILED", "FETCH_FAILED", "DATE_UNAVAILABLE"}
+            and age_seconds < ARCHIVE_REVALIDATION_COOLDOWN_SECONDS
+        ):
+            coverage_count = len(_archive_sector_coverage(cached)) if cached is not None else 0
+            print(
+                f"[SECTOR][ARCHIVE] REVALIDATION_COOLDOWN date={day.date()} "
+                f"age_minutes={age_seconds / 60:.1f} coverage={coverage_count}/{len(SECTOR_INDICES)} "
+                f"status={validation.get('status')}; no duplicate network request"
+            )
+            return cached if cached is not None else pd.DataFrame()
+    except (OSError, ValueError, TypeError):
+        pass
 
     urls = [
         f"https://archives.nseindia.com/content/indices/ind_close_all_{date_key}.csv",
@@ -294,27 +317,45 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
                 f"rows={len(frame)} sector_coverage={len(coverage)}/{expected_count}"
             )
             frame.to_csv(cache_path, index=False)
+            validation_path.unlink(missing_ok=True)
             print(f"[SECTOR][ARCHIVE] CACHE_REFRESHED date={day.date()} sector_coverage={len(coverage)}/{expected_count}")
             return frame
         except Exception as exc:
             errors.append(f"{host}: {type(exc).__name__}: {exc}")
             print(f"[SECTOR][ARCHIVE] REQUEST_ERROR date={day.date()} host={host} error={type(exc).__name__}: {exc}")
 
+    validation_status = (
+        "DATE_UNAVAILABLE" if errors and all("HTTP 404" in item for item in errors)
+        else "REVALIDATION_FAILED" if cached is not None
+        else "FETCH_FAILED"
+    )
+    validation_path.write_text(
+        json.dumps({
+            "date": day.date().isoformat(),
+            "attempted_at_epoch": time.time(),
+            "status": validation_status,
+            "cached_coverage": len(_archive_sector_coverage(cached)) if cached is not None else 0,
+            "expected_coverage": len(SECTOR_INDICES),
+            "errors": errors,
+        }, sort_keys=True),
+        encoding="utf-8",
+    )
+
     if cached is not None:
         print(
             f"[SECTOR][ARCHIVE] CACHE_FALLBACK date={day.date()} "
             f"sector_coverage={len(_archive_sector_coverage(cached))}/{len(SECTOR_INDICES)} "
-            "reason=official_revalidation_unavailable"
+            "reason=official_revalidation_unavailable; cooldown sidecar saved"
         )
         return cached
 
     if errors and all("HTTP 404" in item for item in errors):
         print(
             f"[SECTOR][ARCHIVE] DATE_UNAVAILABLE date={day.date()} "
-            "both official archive hosts returned HTTP 404 (holiday, unpublished report, or unavailable date)"
+            "both official archive hosts returned HTTP 404 (holiday, unpublished report, or unavailable date); retry cooldown saved"
         )
     elif errors:
-        print(f"[SECTOR][ARCHIVE] FETCH_FAILED date={day.date()} details={' ; '.join(errors)}")
+        print(f"[SECTOR][ARCHIVE] FETCH_FAILED date={day.date()} details={' ; '.join(errors)}; retry cooldown saved")
     return pd.DataFrame()
 
 
