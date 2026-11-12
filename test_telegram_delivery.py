@@ -153,4 +153,4 @@ def test_telegram_delivery_line_uses_compact_a_b_counts():
         "AvgDelivery30D": 63.0,
     }])
     digest = "\\n".join(news_catalyst._observation_digest_lines(report, pd.DataFrame()))
-    assert "Delivery: A 7/30 OK | B 5/30 OK" in digest
+    assert "Delivery: A 7/30 PASS | B 5/30 PASS" in digest
