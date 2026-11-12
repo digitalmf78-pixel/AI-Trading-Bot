@@ -176,8 +176,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Classify Category A/B over all valid reports in the 30-calendar-day window.
 
-    Category A: average Delivery % across each candidate's valid reports >=60%.
-    Category B: every one of that candidate's valid reports is >=60%.
+    Category A: at least five qualifying trailing five-session averages >=60%.
+    Category B: at least five individual daily reports with Delivery >=60%.
+    Compact A/B n/30 columns are display-only; no eligibility changes.
     Each candidate needs at least five valid distinct report dates; otherwise
     both categories remain WAIT_FOR_DATA. Exactly 60.00% passes.
     """
@@ -215,6 +216,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         audit["DeliverySessions"] = 0
         audit["DeliveryExpectedSessions30D"] = float("nan")
         audit["DeliveryCoveragePct"] = float("nan")
+        audit["DeliveryACount30DDisplay"] = "WAIT_FOR_DATA/30"
+        audit["DeliveryBCount30DDisplay"] = "WAIT_FOR_DATA/30"
         audit["DeliveryDailyPassCount"] = 0
         audit["DeliveryARolling5DPassCount30D"] = 0
         audit["DeliveryACount30DStatus"] = "WAIT_FOR_DATA"
@@ -336,6 +339,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliveryExpectedSessions30D": expected_sessions,
             "DeliveryCoveragePct": coverage_pct,
             "DeliveryDailyPassCount": daily_pass_count,
+            "DeliveryACount30DDisplay": f"{rolling_5d_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
+            "DeliveryBCount30DDisplay": f"{daily_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
             "DeliveryARolling5DPassCount30D": rolling_5d_pass_count,
             "DeliveryACount30DStatus": a_count_status,
             "DeliveryBCount30DStatus": b_count_status,
