@@ -136,3 +136,21 @@ def test_research_digest_has_delivery_5_10_20_news_links_events_and_watchlist_ex
     assert saved.loc[0,"TckrSymb"]=="ABC" and "UpcomingEvents20D" in saved.columns
     assert saved.loc[0,"ResearchWatchlistCategories"] == "ACCUMULATION"
     assert (out/"research_watchlists"/"v8_telegram_research_watchlist_20261111.csv").is_file()
+
+def test_telegram_delivery_line_uses_compact_a_b_counts():
+    import pandas as pd
+
+    report = pd.DataFrame([{
+        "TckrSymb": "COMPACT",
+        "LiquidityFilterStatus": "PASS",
+        "LiquidityTier": "STRONG",
+        "DeliveryCategoryAStatus": "PASS_AVG_GE_60_PERCENT",
+        "DeliveryCategoryBStatus": "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT",
+        "DeliveryARolling5DPassCount30D": 7,
+        "DeliveryDailyPassCount": 5,
+        "DeliveryACount30DStatus": "PASS",
+        "DeliveryBCount30DStatus": "PASS",
+        "AvgDelivery30D": 63.0,
+    }])
+    digest = "\\n".join(news_catalyst._observation_digest_lines(report, pd.DataFrame()))
+    assert "Delivery: A 7/30 OK | B 5/30 OK" in digest
