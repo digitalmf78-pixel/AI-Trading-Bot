@@ -200,7 +200,7 @@ def test_delivery_qualified_union_is_retained_and_rvol_only_classifies_in_scanne
     rvol_calculation_step = source.index("current = calculate_rvol(delivery_candidates, avg_volume)")
     rvol_classification = source.index("current = classify_rvol_for_delivery_candidates")
     liquidity_step = source.index("STEP 6: EXISTING LIQUIDITY FILTER")
-    fundamental_step = source.index("STEP 7: FUNDAMENTALS FOR ALL RVOL > 1.5 DELIVERY A/B CANDIDATES")
+    fundamental_step = source.index("STEP 7: FUNDAMENTALS FOR LIQUIDITY-PASS CANDIDATES")
     technical_step = source.index("STEP 7: PRICE + VOLUME")
 
     assert history_baseline_step < delivery_step < union_step < rvol_calculation_step < rvol_classification < liquidity_step
