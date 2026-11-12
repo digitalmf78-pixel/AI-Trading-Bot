@@ -97,9 +97,14 @@ def _build_watchlist(result, news, eod_date):
         watch.to_csv(SNAPSHOT_DIR / f"v8_telegram_research_watchlist_{date_key:%Y%m%d}.csv", index=False)
     return watch
 
-def build_telegram_research_sections(result, news, eod_date):
+def build_telegram_research_sections(result, news, eod_date, company_names=None):
     """Render the research summary; source reports remain the evidence of record."""
     watch = _build_watchlist(result if result is not None else pd.DataFrame(), news, eod_date)
+    company_names = company_names or {}
+    def identity(symbol):
+        symbol = str(symbol or "").strip().upper()
+        official_name = company_names.get(symbol)
+        return f"{official_name} | NSE: {symbol}" if official_name else f"NAME_NOT_VERIFIED_IN_NSE_MASTER | NSE: {symbol}"
     lines = ["", "━━━━━━━━━━━━━━━━━━━━", "🔬 RESEARCH BRIEF • पुराव्यावर आधारित निरीक्षण",
              "", "📦 DELIVERY + PRICE RESPONSE • 5D / 10D / 20D"]
     delivery = _delivery()
@@ -116,7 +121,7 @@ def build_telegram_research_sections(result, news, eod_date):
                 bits.append(f"{days}D Qty Δ {_n(row,p+'ChangePct','%')} | Del% {_n(row,p+'DeliveryPctAverage','%')} | Price {_n(row,p+'CloseChangePct','%')}")
             else:
                 bits.append(f"{days}D WAIT_FOR_DATA")
-        lines.append(f"• {sym}: " + " ; ".join(bits))
+        lines.append(f"• {identity(sym)}: " + " ; ".join(bits))
     acc = _read("v8_hybrid_potential_accumulation_watchlist.csv")
     lines.extend(["", f"🟢 EARLY ACCUMULATION WATCH • {len(acc)} rows | observation only"])
     if acc.empty:
@@ -125,13 +130,13 @@ def build_telegram_research_sections(result, news, eod_date):
         counts = acc.get("WatchlistStatus", pd.Series("WAIT_FOR_DATA", index=acc.index)).fillna("WAIT_FOR_DATA").value_counts().to_dict()
         lines.append(f"ACCUMULATION_WATCH {counts.get('ACCUMULATION_WATCH',0)} | WAIT {counts.get('WAIT_FOR_DATA',0)}")
         for _, row in acc.head(12).iterrows():
-            lines.append(f"• {_v(row,'TckrSymb','')}: {_v(row,'WatchlistStatus')} | High-delivery days {_n(row,'HighDeliverySessionCount','',0)} | Up/Down {_n(row,'HighDeliveryUpDayCount','',0)}/{_n(row,'HighDeliveryDownDayCount','',0)} | {_v(row,'WatchlistReason')}")
+            lines.append(f"• {identity(_v(row,'TckrSymb',''))}: {_v(row,'WatchlistStatus')} | High-delivery days {_n(row,'HighDeliverySessionCount','',0)} | Up/Down {_n(row,'HighDeliveryUpDayCount','',0)}/{_n(row,'HighDeliveryDownDayCount','',0)} | {_v(row,'WatchlistReason')}")
     setup = _read("v8_hybrid_breakout_ready_watchlist.csv")
     lines.extend(["", "🎯 BREAKOUT / PULLBACK WATCHLIST"])
     if setup.empty:
         lines.append("Breakout/Pullback report उपलब्ध नाही.")
     for _, row in setup.head(15).iterrows():
-        lines.append(f"• {_v(row,'TckrSymb','')}: {_v(row,'WatchlistStatus')} | Breakout {_v(row,'BreakoutStatus')} | Pullback {_v(row,'PullbackStatus')} | Chase {_v(row,'ChaseStatus')}")
+        lines.append(f"• {identity(_v(row,'TckrSymb',''))}: {_v(row,'WatchlistStatus')} | Breakout {_v(row,'BreakoutStatus')} | Pullback {_v(row,'PullbackStatus')} | Chase {_v(row,'ChaseStatus')}")
     entry = _read("v8_hybrid_confirmed_entry_watchlist.csv")
     eligible = entry[entry.get("WatchlistStatus", pd.Series("", index=entry.index)).astype(str).eq("ENTRY_CANDIDATE")] if not entry.empty else entry
     lines.extend(["", f"✅ FINAL ENTRY WATCHLIST • {len(eligible)} candidate(s)"])
@@ -139,7 +144,7 @@ def build_telegram_research_sections(result, news, eod_date):
         lines.append("विद्यमान final gates नुसार ENTRY_CANDIDATE नाही.")
     else:
         for _, row in eligible.head(15).iterrows():
-            lines.append(f"• {_v(row,'TckrSymb','')}: {_v(row,'WatchlistReason')}")
+            lines.append(f"• {identity(_v(row,'TckrSymb',''))}: {_v(row,'WatchlistReason')}")
     fund = _read("v8_fundamental_report.csv")
     lines.extend(["", f"📊 FUNDAMENTAL RESEARCH • {len(fund)} collected rows"])
     if not fund.empty:
@@ -150,7 +155,7 @@ def build_telegram_research_sections(result, news, eod_date):
                        (("RevenueGrowthPct","Revenue","%"),("ProfitGrowthPct","Profit","%"),
                         ("ROEPercent","ROE","%"),("ROCEPercent","ROCE","%"),
                         ("DebtToEquity","D/E","x"),("InterestCoverage","Interest Cov.","x"),("TrailingPE","P/E","x"),("PriceToBook","P/B","x"),("PromoterHoldingPct","Promoter","%"),("FIIHoldingPct","FII","%"),("DIIHoldingPct","DII","%")) if col in fund.columns]
-            lines.append(f"• {_v(row,'TckrSymb','')}: {_v(row,'FundamentalStatus')} | Score {_n(row,'FundamentalScore','/100')} | " + " | ".join(metrics))
+            lines.append(f"• {identity(_v(row,'TckrSymb',''))}: {_v(row,'FundamentalStatus')} | Score {_n(row,'FundamentalScore','/100')} | " + " | ".join(metrics))
     events = _read("v8_upcoming_corporate_events.csv")
     ref = pd.to_datetime(eod_date, errors="coerce")
     confirmed = []
@@ -162,7 +167,7 @@ def build_telegram_research_sections(result, news, eod_date):
     if not confirmed:
         lines.append("पुढील 20 दिवसांत अधिकृत तारीख पुष्टी झालेला event उपलब्ध नाही.")
     for row in confirmed[:15]:
-        lines.append(f"• {_v(row,'TckrSymb','')} | {_v(row,'EventDate')} | {_v(row,'EventType','Event')} | {_v(row,'Headline','')[:130]}")
+        lines.append(f"• {identity(_v(row,'TckrSymb',''))} | {_v(row,'EventDate')} | {_v(row,'EventType','Event')} | {_v(row,'Headline','')[:130]}")
         url = _v(row,"URL","")
         if url:
             lines.append(f"  Source: {_v(row,'Source','NSE')} | {url[:900]}")
@@ -177,7 +182,7 @@ def build_telegram_research_sections(result, news, eod_date):
             headline = _v(row,"Headline","")
             if not headline or shown >= 15:
                 continue
-            lines.append(f"• {_v(row,'TckrSymb','')} | {_v(row,'Impact','unverified').upper()} | {_v(row,'SourceType','source')} | {_v(row,'PublishedAt','')}")
+            lines.append(f"• {identity(_v(row,'TckrSymb',''))} | {_v(row,'Impact','unverified').upper()} | {_v(row,'SourceType','source')} | {_v(row,'PublishedAt','')}")
             lines.append(f"  {headline[:180]}")
             url = _v(row,"URL","")
             if url:
