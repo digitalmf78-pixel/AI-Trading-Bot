@@ -1,12 +1,10 @@
-"""Research-only comparison of three RVOL gates on cached NSE EOD data.
+"""Research-only Delivery A/B cohort forward-outcome backtest on cached NSE EOD data.
 
-Strategies are compared on the same historical cohort and gates:
-all valid candidate-specific Delivery reports in the inclusive 30-calendar-day
-window (minimum five), Category A average >=60%, plus prior-20-official-session
-average traded value >= INR 1.5 crore, then:
-A) RVOL > 1.5; B) RVOL > 1.2; C) no hard RVOL threshold.
-Category B requires every valid report in that 30-day window to be >=60%.
-Forward horizons use exact official NSE sessions and require complete symbol OHLC.
+Uses the approved 30-calendar-day Delivery rules (A: at least five qualifying
+trailing 5-valid-session averages >=60%; B: at least five daily observations
+>=60%), includes the A OR B union, and treats RVOL as descriptive only.
+The prior-20-session average traded-value liquidity condition remains >= INR
+1.5 crore. Forward 5/10/20-session outcomes use exact official NSE sessions.
 No network calls, no live scanner changes, no fundamental claims.
 """
 from __future__ import annotations
@@ -71,11 +69,17 @@ def forward_session_dates(market_dates, signal_date, horizon: int) -> list[pd.Ti
 
 
 def classify_delivery(values: list[float]) -> tuple[str, str]:
-    """Classify all valid candidate reports in the 30-day window; at least five are required."""
+    """Apply approved A/B counts over valid distinct reports in the 30-day window."""
     if len(values) < 5 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 100 for v in values):
         return "WAIT_FOR_DATA", "WAIT_FOR_DATA"
-    a = "PASS" if sum(values) / len(values) >= 60.0 else "REJECT"
-    b = "PASS" if all(float(v) >= 60.0 for v in values) else "REJECT"
+    valid = [float(v) for v in values]
+    qualifying_a_windows = sum(
+        sum(valid[index - 4:index + 1]) / 5.0 >= 60.0
+        for index in range(4, len(valid))
+    )
+    qualifying_b_days = sum(value >= 60.0 for value in valid)
+    a = "PASS" if qualifying_a_windows >= 5 else "REJECT"
+    b = "PASS" if qualifying_b_days >= 5 else "REJECT"
     return a, b
 
 
@@ -224,23 +228,28 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 rejection["insufficient_delivery_history"] += 1
                 continue
             cat_a, cat_b = classify_delivery(dvalues)
-            if cat_a != "PASS":
-                rejection["delivery_category_a_reject"] += 1
+            if cat_a != "PASS" and cat_b != "PASS":
+                rejection["delivery_a_and_b_reject"] += 1
                 continue
             if avg_value < LIQUIDITY_MIN_INR:
                 rejection["liquidity_below_1_5cr"] += 1
                 continue
 
-            strict, relaxed, no_gate = strategy_membership(rvol)
+            delivery_cohort = (
+                "A_AND_B" if cat_a == "PASS" and cat_b == "PASS"
+                else "A_ONLY" if cat_a == "PASS" else "B_ONLY"
+            )
             rec = {
                 "Date": date.date().isoformat(), "Symbol": symbol, "Close": current_close,
                 "CurrentVolume": float(current_volume), "AvgVolume20D": avg_volume, "RVOL": rvol,
                 "AvgTradedValue20D_INR": avg_value, "Delivery30D_AveragePct": sum(dvalues) / len(dvalues),
                 "Delivery30D_MinPct": min(dvalues), "DeliveryCategoryA": cat_a, "DeliveryCategoryB": cat_b,
                 "DeliveryValidReportCount": len(dvalues),
+                "DeliveryQualifyingAWindows": max(0, len(dvalues) - 4),
+                "DeliveryQualifyingBDays": sum(float(v) >= 60.0 for v in dvalues),
+                "DeliveryCohort": delivery_cohort,
                 "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in candidate_delivery_dates),
-                "Strategy_A_RVOL_GT_1_5": strict, "Strategy_B_RVOL_GT_1_2": relaxed,
-                "Strategy_C_No_RVOL_Hard_Gate": no_gate,
+                "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
                 "UniverseStatus": "EQ_SERIES_ONLY_HISTORICAL_MAINBOARD_NOT_VERIFIED",
             }
             for horizon in HORIZONS:
@@ -284,38 +293,39 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
 
     signals = pd.DataFrame(records)
     if signals.empty:
-        signals = pd.DataFrame(columns=["Date", "Symbol", "Close", "RVOL", "DeliveryCategoryA", "DeliveryCategoryB", *[f"ForwardReturn{h}D_Pct" for h in HORIZONS], *[f"MaxFavorable{h}D_Pct" for h in HORIZONS], *[f"MaxAdverse{h}D_Pct" for h in HORIZONS], "Strategy_A_RVOL_GT_1_5", "Strategy_B_RVOL_GT_1_2", "Strategy_C_No_RVOL_Hard_Gate"])
+        signals = pd.DataFrame(columns=["Date", "Symbol", "Close", "RVOL", "DeliveryCategoryA", "DeliveryCategoryB", "DeliveryCohort", *[f"ForwardReturn{h}D_Pct" for h in HORIZONS], *[f"MaxFavorable{h}D_Pct" for h in HORIZONS], *[f"MaxAdverse{h}D_Pct" for h in HORIZONS]])
     signals.to_csv(output_dir / "signals.csv", index=False)
     pd.DataFrame([{"Stage": k, "Rows": v} for k, v in rejection.items()]).to_csv(output_dir / "rejection_counts.csv", index=False)
 
     comparison = []
-    strategy_map = {
-        "A_RVOL_GT_1_5": "Strategy_A_RVOL_GT_1_5",
-        "B_RVOL_GT_1_2": "Strategy_B_RVOL_GT_1_2",
-        "C_NO_RVOL_HARD_GATE": "Strategy_C_No_RVOL_Hard_Gate",
-    }
-    for label, flag in strategy_map.items():
-        subset = signals[signals[flag].fillna(False)].copy() if not signals.empty else signals.copy()
-        for category in ("A", "B"):
-            group = subset if category == "A" else subset[subset["DeliveryCategoryB"].eq("PASS")]
-            row = {"Strategy": label, "DeliveryCohort": category, "SignalCount": int(len(group)),
-                   "RVOLThreshold": {"A_RVOL_GT_1_5": ">1.5", "B_RVOL_GT_1_2": ">1.2", "C_NO_RVOL_HARD_GATE": "none"}[label],
-                   "LiquidityGate": "20 prior sessions average traded value >= INR 1.5 crore",
-                   "DeliveryGate": "all valid candidate reports in prior 30 calendar days; minimum 5; average >=60%" if category == "A" else "all valid candidate reports in prior 30 calendar days; minimum 5; each >=60%",
-                   "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY"}
-            for h in HORIZONS:
-                row.update(_metric(group[f"ForwardReturn{h}D_Pct"], f"Return{h}D"))
-                row[f"AvgMFE{h}D_Pct"] = round(float(pd.to_numeric(group[f"MaxFavorable{h}D_Pct"], errors="coerce").mean()), 3) if len(group) else np.nan
-                row[f"AvgMAE{h}D_Pct"] = round(float(pd.to_numeric(group[f"MaxAdverse{h}D_Pct"], errors="coerce").mean()), 3) if len(group) else np.nan
-            comparison.append(row)
+    for cohort in ("A_OR_B", "A_ONLY", "A_AND_B", "B_ONLY"):
+        if signals.empty:
+            group = signals.copy()
+        elif cohort == "A_OR_B":
+            group = signals.copy()
+        else:
+            group = signals[signals["DeliveryCohort"].eq(cohort)].copy()
+        row = {
+            "DeliveryCohort": cohort, "SignalCount": int(len(group)),
+            "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
+            "LiquidityGate": "20 prior official sessions average traded value >= INR 1.5 crore",
+            "DeliveryGate": "30 calendar days; A = at least 5 trailing 5-valid-session averages >=60%; B = at least 5 daily reports >=60%; A OR B",
+            "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
+        }
+        for h in HORIZONS:
+            row.update(_metric(group[f"ForwardReturn{h}D_Pct"], f"Return{h}D"))
+            row[f"AvgMFE{h}D_Pct"] = round(float(pd.to_numeric(group[f"MaxFavorable{h}D_Pct"], errors="coerce").mean()), 3) if len(group) else np.nan
+            row[f"AvgMAE{h}D_Pct"] = round(float(pd.to_numeric(group[f"MaxAdverse{h}D_Pct"], errors="coerce").mean()), 3) if len(group) else np.nan
+        comparison.append(row)
     comp = pd.DataFrame(comparison)
     comp["BacktestStatus"] = "RESEARCH_ONLY_NOT_PRODUCTION_VALIDATED"
     comp["Caveat"] = "No transaction costs/slippage or portfolio simulation; daily signals can repeat and overlap, so observations are not independent executed trades. EQ-only and current cache survivorship; historical official Main Board classification and point-in-time fundamentals unavailable. Forward outcomes require every symbol row on each of the next official market dates; incomplete horizons are excluded."
     comp.to_csv(output_dir / "comparison.csv", index=False)
-    print(f"[RVOL BACKTEST] Cache dates={len(market_dates)}, symbols={len(price_groups)}, qualified signal rows={len(signals)}")
-    print(f"[RVOL BACKTEST] Comparison: {output_dir / 'comparison.csv'}; signals: {output_dir / 'signals.csv'}")
-    print("[RVOL BACKTEST] Research only; no scanner filter or Master Spec was changed.")
+    print(f"[DELIVERY BACKTEST] Cache dates={len(market_dates)}, symbols={len(price_groups)}, A-or-B signal rows={len(signals)}")
+    print(f"[DELIVERY BACKTEST] Comparison: {output_dir / 'comparison.csv'}; signals: {output_dir / 'signals.csv'}")
+    print("[DELIVERY BACKTEST] Research only; RVOL descriptive, no scanner filter or Master Spec was changed.")
     return {"status": "OK", "price_dates": len(market_dates), "symbols": len(price_groups), "signals": len(signals)}
+
 
 
 if __name__ == "__main__":
