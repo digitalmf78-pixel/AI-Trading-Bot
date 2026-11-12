@@ -1180,7 +1180,9 @@ def _telegram_observation_rows(report: pd.DataFrame | None,
             "RiskReward", "RiskRewardStatus", "NewsEvidenceStatus", "NewsPrimarySourceVerified",
             "EODWatchlistStatus", "DeliveryCategoryAStatus",
             "DeliveryCategoryBStatus", "AvgDelivery5D",
-            "DeliveryDailyPassCount", "DeliverySessions", "DeliveryMin5D",
+            "DeliveryDailyPassCount", "DeliveryARolling5DPassCount30D",
+            "DeliveryACount30DStatus", "DeliveryBCount30DStatus",
+            "DeliverySessions", "DeliveryMin5D",
             "LatestDeliveryPct", "ClsPric", "ValuationPriceINR",
             "ValuationStatus", "ValuationAsOfDate", "ValuationSource",
             "ValuationAssessmentStatus", "TrailingPE", "ForwardPE",
@@ -1354,7 +1356,7 @@ def _top_ranked_observations_by_tier(selected: pd.DataFrame, limit_per_tier: int
 def _observation_digest_lines(report: pd.DataFrame | None,
                               result: pd.DataFrame | None = None,
                               news_data: pd.DataFrame | None = None) -> list[str]:
-    """Send every liquidity-passed stock with all downstream filter confirmations."""
+    """Send every liquidity-passed stock with downstream confirmations and compact 30-day Delivery A/B counts."""
     rows = _telegram_observation_rows(report, result, limit=None)
     if rows.empty:
         return ["", "🔎 Liquidity filter नंतर Telegram साठी stock उपलब्ध नाही.",
@@ -1458,7 +1460,13 @@ def _observation_digest_lines(report: pd.DataFrame | None,
 
         lines.append("  " + symbol + " | " + tier + " " + turnover_text)
         rvol_raw = value(row, "RVOLStatus")
-        lines.append("  Delivery: A" + _s(a_status) + " B" + _s(b_status) + " (avg " + str(avg_delivery) + ") | RVOL: " + str(rvol) + " " + _s(rvol_raw))
+        a_count = value(row, "DeliveryARolling5DPassCount30D", "WAIT")
+        b_count = value(row, "DeliveryDailyPassCount", "WAIT")
+        a_count_status = value(row, "DeliveryACount30DStatus", "WAIT_FOR_DATA")
+        b_count_status = value(row, "DeliveryBCount30DStatus", "WAIT_FOR_DATA")
+        a_count_tag = a_count_status if a_count_status in {"PASS", "FAIL"} else "WAIT"
+        b_count_tag = b_count_status if b_count_status in {"PASS", "FAIL"} else "WAIT"
+        lines.append("  Delivery: A " + str(a_count) + "/30 " + a_count_tag + " | B " + str(b_count) + "/30 " + b_count_tag + " | RVOL: " + str(rvol) + " " + _s(rvol_raw))
         lines.append("  Fund: " + str(fund_status) + " " + str(fund_score) + " " + _s(fund_status) + " | Technical:" + str(technical) + " (" + _s(technical) + ") | Setup: " + str(setup))
         lines.append("  Trend: " + str(trend) + " (" + _s(trend) + ") | EMA44: " + str(ema_signal) + " " + _s(ema_signal) + " | RSI: " + str(number(row, "RSI14", "", 1)))
         lines.append("  Sector:" + str(sector_status) + " (" + str(sector) + ") | News: " + str(news_status) + " " + _s(news_status) + " | 3+1:" + str(confirmation) + "/" + str(mandatory_status))

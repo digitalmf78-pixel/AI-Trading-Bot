@@ -215,6 +215,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         audit["DeliveryExpectedSessions30D"] = float("nan")
         audit["DeliveryCoveragePct"] = float("nan")
         audit["DeliveryDailyPassCount"] = 0
+        audit["DeliveryARolling5DPassCount30D"] = 0
+        audit["DeliveryACount30DStatus"] = "WAIT_FOR_DATA"
+        audit["DeliveryBCount30DStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryMin30D"] = float("nan")
         audit["DeliveryMax30D"] = float("nan")
         audit["AvgDelivery30D"] = float("nan")
@@ -291,11 +294,18 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         count = len(values)
         avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
+        # Reporting-only compact counts: for each valid NSE session in the 30-calendar-day
+        # window, count the trailing five-session average when all five symbol observations
+        # are present. Keep the existing production A/B eligibility rules unchanged.
+        session_values = pd.Series([by_date.get(day, float("nan")) for day in report_dates], dtype="float64")
+        rolling_5d = session_values.rolling(window=5, min_periods=5).mean()
+        rolling_5d_pass_count = int(rolling_5d.ge(threshold).sum())
         daily_min = min(values) if count >= 5 else float("nan")
         daily_max = max(values) if count >= 5 else float("nan")
         coverage_pct = (count / expected_sessions * 100.0) if expected_sessions else float("nan")
         if count < 5:
             category_a = category_b = overall = "WAIT_FOR_DATA"
+            a_count_status = b_count_status = "WAIT_FOR_DATA"
         else:
             category_a = (
                 "PASS_AVG_GE_60_PERCENT" if avg >= threshold
@@ -307,6 +317,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             )
             # The generic production status represents the Delivery A OR B
             # union. Keep both category-specific statuses intact for reporting.
+            a_count_status = "PASS" if rolling_5d_pass_count >= 5 else "FAIL"
+            b_count_status = "PASS" if daily_pass_count >= 5 else "FAIL"
             overall = (
                 "PASS_GE_60_PERCENT"
                 if category_a == "PASS_AVG_GE_60_PERCENT"
@@ -315,6 +327,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             )
         if window_stale:
             category_a = category_b = overall = "WAIT_FOR_DATA_STALE_REPORT"
+            a_count_status = b_count_status = "WAIT_FOR_DATA"
 
         record = row.drop(labels=["_SYMBOL_KEY", "_SERIES_KEY"]).to_dict()
         record.update({
@@ -322,6 +335,9 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliveryExpectedSessions30D": expected_sessions,
             "DeliveryCoveragePct": coverage_pct,
             "DeliveryDailyPassCount": daily_pass_count,
+            "DeliveryARolling5DPassCount30D": rolling_5d_pass_count,
+            "DeliveryACount30DStatus": a_count_status,
+            "DeliveryBCount30DStatus": b_count_status,
             "DeliveryMin30D": daily_min,
             "DeliveryMax30D": daily_max,
             "AvgDelivery30D": avg,
