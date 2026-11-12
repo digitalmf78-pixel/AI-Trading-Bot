@@ -1,41 +1,44 @@
 # NSE V8 — Authoritative Delivery A/B Rules Addendum
-**Updated:** 2026-11-10  
+**Updated:** 2026-11-12  
 **Status:** Active production rules  
 **Scope:** Delivery A/B screening only. This addendum supplements the Master Specification; it does not replace or rewrite it.
 
 ## 1. Lookback and valid sessions
 - Use the 30-calendar-day window ending on and including the applicable EOD as-of date.
 - Count all valid, distinct, candidate-specific NSE Delivery report sessions in this window; never use a report dated after the as-of date.
-- Do not restrict production A/B classification to the latest five reports. If more than five valid sessions exist, use every valid in-window session.
-- At least five valid distinct sessions are required. Fewer than five means `WAIT_FOR_DATA`, not PASS or FAIL.
-- 30 calendar days is a calendar window, not an expectation of 30 trading-session reports.
+- Use every valid in-window session up to the maximum available in the 30-calendar-day window. Do not stop at five when more reports exist.
+- At least five valid distinct reports are required before evaluating either category. Fewer than five means `WAIT_FOR_DATA`, not PASS or FAIL.
+- Thirty calendar days is a calendar window, not an expectation of 30 trading-session reports. Always show the actual valid report count.
 
-## 2. Category A — Average Delivery Strength
-- Calculate the arithmetic average Delivery % across all valid sessions for that symbol in the 30-calendar-day window.
-- PASS when the average is **>=60.00%**. Exactly 60.00% passes.
-- A daily value below 60.00% does not by itself fail Category A if the full-window average remains >=60.00%.
+## 2. Category A — Five-session rolling-average Delivery
+- For each symbol, order all its valid distinct Delivery observations in the 30-calendar-day window chronologically.
+- Calculate each trailing five-valid-session rolling arithmetic average. A rolling window is evaluated only when all five valid symbol-specific observations exist; do not fabricate or fill missing values.
+- Count how many such rolling five-session averages are >=60.00%.
+- Category A passes only when at least 5 rolling windows meet the >=60.00% threshold. Exactly five passes; four or fewer fails.
+- Display the count compactly as `A: n/30`, where n is the number of qualifying rolling windows. The denominator denotes the maximum 30-calendar-day lookback, not a claim that 30 trading sessions exist.
 
-## 3. Category B — Consistent Daily Delivery Strength
-- PASS only when every valid session in the same 30-calendar-day window has Delivery % **>=60.00%**.
-- Exactly 60.00% passes. If even one valid session is below 60.00%, Category B fails.
-- Category A and B are evaluated independently. A stock can pass A while failing B.
-- Category B represents stronger consistency, not a BUY signal or proof of institutional buying.
+## 3. Category B — Daily Delivery consistency count
+- Count all valid individual sessions in the same 30-calendar-day window where daily Delivery % is >=60.00%.
+- Category B passes only when at least 5 valid days meet the >=60.00% threshold. Exactly five passes; four or fewer fails.
+- Display the count compactly as `B: n/30`.
+- A daily value exactly 60.00% passes.
 
 ## 4. Eligibility and output
-- Production eligibility is the full **A OR B** union. Preserve the actual category membership/status and de-duplicate symbols.
-- Since Category A is the average of the same values checked by B, a B pass mathematically implies an A pass. Retain B-only status as a defensive/audit field but flag any occurrence for consistency investigation.
-- For every stock, report: as-of date; 30-calendar-day window start/end; valid session count; coverage where determinable; every valid session date and Delivery %; average Delivery %; minimum and maximum daily Delivery %; Category A status; Category B status; union eligibility/membership; and PASS/FAIL/WAIT_FOR_DATA reason.
-- Explicitly display the actual valid-session count (e.g. 5, 12, 20) so users can distinguish a five-session sample from a wider sample. Do not imply 30 reports are expected.
-- Keep 5D/10D/20D consistency fields as additional observations only; they do not replace or alter the 30-calendar-day A/B eligibility rule.
+- Evaluate A and B independently.
+- Production eligibility is the full A OR B union. A stock passes the Delivery stage if A has at least five qualifying rolling windows OR B has at least five qualifying daily sessions. Preserve A_ONLY, B_ONLY, A_AND_B membership and de-duplicate symbols.
+- If the symbol has fewer than five valid distinct Delivery report sessions in the window, both categories remain WAIT_FOR_DATA, even if partial counts appear promising.
+- If the latest valid report is stale under the existing freshness rule, both categories remain WAIT_FOR_DATA_STALE_REPORT; stale data must not pass.
+- For every stock, report: as-of date; 30-calendar-day window start/end; valid session count; coverage where determinable; A qualifying rolling-window count/status; B qualifying daily-session count/status; average/minimum/maximum daily Delivery %; latest report date; and PASS/FAIL/WAIT reason.
+- The compact Telegram display is `A n/30 PASS|FAIL|WAIT | B n/30 PASS|FAIL|WAIT`.
+- These are Delivery eligibility rules, not BUY signals and not proof of institutional buyer identity.
 
 ## 5. Data reuse and historical integrity
-- Fetch/prepare the 30-day delivery-report set once per EOD run and reuse the same in-memory report set for A/B and 5D/10D/20D consistency analysis.
+- Fetch/prepare the 30-day Delivery report set once per EOD run and reuse the same in-memory report set for A/B and other Delivery observations.
 - For historical/backtest signals, use only reports available on or before that signal date and inside its 30-calendar-day lookback.
 - Missing/invalid report data is not a pass. Expected but unavailable reports must remain visible as missing/WAIT evidence; do not fabricate daily values.
 
 ## 6. Separate five-session Delivery-only watchlist
-- The strict five-session Delivery-only watchlist remains a separate artifact with its own explicitly requested rule (each of exactly five sessions >=60%).
-- Do not confuse that standalone shortlist with the production 30-calendar-day A/B pipeline.
+- The standalone strict five-session Delivery-only watchlist remains a separate artifact if explicitly requested. Do not confuse it with the production 30-calendar-day A/B count rules.
 
 ## 7. Change control
-This update clarifies the previously approved 30-calendar-day A/B rule and minimum five-valid-session requirement. It does not change the 60.00% thresholds, lookback window, A OR B eligibility semantics, RVOL, liquidity, fundamentals, technical filters, risk controls, or any unrelated production parameter. The original Master Specification remains unchanged.
+This 12-Nov-2026 user-approved update supersedes the previous Category A full-window-average and Category B every-session rules for production Delivery eligibility. The original Master Specification file remains unchanged. No RVOL, liquidity, fundamentals, technical, risk, or unrelated production parameter is changed.
