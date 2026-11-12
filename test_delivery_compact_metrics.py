@@ -20,10 +20,10 @@ def test_compact_delivery_counts_are_reporting_only_and_use_rolling_five_session
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-12", sessions=reports)
     row = audit.iloc[0]
 
-    # Two five-session rolling averages (ending Oct 7 and Oct 8) meet >=60%.
-    assert row["DeliveryARolling5DPassCount30D"] == 2
-    # Five individual sessions have Delivery >=60%.
-    assert row["DeliveryDailyPassCount"] == 5
+    # Three five-session rolling averages ending within the 30-day window meet >=60%.
+    assert row["DeliveryARolling5DPassCount30D"] == 3
+    # Six individual sessions have Delivery >=60%.
+    assert row["DeliveryDailyPassCount"] == 6
     assert row["DeliveryACount30DStatus"] == "FAIL"
     assert row["DeliveryBCount30DStatus"] == "PASS"
     # Existing production A/B eligibility remains based on the full-window average / every-day rule.
