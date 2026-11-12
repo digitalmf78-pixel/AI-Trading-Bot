@@ -1383,6 +1383,17 @@ def _observation_digest_lines(report: pd.DataFrame | None,
     rows = rows.drop(columns=["_tier_rank"])
 
     tier_counts = rows.get(tier_col, pd.Series("UNKNOWN", index=rows.index)).fillna("UNKNOWN").astype(str).str.upper().value_counts().to_dict()
+    # Show the actual new 30-calendar-day Delivery A/B eligibility totals up front.
+    # A = count of rolling five-valid-session averages >=60%; B = count of daily
+    # sessions >=60%. Each route passes at five qualifying observations; eligibility
+    # is A OR B. These are summaries of the liquidity-passed rows, not raw universe totals.
+    a_statuses = rows.get("DeliveryACount30DStatus", pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
+    b_statuses = rows.get("DeliveryBCount30DStatus", pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
+    a_pass = int(a_statuses.eq("PASS").sum())
+    b_pass = int(b_statuses.eq("PASS").sum())
+    ab_union = int((a_statuses.eq("PASS") | b_statuses.eq("PASS")).sum())
+    a_wait = int(a_statuses.str.startswith("WAIT").sum())
+    b_wait = int(b_statuses.str.startswith("WAIT").sum())
     core_col = "CoreTechnicalScreenStatus" if "CoreTechnicalScreenStatus" in rows.columns else "CandidateScreenStatus"
     core_status = rows.get(core_col, pd.Series("WAIT_FOR_DATA", index=rows.index)).fillna("WAIT_FOR_DATA").astype(str).str.upper()
     core_pass = rows.loc[core_status.eq("PASS"), "TckrSymb"].astype(str).tolist()
@@ -1396,6 +1407,8 @@ def _observation_digest_lines(report: pd.DataFrame | None,
         "",
         f"📋 LIQUIDITY-PASSED FULL AUDIT • एकूण {len(rows)} stocks",
         f"🟢 STRONG: {tier_counts.get('STRONG', 0)} | 🟡 MEDIUM: {tier_counts.get('MEDIUM', 0)} | 🔵 WEAK: {tier_counts.get('LOW', 0)}",
+        f"📦 DELIVERY A/B (30D): A PASS {a_pass} | B PASS {b_pass} | A OR B eligible {ab_union}",
+        f"⏳ Delivery WAIT: A {a_wait} | B {b_wait} | नियम: A rolling 5-session avg >=60% किमान 5 वेळा; B daily >=60% किमान 5 दिवस.",
         f"Core Technical PASS: {len(core_pass)} | Mandatory confirmation PASS: {int(mandatory.eq('PASS').sum())} | R:R PASS: {int(rr.eq('PASS').sum())}",
         f"Risk Control PASS: {int(risk.eq('PASS').sum())} | Final WATCH: {int(final.isin(['WATCH', 'PASS']).sum())}",
         "खालील प्रत्येक stock साठी Delivery, RVOL, Liquidity, Fundamental, Technical, Sector, News, 3+1, R:R, Chase, Risk आणि Final status दिले आहेत.",
