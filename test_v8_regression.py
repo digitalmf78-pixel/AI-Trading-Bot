@@ -731,7 +731,7 @@ if __name__ == "__main__":
         test_three_secondary_reposts_do_not_create_three_confirmations,
         test_untrusted_domain_cannot_be_primary_just_because_of_label,
         test_sector_mapping_uses_exact_official_nse_industry_fallbacks,
-        test_delivery_average_category_passes_while_daily_category_fails,
+        test_delivery_a_requires_five_rolling_windows_while_b_requires_five_daily_passes,
         test_delivery_exactly_60_each_day_passes,
         test_delivery_below_60_rejects_and_incomplete_waits,
         test_news_gate_preserves_category_a_only_candidates,
