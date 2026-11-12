@@ -40,8 +40,8 @@ def test_rvol_has_no_top_50_or_top_20_cap():
 
 def test_dual_delivery_categories_are_written_separately():
     source = (ROOT / "delivery_filter.py").read_text(encoding="utf-8")
-    assert "PASS_AVG_GE_60_PERCENT" in source
-    assert "PASS_EACH_DAY_GE_60_PERCENT" in source
+    assert "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5" in source
+    assert "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5" in source
     assert "v8_delivery_category_a_avg60.csv" in source
     assert "v8_delivery_category_b_each_day60.csv" in source
 
