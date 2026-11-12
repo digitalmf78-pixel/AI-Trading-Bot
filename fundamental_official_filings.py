@@ -721,11 +721,14 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
             )
         if unmatched:
             try:
+                targeted_started = time.perf_counter()
                 targeted = _fetch_targeted_nse_filings(
                     cutoff.date().isoformat(), unmatched,
                     diagnostics_path=TARGETED_LOOKUP_DIAGNOSTICS,
                     segments=targeted_segments, request_timeout=targeted_timeout,
                 )
+                targeted_elapsed = time.perf_counter() - targeted_started
+                print(f"[FUNDAMENTAL OFFICIAL TARGETED PERF] requested_pairs={len(unmatched)} elapsed_seconds={targeted_elapsed:.3f} returned_rows={len(targeted) if targeted is not None else 0}")
                 if targeted is not None and not targeted.empty:
                     filings = pd.concat([filings, targeted], ignore_index=True).drop_duplicates(
                         subset=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL"], keep="last"
