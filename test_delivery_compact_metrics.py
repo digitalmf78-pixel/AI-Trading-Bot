@@ -27,6 +27,6 @@ def test_compact_delivery_counts_are_reporting_only_and_use_rolling_five_session
     assert row["DeliveryACount30DStatus"] == "FAIL"
     assert row["DeliveryBCount30DStatus"] == "PASS"
     # Existing production A/B eligibility remains based on the full-window average / every-day rule.
-    assert row["DeliveryCategoryAStatus"] == "PASS_AVG_GE_60_PERCENT"
-    assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_AT_LEAST_ONE_DAY_LT_60_PERCENT"
+    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+    assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
