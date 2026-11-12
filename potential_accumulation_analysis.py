@@ -172,11 +172,11 @@ def _build_price_history(candidate, historical, asof, market_sessions):
             history[col] = pd.to_numeric(history[col], errors="coerce")
     return history.reset_index(drop=True), market_sessions
 
-def _delivery_observations(symbol, series, sessions, asof):
-    observations = []
+def _build_delivery_session_index(delivery_sessions, asof):
+    """Normalize each cached Delivery report once, indexed by symbol and series."""
     by_day = {}
     duplicate_dates = set()
-    for raw_day, raw in sessions or []:
+    for raw_day, raw in delivery_sessions or []:
         day = _session_date(raw_day)
         if day is None or day > asof:
             continue
@@ -185,8 +185,9 @@ def _delivery_observations(symbol, series, sessions, asof):
             by_day.pop(day, None)
             continue
         by_day[day] = raw
-    for day in sorted(by_day):
-        raw = by_day[day]
+
+    indexed = {}
+    for day, raw in by_day.items():
         if raw is None or raw.empty:
             continue
         sym_col = _find_col(raw, ("SYMBOL", "TckrSymb"))
@@ -204,13 +205,40 @@ def _delivery_observations(symbol, series, sessions, asof):
         data = raw.copy()
         data["_SYM"] = data[sym_col].astype(str).str.strip().str.upper()
         data["_SER"] = data[ser_col].astype(str).str.strip().str.upper()
-        match = data[(data["_SYM"] == symbol) & (data["_SER"] == series)]
-        if len(match) != 1:
+        data = data.set_index(["_SYM", "_SER"], drop=False)
+        indexed[day] = {
+            "frame": data,
+            "qty": qty_col, "pct": pct_col, "close": close_col,
+            "prev": prev_col, "open": open_col, "high": high_col,
+            "low": low_col, "volume": vol_col,
+        }
+    return indexed
+
+
+def _delivery_observations(symbol, series, sessions, asof, delivery_index=None):
+    observations = []
+    indexed = delivery_index if delivery_index is not None else _build_delivery_session_index(sessions, asof)
+    for day in sorted(indexed):
+        entry = indexed[day]
+        try:
+            match = entry["frame"].loc[(symbol, series)]
+        except KeyError:
             continue
-        row = match.iloc[0]
-        qty, pct = _num(row[qty_col]), _num(row[pct_col])
+        # Multiple rows for the same symbol/series/date remain ambiguous and
+        # are deliberately excluded exactly as in the original row-scan path.
+        if isinstance(match, pd.DataFrame):
+            if len(match) != 1:
+                continue
+            row = match.iloc[0]
+        else:
+            row = match
+        qty = _num(row[entry["qty"]])
+        pct = _num(row[entry["pct"]])
         if not math.isfinite(qty) or qty < 0 or not math.isfinite(pct) or not 0 <= pct <= 100:
             continue
+        close_col, prev_col = entry["close"], entry["prev"]
+        high_col, low_col = entry["high"], entry["low"]
+        vol_col, open_col = entry["volume"], entry["open"]
         close = _num(row[close_col]) if close_col else float("nan")
         previous = _num(row[prev_col]) if prev_col else float("nan")
         high = _num(row[high_col]) if high_col else float("nan")
@@ -242,6 +270,7 @@ def build_potential_accumulation_report(
     if asof is None:
         raise ValueError(f"Invalid as-of date: {asof_date!r}")
     history_index, ordered_market_sessions = build_price_history_index(historical, asof)
+    delivery_index = _build_delivery_session_index(delivery_sessions, asof)
 
     rows = []
     for _, candidate in candidates.drop_duplicates("TckrSymb", keep="first").iterrows():
@@ -443,7 +472,7 @@ def build_potential_accumulation_report(
                     row["DownVsUpVolumeRatio20D"] = float("nan")
                     row["SellingPressureObservationStatus"] = "WAIT_FOR_DATA"
 
-        delivery_rows = _delivery_observations(symbol, series, delivery_sessions, asof)
+        delivery_rows = _delivery_observations(symbol, series, delivery_sessions, asof, delivery_index=delivery_index)
         if len(delivery_rows) >= 5:
             row["DeliveryEvidenceStatus"] = "OBSERVATIONS_AVAILABLE"
             high_delivery = [item for item in delivery_rows if item["DeliveryPct"] >= DELIVERY_OBSERVATION_THRESHOLD]
