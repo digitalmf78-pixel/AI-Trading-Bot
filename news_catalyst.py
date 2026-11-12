@@ -6,7 +6,9 @@ secondary coverage. A headline is not treated as proof of why a stock moved.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import local
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
@@ -939,14 +941,41 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     api_end_date = window_end_ist_date
     api_coverage: dict[str, bool] = {}
     upcoming_event_rows: list[dict[str, str]] = []
-    api_session = requests.Session()
-    for api_index, symbol in enumerate(sorted(symbols)):
-        # Query every candidate even when RSS found one filing: RSS is global and
-        # can omit additional issuer-specific filings. Reuse one warmed session.
-        api_items = _nse_announcement_api_items(
-            symbol, api_start_date, api_end_date,
-            session=api_session, warm_session=(api_index == 0),
-        )
+    # Issuer API requests are independent by symbol. Use a small bounded worker
+    # pool with one warmed requests.Session per worker; preserve deterministic
+    # processing order and keep the exact same 90-day evidence window.
+    api_thread_state = local()
+
+    def _fetch_issuer_announcements(symbol):
+        session = getattr(api_thread_state, "session", None)
+        if session is None:
+            session = requests.Session()
+            api_thread_state.session = session
+            api_thread_state.warmed = False
+        warm_session = not api_thread_state.warmed
+        try:
+            items = _nse_announcement_api_items(
+                symbol, api_start_date, api_end_date,
+                session=session, warm_session=warm_session,
+            )
+            api_thread_state.warmed = True
+            return symbol, items
+        except Exception as exc:
+            print(
+                f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_FETCH_FAIL symbol={symbol} "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            api_thread_state.warmed = True
+            return symbol, _RSSItemList([], available=False)
+
+    ordered_symbols = sorted(symbols)
+    api_workers = min(4, len(ordered_symbols))
+    print(f"[NEWS-DIAG] NSE_ANNOUNCEMENT_API_PARALLEL workers={api_workers} symbols={len(ordered_symbols)}")
+    with ThreadPoolExecutor(max_workers=max(1, api_workers)) as executor:
+        api_results = dict(executor.map(_fetch_issuer_announcements, ordered_symbols))
+
+    for symbol in ordered_symbols:
+        api_items = api_results[symbol]
         api_coverage[symbol] = bool(getattr(api_items, "available", True))
         api_matches = 0
         for item in api_items:
@@ -985,27 +1014,51 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
     # upgrades itself to primary evidence; the NSE file remains authoritative.
     secondary_successes = 0
     secondary_partial = False
-    for symbol in sorted(symbols):
+
+    def _fetch_secondary_symbol(symbol):
         company = names.get(symbol, "").strip()
         combined_items: list[ET.Element] = []
         item_keys: set[tuple[str, str]] = set()
         query_success = False
         symbol_partial = False
+        query_diagnostics = []
         for query in _secondary_search_queries(symbol, company):
             try:
                 fetched = _rss_items(GOOGLE_RSS_URL, {
                     "q": query, "hl": "en-IN", "gl": "IN", "ceid": "IN:en",
                 })
                 query_success = True
-                symbol_partial = symbol_partial or bool(getattr(fetched, "partial", False))
-                print(f"[NEWS-DIAG] SECONDARY_QUERY symbol={symbol} query={query!r} items={len(fetched)}")
+                partial = bool(getattr(fetched, "partial", False))
+                symbol_partial = symbol_partial or partial
+                query_diagnostics.append((query, len(fetched), partial, ""))
                 for item in fetched:
                     key = (_item_text(item, "title").casefold(), _item_text(item, "link").casefold())
                     if key not in item_keys:
                         item_keys.add(key)
                         combined_items.append(item)
             except Exception as exc:
-                print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} query={query!r} error={type(exc).__name__}: {exc}")
+                query_diagnostics.append((query, 0, False, f"{type(exc).__name__}: {exc}"))
+        return symbol, combined_items, query_success, symbol_partial, query_diagnostics
+
+    secondary_workers = min(4, len(ordered_symbols))
+    print(f"[NEWS-DIAG] SECONDARY_RSS_PARALLEL workers={secondary_workers} symbols={len(ordered_symbols)}")
+    with ThreadPoolExecutor(max_workers=max(1, secondary_workers)) as executor:
+        secondary_results = dict(
+            (symbol, (items, success, partial, diagnostics))
+            for symbol, items, success, partial, diagnostics
+            in executor.map(_fetch_secondary_symbol, ordered_symbols)
+        )
+
+    for symbol in ordered_symbols:
+        combined_items, query_success, symbol_partial, query_diagnostics = secondary_results[symbol]
+        for query, item_count, partial, error in query_diagnostics:
+            if error:
+                print(f"[NEWS-DIAG] SECONDARY_FEED_FETCH_FAIL symbol={symbol} query={query!r} error={error}")
+            else:
+                print(
+                    f"[NEWS-DIAG] SECONDARY_QUERY symbol={symbol} query={query!r} "
+                    f"items={item_count} partial={partial}"
+                )
         if not query_success:
             continue
         secondary_successes += 1
