@@ -969,6 +969,11 @@ def collect_missing_fundamentals(
                     break
     records = {str(row["TckrSymb"]): row.to_dict() for _, row in existing.iterrows() if str(row.get("TckrSymb", "")).strip() not in {"", "NAN", "nan"}}
     diagnostics = []
+    provider_loop_started = time.perf_counter()
+    provider_fetch_elapsed_seconds = 0.0
+    provider_fetch_attempts = 0
+    existing_record_complete_count = 0
+    pause_elapsed_seconds = 0.0
     free_sources_enabled = os.getenv("V8_FREE_FUNDAMENTAL_SOURCES", "false").strip().lower() in {"1", "true", "yes", "on"}
     free_source_budget = max(0, int(os.getenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "10") or 10))
     free_source_retry_days = max(1, int(os.getenv("FREE_FUNDAMENTAL_RETRY_DAYS", "7") or 7))
@@ -1029,6 +1034,7 @@ def collect_missing_fundamentals(
             and not in_free_cooldown and bool(free_source_missing)
         )
         if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending and not free_source_pending:
+            existing_record_complete_count += 1
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
             diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
             continue
@@ -1062,7 +1068,16 @@ def collect_missing_fundamentals(
         except (TypeError, ValueError):
             # Legacy injected test fetchers may expose no inspectable signature.
             pass
+        fetch_started = time.perf_counter()
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
+        fetch_elapsed = time.perf_counter() - fetch_started
+        provider_fetch_elapsed_seconds += fetch_elapsed
+        provider_fetch_attempts += 1
+        diagnostic["ProviderFetchElapsedSeconds"] = round(fetch_elapsed, 3)
+        print(
+            f"[FUNDAMENTAL PERF] symbol={symbol} fetch_elapsed_seconds={fetch_elapsed:.3f} "
+            f"free_sources_attempted={bool(diagnostic.get('FreeSourcesAttempted'))}"
+        )
         if diagnostic.get("FreeSourcesAttempted"):
             free_source_attempts += 1
         # Never overwrite manually supplied metric values. Existing provider rows
@@ -1172,7 +1187,9 @@ def collect_missing_fundamentals(
         diagnostic["MetricsMissing"] = ";".join([c for c in METRIC_COLUMNS if not _present(merged.get(c))])
         diagnostics.append(diagnostic)
         if pause_seconds > 0:
+            pause_started = time.perf_counter()
             time.sleep(pause_seconds)
+            pause_elapsed_seconds += time.perf_counter() - pause_started
 
     combined = pd.DataFrame(list(records.values()))
     for col in BASE_COLUMNS:
@@ -1204,6 +1221,14 @@ def collect_missing_fundamentals(
     _atomic_write_csv(combined, path)
     snapshot_path = save_fundamental_history_snapshot(path, cutoff_text or date.today().isoformat())
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
+    provider_total_elapsed = time.perf_counter() - provider_loop_started
+    print(
+        f"[FUNDAMENTAL PERF] symbols_total={len(symbols)} provider_fetch_attempts={provider_fetch_attempts} "
+        f"existing_record_complete={existing_record_complete_count} "
+        f"provider_fetch_elapsed_seconds={provider_fetch_elapsed_seconds:.3f} "
+        f"configured_pause_seconds_per_attempt={pause_seconds} pause_elapsed_seconds={pause_elapsed_seconds:.3f} "
+        f"total_elapsed_seconds={provider_total_elapsed:.3f} free_source_attempts={free_source_attempts}"
+    )
     print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; history snapshot={snapshot_path}; diagnostics={DIAGNOSTICS_PATH}")
     return combined
 
