@@ -115,3 +115,16 @@ Only after Phases A–C:
 **PRODUCTION CHANGES: NONE.**
 
 The next implementation task is a research-only point-in-time replay/backtest harness that consumes the existing Bhavcopy and Delivery caches read-only, writes dated feature/outcome artifacts, and never changes Track 1 selection.
+
+
+## 7. Critical lookback-versus-forward-history constraint
+The inspected Bhavcopy history spans 201 official sessions (2026-01-16 through 2026-11-13). It can produce today's 200-session observations, but it cannot produce a valid historical sample for a 200-session lookback **and** a subsequent 5D/10D/20D outcome:
+- At earlier as-of dates, 200 prior sessions are not yet available.
+- At the latest as-of date, there are no future sessions in the cache.
+- Therefore the current cache contains **zero** as-of dates that simultaneously have a complete 200-session lookback and a complete forward 20-session outcome.
+
+Minimum history arithmetic:
+- 220 sessions are needed for at least one mature 200-session lookback date plus 20 future sessions.
+- Approximately 420 contiguous official sessions are needed to evaluate 200 separate mature as-of dates and retain a complete 20-session forward horizon for the last tested date.
+
+**Next data task:** build a separate research-only historical price cache (for example, `data/research/bhavcopy_backtest/`) from official NSE Bhavcopy sources, targeting at least 420 valid official sessions. Do not rewrite, prune, or replace `data/bhavcopy/`; the existing production Bhavcopy cache remains untouched. Validate each filename date against the file's internal date, EQ identity, duplicate symbol/session rows, OHLCV structure, gaps and official calendar before any backtest. If the source cannot supply the full period, report the actual supported date range and reduce the tested lookback explicitly rather than synthesizing history.
