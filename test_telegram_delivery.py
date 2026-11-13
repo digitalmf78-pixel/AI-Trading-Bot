@@ -19,10 +19,14 @@ def test_telegram_digest_confirms_api_delivery(monkeypatch):
     news_catalyst.send_marathi_telegram(None, "2026-11-05", None, {}, "token", "chat")
     assert len(sent) == 2
     assert sent[0][1]["chat_id"] == "chat"
-    assert "NSE V8 report" in sent[0][1]["text"]
+    assert "NSE V8" in sent[0][1]["text"]
     assert sent[0][0].endswith("/sendMessage")
     assert sent[1][0].endswith("/sendDocument")
     assert sent[1][2]["document"][0] == "v8_telegram_full_report.zip"
+    import io, zipfile
+    with zipfile.ZipFile(io.BytesIO(sent[1][2]["document"][1])) as archive:
+        audit = archive.read("v8_telegram_full_audit.txt").decode("utf-8")
+        assert "NSE V8 report" in audit
 
 
 def test_telegram_missing_secrets_fails_loudly():
