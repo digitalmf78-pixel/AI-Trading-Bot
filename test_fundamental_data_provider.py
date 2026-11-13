@@ -553,3 +553,60 @@ def test_cached_fundamentals_refresh_valuation_without_full_provider_fetch(tmp_p
     assert float(cached["ROEPercent"]) == 10.0
     assert float(cached["TrailingPE"]) == 21.0
     assert cached["ValuationRequestedEODDate"] == "2026-11-13"
+
+
+def test_primary_provider_missing_data_is_throttled_and_retried_after_cooldown(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("V8_FREE_FUNDAMENTAL_SOURCES", "false")
+    monkeypatch.setenv("V8_FUNDAMENTAL_RETRY_DAYS", "7")
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    calls = []
+
+    def fake_fetch(symbol, ticker_factory=None, **kwargs):
+        calls.append(symbol)
+        fetched = {column: pd.NA for column in provider.BASE_COLUMNS}
+        fetched.update({
+            "TckrSymb": symbol, "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
+            "SourceURL": "https://finance.yahoo.com/quote/AAA.NS/financials/",
+            "DataRetrievedAtUTC": "2026-11-13T10:00:00+00:00",
+            "PublicationDateStatus": "UNVERIFIED",
+            "TTMCalculationAttemptedAtUTC": "2026-11-13T10:00:00+00:00",
+            "TTMDiagnosticsCapturedAtUTC": "2026-11-13T10:00:00+00:00",
+        })
+        diagnostic = {
+            "TckrSymb": symbol, "ProviderStatus": "MISSING_DATA",
+            "ProviderReason": "no usable statement values", "ProviderSource": "Yahoo Finance via yfinance",
+            "ProviderSourceURL": fetched["SourceURL"], "AttemptedAtUTC": "2026-11-13T10:00:00+00:00",
+            "MetricsAvailable": 0,
+        }
+        return fetched, diagnostic
+
+    monkeypatch.setattr(provider, "_fetch_one", fake_fetch)
+    monkeypatch.setattr(provider, "_fetch_valuation_only", lambda *a, **k: (
+        {column: pd.NA for column in provider.VALUATION_COLUMNS},
+        {"TckrSymb": "AAA", "ProviderStatus": "VALUATION_MISSING"},
+    ))
+    run = lambda day: provider.collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
+        pause_seconds=0, asof_date=day, filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    run("2026-11-13")
+    assert calls == ["AAA"]
+    run("2026-11-14")
+    assert calls == ["AAA"]
+    run("2026-11-21")
+    assert calls == ["AAA", "AAA"]
+
+
+def test_provider_error_uses_shorter_retry_cooldown():
+    from fundamental_data_provider import _provider_retry_cooldown_active
+
+    assert _provider_retry_cooldown_active(
+        "2026-11-13T10:00:00Z", "PROVIDER_ERROR", 7, 24, now="2026-11-13T20:00:00Z"
+    )
+    assert not _provider_retry_cooldown_active(
+        "2026-11-13T10:00:00Z", "PROVIDER_ERROR", 7, 24, now="2026-11-14T11:00:00Z"
+    )
