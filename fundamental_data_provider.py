@@ -547,6 +547,41 @@ def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date
     )
 
 
+def _fetch_valuation_only(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, dict]:
+    """Refresh only the dated valuation snapshot; never request financial statements.
+
+    Fundamental metrics remain served from the persistent cache. This lightweight
+    path exists because valuation is point-in-time data and must not force a full
+    fundamentals re-fetch on every EOD run.
+    """
+    symbol = str(symbol).strip().upper()
+    url = f"https://finance.yahoo.com/quote/{symbol}.NS/"
+    record = {col: pd.NA for col in VALUATION_COLUMNS}
+    diagnostic = {
+        "TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA",
+        "ProviderReason": "", "ProviderSource": "Yahoo Finance valuation snapshot",
+        "ProviderSourceURL": url,
+        "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        if ticker_factory is None:
+            import yfinance as yf  # type: ignore
+            ticker_factory = yf.Ticker
+        ticker = ticker_factory(f"{symbol}.NS")
+        info = ticker.info or {}
+        _capture_valuation_snapshot(record, info, symbol, asof_date=asof_date)
+        diagnostic["ProviderStatus"] = (
+            "VALUATION_UPDATED" if _present(record.get("ValuationDataStatus"))
+            and str(record.get("ValuationDataStatus")) == "AVAILABLE"
+            else "VALUATION_MISSING"
+        )
+        diagnostic["ProviderReason"] = "valuation-only refresh; cached fundamental metrics untouched"
+    except Exception as exc:
+        diagnostic["ProviderStatus"] = "VALUATION_PROVIDER_ERROR"
+        diagnostic["ProviderReason"] = f"{type(exc).__name__}: {exc}"[:500]
+    return record, diagnostic
+
+
 def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=None, missing_metrics=None,
                allow_free_sources=False, free_source_defer_reason="DISABLED") -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
@@ -1033,6 +1068,24 @@ def collect_missing_fundamentals(
             free_sources_enabled and free_source_attempts < free_source_budget
             and not in_free_cooldown and bool(free_source_missing)
         )
+        # A fresh, fully enriched fundamental row must not trigger a complete
+        # Yahoo fundamentals/statement download just because today's valuation
+        # snapshot has a new EOD date. Refresh only the point-in-time valuation.
+        if not missing and not ttm_pending and not diagnostics_pending and valuation_pending and not free_source_pending:
+            valuation_started = time.perf_counter()
+            valuation_record, valuation_diag = _fetch_valuation_only(
+                symbol, ticker_factory=ticker_factory, asof_date=cutoff_text,
+            )
+            for col in VALUATION_COLUMNS:
+                if col in valuation_record:
+                    current[col] = valuation_record.get(col, pd.NA)
+            records[symbol] = current
+            valuation_diag["FetchElapsedSeconds"] = round(time.perf_counter() - valuation_started, 3)
+            valuation_diag["MetricsAvailable"] = len(METRIC_COLUMNS)
+            valuation_diag["SymbolProcessingSeconds"] = round(time.perf_counter() - symbol_started, 3)
+            diagnostics.append(valuation_diag)
+            cache_complete_count += 1
+            continue
         if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending and not free_source_pending:
             cache_complete_count += 1
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
