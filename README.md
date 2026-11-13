@@ -253,3 +253,12 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 - RVOL is recorded descriptively and is not used as a hard eligibility gate. The prior-20-session average traded-value liquidity floor remains ₹1.5 crore.
 - Forward 5D/10D/20D close-to-close outcomes use official NSE sessions and require complete symbol OHLC. Incomplete horizons remain blank and are excluded from the corresponding metrics.
 - Research caveats remain: EQ-series cache, current-cache survivorship, no point-in-time historical Main Board classification/fundamentals, and no fees/slippage or portfolio simulation. Outputs do not alter scanner selection or the immutable Master Specification.
+
+
+## Sector quote classification cache — 13-Nov-2026
+
+- Successful, non-empty official NSE quote classifications are cached per symbol under `data/cache/sector_quote_classifications/` for a maximum of 24 hours.
+- Cache records are bound to the exact symbol, schema version, and official NSE source identifier. Expired, malformed, mismatched, empty, or untrusted records are treated as cache misses and refreshed from NSE.
+- Failed requests and empty responses are never cached. An expired cache is never used as a fallback when the official refresh fails; unresolved classifications remain unavailable under the existing fail-closed behavior.
+- GitHub Actions restores and saves this cache alongside existing sector caches. The cache reduces repeated quote HTTP calls only; it does not change Mainboard/Delivery/Liquidity eligibility, sector taxonomy, mapping precedence, candidate counts, or the Master Specification.
+- Regression coverage verifies cache hits, expiry/refetch, invalid symbol/source rejection, and no caching of failed/empty responses. Live runtime benefit must be measured on the next EOD run; no speed improvement is claimed before that measurement.
