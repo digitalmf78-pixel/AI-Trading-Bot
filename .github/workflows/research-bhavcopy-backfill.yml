@@ -1,6 +1,13 @@
 name: Research-only NSE Bhavcopy Historical Backfill
 
 on:
+  push:
+    branches:
+      - research/stock-selection-backtest-2026-11-13
+    paths:
+      - ".github/workflows/research-bhavcopy-backfill.yml"
+      - "scripts/research_bhavcopy_backfill.py"
+      - "test_research_bhavcopy_backfill.py"
   workflow_dispatch:
     inputs:
       sessions:
