@@ -1737,7 +1737,8 @@ def _premarket_new_news(news: pd.DataFrame | None):
     if "PublishedAt" in fresh.columns:
         fresh["_published_sort"] = pd.to_datetime(fresh["PublishedAt"], errors="coerce", utc=True)
         fresh = fresh.sort_values("_published_sort", ascending=False, na_position="last", kind="stable")
-    return fresh, set(frame["_fingerprint"].astype(str))
+    # Persist only the five actually delivered; remaining new items roll into the next PREMARKET message.
+    return fresh, set(fresh.head(5)["_fingerprint"].astype(str))
 
 
 def _persist_premarket_seen(fingerprints: set[str]) -> None:
