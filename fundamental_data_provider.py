@@ -65,6 +65,7 @@ BASE_COLUMNS = [
     "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
     "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
+    "ProviderLastAttemptAtUTC", "ProviderLastAttemptStatus",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
     "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON", "FreeSourcesAlternatesJSON",
@@ -547,6 +548,41 @@ def _capture_valuation_snapshot(record: dict, info: dict, symbol: str, asof_date
     )
 
 
+def _fetch_valuation_only(symbol: str, ticker_factory=None, asof_date=None) -> tuple[dict, dict]:
+    """Refresh only the dated valuation snapshot; never request financial statements.
+
+    Fundamental metrics remain served from the persistent cache. This lightweight
+    path exists because valuation is point-in-time data and must not force a full
+    fundamentals re-fetch on every EOD run.
+    """
+    symbol = str(symbol).strip().upper()
+    url = f"https://finance.yahoo.com/quote/{symbol}.NS/"
+    record = {col: pd.NA for col in VALUATION_COLUMNS}
+    diagnostic = {
+        "TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA",
+        "ProviderReason": "", "ProviderSource": "Yahoo Finance valuation snapshot",
+        "ProviderSourceURL": url,
+        "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        if ticker_factory is None:
+            import yfinance as yf  # type: ignore
+            ticker_factory = yf.Ticker
+        ticker = ticker_factory(f"{symbol}.NS")
+        info = ticker.info or {}
+        _capture_valuation_snapshot(record, info, symbol, asof_date=asof_date)
+        diagnostic["ProviderStatus"] = (
+            "VALUATION_UPDATED" if _present(record.get("ValuationDataStatus"))
+            and str(record.get("ValuationDataStatus")) == "AVAILABLE"
+            else "VALUATION_MISSING"
+        )
+        diagnostic["ProviderReason"] = "valuation-only refresh; cached fundamental metrics untouched"
+    except Exception as exc:
+        diagnostic["ProviderStatus"] = "VALUATION_PROVIDER_ERROR"
+        diagnostic["ProviderReason"] = f"{type(exc).__name__}: {exc}"[:500]
+    return record, diagnostic
+
+
 def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=None, missing_metrics=None,
                allow_free_sources=False, free_source_defer_reason="DISABLED") -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
@@ -836,6 +872,20 @@ def _free_source_cooldown_active(last_attempt, last_status, retry_days: int, *, 
     return (current - attempted) < pd.Timedelta(days=max(1, int(retry_days)))
 
 
+def _provider_retry_cooldown_active(last_attempt, last_status, retry_days: int, error_retry_hours: int = 24, *, now=None) -> bool:
+    """Throttle repeated incomplete provider lookups; first attempts remain immediate."""
+    attempted = pd.to_datetime(last_attempt, errors="coerce", utc=True)
+    if pd.isna(attempted):
+        return False
+    current = pd.Timestamp.now(tz="UTC") if now is None else pd.to_datetime(now, errors="coerce", utc=True)
+    if pd.isna(current):
+        return False
+    status = str(last_status).strip().upper() if _present(last_status) else ""
+    interval = (pd.Timedelta(hours=max(1, int(error_retry_hours))) if status == "PROVIDER_ERROR"
+                else pd.Timedelta(days=max(1, int(retry_days))))
+    return current - attempted < interval
+
+
 def _is_stale_provider_record(record: dict, today, refresh_days: int) -> bool:
     """Provider-sourced (never manual) records older than refresh_days are refetched."""
     raw_source = record.get("Source", "")
@@ -972,6 +1022,8 @@ def collect_missing_fundamentals(
     free_sources_enabled = os.getenv("V8_FREE_FUNDAMENTAL_SOURCES", "false").strip().lower() in {"1", "true", "yes", "on"}
     free_source_budget = max(0, int(os.getenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "10") or 10))
     free_source_retry_days = max(1, int(os.getenv("FREE_FUNDAMENTAL_RETRY_DAYS", "7") or 7))
+    provider_retry_days = max(1, int(os.getenv("V8_FUNDAMENTAL_RETRY_DAYS", "7") or 7))
+    provider_error_retry_hours = max(1, int(os.getenv("V8_FUNDAMENTAL_ERROR_RETRY_HOURS", "24") or 24))
     free_source_attempts = 0
     cache_complete_count = 0
     provider_fetch_count = 0
@@ -995,6 +1047,7 @@ def collect_missing_fundamentals(
                                          "ProviderFetchCalculationBasis", "ProviderFetchQuarterlyAlignmentReason",
                                          "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
                                          "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
+                                         "ProviderLastAttemptAtUTC", "ProviderLastAttemptStatus",
                                          "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
                                          "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
                                          "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"]:
@@ -1033,6 +1086,62 @@ def collect_missing_fundamentals(
             free_sources_enabled and free_source_attempts < free_source_budget
             and not in_free_cooldown and bool(free_source_missing)
         )
+        fetched_metrics_value = current.get("ProviderFetchedMetrics", "")
+        previously_fetched_metrics = {
+            item.strip() for item in (
+                str(fetched_metrics_value) if _present(fetched_metrics_value) else ""
+            ).split(";")
+            if item.strip()
+        }
+        # If a previously stored provider metric was manually cleared/corrupted,
+        # treat that as cache invalidation and allow immediate repair.
+        cache_metric_invalidated = bool(previously_fetched_metrics.intersection(missing))
+        provider_retry_active = (
+            not cache_metric_invalidated
+            and _provider_retry_cooldown_active(
+                current.get("ProviderLastAttemptAtUTC"), current.get("ProviderLastAttemptStatus"),
+                provider_retry_days, provider_error_retry_hours,
+                now=today_for_refresh,
+            )
+        )
+        if (provider_retry_active and (missing or ttm_pending or diagnostics_pending)
+                and not free_source_pending):
+            # Do not download the same incomplete statements on every daily EOD run.
+            if valuation_pending:
+                valuation_record, valuation_diag = _fetch_valuation_only(
+                    symbol, ticker_factory=ticker_factory, asof_date=cutoff_text,
+                )
+                if _present(valuation_record.get("ValuationRetrievedAtUTC")):
+                    for col in VALUATION_COLUMNS:
+                        current[col] = valuation_record.get(col, pd.NA)
+                diagnostics.append(valuation_diag)
+            diagnostics.append({
+                "TckrSymb": symbol, "ProviderStatus": "RETRY_COOLDOWN",
+                "ProviderReason": f"fundamental retry deferred; last status={current.get('ProviderLastAttemptStatus')}",
+                "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""),
+                "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(),
+                "MetricsAvailable": sum(_present(current.get(c)) for c in METRIC_COLUMNS),
+            })
+            records[symbol] = current
+            continue
+        # A fresh, fully enriched fundamental row must not trigger a complete
+        # Yahoo fundamentals/statement download just because today's valuation
+        # snapshot has a new EOD date. Refresh only the point-in-time valuation.
+        if not missing and not ttm_pending and not diagnostics_pending and valuation_pending and not free_source_pending:
+            valuation_started = time.perf_counter()
+            valuation_record, valuation_diag = _fetch_valuation_only(
+                symbol, ticker_factory=ticker_factory, asof_date=cutoff_text,
+            )
+            if _present(valuation_record.get("ValuationRetrievedAtUTC")):
+                for col in VALUATION_COLUMNS:
+                    current[col] = valuation_record.get(col, pd.NA)
+            records[symbol] = current
+            valuation_diag["FetchElapsedSeconds"] = round(time.perf_counter() - valuation_started, 3)
+            valuation_diag["MetricsAvailable"] = len(METRIC_COLUMNS)
+            valuation_diag["SymbolProcessingSeconds"] = round(time.perf_counter() - symbol_started, 3)
+            diagnostics.append(valuation_diag)
+            cache_complete_count += 1
+            continue
         if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending and not free_source_pending:
             cache_complete_count += 1
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
@@ -1070,6 +1179,8 @@ def collect_missing_fundamentals(
             pass
         fetch_started = time.perf_counter()
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
+        fetched["ProviderLastAttemptAtUTC"] = diagnostic.get("AttemptedAtUTC") or datetime.now(timezone.utc).isoformat()
+        fetched["ProviderLastAttemptStatus"] = diagnostic.get("ProviderStatus", "UNKNOWN")
         fetch_elapsed = time.perf_counter() - fetch_started
         provider_fetch_count += 1
         provider_fetch_seconds += fetch_elapsed
@@ -1087,6 +1198,9 @@ def collect_missing_fundamentals(
         quarterly_verified = str(fetched.get("TTMQuarterlyAlignmentStatus", "")) == "VERIFIED"
         for col in BASE_COLUMNS:
             if col == "TckrSymb":
+                continue
+            if col in {"ProviderLastAttemptAtUTC", "ProviderLastAttemptStatus"} and _present(fetched.get(col)):
+                merged[col] = fetched.get(col)
                 continue
             if col in {"FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"} and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
