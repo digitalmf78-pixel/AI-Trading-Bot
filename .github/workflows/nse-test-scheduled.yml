@@ -59,7 +59,7 @@ permissions:
 jobs:
   nse-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75 # Scanner plus post-scan audits/backtests/persistence need >45 minutes on full-universe days.
 
     steps:
       - name: Checkout repository
@@ -468,7 +468,7 @@ jobs:
           if [ -f outputs/rvol_strategy_backtest/rejection_counts.csv ]; then cat outputs/rvol_strategy_backtest/rejection_counts.csv; fi
 
       - name: Persist append-only signal history in repository
-        if: steps.nse_scan.outcome == 'success' && github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
+        if: always() && steps.nse_scan.outcome == 'success' && github.event.schedule != '30 2 * * 1-5' && inputs.scan_mode != 'PREMARKET'
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
