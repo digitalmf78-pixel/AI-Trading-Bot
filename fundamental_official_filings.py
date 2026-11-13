@@ -7,6 +7,7 @@ requested EOD cutoff. Fetch failures never remove candidates or invent dates.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
 from pathlib import Path
 import re
 from typing import Callable
@@ -635,7 +636,9 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
     use_targeted_fallback = filings is None and fetcher is None
     if filings is None:
         try:
+            bulk_fetch_started = time.perf_counter()
             fetched = (fetcher or fetch_nse_financial_results)(cutoff.date().isoformat())
+            print(f"[FUNDAMENTAL PERF] official_bulk_filing_fetch_seconds={time.perf_counter() - bulk_fetch_started:.3f}")
             if fetched is None:
                 fetched = pd.DataFrame()
             if not fetched.empty:
@@ -649,6 +652,8 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
                 filings = pd.DataFrame()
                 diagnostics.append({"Status": "LIVE_FETCH_EMPTY", "Reason": "Live NSE response produced no parseable financial-result filings"})
         except Exception as exc:
+            if "bulk_fetch_started" in locals():
+                print(f"[FUNDAMENTAL PERF] official_bulk_filing_fetch_seconds={time.perf_counter() - bulk_fetch_started:.3f} outcome=error")
             fetch_error = f"{type(exc).__name__}: {exc}"[:500]
             diagnostics.append({"Status": "FETCH_FAILED", "Reason": fetch_error})
             filings = pd.DataFrame()
@@ -718,11 +723,13 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
             )
         if unmatched:
             try:
+                targeted_fetch_started = time.perf_counter()
                 targeted = _fetch_targeted_nse_filings(
                     cutoff.date().isoformat(), unmatched,
                     diagnostics_path=TARGETED_LOOKUP_DIAGNOSTICS,
                     segments=targeted_segments, request_timeout=targeted_timeout,
                 )
+                print(f"[FUNDAMENTAL PERF] official_targeted_filing_fetch_seconds={time.perf_counter() - targeted_fetch_started:.3f} requested_pairs={len(unmatched)}")
                 if targeted is not None and not targeted.empty:
                     filings = pd.concat([filings, targeted], ignore_index=True).drop_duplicates(
                         subset=["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL"], keep="last"
@@ -742,6 +749,8 @@ def apply_official_publication_dates(records: pd.DataFrame, asof_date, filings: 
                 else:
                     diagnostics.append({"Status": "TARGETED_LOOKUP_NO_ROWS", "RequestedPairs": len(unmatched), "Reason": "No additional parseable records returned by targeted NSE lookup; unresolved candidates remain UNVERIFIED"})
             except Exception as targeted_exc:
+                if "targeted_fetch_started" in locals():
+                    print(f"[FUNDAMENTAL PERF] official_targeted_filing_fetch_seconds={time.perf_counter() - targeted_fetch_started:.3f} outcome=error")
                 diagnostics.append({"Status": "TARGETED_LOOKUP_FAILED", "RequestedPairs": len(unmatched), "Reason": f"{type(targeted_exc).__name__}: {targeted_exc}"[:400]})
 
     for idx, row in output.iterrows():
