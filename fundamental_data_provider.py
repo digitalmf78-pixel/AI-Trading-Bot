@@ -1086,8 +1086,11 @@ def collect_missing_fundamentals(
             free_sources_enabled and free_source_attempts < free_source_budget
             and not in_free_cooldown and bool(free_source_missing)
         )
+        fetched_metrics_value = current.get("ProviderFetchedMetrics", "")
         previously_fetched_metrics = {
-            item.strip() for item in str(current.get("ProviderFetchedMetrics", "") or "").split(";")
+            item.strip() for item in (
+                str(fetched_metrics_value) if _present(fetched_metrics_value) else ""
+            ).split(";")
             if item.strip()
         }
         # If a previously stored provider metric was manually cleared/corrupted,
