@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import re
 import time
 import zipfile
@@ -43,7 +44,7 @@ def expected_sessions(end_date: date, count: int) -> list[date]:
     """Get exactly the latest N official sessions ending on/before end_date."""
     if count < 1:
         raise ValueError("sessions must be >= 1")
-    start = end_date - timedelta(days=count * 2 + 120)
+    start = date(end_date.year - 1, 1, 1)
     found = []
     try:
         cursor = start
@@ -88,7 +89,7 @@ def validate_bhavcopy(frame: pd.DataFrame, expected: date, source: str = "Bhavco
     )
     if numeric.isna().any().any():
         raise ValueError(f"{source}: missing/non-numeric EQ OHLCV values")
-    if not numeric.apply(lambda col: col.map(lambda x: pd.notna(x) and float(x) >= 0)).all().all():
+    if not numeric.apply(lambda col: col.map(lambda x: pd.notna(x) and math.isfinite(float(x)) and float(x) >= 0)).all().all():
         raise ValueError(f"{source}: negative or non-finite OHLCV values")
     if (numeric[["OpnPric", "HghPric", "LwPric", "ClsPric"]] <= 0).any().any():
         raise ValueError(f"{source}: non-positive EQ price")
@@ -189,22 +190,21 @@ def run_backfill(sessions: int = 420, end_date: date | None = None,
     http.headers.update(HEADERS)
 
     results = []
-    new_downloads = 0
+    new_download_attempts = 0
     for day in dates:
         destination = cache_dir / f"bhavcopy_{day:%Y%m%d}.csv"
         valid, _ = _cached_frame(destination, day)
         if valid:
             results.append(download_one(http, day, cache_dir))
             continue
-        if max_new_downloads is not None and new_downloads >= max_new_downloads:
+        if max_new_downloads is not None and new_download_attempts >= max_new_downloads:
             results.append({"date": day.isoformat(), "status": "NOT_ATTEMPTED_DOWNLOAD_LIMIT"})
             continue
-        if new_downloads:
+        if new_download_attempts:
             time.sleep(max(0.0, request_interval))
         result = download_one(http, day, cache_dir)
+        new_download_attempts += 1
         results.append(result)
-        if result["status"] == "DOWNLOADED_VALIDATED":
-            new_downloads += 1
 
     counts = {}
     for row in results:
