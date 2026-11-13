@@ -128,3 +128,14 @@ Minimum history arithmetic:
 - Approximately 420 contiguous official sessions are needed to evaluate 200 separate mature as-of dates and retain a complete 20-session forward horizon for the last tested date.
 
 **Next data task:** build a separate research-only historical price cache (for example, `data/research/bhavcopy_backtest/`) from official NSE Bhavcopy sources, targeting at least 420 valid official sessions. Do not rewrite, prune, or replace `data/bhavcopy/`; the existing production Bhavcopy cache remains untouched. Validate each filename date against the file's internal date, EQ identity, duplicate symbol/session rows, OHLCV structure, gaps and official calendar before any backtest. If the source cannot supply the full period, report the actual supported date range and reduce the tested lookback explicitly rather than synthesizing history.
+
+
+## 7. Isolated historical Bhavcopy backfill implementation (research branch)
+- Added `scripts/research_bhavcopy_backfill.py`; it reads the official NSE CM ZIP archive pattern and writes only to `data/research/bhavcopy_backtest/`.
+- The production `data/bhavcopy/` directory is not imported as a destination, modified, or pruned by this downloader.
+- Default target is 420 official NSE sessions ending on/before the requested date; the calendar is read from the repository's official NSE Capital Market calendar and unknown years fail closed.
+- Each ZIP must contain exactly one CSV. Each CSV is validated against its internal business date, required symbol/series/OHLCV columns, EQ-row presence, duplicate EQ symbol/session identities, finite/non-negative volume and valid positive OHLC candle structure.
+- Valid files are staged, re-read and revalidated before atomic replacement. Existing valid research-cache files are reused. HTTP 404, invalid responses, request failures and capped/unattempted dates remain explicit in the JSON manifest.
+- Added `test_research_bhavcopy_backfill.py` for calendar count, date mismatch, duplicate symbol, missing fields, OHLC integrity, ZIP parsing and malformed response coverage.
+- Added manual-only workflow `.github/workflows/research-bhavcopy-backfill.yml`; the research cache is stored in a separately namespaced GitHub Actions cache and the manifest is uploaded as an artifact. It does not alter the scheduled production EOD workflow or scanner.
+- This is downloader implementation only. No 420-session archive fetch has yet been run, and no Accumulation/VCP backtest result is claimed until coverage is verified.
