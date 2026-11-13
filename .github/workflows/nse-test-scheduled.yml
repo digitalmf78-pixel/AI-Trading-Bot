@@ -73,6 +73,7 @@ jobs:
             data/cache/delivery/
             data/cache/sector_index_daily/
             data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
             data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv
