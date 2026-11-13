@@ -102,3 +102,46 @@ These groups are subdivisions of the unchanged A OR B eligible signals. The 5D r
 - GitHub Actions run: 43476942945
 - Artifact: delivery-ab-historical-backtest-43476942945
 - Artifact SHA-256 reported by GitHub: a3d9a5d6f631132ad5b775715e3dfcb1aa147a239087303b4f3c87d705e154a7
+
+
+## Follow-up repository audit — signal-history readiness (13-Nov-2026)
+
+### Durable signal log inspection on main
+
+Read-only inspection of `data/signal_history/signal_log.csv` on the main branch found:
+
+| EOD date | Logged rows |
+|---|---:|
+| 2026-11-09 | 54 |
+| 2026-11-11 | 325 |
+| 2026-11-12 | 343 |
+| 2026-11-13 | 342 |
+| **Total** | **1,064** |
+
+All 1,064 logged rows are currently `EODWatchlistStatus=SKIP` (1,042) or `WAIT_FOR_DATA` (22). There are zero `PASS` / entry-eligible rows in this durable sample. The tracked `data/signal_history/signal_outcomes.csv` file is not present on main at this audit point.
+
+### Consequence for the proposed portfolio simulator
+
+- The existing durable signal log is not yet a usable set of executed/entry-eligible portfolio candidates. Running a four-position simulation against these rows would either produce no trades or require inventing a new selection rule.
+- Do not silently reinterpret `SKIP` or `WAIT_FOR_DATA` as candidates. Preserve their status and reasons.
+- `signal_log.py` currently logs `EODWatchlistStatus`, `V8Score`, setup, delivery/liquidity, sector/regime and entry/stop/target fields, but does not persist the explicit `EODWatchlistReason` / full rejection reason. A future observational schema extension should capture source status/reason fields without changing scanner decisions.
+- The current durable history spans only four EOD dates, so it is not enough to assess a 2–4 week holding strategy or drawdown. Continue collecting append-only daily observations and wait for complete forward outcomes.
+
+### Important distinction: two existing outcome paths
+
+1. `rvol_strategy_backtest.py` is a separate Delivery A/B historical cohort study. Its forward return denominator is the signal-day close; the report explicitly labels these as non-executable close-to-close research measurements with no fees/slippage.
+2. `signal_outcome_tracker.py` is the V8 signal-history tracker. It already uses the next official NSE session Open as the entry reference, excludes signal-day OHLC, and waits for complete official-session horizons. Its stored `FeesSlippageAssumption` is still `NOT_CONFIGURED`.
+
+These paths must not be conflated. The next-open tracker does not retroactively change the entry basis of the Delivery A/B backtest.
+
+### PR #94 validation note
+
+The documentation-only PR #94 has one GitHub Actions check on its head commit, `Issuer Matching and RSS Parser Tests`, completed successfully. This is a successful check for that workflow only, not a full scanner regression suite; no production code is changed by this PR.
+
+### Revised next safe step
+
+Before implementing a portfolio engine:
+1. Extend the observational signal log to retain explicit watchlist reason / decision provenance and the exact point-in-time fields needed to reproduce candidate ranking; do not alter production selection.
+2. Confirm the source rows that qualify for a portfolio are the existing final `PASS` / `ENTRY_CANDIDATE` status (or another already-approved status), not a newly invented interpretation of `SKIP`.
+3. Collect enough distinct EOD dates and complete next-open outcomes to cover multiple 2–4 week holding cycles.
+4. Only then implement a research-only max-four-position simulator with deterministic tie-breaks, cash accounting, conservative costs/slippage, and predeclared exit rules. If no qualifying signals occur, report zero trades rather than force trades.
