@@ -212,3 +212,12 @@ def test_item_exact_symbols_extracts_all_supported_symbol_fields_once():
     assert news._item_exact_symbols(item) == {"ABC", "XYZ", "DEF", "GHI"}
     assert news._item_has_exact_symbol(item, "XYZ")
     assert not news._item_has_exact_symbol(item, "NOTFOUND")
+
+
+
+def test_empty_symbol_never_matches_even_with_company_name():
+    headline = "Known Company Ltd announces quarterly results"
+    raw = news._clean(headline)
+    assert news._issuer_match_reason("", headline, "Known Company Ltd") == ""
+    matcher = news._prepare_issuer_matcher("", "Known Company Ltd")
+    assert news._issuer_match_reason_prepared(raw, news._norm(raw), matcher) == ""
