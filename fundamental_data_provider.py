@@ -1089,6 +1089,7 @@ def collect_missing_fundamentals(
         provider_retry_active = _provider_retry_cooldown_active(
             current.get("ProviderLastAttemptAtUTC"), current.get("ProviderLastAttemptStatus"),
             provider_retry_days, provider_error_retry_hours,
+            now=today_for_refresh,
         )
         if (provider_retry_active and (missing or ttm_pending or diagnostics_pending)
                 and not free_source_pending):
