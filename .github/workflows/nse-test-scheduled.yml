@@ -181,6 +181,7 @@ jobs:
           python --version
 
       - name: Run NSE V8 compile and regression tests
+        if: github.event_name != 'schedule'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -221,6 +222,15 @@ jobs:
           python -m pytest -q test_news_catalyst_parser.py
           echo "===== UPCOMING CORPORATE EVENTS TESTS ====="
           python -m pytest -q test_upcoming_corporate_events.py
+
+      - name: Fast scheduled scanner preflight
+        if: github.event_name == 'schedule'
+        env:
+          SEND_TELEGRAM: "false"
+        run: |
+          set -euo pipefail
+          python -m py_compile volume_gainer.py delivery_filter.py delivery_cache_manager.py delivery_streak_tracker.py main_board_filter.py liquidity_filter.py fundamental_filter.py fundamental_data_provider.py news_catalyst.py signal_log.py signal_history_persistence.py
+          python -m pytest -q test_volume_gainer_entrypoint_order.py test_eod_required_data_status.py test_delivery_report_date_integrity.py test_bhavcopy_history_cache_reuse.py
 
       - name: Diagnose official NSE DNS reachability (non-blocking)
         if: always()
