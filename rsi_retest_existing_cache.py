@@ -13,6 +13,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from delivery_filter import validate_delivery_report_date
+
 PRICE_DIR = Path("data/bhavcopy")
 DELIVERY_DIR = Path("data/cache/delivery")
 OUTPUT_DIR = Path("outputs/rsi_retest")
@@ -93,8 +95,9 @@ def _read_delivery_cache(delivery_dir: Path = DELIVERY_DIR) -> tuple[dict[pd.Tim
             continue
         try:
             df = _norm_columns(pd.read_csv(path, low_memory=False))
+            validate_delivery_report_date(df, date.date(), source=f"Cached delivery {path}")
         except Exception as exc:
-            rejected.append(f"{path.name}: read error: {exc}")
+            rejected.append(f"{path.name}: invalid report: {exc}")
             continue
         required = {"SYMBOL", "SERIES", "DELIV_PER"}
         if not required.issubset(df.columns):

@@ -24,12 +24,30 @@ class ExistingCacheRSITests(unittest.TestCase):
     def test_delivery_cache_requires_exact_columns(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
-            pd.DataFrame({"SYMBOL":["ABC"], "SERIES":["EQ"], "DELIV_PER":[60]}).to_csv(p / "sec_bhavdata_full_02012026.csv", index=False)
+            pd.DataFrame({"DATE1":["02-Jan-2026"], "SYMBOL":["ABC"], "SERIES":["EQ"], "DELIV_PER":[60]}).to_csv(p / "sec_bhavdata_full_02012026.csv", index=False)
             data, issues = _read_delivery_cache(p)
             self.assertEqual(len(data), 1)
             self.assertEqual(float(data[pd.Timestamp("2026-01-02")].iloc[0]["DELIV_PER"]), 60.0)
             self.assertEqual(issues, [])
 
+
+    def test_delivery_cache_rejects_internal_date_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            pd.DataFrame({"DATE1":["03-Jan-2026"], "SYMBOL":["ABC"], "SERIES":["EQ"], "DELIV_PER":[60]}).to_csv(p / "sec_bhavdata_full_02012026.csv", index=False)
+            data, issues = _read_delivery_cache(p)
+            self.assertEqual(data, {})
+            self.assertEqual(len(issues), 1)
+            self.assertIn("do not match requested 2026-01-02", issues[0])
+
+    def test_delivery_cache_rejects_missing_internal_date(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            pd.DataFrame({"SYMBOL":["ABC"], "SERIES":["EQ"], "DELIV_PER":[60]}).to_csv(p / "sec_bhavdata_full_02012026.csv", index=False)
+            data, issues = _read_delivery_cache(p)
+            self.assertEqual(data, {})
+            self.assertEqual(len(issues), 1)
+            self.assertIn("missing internal DATE1", issues[0])
 
     def test_ema50_is_available_with_warmup_flag(self):
         dates = pd.date_range("2026-01-01", periods=55, freq="B")
