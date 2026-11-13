@@ -15,6 +15,17 @@ def test_delivery_categories_use_approved_rolling_window_and_daily_counts():
     assert classify_delivery([60, 60, 60, 60]) == ("WAIT_FOR_DATA", "WAIT_FOR_DATA")
 
 
+def test_last5_consistency_requires_exact_five_official_session_observations():
+    from rvol_strategy_backtest import classify_last5_consistency
+
+    assert classify_last5_consistency([60, 60, 60, 60, 60]) == ("HIGH_CONSISTENCY", 5)
+    assert classify_last5_consistency([60, 59, 60, 59, 60]) == ("MODERATE_CONSISTENCY", 3)
+    assert classify_last5_consistency([59, 59, 60, 59, 59]) == ("LOW_CONSISTENCY", 1)
+    assert classify_last5_consistency([60, 60, None, 60, 60]) == ("WAIT_FOR_DATA", None)
+    assert classify_last5_consistency([60, 60, 60, 60]) == ("WAIT_FOR_DATA", None)
+    assert classify_last5_consistency([60, 60, 60, 60, 101]) == ("WAIT_FOR_DATA", None)
+
+
 def test_delivery_window_is_inclusive_30_calendar_days():
     dates = pd.to_datetime(["2026-10-07", "2026-10-08", "2026-10-11", "2026-10-12", "2026-11-06", "2026-11-07"])
     got = delivery_window_dates(dates, "2026-11-06", max_calendar_days=30)
