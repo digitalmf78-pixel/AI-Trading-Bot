@@ -97,6 +97,38 @@ def _build_watchlist(result, news, eod_date):
         watch.to_csv(SNAPSHOT_DIR / f"v8_telegram_research_watchlist_{date_key:%Y%m%d}.csv", index=False)
     return watch
 
+
+def select_summary_stocks(rows, max_stocks=10):
+    """Select only final WATCH/ENTRY_CANDIDATE rows; entry first, then V8Score."""
+    if rows is None or rows.empty or "TckrSymb" not in rows.columns:
+        return pd.DataFrame()
+    selected = rows.copy()
+    status_col = "EODWatchlistStatus" if "EODWatchlistStatus" in selected.columns else None
+    if status_col is None:
+        return selected.iloc[0:0].copy()
+    status = selected[status_col].fillna("").astype(str).str.strip().str.upper()
+    selected = selected[status.isin({"ENTRY_CANDIDATE", "WATCH"})].copy()
+    if selected.empty:
+        return selected
+    selected["_final_rank"] = selected[status_col].fillna("").astype(str).str.upper().map(
+        {"ENTRY_CANDIDATE": 0, "WATCH": 1}
+    ).fillna(2)
+    if "V8Score" in selected.columns:
+        selected["_v8_sort"] = pd.to_numeric(selected["V8Score"], errors="coerce")
+        selected = selected.sort_values(
+            ["_final_rank", "_v8_sort", "TckrSymb"],
+            ascending=[True, False, True], na_position="last", kind="stable",
+        )
+    else:
+        selected = selected.sort_values(
+            ["_final_rank", "TckrSymb"], ascending=[True, True], kind="stable"
+        )
+    selected = selected.drop(columns=["_final_rank", "_v8_sort"], errors="ignore")
+    if max_stocks is not None:
+        selected = selected.head(max(0, int(max_stocks)))
+    return selected.reset_index(drop=True)
+
+
 def build_telegram_research_sections(result, news, eod_date, company_names=None):
     """Render the research summary; source reports remain the evidence of record."""
     watch = _build_watchlist(result if result is not None else pd.DataFrame(), news, eod_date)
