@@ -1086,10 +1086,20 @@ def collect_missing_fundamentals(
             free_sources_enabled and free_source_attempts < free_source_budget
             and not in_free_cooldown and bool(free_source_missing)
         )
-        provider_retry_active = _provider_retry_cooldown_active(
-            current.get("ProviderLastAttemptAtUTC"), current.get("ProviderLastAttemptStatus"),
-            provider_retry_days, provider_error_retry_hours,
-            now=today_for_refresh,
+        previously_fetched_metrics = {
+            item.strip() for item in str(current.get("ProviderFetchedMetrics", "") or "").split(";")
+            if item.strip()
+        }
+        # If a previously stored provider metric was manually cleared/corrupted,
+        # treat that as cache invalidation and allow immediate repair.
+        cache_metric_invalidated = bool(previously_fetched_metrics.intersection(missing))
+        provider_retry_active = (
+            not cache_metric_invalidated
+            and _provider_retry_cooldown_active(
+                current.get("ProviderLastAttemptAtUTC"), current.get("ProviderLastAttemptStatus"),
+                provider_retry_days, provider_error_retry_hours,
+                now=today_for_refresh,
+            )
         )
         if (provider_retry_active and (missing or ttm_pending or diagnostics_pending)
                 and not free_source_pending):
