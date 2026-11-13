@@ -973,7 +973,12 @@ def collect_missing_fundamentals(
     free_source_budget = max(0, int(os.getenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "10") or 10))
     free_source_retry_days = max(1, int(os.getenv("FREE_FUNDAMENTAL_RETRY_DAYS", "7") or 7))
     free_source_attempts = 0
+    cache_complete_count = 0
+    provider_fetch_count = 0
+    provider_fetch_seconds = 0.0
+    collection_started = time.perf_counter()
     for symbol in symbols:
+        symbol_started = time.perf_counter()
         current = records.get(symbol, {})
         if not current:
             current = {col: pd.NA for col in BASE_COLUMNS}
@@ -1029,8 +1034,9 @@ def collect_missing_fundamentals(
             and not in_free_cooldown and bool(free_source_missing)
         )
         if not missing and not ttm_pending and not diagnostics_pending and not valuation_pending and not free_source_pending:
+            cache_complete_count += 1
             cached_diag = {col: current.get(col, pd.NA) for col in TTM_DIAGNOSTIC_COLUMNS}
-            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), **cached_diag})
+            diagnostics.append({"TckrSymb": symbol, "ProviderStatus": "EXISTING_RECORD_COMPLETE", "ProviderReason": "metrics complete; TTM and raw period diagnostics already cached", "ProviderSource": current.get("Source", ""), "ProviderSourceURL": current.get("SourceURL", ""), "AttemptedAtUTC": datetime.now(timezone.utc).isoformat(), "MetricsAvailable": len(METRIC_COLUMNS), "SymbolProcessingSeconds": round(time.perf_counter() - symbol_started, 3), **cached_diag})
             continue
         # Keep compatibility with injected fetchers that predate newer kwargs.
         # Secondary-provider requests are budgeted and cooled down per symbol.
@@ -1062,7 +1068,12 @@ def collect_missing_fundamentals(
         except (TypeError, ValueError):
             # Legacy injected test fetchers may expose no inspectable signature.
             pass
+        fetch_started = time.perf_counter()
         fetched, diagnostic = _fetch_one(symbol, **fetch_kwargs)
+        fetch_elapsed = time.perf_counter() - fetch_started
+        provider_fetch_count += 1
+        provider_fetch_seconds += fetch_elapsed
+        diagnostic["FetchElapsedSeconds"] = round(fetch_elapsed, 3)
         if diagnostic.get("FreeSourcesAttempted"):
             free_source_attempts += 1
         # Never overwrite manually supplied metric values. Existing provider rows
@@ -1170,10 +1181,18 @@ def collect_missing_fundamentals(
         records[symbol] = merged
         diagnostic["MetricsAvailable"] = sum(_present(merged.get(c)) for c in METRIC_COLUMNS)
         diagnostic["MetricsMissing"] = ";".join([c for c in METRIC_COLUMNS if not _present(merged.get(c))])
+        diagnostic["SymbolProcessingSeconds"] = round(time.perf_counter() - symbol_started, 3)
         diagnostics.append(diagnostic)
         if pause_seconds > 0:
             time.sleep(pause_seconds)
 
+    print(
+        "[FUNDAMENTAL PERF] "
+        f"symbols={len(symbols)} cache_complete_skips={cache_complete_count} "
+        f"provider_fetches={provider_fetch_count} "
+        f"provider_fetch_seconds={provider_fetch_seconds:.3f} "
+        f"symbol_loop_seconds={time.perf_counter() - collection_started:.3f}"
+    )
     combined = pd.DataFrame(list(records.values()))
     for col in BASE_COLUMNS:
         if col not in combined.columns:
@@ -1185,6 +1204,7 @@ def collect_missing_fundamentals(
         combined.loc[blank_asof, "AsOfDate"] = cutoff_text
     # Official date verification is a single batched request for the full universe.
     # Failure is non-fatal: candidates remain and statuses stay UNVERIFIED.
+    official_verification_started = time.perf_counter()
     try:
         from fundamental_official_filings import apply_official_publication_dates
         combined = apply_official_publication_dates(
@@ -1201,6 +1221,7 @@ def collect_missing_fundamentals(
     except Exception as exc:
         combined["PublicationDateStatus"] = combined.get("PublicationDateStatus", pd.Series("UNVERIFIED", index=combined.index)).fillna("UNVERIFIED")
         combined["OfficialFilingVerificationError"] = f"{type(exc).__name__}: {exc}"[:300]
+    print(f"[FUNDAMENTAL PERF] official_filing_verification_seconds={time.perf_counter() - official_verification_started:.3f}")
     _atomic_write_csv(combined, path)
     snapshot_path = save_fundamental_history_snapshot(path, cutoff_text or date.today().isoformat())
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
