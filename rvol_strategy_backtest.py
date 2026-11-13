@@ -83,6 +83,18 @@ def classify_delivery(values: list[float]) -> tuple[str, str]:
     return a, b
 
 
+def classify_last5_consistency(values: list[float | None], threshold: float = 60.0) -> tuple[str, int | None]:
+    """Classify the exact latest five official sessions; missing any value fails closed."""
+    if len(values) != 5 or any(
+        value is None or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 100.0
+        for value in values
+    ):
+        return "WAIT_FOR_DATA", None
+    passes = sum(float(value) >= threshold for value in values)
+    tier = "HIGH_CONSISTENCY" if passes == 5 else "MODERATE_CONSISTENCY" if passes >= 3 else "LOW_CONSISTENCY"
+    return tier, passes
+
+
 def _metric(values: pd.Series, prefix: str) -> dict:
     vals = pd.to_numeric(values, errors="coerce").dropna()
     if vals.empty:
@@ -220,6 +232,14 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 rejection["insufficient_delivery_history"] += 1
                 continue
             cat_a, cat_b = classify_delivery(dvalues)
+            # Exact latest five official NSE sessions: do not compress missing
+            # symbol observations into a misleading five-observation streak.
+            latest_five_sessions = market_dates[max(0, pos - 4):pos + 1]
+            last5_values = [
+                delivery_lookup.get(day, {}).get(symbol)
+                for day in latest_five_sessions
+            ] if len(latest_five_sessions) == 5 else []
+            consistency_tier, consistency_pass_count = classify_last5_consistency(last5_values)
             qualifying_a_windows = sum(
                 sum(float(v) for v in dvalues[index - 4:index + 1]) / 5.0 >= 60.0
                 for index in range(4, len(dvalues))
@@ -245,6 +265,9 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 "DeliveryQualifyingAWindows": qualifying_a_windows,
                 "DeliveryQualifyingBDays": qualifying_b_days,
                 "DeliveryCohort": delivery_cohort,
+                "Delivery5DConsistencyTier": consistency_tier,
+                "Delivery5DDailyPassCount": consistency_pass_count,
+                "Delivery5DSessionDates": "|".join(d.strftime("%Y-%m-%d") for d in latest_five_sessions),
                 "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in candidate_delivery_dates),
                 "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
                 "UniverseStatus": "EQ_SERIES_ONLY_HISTORICAL_MAINBOARD_NOT_VERIFIED",
@@ -307,6 +330,21 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
             "LiquidityGate": "20 prior official sessions average traded value >= INR 1.5 crore",
             "DeliveryGate": "30 calendar days; A = at least 5 trailing 5-valid-session averages >=60%; B = at least 5 daily reports >=60%; A OR B",
+            "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
+        }
+        for h in HORIZONS:
+            row.update(_metric(group[f"ForwardReturn{h}D_Pct"], f"Return{h}D"))
+            row[f"AvgMFE{h}D_Pct"] = round(float(pd.to_numeric(group[f"MaxFavorable{h}D_Pct"], errors="coerce").mean()), 3) if len(group) else np.nan
+            row[f"AvgMAE{h}D_Pct"] = round(float(pd.to_numeric(group[f"MaxAdverse{h}D_Pct"], errors="coerce").mean()), 3) if len(group) else np.nan
+        comparison.append(row)
+    # Compare consistency tiers only within the unchanged A/B-qualified cohort.
+    for tier in ("HIGH_CONSISTENCY", "MODERATE_CONSISTENCY", "LOW_CONSISTENCY", "WAIT_FOR_DATA"):
+        group = signals[signals["Delivery5DConsistencyTier"].eq(tier)].copy() if not signals.empty else signals.copy()
+        row = {
+            "DeliveryCohort": f"A_OR_B__{tier}",
+            "SignalCount": int(len(group)),
+            "DeliveryGate": "Existing 30-calendar-day A OR B gate; consistency is observational only",
+            "ConsistencyRule": "Exact latest 5 official NSE sessions; 5/5 high, 3-4/5 moderate, 0-2/5 low; missing session data WAIT_FOR_DATA",
             "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
         }
         for h in HORIZONS:
