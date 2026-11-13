@@ -79,6 +79,7 @@ jobs:
             data/inputs/sector_history.csv
             data/inputs/fundamental_metrics.csv
             data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
             data/cache/xbrl_samples/
             data/cache/xbrl_period_pairs/
             data/cache/shareholding_xbrl/
@@ -266,6 +267,8 @@ jobs:
           FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN: "10"
           FREE_FUNDAMENTAL_RETRY_DAYS: "7"
           NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
+          TELEGRAM_MAX_STOCKS: ${{ vars.TELEGRAM_MAX_STOCKS || '10' }}
+          TELEGRAM_MODE: ${{ vars.TELEGRAM_MODE || 'SUMMARY' }}
         run: |
           set -e
           echo "===== NEWS SCAN MODE: ${NEWS_SCAN_MODE} ====="
