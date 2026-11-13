@@ -183,3 +183,41 @@ def test_telegram_top4_does_not_force_fill_or_rank_wait_for_data():
     assert selected["TckrSymb"].tolist() == ["STRONG_PASS", "MEDIUM_PASS", "LOW_PASS"]
     assert len(selected) == 3
 
+
+
+def test_precompiled_issuer_matcher_preserves_existing_match_semantics():
+    cases = [
+        ("AKASH", "Akash Infra-Projects Ltd announces quarterly results", "AKASH INFRA-PROJECTS LIMITED"),
+        ("AKASH", "After return to BSP, Akash Anand set to resume electoral campaign", "AKASH INFRA-PROJECTS LIMITED"),
+        ("AKASH", "AKASH (NSE: AKASH) share price update", ""),
+        ("EFCIL", "EFC (I) Ltd. (EFCIL) Reg 74(5) Certificate Q2 FY27", "EFC (I) LIMITED"),
+        ("TECH", "Technology shares rally after earnings", ""),
+    ]
+    for symbol, headline, company in cases:
+        raw = news._clean(headline)
+        normalized = news._norm(raw)
+        prepared = news._issuer_match_reason_prepared(
+            raw, normalized, news._prepare_issuer_matcher(symbol, company)
+        )
+        assert prepared == news._issuer_match_reason(symbol, headline, company)
+
+
+def test_item_exact_symbols_extracts_all_supported_symbol_fields_once():
+    from xml.etree import ElementTree as ET
+
+    item = ET.fromstring(
+        "<item><symbol>ABC</symbol><ticker>XYZ</ticker>"
+        "<securitysymbol>DEF</securitysymbol><scripsymbol>GHI</scripsymbol></item>"
+    )
+    assert news._item_exact_symbols(item) == {"ABC", "XYZ", "DEF", "GHI"}
+    assert news._item_has_exact_symbol(item, "XYZ")
+    assert not news._item_has_exact_symbol(item, "NOTFOUND")
+
+
+
+def test_empty_symbol_never_matches_even_with_company_name():
+    headline = "Known Company Ltd announces quarterly results"
+    raw = news._clean(headline)
+    assert news._issuer_match_reason("", headline, "Known Company Ltd") == ""
+    matcher = news._prepare_issuer_matcher("", "Known Company Ltd")
+    assert news._issuer_match_reason_prepared(raw, news._norm(raw), matcher) == ""

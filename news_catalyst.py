@@ -165,65 +165,78 @@ def _company_base(value: str) -> str:
     return " ".join(tokens)
 
 
-def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
-    """Match an issuer by its registered name or an explicit market ticker.
-
-    Registered names are matched as complete normalized phrases. Ticker matching
-    is deliberately stricter than substring matching: bare common words such as
-    TECH or DIVIDEND are not accepted as issuer identifiers.
-    """
+def _prepare_issuer_matcher(symbol: str, company: str = "") -> tuple:
+    """Compile immutable issuer patterns once instead of rebuilding them per RSS item."""
     symbol = str(symbol or "").strip().upper()
-    raw_text = _clean(headline or "")
-    title = _norm(raw_text)
-    if not symbol or not title:
-        return ""
-
+    if not symbol:
+        return None, (), ()
     company_base = _company_base(company)
     company_tokens = company_base.split()
-    if company_base:
-        distinctive = (
-            len(company_tokens) >= 2 and len(company_base) >= 5
-        ) or (
-            len(company_tokens) == 1
-            and len(company_base) >= 6
-            and company_base not in _GENERIC_SINGLE_WORD_ISSUER_NAMES
-        )
-        if distinctive and re.search(
-            rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])", title
-        ):
-            return "COMPANY_NAME_MATCH"
-
+    distinctive = bool(company_base) and (
+        (len(company_tokens) >= 2 and len(company_base) >= 5)
+        or (len(company_tokens) == 1 and len(company_base) >= 6
+            and company_base not in _GENERIC_SINGLE_WORD_ISSUER_NAMES)
+    )
+    company_pattern = (
+        re.compile(rf"(?<![A-Z0-9]){re.escape(company_base)}(?![A-Z0-9])")
+        if distinctive else None
+    )
     escaped = re.escape(symbol)
-    # Punctuation is removed by _norm, so check explicit ticker forms in raw text.
-    raw_explicit_patterns = (
+    raw_patterns = tuple(re.compile(pattern, flags=re.IGNORECASE) for pattern in (
         rf"(?<![A-Z0-9])NSE\s*[:\-]\s*{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9])\(\s*{escaped}\s*\)(?![A-Z0-9])",
         rf"(?<![A-Z0-9]){escaped}\.NS(?![A-Z0-9])",
-    )
-    if any(re.search(pattern, raw_text, flags=re.IGNORECASE) for pattern in raw_explicit_patterns):
-        return "EXPLICIT_TICKER_MATCH"
-
-    normalized_patterns = (
+    ))
+    normalized_patterns = tuple(re.compile(pattern) for pattern in (
         rf"(?<![A-Z0-9])NSE\s+{escaped}(?![A-Z0-9])",
         rf"(?<![A-Z0-9]){escaped}\s+NS(?![A-Z0-9])",
-    )
-    if any(re.search(pattern, title) for pattern in normalized_patterns):
+    ))
+    return company_pattern, raw_patterns, normalized_patterns
+
+
+def _issuer_match_reason_prepared(raw_text: str, title: str, matcher: tuple) -> str:
+    """Apply precompiled issuer patterns to already-cleaned raw/normalized text."""
+    if not title:
+        return ""
+    company_pattern, raw_patterns, normalized_patterns = matcher
+    if not raw_patterns:
+        return ""
+    if company_pattern is not None and company_pattern.search(title):
+        return "COMPANY_NAME_MATCH"
+    if any(pattern.search(raw_text) for pattern in raw_patterns):
+        return "EXPLICIT_TICKER_MATCH"
+    if any(pattern.search(title) for pattern in normalized_patterns):
         return "EXPLICIT_TICKER_MATCH"
     return ""
+
+
+def _issuer_match_reason(symbol: str, headline: str, company: str = "") -> str:
+    """Match an issuer by registered name or explicit ticker; never by loose substring."""
+    raw_text = _clean(headline or "")
+    title = _norm(raw_text)
+    if not str(symbol or "").strip() or not title:
+        return ""
+    return _issuer_match_reason_prepared(
+        raw_text, title, _prepare_issuer_matcher(symbol, company)
+    )
+
+
+def _item_exact_symbols(item: ET.Element) -> set[str]:
+    """Extract exact issuer symbols once per RSS item, not once per candidate."""
+    found = set()
+    for node in item.iter():
+        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+        if local_name in {"symbol", "ticker", "securitysymbol", "scripsymbol"}:
+            value = str(node.text or "").strip().upper()
+            if value:
+                found.add(value)
+    return found
 
 
 def _item_has_exact_symbol(item: ET.Element, symbol: str) -> bool:
     """Return true only when an official RSS/API symbol field equals the ticker."""
     wanted = str(symbol or "").strip().upper()
-    if not wanted:
-        return False
-    for node in item.iter():
-        local_name = str(node.tag).rsplit("}", 1)[-1].split(":")[-1].strip().lower()
-        if local_name in {"symbol", "ticker", "securitysymbol", "scripsymbol"}:
-            value = str(node.text or "").strip().upper()
-            if value == wanted:
-                return True
-    return False
+    return bool(wanted) and wanted in _item_exact_symbols(item)
 
 
 def _is_market_quote_headline(headline: str) -> bool:
@@ -829,6 +842,13 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
 
     symbols = set(candidates["TckrSymb"].tolist())
     names = _read_equity_master()
+    # Precompile issuer matching once. NSE global RSS can contain thousands of
+    # items; repeated normalization/regex compilation for every item × symbol
+    # pair was the dominant CPU cost in the EOD news stage.
+    issuer_matchers = {
+        symbol: _prepare_issuer_matcher(symbol, names.get(symbol, ""))
+        for symbol in symbols
+    }
     print(
         "[NEWS-DIAG] ISSUER_MASTER "
         f"candidate_count={len(symbols)} mapped_company_names={sum(bool(str(names.get(sym, '')).strip()) for sym in symbols)} "
@@ -899,12 +919,16 @@ def collect_catalyst_news(result: pd.DataFrame, eod_date, session_dates=None) ->
             if len(in_window_samples) < 5:
                 in_window_samples.append((title or description)[:220])
             link = _clean(item.findtext("link", ""))
+            exact_symbols = _item_exact_symbols(item)
+            raw_match_text = _clean(match_text)
+            normalized_match_text = _norm(raw_match_text)
             for symbol in symbols:
-                company = names.get(symbol, "")
                 match_reason = (
                     "EXACT_OFFICIAL_SYMBOL_FIELD"
-                    if _item_has_exact_symbol(item, symbol)
-                    else _issuer_match_reason(symbol, match_text, company)
+                    if symbol in exact_symbols
+                    else _issuer_match_reason_prepared(
+                        raw_match_text, normalized_match_text, issuer_matchers[symbol]
+                    )
                 )
                 if not match_reason:
                     continue
