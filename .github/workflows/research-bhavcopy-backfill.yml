@@ -61,7 +61,8 @@ jobs:
           INPUT_END_DATE: ${{ inputs.end_date }}
           INPUT_MAX_DOWNLOADS: ${{ inputs.max_new_downloads }}
         run: |
-          args=(--sessions "$INPUT_SESSIONS")
+          SESSIONS="${INPUT_SESSIONS:-420}"
+          args=(--sessions "$SESSIONS")
           if [ -n "$INPUT_END_DATE" ]; then args+=(--end-date "$INPUT_END_DATE"); fi
           if [ -n "$INPUT_MAX_DOWNLOADS" ]; then args+=(--max-new-downloads "$INPUT_MAX_DOWNLOADS"); fi
           python -u scripts/research_bhavcopy_backfill.py "${args[@]}"
