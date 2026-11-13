@@ -12,13 +12,16 @@ from threading import local
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
+from io import BytesIO
+import hashlib
 import os
 import re
+import zipfile
 import xml.etree.ElementTree as ET
 
 import pandas as pd
 import requests
-from telegram_research_digest import build_telegram_research_sections
+from telegram_research_digest import build_telegram_research_sections, select_summary_stocks
 
 
 NEWS_COLUMNS = [
@@ -1616,48 +1619,258 @@ def build_marathi_digest(result: pd.DataFrame, eod_date, news: pd.DataFrame, fee
     lines.append("रिकामी/unverified माहिती WAIT_FOR_DATA राहते. हा अहवाल BUY शिफारस नाही; automatic order नाही.")
     return lines
 
-def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None, observation_report: pd.DataFrame | None = None) -> None:
-    """Send the complete scan digest and verify Telegram's acknowledgement."""
-    import time
 
+def _telegram_env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default)).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _telegram_summary_lines(result, eod_date, observation_report, news, scan_mode):
+    """Build one <=3500-character summary with counts and only final top-ranked names."""
+    rows = _telegram_observation_rows(observation_report, result, limit=None)
+    if rows.empty and isinstance(result, pd.DataFrame) and not result.empty:
+        rows = result.copy()
+        if "TckrSymb" in rows:
+            rows["TckrSymb"] = rows["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
+            rows = rows[rows["TckrSymb"].ne("")].drop_duplicates("TckrSymb")
+
+    def series(column, default=""):
+        return rows.get(column, pd.Series(default, index=rows.index)).fillna(default).astype(str).str.upper()
+
+    a_status = series("DeliveryACount30DStatus")
+    b_status = series("DeliveryBCount30DStatus")
+    a_pass = a_status.eq("PASS")
+    b_pass = b_status.eq("PASS")
+    eligible_ab = int((a_pass | b_pass).sum())
+    core_col = "CoreTechnicalScreenStatus" if "CoreTechnicalScreenStatus" in rows else "CandidateScreenStatus"
+    core_pass = int(series(core_col).eq("PASS").sum())
+    final_status = series("EODWatchlistStatus")
+    watch_count = int(final_status.eq("WATCH").sum())
+    entry_count = int(final_status.eq("ENTRY_CANDIDATE").sum())
+
+    lines = [
+        f"📊 NSE V8 • {str(scan_mode).upper()} • {eod_date}",
+        f"Liquidity PASS: {len(rows)} | Delivery A/B eligible: {eligible_ab} (A {int(a_pass.sum())}, B {int(b_pass.sum())})",
+        f"Core PASS: {core_pass} | Final WATCH: {watch_count} | ENTRY_CANDIDATE: {entry_count}",
+    ]
+    max_stocks = _telegram_env_int("TELEGRAM_MAX_STOCKS", 10)
+    selected = select_summary_stocks(rows, max_stocks=max_stocks if str(os.getenv("TELEGRAM_MODE", "SUMMARY")).upper() != "FULL" else None)
+    names = _read_equity_master()
+    if selected.empty:
+        lines.append("Top stocks: सध्या Final WATCH / ENTRY_CANDIDATE उपलब्ध नाही.")
+    else:
+        news_frame = news.copy() if isinstance(news, pd.DataFrame) else pd.DataFrame()
+        for _, row in selected.iterrows():
+            symbol = str(row.get("TckrSymb", "")).strip().upper()
+            name = names.get(symbol, "NSE name not verified")
+            score = pd.to_numeric(pd.Series([row.get("V8Score")]), errors="coerce").iloc[0]
+            score_text = f"{score:.1f}" if pd.notna(score) else "WAIT"
+            status = str(row.get("EODWatchlistStatus", "WAIT_FOR_DATA")).upper()
+            liquidity = str(row.get("LiquidityTier", row.get("LiquidityTier_pipeline", "WAIT"))).upper()
+            core = str(row.get(core_col, "WAIT_FOR_DATA")).upper()
+            lines.append(f"• {name} ({symbol}) | {status} | V8Score {score_text}")
+            headline = ""
+            if not news_frame.empty and {"TckrSymb", "Headline"}.issubset(news_frame.columns):
+                matched = news_frame[news_frame["TckrSymb"].fillna("").astype(str).str.upper().eq(symbol)]
+                if not matched.empty:
+                    headline = _clean(str(matched.iloc[0].get("Headline", "")))[:95]
+            detail = f"  Liquidity {liquidity} | Core {core}"
+            if headline:
+                detail += f" | News: {headline}"
+            lines.append(detail[:220])
+
+    run_url = ""
+    server = os.getenv("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    repository = os.getenv("GITHUB_REPOSITORY", "digitalmf78-pixel/AI-Trading-Bot").strip("/")
+    run_id = os.getenv("GITHUB_RUN_ID", "").strip()
+    if run_id:
+        run_url = f"{server}/{repository}/actions/runs/{run_id}"
+    lines.extend([
+        f"Full report: outputs/v8_telegram_full_report.zip (CSV + complete audit text)",
+        f"Run / artifacts: {run_url or 'GitHub Actions run artifacts'}",
+        "ही screening/watchlist माहिती आहे; BUY शिफारस किंवा automatic order नाही.",
+    ])
+
+    # Telegram hard limit is 4096; keep a safety margin at the requested ~3500 chars.
+    message = "\n".join(lines)
+    while len(message) > 3500 and len(lines) > 7:
+        # Drop the lowest-ranked stock as a whole (two lines), preserving counts and run link.
+        del lines[-5:-3]
+        message = "\n".join(lines)
+    if len(message) > 3500:
+        message = message[:3497].rstrip() + "..."
+    return lines
+
+
+_PREMARKET_SEEN_PATH = Path("data/cache/telegram_premarket_news_seen.csv")
+
+
+def _premarket_news_fingerprint(row) -> str:
+    fields = [
+        str(row.get("TckrSymb", "")).strip().upper(),
+        str(row.get("PublishedAt", "")).strip(),
+        str(row.get("Headline", "")).strip(),
+        str(row.get("URL", "")).strip(),
+    ]
+    return hashlib.sha256("|".join(fields).encode("utf-8")).hexdigest()
+
+
+def _premarket_new_news(news: pd.DataFrame | None):
+    """Compare issuer-matched catalysts with persisted fingerprints; fail closed on malformed state."""
+    frame = news.copy() if isinstance(news, pd.DataFrame) else pd.DataFrame()
+    if frame.empty or "Headline" not in frame.columns:
+        return pd.DataFrame(), set()
+    frame = frame[frame["Headline"].fillna("").astype(str).str.strip().ne("")].copy()
+    frame["_fingerprint"] = frame.apply(_premarket_news_fingerprint, axis=1)
+    seen = set()
+    if _PREMARKET_SEEN_PATH.exists():
+        try:
+            prior = pd.read_csv(_PREMARKET_SEEN_PATH)
+            if "Fingerprint" in prior.columns:
+                seen = set(prior["Fingerprint"].dropna().astype(str))
+        except (OSError, ValueError, pd.errors.ParserError) as exc:
+            # Do not silently mark everything as new when persisted state is corrupt.
+            raise RuntimeError(f"PREMARKET_TELEGRAM_STATE_INVALID: {_PREMARKET_SEEN_PATH}: {exc}") from exc
+    fresh = frame[~frame["_fingerprint"].isin(seen)].copy()
+    if "PublishedAt" in fresh.columns:
+        fresh["_published_sort"] = pd.to_datetime(fresh["PublishedAt"], errors="coerce", utc=True)
+        fresh = fresh.sort_values("_published_sort", ascending=False, na_position="last", kind="stable")
+    return fresh, set(frame["_fingerprint"].astype(str))
+
+
+def _persist_premarket_seen(fingerprints: set[str]) -> None:
+    if not fingerprints:
+        return
+    _PREMARKET_SEEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    prior = set()
+    if _PREMARKET_SEEN_PATH.exists():
+        try:
+            old = pd.read_csv(_PREMARKET_SEEN_PATH)
+            if "Fingerprint" in old.columns:
+                prior = set(old["Fingerprint"].dropna().astype(str))
+        except (OSError, ValueError, pd.errors.ParserError) as exc:
+            raise RuntimeError(f"PREMARKET_TELEGRAM_STATE_INVALID: {_PREMARKET_SEEN_PATH}: {exc}") from exc
+    combined = sorted(prior | fingerprints)
+    # Bound state size while retaining ample history for repeated RSS entries.
+    pd.DataFrame({"Fingerprint": combined[-20000:]}).to_csv(_PREMARKET_SEEN_PATH, index=False)
+
+
+def _telegram_post_with_retries(url, *, data, files=None, label="message"):
+    import time
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            response = requests.post(url, data=data, files=files, timeout=40 if files else 25)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or payload.get("ok") is not True:
+                raise RuntimeError(f"Telegram API rejected {label}: {payload}")
+            print(f"TELEGRAM_DELIVERED type={label} message_id={payload.get('result', {}).get('message_id')}")
+            return payload
+        except Exception as exc:
+            last_error = exc
+            print(f"Telegram {label} failed attempt={attempt}/3: {type(exc).__name__}: {exc}")
+            if attempt < 3:
+                time.sleep(2 ** attempt)
+    raise RuntimeError(f"Telegram delivery failed for {label} after 3 attempts") from last_error
+
+
+def _build_telegram_report_archive(full_audit_lines: list[str]) -> bytes:
+    """Bundle the complete audit text and the complete research watchlist CSV in one document."""
+    from pathlib import Path
+    output = Path("outputs")
+    output.mkdir(parents=True, exist_ok=True)
+    csv_path = output / "v8_telegram_research_watchlist.csv"
+    if not csv_path.exists():
+        pd.DataFrame(columns=["AsOfDate", "TckrSymb"]).to_csv(csv_path, index=False)
+    audit_path = output / "v8_telegram_full_audit.txt"
+    audit_path.write_text("\n".join(full_audit_lines) + "\n", encoding="utf-8")
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(csv_path, arcname="v8_telegram_research_watchlist.csv")
+        archive.write(audit_path, arcname="v8_telegram_full_audit.txt")
+    archive_path = output / "v8_telegram_full_report.zip"
+    archive_path.write_bytes(buffer.getvalue())
+    return archive_path.read_bytes()
+
+
+def _premarket_telegram_lines(eod_date, news, feed_status, fresh_news):
+    frame = news if isinstance(news, pd.DataFrame) else pd.DataFrame()
+    fresh = fresh_news if isinstance(fresh_news, pd.DataFrame) else pd.DataFrame()
+    symbols = int(frame["TckrSymb"].nunique()) if not frame.empty and "TckrSymb" in frame else 0
+    official = int(frame.get("SourceType", pd.Series(dtype=str)).astype(str).str.lower().isin(
+        {"primary", "official", "exchange", "company", "regulator"}
+    ).sum()) if not frame.empty else 0
+    lines = [
+        f"🌅 NSE V8 • PREMARKET NEWS UPDATE • {eod_date}",
+        f"Matched news: {len(frame)} | New catalysts: {len(fresh)} | Issuers: {symbols}",
+        f"Official items: {official} | NSE feed: {feed_status.get('NSE', 'WAIT')} | Secondary: {feed_status.get('secondary', 'WAIT')}",
+    ]
+    for _, row in fresh.head(5).iterrows():
+        symbol = str(row.get("TckrSymb", "")).strip().upper()
+        source_type = str(row.get("SourceType", "news")).upper()
+        impact = str(row.get("Impact", "neutral")).upper()
+        headline = _clean(str(row.get("Headline", "")))[:190]
+        published = str(row.get("PublishedAt", ""))
+        url = str(row.get("URL", "")).strip()
+        lines.append(f"• {symbol} | {impact} | {source_type} | {published}")
+        lines.append(f"  {headline}")
+        if url:
+            lines.append(f"  {url[:500]}")
+    lines.append("फक्त नव्याने आढळलेले issuer-matched catalysts; ही BUY शिफारस नाही.")
+    message = "\n".join(lines)
+    return message[:3497].rstrip() + "..." if len(message) > 3500 else message
+
+
+def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None, observation_report: pd.DataFrame | None = None) -> None:
+    """Send one compact summary plus one zipped full report; PREMARKET sends only unseen catalysts."""
     if not token or not chat_id:
         raise RuntimeError("Telegram enabled but TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is missing; configure both GitHub Actions secrets.")
 
-    lines = build_marathi_digest(result, eod_date, news, feed_status, observation_report)
-    chunks: list[str] = []
-    current = ""
-    for line in lines:
-        addition = line + "\n"
-        if current and len(current) + len(addition) > 3500:
-            chunks.append(current.rstrip())
-            current = ""
-        current += addition
-    if current:
-        chunks.append(current.rstrip())
-    if not chunks:
-        chunks = [f"NSE V8 Scan completed | {eod_date}\nरिपोर्टमध्ये दाखवण्यासाठी डेटा उपलब्ध नाही."]
+    scan_mode = str(os.getenv("NEWS_SCAN_MODE", "EOD")).strip().upper()
+    base_url = f"https://api.telegram.org/bot{token}"
+    if scan_mode == "PREMARKET":
+        fresh, fingerprints = _premarket_new_news(news)
+        if fresh.empty:
+            print("TELEGRAM_PREMARKET_NO_CHANGE: no new issuer-matched catalyst; message skipped.")
+            return
+        message = _premarket_telegram_lines(eod_date, news, feed_status, fresh)
+        _telegram_post_with_retries(
+            f"{base_url}/sendMessage",
+            data={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
+            label="premarket-summary",
+        )
+        _persist_premarket_seen(fingerprints)
+        return
 
-    for index, chunk in enumerate(chunks, start=1):
-        message = f"भाग {index}/{len(chunks)}\n{chunk}" if len(chunks) > 1 else chunk
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                response = requests.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
-                    timeout=25,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                if not isinstance(payload, dict) or payload.get("ok") is not True:
-                    raise RuntimeError(f"Telegram API rejected message: {payload}")
-                print(f"TELEGRAM_DELIVERED part={index}/{len(chunks)} message_id={payload.get('result', {}).get('message_id')}")
-                last_error = None
-                break
-            except Exception as exc:
-                last_error = exc
-                print(f"Telegram send failed part={index}/{len(chunks)} attempt={attempt}/3: {type(exc).__name__}: {exc}")
-                if attempt < 3:
-                    time.sleep(2 ** attempt)
-        if last_error is not None:
-            raise RuntimeError(f"Telegram delivery failed for part {index}/{len(chunks)} after 3 attempts") from last_error
+    # Build the complete legacy audit first; this also writes the full watchlist CSV.
+    full_audit_lines = build_marathi_digest(result, eod_date, news, feed_status, observation_report)
+    archive_bytes = _build_telegram_report_archive(full_audit_lines)
+    mode = str(os.getenv("TELEGRAM_MODE", "SUMMARY")).strip().upper()
+    if mode not in {"SUMMARY", "FULL"}:
+        print(f"TELEGRAM_MODE_INVALID={mode!r}; using SUMMARY")
+        mode = "SUMMARY"
+    summary_lines = _telegram_summary_lines(result, eod_date, observation_report, news, "EOD")
+    if mode == "FULL":
+        # FULL keeps every final candidate eligible for the compact message; the
+        # complete, untruncated stock-by-stock audit is always in the ZIP document.
+        summary_lines = _telegram_summary_lines(result, eod_date, observation_report, news, "EOD")
+        # Explicitly label the document as the complete audit in FULL mode.
+        summary_lines.insert(1, "Mode: FULL • complete stock audit attached.")
+    message = "\n".join(summary_lines)
+    if len(message) > 3500:
+        message = message[:3497].rstrip() + "..."
+    _telegram_post_with_retries(
+        f"{base_url}/sendMessage",
+        data={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
+        label="summary",
+    )
+    _telegram_post_with_retries(
+        f"{base_url}/sendDocument",
+        data={"chat_id": chat_id, "caption": f"NSE V8 full audit • {eod_date}"},
+        files={"document": ("v8_telegram_full_report.zip", archive_bytes, "application/zip")},
+        label="full-report-document",
+    )
+
