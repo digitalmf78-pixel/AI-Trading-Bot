@@ -168,6 +168,8 @@ def _company_base(value: str) -> str:
 def _prepare_issuer_matcher(symbol: str, company: str = "") -> tuple:
     """Compile immutable issuer patterns once instead of rebuilding them per RSS item."""
     symbol = str(symbol or "").strip().upper()
+    if not symbol:
+        return None, (), ()
     company_base = _company_base(company)
     company_tokens = company_base.split()
     distinctive = bool(company_base) and (
@@ -197,6 +199,8 @@ def _issuer_match_reason_prepared(raw_text: str, title: str, matcher: tuple) -> 
     if not title:
         return ""
     company_pattern, raw_patterns, normalized_patterns = matcher
+    if not raw_patterns:
+        return ""
     if company_pattern is not None and company_pattern.search(title):
         return "COMPANY_NAME_MATCH"
     if any(pattern.search(raw_text) for pattern in raw_patterns):
