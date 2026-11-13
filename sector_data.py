@@ -1003,7 +1003,7 @@ def _load_nse_quote_classification_cache(symbol: str, now_epoch: float | None = 
             raise ValueError("unsupported cache schema")
         if _clean_symbol(record.get("symbol")) != symbol:
             raise ValueError("symbol mismatch")
-        if record.get("source") != "NSE_OFFICIAL_GETQUOTEAPI":
+        if record.get("source") != "NSE_OFFICIAL_QUOTE_CLASSIFICATION":
             raise ValueError("untrusted classification source")
         fetched_at = float(record.get("fetched_at_epoch"))
         now = time.time() if now_epoch is None else float(now_epoch)
@@ -1039,7 +1039,7 @@ def _save_nse_quote_classification_cache(symbol: str, classification: dict[str, 
     record = {
         "schema_version": NSE_QUOTE_CLASSIFICATION_CACHE_SCHEMA_VERSION,
         "symbol": symbol,
-        "source": "NSE_OFFICIAL_GETQUOTEAPI",
+        "source": "NSE_OFFICIAL_QUOTE_CLASSIFICATION",
         "fetched_at_epoch": time.time() if now_epoch is None else float(now_epoch),
         "classification": normalized,
     }
