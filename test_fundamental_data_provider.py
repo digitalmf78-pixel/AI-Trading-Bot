@@ -494,3 +494,62 @@ def test_free_source_provider_error_is_not_suppressed_by_retry_cooldown():
     assert _free_source_cooldown_active(
         recent_attempt, pd.NA, 7, now=now,
     )
+
+
+def test_cached_fundamentals_refresh_valuation_without_full_provider_fetch(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("V8_FREE_FUNDAMENTAL_SOURCES", "false")
+    path = Path("data/inputs/fundamental_metrics.csv")
+    path.parent.mkdir(parents=True)
+    row = {
+        "TckrSymb": "AAA",
+        "Source": "Yahoo Finance via yfinance (secondary; verify against filings)",
+        "SourceURL": "https://finance.yahoo.com/quote/AAA.NS/financials/",
+        "AsOfDate": "2026-11-12",
+        "DataRetrievedAtUTC": "2026-11-12T10:00:00+00:00",
+        "ProviderFetchedAtUTC": "2026-11-12T10:00:00+00:00",
+        "TTMCalculationAttemptedAtUTC": "2026-11-12T10:00:00+00:00",
+        "TTMDiagnosticsCapturedAtUTC": "2026-11-12T10:00:00+00:00",
+        "ValuationRequestedEODDate": "2026-11-12",
+        **{column: 10.0 for column in provider.METRIC_COLUMNS},
+    }
+    pd.DataFrame([row]).to_csv(path, index=False)
+
+    valuation_calls = []
+    def valuation_only(symbol, ticker_factory=None, asof_date=None):
+        valuation_calls.append((symbol, asof_date))
+        return (
+            {
+                **{column: pd.NA for column in provider.VALUATION_COLUMNS},
+                "ValuationRequestedEODDate": asof_date,
+                "ValuationAsOfDate": asof_date,
+                "ValuationDataStatus": "AVAILABLE",
+                "TrailingPE": 21.0,
+            },
+            {"TckrSymb": symbol, "ProviderStatus": "VALUATION_UPDATED",
+             "ProviderReason": "valuation-only test"},
+        )
+
+    def unexpected_full_fetch(*args, **kwargs):
+        raise AssertionError("fresh cached fundamentals must not trigger a full provider fetch")
+
+    monkeypatch.setattr(provider, "_fetch_valuation_only", valuation_only)
+    monkeypatch.setattr(provider, "_fetch_one", unexpected_full_fetch)
+
+    result = provider.collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}),
+        metrics_path=path,
+        enabled=True,
+        pause_seconds=0,
+        asof_date="2026-11-13",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+
+    cached = result.set_index("TckrSymb").loc["AAA"]
+    assert valuation_calls == [("AAA", "2026-11-13")]
+    assert float(cached["RevenueGrowthPct"]) == 10.0
+    assert float(cached["ROEPercent"]) == 10.0
+    assert float(cached["TrailingPE"]) == 21.0
+    assert cached["ValuationRequestedEODDate"] == "2026-11-13"
