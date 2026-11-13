@@ -14,11 +14,19 @@ class FakeResponse:
 def test_telegram_digest_confirms_api_delivery(monkeypatch):
     sent = []
     monkeypatch.setattr(news_catalyst, "build_marathi_digest", lambda *args: ["NSE V8 report", "Scan complete"])
-    monkeypatch.setattr(news_catalyst.requests, "post", lambda url, data, timeout: (sent.append(data) or FakeResponse()))
+    monkeypatch.setattr(news_catalyst.requests, "post", lambda url, data, timeout, files=None: (sent.append((url, data, files)) or FakeResponse()))
+    monkeypatch.setenv("NEWS_SCAN_MODE", "EOD")
     news_catalyst.send_marathi_telegram(None, "2026-11-05", None, {}, "token", "chat")
-    assert len(sent) == 1
-    assert sent[0]["chat_id"] == "chat"
-    assert "NSE V8 report" in sent[0]["text"]
+    assert len(sent) == 2
+    assert sent[0][1]["chat_id"] == "chat"
+    assert "NSE V8" in sent[0][1]["text"]
+    assert sent[0][0].endswith("/sendMessage")
+    assert sent[1][0].endswith("/sendDocument")
+    assert sent[1][2]["document"][0] == "v8_telegram_full_report.zip"
+    import io, zipfile
+    with zipfile.ZipFile(io.BytesIO(sent[1][2]["document"][1])) as archive:
+        audit = archive.read("v8_telegram_full_audit.txt").decode("utf-8")
+        assert "NSE V8 report" in audit
 
 
 def test_telegram_missing_secrets_fails_loudly():
@@ -40,8 +48,9 @@ def test_telegram_retries_failed_delivery(monkeypatch):
         return FakeResponse()
     monkeypatch.setattr(news_catalyst.requests, "post", fake_post)
     monkeypatch.setattr("time.sleep", lambda *_: None)
+    monkeypatch.setenv("NEWS_SCAN_MODE", "EOD")
     news_catalyst.send_marathi_telegram(None, "2026-11-05", None, {}, "token", "chat")
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 def test_telegram_digest_lists_every_liquidity_passed_stock_and_all_confirmation_layers(monkeypatch):
     report = __import__("pandas").DataFrame([
@@ -158,3 +167,83 @@ def test_telegram_delivery_line_uses_compact_a_b_counts():
     }])
     digest = "\\n".join(news_catalyst._observation_digest_lines(report, pd.DataFrame()))
     assert "Delivery: A 7/30 PASS | B 5/30 PASS" in digest
+
+
+def test_summary_selects_only_final_stocks_sorted_entry_then_v8score(monkeypatch):
+    import pandas as pd
+    rows = pd.DataFrame([
+        {"TckrSymb":"WATCH_HIGH","EODWatchlistStatus":"WATCH","V8Score":95},
+        {"TckrSymb":"ENTRY_LOW","EODWatchlistStatus":"ENTRY_CANDIDATE","V8Score":50},
+        {"TckrSymb":"ENTRY_HIGH","EODWatchlistStatus":"ENTRY_CANDIDATE","V8Score":90},
+        {"TckrSymb":"SKIP","EODWatchlistStatus":"SKIP","V8Score":100},
+        {"TckrSymb":"WATCH_LOW","EODWatchlistStatus":"WATCH","V8Score":20},
+    ])
+    from telegram_research_digest import select_summary_stocks
+    selected = select_summary_stocks(rows, max_stocks=3)
+    assert selected["TckrSymb"].tolist() == ["ENTRY_HIGH", "ENTRY_LOW", "WATCH_HIGH"]
+
+
+def test_summary_message_is_short_and_reports_required_counts(monkeypatch):
+    import pandas as pd
+    report = pd.DataFrame([
+        {"TckrSymb":"AAA","LiquidityFilterStatus":"PASS","LiquidityTier":"STRONG",
+         "DeliveryACount30DStatus":"PASS","DeliveryBCount30DStatus":"FAIL",
+         "CoreTechnicalScreenStatus":"PASS","EODWatchlistStatus":"ENTRY_CANDIDATE","V8Score":88},
+        {"TckrSymb":"BBB","LiquidityFilterStatus":"PASS","LiquidityTier":"MEDIUM",
+         "DeliveryACount30DStatus":"FAIL","DeliveryBCount30DStatus":"PASS",
+         "CoreTechnicalScreenStatus":"REJECT","EODWatchlistStatus":"WATCH","V8Score":70},
+        {"TckrSymb":"CCC","LiquidityFilterStatus":"PASS","LiquidityTier":"LOW",
+         "DeliveryACount30DStatus":"FAIL","DeliveryBCount30DStatus":"FAIL",
+         "CoreTechnicalScreenStatus":"PASS","EODWatchlistStatus":"SKIP","V8Score":99},
+    ])
+    monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {})
+    monkeypatch.setenv("TELEGRAM_MAX_STOCKS", "10")
+    monkeypatch.setenv("TELEGRAM_MODE", "SUMMARY")
+    lines = news_catalyst._telegram_summary_lines(pd.DataFrame(), "2026-11-13", report, pd.DataFrame(), "EOD")
+    message = "\n".join(lines)
+    assert len(message) <= 3500
+    assert "Liquidity PASS: 3" in message
+    assert "Delivery A/B eligible: 2" in message
+    assert "Core PASS: 2" in message
+    assert "Final WATCH: 1" in message and "ENTRY_CANDIDATE: 1" in message
+    assert "AAA" in message and "BBB" in message and "CCC" not in message
+
+
+def test_premarket_sends_only_new_catalysts_then_skips_unchanged(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NEWS_SCAN_MODE", "PREMARKET")
+    calls = []
+    monkeypatch.setattr(news_catalyst.requests, "post",
+        lambda url, data, timeout, files=None: (calls.append(data["text"]) or FakeResponse()))
+    news = pd.DataFrame([{
+        "TckrSymb":"ABC","PublishedAt":"2026-11-13T03:00:00Z",
+        "Headline":"ABC receives a new order","SourceType":"primary",
+        "Impact":"positive","URL":"https://example.test/abc"
+    }])
+    news_catalyst.send_marathi_telegram(None, "2026-11-13", news, {"NSE":"available"}, "token", "chat")
+    news_catalyst.send_marathi_telegram(None, "2026-11-13", news, {"NSE":"available"}, "token", "chat")
+    assert len(calls) == 1
+    assert "New catalysts: 1" in calls[0]
+    assert "ABC receives a new order" in calls[0]
+    assert "Full audit" not in calls[0]
+
+
+def test_premarket_batches_more_than_five_new_catalysts_without_losing_remainder(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NEWS_SCAN_MODE", "PREMARKET")
+    sent = []
+    monkeypatch.setattr(news_catalyst.requests, "post",
+        lambda url, data, timeout, files=None: (sent.append(data["text"]) or FakeResponse()))
+    news = pd.DataFrame([{
+        "TckrSymb":f"SYM{i}","PublishedAt":f"2026-11-13T0{i}:00:00Z",
+        "Headline":f"New issuer catalyst {i}","SourceType":"primary",
+        "Impact":"neutral","URL":f"https://example.test/{i}"
+    } for i in range(6)])
+    for _ in range(3):
+        news_catalyst.send_marathi_telegram(None, "2026-11-13", news, {"NSE":"available"}, "token", "chat")
+    assert len(sent) == 2
+    assert "New catalysts: 6" in sent[0]
+    assert "New catalysts: 1" in sent[1]
+    assert "New issuer catalyst 0" in sent[1]
