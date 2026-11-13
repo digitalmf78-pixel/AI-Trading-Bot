@@ -149,5 +149,96 @@ class SectorMappingCacheReconciliationTests(unittest.TestCase):
 
 
 
+    def test_official_nse_quote_classification_cache_hit_skips_network(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_dir = sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR
+            sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = Path(tmp)
+            try:
+                sector_data._save_nse_quote_classification_cache(
+                    "ABC",
+                    {"macro": "Services", "sector": "Information Technology",
+                     "industry": "IT - Software", "basicIndustry": "Software"},
+                    now_epoch=time.time(),
+                )
+                original_fetch = sector_data._fetch_nse_quote_industry_classification
+                def no_network(_session, _symbol):
+                    raise AssertionError("fresh official classification cache should avoid network")
+                sector_data._fetch_nse_quote_industry_classification = no_network
+                result = sector_data._nse_quote_industry_classification(object(), "abc")
+                self.assertEqual(result["sector"], "Information Technology")
+                self.assertEqual(result["basicIndustry"], "Software")
+                sector_data._fetch_nse_quote_industry_classification = original_fetch
+            finally:
+                sector_data._fetch_nse_quote_industry_classification = original_fetch
+                sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = original_dir
+
+    def test_expired_official_nse_quote_classification_is_refetched_and_replaced(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_dir = sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR
+            original_fetch = sector_data._fetch_nse_quote_industry_classification
+            sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = Path(tmp)
+            try:
+                sector_data._save_nse_quote_classification_cache(
+                    "ABC", {"sector": "Old Sector"},
+                    now_epoch=time.time() - sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_TTL_SECONDS - 5,
+                )
+                calls = []
+                def fetch(_session, symbol):
+                    calls.append(symbol)
+                    return {"macro": "Services", "sector": "Information Technology",
+                            "industry": "IT - Software", "basicIndustry": "Software"}
+                sector_data._fetch_nse_quote_industry_classification = fetch
+                result = sector_data._nse_quote_industry_classification(object(), "ABC")
+                self.assertEqual(calls, ["ABC"])
+                self.assertEqual(result["sector"], "Information Technology")
+                cached = sector_data._load_nse_quote_classification_cache("ABC")
+                self.assertEqual(cached["sector"], "Information Technology")
+            finally:
+                sector_data._fetch_nse_quote_industry_classification = original_fetch
+                sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = original_dir
+
+    def test_empty_or_failed_classification_is_never_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_dir = sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR
+            original_fetch = sector_data._fetch_nse_quote_industry_classification
+            sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = Path(tmp)
+            try:
+                self.assertFalse(sector_data._save_nse_quote_classification_cache("ABC", {}))
+                def fail(_session, _symbol):
+                    raise RuntimeError("official endpoint unavailable")
+                sector_data._fetch_nse_quote_industry_classification = fail
+                with self.assertRaisesRegex(RuntimeError, "official endpoint unavailable"):
+                    sector_data._nse_quote_industry_classification(object(), "ABC")
+                self.assertFalse(sector_data._nse_quote_classification_cache_path("ABC").exists())
+            finally:
+                sector_data._fetch_nse_quote_industry_classification = original_fetch
+                sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = original_dir
+
+    def test_quote_classification_cache_rejects_wrong_symbol_or_source(self):
+        import json
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_dir = sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR
+            sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = Path(tmp)
+            try:
+                path = sector_data._nse_quote_classification_cache_path("ABC")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({
+                    "schema_version": sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_SCHEMA_VERSION,
+                    "symbol": "XYZ",
+                    "source": "UNVERIFIED",
+                    "fetched_at_epoch": time.time(),
+                    "classification": {"sector": "Information Technology"},
+                }), encoding="utf-8")
+                self.assertIsNone(sector_data._load_nse_quote_classification_cache("ABC"))
+            finally:
+                sector_data.NSE_QUOTE_CLASSIFICATION_CACHE_DIR = original_dir
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

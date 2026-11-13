@@ -975,6 +975,86 @@ def _nse_quote_page_basic_industry(session: requests.Session, symbol: str) -> st
 
 NSE_NEXT_QUOTE_URL = "https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi"
 
+# Successful official NSE quote classifications are stable reference data. Reuse
+# them for at most 24 hours across EOD/premarket runs; never cache failures or
+# empty classifications. This cache only avoids repeat HTTP requests and does
+# not change the exact-label mapping rules below.
+NSE_QUOTE_CLASSIFICATION_CACHE_DIR = Path("data") / "cache" / "sector_quote_classifications"
+NSE_QUOTE_CLASSIFICATION_CACHE_TTL_SECONDS = 24 * 60 * 60
+NSE_QUOTE_CLASSIFICATION_CACHE_SCHEMA_VERSION = 1
+
+
+def _nse_quote_classification_cache_path(symbol: str) -> Path:
+    safe_symbol = re.sub(r"[^A-Z0-9_-]+", "_", _clean_symbol(symbol))
+    return NSE_QUOTE_CLASSIFICATION_CACHE_DIR / f"{safe_symbol}.json"
+
+
+def _load_nse_quote_classification_cache(symbol: str, now_epoch: float | None = None) -> dict[str, str] | None:
+    """Load a fresh, symbol-bound cache record; invalid/stale records are misses."""
+    symbol = _clean_symbol(symbol)
+    if not symbol:
+        return None
+    path = _nse_quote_classification_cache_path(symbol)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            raise ValueError("cache root is not an object")
+        if record.get("schema_version") != NSE_QUOTE_CLASSIFICATION_CACHE_SCHEMA_VERSION:
+            raise ValueError("unsupported cache schema")
+        if _clean_symbol(record.get("symbol")) != symbol:
+            raise ValueError("symbol mismatch")
+        if record.get("source") != "NSE_OFFICIAL_QUOTE_CLASSIFICATION":
+            raise ValueError("untrusted classification source")
+        fetched_at = float(record.get("fetched_at_epoch"))
+        now = time.time() if now_epoch is None else float(now_epoch)
+        age = now - fetched_at
+        if age < 0 or age > NSE_QUOTE_CLASSIFICATION_CACHE_TTL_SECONDS:
+            print(f"[SECTOR] NSE classification CACHE_EXPIRED {symbol}: age_hours={max(age, 0) / 3600:.1f}")
+            return None
+        raw = record.get("classification")
+        if not isinstance(raw, dict):
+            raise ValueError("classification is not an object")
+        fields = ("macro", "sector", "industry", "basicIndustry")
+        result = {key: str(raw.get(key) or "").strip() for key in fields}
+        if not any(result.values()):
+            raise ValueError("empty classification")
+        print(f"[SECTOR] NSE classification CACHE_HIT {symbol}: age_hours={age / 3600:.1f}")
+        return result
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        print(f"[SECTOR] NSE classification CACHE_INVALID {symbol}: {type(exc).__name__}: {exc}")
+        return None
+
+
+def _save_nse_quote_classification_cache(symbol: str, classification: dict[str, str], now_epoch: float | None = None) -> bool:
+    """Atomically persist only non-empty official classification responses."""
+    symbol = _clean_symbol(symbol)
+    fields = ("macro", "sector", "industry", "basicIndustry")
+    if not symbol or not isinstance(classification, dict):
+        return False
+    normalized = {key: str(classification.get(key) or "").strip() for key in fields}
+    if not any(normalized.values()):
+        return False
+    record = {
+        "schema_version": NSE_QUOTE_CLASSIFICATION_CACHE_SCHEMA_VERSION,
+        "symbol": symbol,
+        "source": "NSE_OFFICIAL_QUOTE_CLASSIFICATION",
+        "fetched_at_epoch": time.time() if now_epoch is None else float(now_epoch),
+        "classification": normalized,
+    }
+    path = _nse_quote_classification_cache_path(symbol)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+        temporary.replace(path)
+        return True
+    except Exception as exc:
+        print(f"[SECTOR] NSE classification CACHE_WRITE_ERROR {symbol}: {type(exc).__name__}: {exc}")
+        return False
+
+
 
 def _classification_from_nse_payload(payload: dict[str, Any]) -> dict[str, str]:
     """Normalize classification fields from current or legacy NSE quote JSON."""
@@ -1001,7 +1081,7 @@ def _classification_from_nse_payload(payload: dict[str, Any]) -> dict[str, str]:
     return {"macro": "", "sector": "", "industry": "", "basicIndustry": ""}
 
 
-def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
+def _fetch_nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
     """Fetch classification from the current NSE quote backend, then legacy API/page.
 
     The legacy /api/quote-equity endpoint has been returning HTTP 403. Current
@@ -1067,6 +1147,20 @@ def _nse_quote_industry_classification(session: requests.Session, symbol: str) -
     raise requests.RequestException(
         f"NSE current quote, legacy quote, and quote-page extraction unavailable for {symbol}; last error: {last_error}"
     )
+
+
+
+def _nse_quote_industry_classification(session: requests.Session, symbol: str) -> dict[str, str]:
+    """Return a fresh cached official classification or fetch and cache a valid response."""
+    symbol = _clean_symbol(symbol)
+    cached = _load_nse_quote_classification_cache(symbol)
+    if cached is not None:
+        return cached
+    result = _fetch_nse_quote_industry_classification(session, symbol)
+    # The fetch helper can return only explicit official NSE classification fields.
+    # Save only non-empty successful results; exceptions and empty payloads remain misses.
+    _save_nse_quote_classification_cache(symbol, result)
+    return result
 
 
 def _targeted_shortlist_mappings(
