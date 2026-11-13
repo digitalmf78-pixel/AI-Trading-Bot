@@ -227,3 +227,23 @@ def test_premarket_sends_only_new_catalysts_then_skips_unchanged(tmp_path, monke
     assert "New catalysts: 1" in calls[0]
     assert "ABC receives a new order" in calls[0]
     assert "Full audit" not in calls[0]
+
+
+def test_premarket_batches_more_than_five_new_catalysts_without_losing_remainder(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NEWS_SCAN_MODE", "PREMARKET")
+    sent = []
+    monkeypatch.setattr(news_catalyst.requests, "post",
+        lambda url, data, timeout, files=None: (sent.append(data["text"]) or FakeResponse()))
+    news = pd.DataFrame([{
+        "TckrSymb":f"SYM{i}","PublishedAt":f"2026-11-13T0{i}:00:00Z",
+        "Headline":f"New issuer catalyst {i}","SourceType":"primary",
+        "Impact":"neutral","URL":f"https://example.test/{i}"
+    } for i in range(6)])
+    for _ in range(3):
+        news_catalyst.send_marathi_telegram(None, "2026-11-13", news, {"NSE":"available"}, "token", "chat")
+    assert len(sent) == 2
+    assert "New catalysts: 6" in sent[0]
+    assert "New catalysts: 1" in sent[1]
+    assert "New issuer catalyst 5" in sent[1]
