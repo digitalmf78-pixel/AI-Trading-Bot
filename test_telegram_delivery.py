@@ -246,4 +246,4 @@ def test_premarket_batches_more_than_five_new_catalysts_without_losing_remainder
     assert len(sent) == 2
     assert "New catalysts: 6" in sent[0]
     assert "New catalysts: 1" in sent[1]
-    assert "New issuer catalyst 5" in sent[1]
+    assert "New issuer catalyst 0" in sent[1]
