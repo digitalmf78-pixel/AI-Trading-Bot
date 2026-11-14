@@ -1,10 +1,10 @@
-name: ECMS EOD (Manual Shadow Run)
+name: ECMS LEGACY EOD - DO NOT USE (Use Volume Gainers)
 
 on:
   workflow_dispatch:
     inputs:
       confirm_shadow:
-        description: "Run the isolated EOD research scanner (no orders, no production writes)"
+        description: "LEGACY scanner only. For the new strategy select ECMS VOLUME GAINERS - MANUAL EOD RUN."
         required: true
         type: choice
         options:
