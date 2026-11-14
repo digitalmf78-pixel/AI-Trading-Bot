@@ -1,2 +1,2 @@
-Start parallel NSE announcement collection; save research-only cache on this branch.
-Batch size 50; persist with retry/rebase.
+Continue official NSE announcement collection for remaining Mainboard symbols.
+Automatic 30-minute loop until all symbols are queried successfully.
