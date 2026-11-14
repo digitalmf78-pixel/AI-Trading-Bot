@@ -34,13 +34,16 @@ jobs:
             data/cache/delivery/
             data/cache/sector_index_daily/
             data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
             data/cache/universe/
             data/inputs/sector_map.csv
             data/inputs/sector_history.csv
             data/inputs/fundamental_metrics.csv
             data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
             data/cache/xbrl_samples/
             data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
             outputs/v8_official_financial_results_filings.csv
           key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
