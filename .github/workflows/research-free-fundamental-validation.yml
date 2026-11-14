@@ -57,7 +57,7 @@ jobs:
               except Exception:
                   complete = False
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"complete={'true' if complete else 'false'}\\n")
+              output.write(f"complete={'true' if complete else 'false'}\n")
           print(f"Mainboard collection already complete: {complete}")
           PY
 
