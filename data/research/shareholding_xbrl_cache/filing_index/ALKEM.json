@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:17:39.193917+00:00",
+  "filing_count": 20,
+  "latest_filing": {
+    "broadcast_date": "09-JUL-2026 16:10:19",
+    "date": "30-JUN-2026",
+    "period_end": "2026-06-30",
+    "record_id": "210697",
+    "revised": "N",
+    "submission_date": "09-JUL-2026",
+    "symbol": "ALKEM",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1689784_09072026041014_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ALKEM"
+}

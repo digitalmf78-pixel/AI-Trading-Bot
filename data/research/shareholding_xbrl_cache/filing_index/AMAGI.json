@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:21:40.402591+00:00",
+  "filing_count": 4,
+  "latest_filing": {
+    "broadcast_date": "16-OCT-2026 14:48:32",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214877",
+    "revised": "N",
+    "submission_date": "16-OCT-2026",
+    "symbol": "AMAGI",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1739773_16102026024826_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AMAGI"
+}
