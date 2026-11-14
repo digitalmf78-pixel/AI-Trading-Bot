@@ -418,15 +418,16 @@ def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
         fundamentals["CatalystRows"] = 0
     fundamentals = fundamentals.merge(news_audit, on="TckrSymb", how="left")
     fundamentals["EODCandidateStatus"] = fundamentals.apply(
-        lambda r: "EOD_RESEARCH_SHORTLIST" if
-        str(r.get("FundamentalShortlistStatus", "")).upper() == "PASS"
-        and str(r.get("CatalystStatus", "")).upper() in {"CATALYST_FOUND", "CATALYST_FOUND_SECONDARY_ONLY"}
-        and str(r.get("CatalystSignalStatus", "")).upper() == "STRONG_POSITIVE_CATALYST_REVIEW"
-        and pd.to_numeric(r.get("NegativeRiskCount", 0), errors="coerce") == 0
-        else ("WAIT_FOR_DATA" if
-              str(r.get("FundamentalShortlistStatus", "")).upper() == "WAIT_FOR_DATA"
-              or str(r.get("CatalystStatus", "")).upper() == "WAIT_FOR_DATA"
-              else "NOT_QUALIFIED"), axis=1)
+        lambda r: "NEGATIVE_RISK_REVIEW" if
+        pd.to_numeric(r.get("NegativeRiskCount", 0), errors="coerce") > 0
+        else ("EOD_RESEARCH_SHORTLIST" if
+              str(r.get("FundamentalShortlistStatus", "")).upper() == "PASS"
+              and str(r.get("CatalystStatus", "")).upper() in {"CATALYST_FOUND", "CATALYST_FOUND_SECONDARY_ONLY"}
+              and str(r.get("CatalystSignalStatus", "")).upper() == "STRONG_POSITIVE_CATALYST_REVIEW"
+              else ("WAIT_FOR_DATA" if
+                    str(r.get("FundamentalShortlistStatus", "")).upper() == "WAIT_FOR_DATA"
+                    or str(r.get("CatalystStatus", "")).upper() == "WAIT_FOR_DATA"
+                    else "NOT_QUALIFIED")), axis=1)
     fundamentals = fundamentals.sort_values(["EODCandidateStatus", "RVOL"], ascending=[True, False])
     fundamentals.to_csv(OUTPUT_DIR / "eod_candidates.csv", index=False)
     audit = board_universe_audit.merge(
