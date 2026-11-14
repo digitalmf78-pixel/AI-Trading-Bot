@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import xml.etree.ElementTree as ET
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any
 
@@ -630,8 +631,10 @@ def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[s
         return 'FILING_PUBLICATION_DATE_MISMATCH', 'Cache publication date differs from exact official filing row'
     if _clean(f.get('PublicationDateStatus')).upper() != 'VERIFIED':
         return 'FILING_PUBLICATION_DATE_NOT_VERIFIED', 'Official filing register does not mark publication date VERIFIED'
-    if not url.startswith('https://nsearchives.nseindia.com/corporate/xbrl/'):
-        return 'FILING_URL_NOT_OFFICIAL_XBRL_HOST', 'Filing URL is not on the NSE archives XBRL host/path'
+    parsed_url = urlsplit(url)
+    if (parsed_url.scheme.lower() != 'https' or parsed_url.hostname.lower() != 'nsearchives.nseindia.in'
+            or not parsed_url.path.startswith('/corporate/xbrl/')):
+        return 'FILING_URL_NOT_OFFICIAL_XBRL_HOST', 'Filing URL must use the exact HTTPS NSE archives host nsearchives.nseindia.in and /corporate/xbrl/ path'
     return 'OFFICIAL_FILING_METADATA_MATCHED', 'Exact symbol, period, URL and publication date matched; this does not verify metric values'
 
 
