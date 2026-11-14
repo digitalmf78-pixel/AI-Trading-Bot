@@ -36,6 +36,7 @@ jobs:
           key: nse-bhavcopy-${{ runner.os }}-main-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+            nse-bhavcopy-${{ runner.os }}-main-
 
       - name: Set up Python
         uses: actions/setup-python@v6
