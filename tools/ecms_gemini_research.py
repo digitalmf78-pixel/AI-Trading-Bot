@@ -123,7 +123,6 @@ def call_gemini(session: requests.Session, api_key: str, model: str,
                 prompt: str) -> tuple[dict, list[dict]]:
     response = session.post(
         API_URL.format(model=model),
-        params={"key": api_key},
         json={
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "tools": [{"google_search": {}}],
@@ -132,6 +131,7 @@ def call_gemini(session: requests.Session, api_key: str, model: str,
                 "maxOutputTokens": 5000,
             },
         },
+        headers={"x-goog-api-key": api_key},
         timeout=TIMEOUT,
     )
     if response.status_code == 429:
@@ -209,6 +209,16 @@ def main() -> int:
                 "analyst_conclusion": "AI research did not complete; do not infer a result.",
                 "error": f"{type(exc).__name__}: {str(exc)[:700]}",
             })
+            if "GEMINI_RATE_LIMIT" in str(exc):
+                for _, pending_row in list(stocks.iterrows())[index:]:
+                    records.append({
+                        "symbol": str(pending_row["TckrSymb"]),
+                        "research_classification": "INSUFFICIENT_DATA",
+                        "confidence": "LOW",
+                        "research_status": "NOT_ATTEMPTED_RATE_LIMIT",
+                        "analyst_conclusion": "Not attempted because Gemini free-tier quota/rate limit was reached.",
+                    })
+                break
         # Stay comfortably below typical free-tier request rates.
         time.sleep(1.3)
 
