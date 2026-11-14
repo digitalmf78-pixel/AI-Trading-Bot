@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   eod-shadow:
+    if: ${{ inputs.confirm_shadow == 'YES - SHADOW ONLY' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
