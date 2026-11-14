@@ -1,24 +1,36 @@
-name: Research Free Fundamental Source Validation
+name: Research Free Fundamental Batch Collection
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - "free_fundamental_sources.py"
-      - "nse_shareholding.py"
       - "research_free_fundamental_validation.py"
       - ".github/workflows/research-free-fundamental-validation.yml"
+  workflow_dispatch:
+    inputs:
+      batch_offset:
+        description: "Offset in the currently eligible Mainboard symbols"
+        required: false
+        default: "0"
+      batch_size:
+        description: "Symbols per batch (maximum 100)"
+        required: false
+        default: "25"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  live-validation:
+  collect:
+    if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout research branch
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -28,13 +40,28 @@ jobs:
       - name: Install project dependencies
         run: python -m pip install --upgrade pip -r requirements.txt
 
-      - name: Run bounded live public-source validation
+      - name: Run bounded free-source batch
+        env:
+          FUNDAMENTAL_RESEARCH_BATCH_OFFSET: ${{ github.event.inputs.batch_offset || '0' }}
+          FUNDAMENTAL_RESEARCH_BATCH_SIZE: ${{ github.event.inputs.batch_size || '25' }}
         run: python -u research_free_fundamental_validation.py
 
-      - name: Upload research diagnostics
+      - name: Persist research-only cache on this branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/research/fundamental_free_source_cache.csv data/research/fundamental_free_source_diagnostics.csv data/research/fundamental_free_source_batch_manifest.json data/research/shareholding_xbrl_cache
+          if git diff --cached --quiet; then
+            echo "No research-cache changes to commit."
+          else
+            git commit -m "Research: persist free fundamental batch cache"
+            git push
+          fi
+
+      - name: Upload research batch artifact
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: research-free-fundamental-validation
-          path: outputs/research_free_fundamental_validation/
+          name: research-free-fundamental-batch
+          path: data/research/
           if-no-files-found: warn
