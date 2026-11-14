@@ -443,6 +443,26 @@ def _same_xbrl_entity_identity(current: dict, prior: dict) -> bool:
     return frozenset({current_scheme, prior_scheme}) in known_scheme_pairs
 
 
+def _xbrl_issuer_crosswalk(facts: list[ET.Element]) -> dict[str, str] | None:
+    """Return a strict issuer crosswalk only when the filing states one Symbol and one real ScripCode."""
+    values: dict[str, set[str]] = {'Symbol': set(), 'ScripCode': set()}
+    for fact in facts:
+        tag = _local(fact.tag)
+        if tag not in values or not fact.attrib.get('contextRef'):
+            continue
+        value = _clean(fact.text).upper() if tag == 'Symbol' else _clean(fact.text)
+        if value:
+            values[tag].add(value)
+    symbols, codes = values['Symbol'], values['ScripCode']
+    if len(symbols) != 1 or len(codes) != 1:
+        return None
+    symbol, code = next(iter(symbols)), next(iter(codes))
+    # NSE XBRL sometimes emits 000000 as a placeholder; never use it as identity proof.
+    if not symbol or not code.isdigit() or code == '000000':
+        return None
+    return {'Symbol': symbol, 'ScripCode': code}
+
+
 def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
                                manual_evidence: pd.DataFrame, repo_root: Path,
                                symbols: set[str] | None) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -556,9 +576,13 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
                 diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
                                     'Status': 'XBRL_ANNUAL_COMPONENT_UNRESOLVED', 'Reason': c_reason or p_reason})
                 continue
-            if not _same_xbrl_entity_identity(current_component, prior_component):
+            same_identity = _same_xbrl_entity_identity(current_component, prior_component)
+            current_issuer = _xbrl_issuer_crosswalk(current_facts)
+            prior_issuer = _xbrl_issuer_crosswalk(prior_facts)
+            issuer_crosswalk = current_issuer if current_issuer and current_issuer == prior_issuer else None
+            if not same_identity and issuer_crosswalk is None:
                 diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
-                                    'Status': 'XBRL_ENTITY_MISMATCH', 'Reason': 'Current and prior year filings identify different entities or an unsupported identifier-scheme change'})
+                                    'Status': 'XBRL_ENTITY_MISMATCH', 'Reason': 'Current/prior context identifiers differ and no matching non-placeholder Symbol + ScripCode pair exists in both official filings'})
                 continue
             crossfoot, crossfoot_reason = _check_growth_components(
                 metric_name, current_component, prior_component,
@@ -577,7 +601,8 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
             details = {'formula': 'growth_percent', 'metric': metric_name,
                        'current': component_record(current_component, current_path, current_digest),
                        'prior': component_record(prior_component, prior_path, prior_digest),
-                       'reportingBasis': reporting_basis, 'arithmeticCrossfoot': 'PASS'}
+                       'reportingBasis': reporting_basis, 'arithmeticCrossfoot': 'PASS',
+                       'issuerCrosswalk': issuer_crosswalk}
             generated.append({
                 'TckrSymb': symbol, 'MetricName': metric_name,
                 'ProviderMetricValue': _clean(metric.get(metric_name)),
@@ -711,9 +736,16 @@ def _verify_derived_growth_evidence(metric: pd.Series, metric_name: str,
             if value is None or abs(value - float(component['Value'])) > 0.01:
                 return 'XBRL_FACT_VALUE_DIFFERS_FROM_LEDGER', 'Official component value differs from evidence details', ev
             parsed.append((contexts, units, facts, component))
-        if (not _same_xbrl_entity_identity(parsed[0][3], parsed[1][3])
-                or parsed[0][3]['UnitMeasure'] != parsed[1][3]['UnitMeasure']):
-            return 'XBRL_ENTITY_MISMATCH', 'Current and prior filings do not describe the same entity and unit', ev
+        same_identity = _same_xbrl_entity_identity(parsed[0][3], parsed[1][3])
+        recorded_crosswalk = details.get('issuerCrosswalk')
+        current_issuer = _xbrl_issuer_crosswalk(parsed[0][2])
+        prior_issuer = _xbrl_issuer_crosswalk(parsed[1][2])
+        crosswalk_match = bool(
+            recorded_crosswalk and current_issuer and current_issuer == prior_issuer
+            and current_issuer == recorded_crosswalk
+        )
+        if (not same_identity and not crosswalk_match) or parsed[0][3]['UnitMeasure'] != parsed[1][3]['UnitMeasure']:
+            return 'XBRL_ENTITY_MISMATCH', 'Current/prior context identity differs and no hash-verified matching Symbol + ScripCode crosswalk exists', ev
         ok, reason = _check_growth_components(metric_name, parsed[0][3], parsed[1][3],
                                              [(parsed[0][0], parsed[0][1], parsed[0][2]),
                                               (parsed[1][0], parsed[1][1], parsed[1][2])])
@@ -1011,4 +1043,3 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
