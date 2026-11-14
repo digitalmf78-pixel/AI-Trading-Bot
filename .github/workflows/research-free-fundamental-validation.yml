@@ -26,7 +26,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: research-fundamental-batch-${{ github.ref_name }}
+  group: research-fundamental-batch
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
       - name: Checkout research branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ref: research/free-fundamental-source-validation-2026-11-14
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check whether every Mainboard symbol is already represented
@@ -78,10 +78,10 @@ jobs:
           FUNDAMENTAL_RESEARCH_BATCH_SIZE: ${{ github.event.inputs.batch_size || '25' }}
         run: python -u research_free_fundamental_validation.py
 
-      - name: Persist research-only cache on this branch
+      - name: Persist research-only cache on the research branch
         if: steps.completion.outputs.complete != 'true'
         env:
-          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          TARGET_BRANCH: research/free-fundamental-source-validation-2026-11-14
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -93,8 +93,6 @@ jobs:
             exit 0
           fi
           git commit -m "Research: persist free fundamental batch cache"
-          # Another run may finish its collection before this push. Rebase the
-          # research-only commit onto the latest branch and retry boundedly.
           for attempt in 1 2 3 4 5; do
             git fetch origin "${TARGET_BRANCH}"
             git rebase "origin/${TARGET_BRANCH}"
@@ -116,4 +114,3 @@ jobs:
           name: research-free-fundamental-batch
           path: data/research/
           if-no-files-found: warn
-
