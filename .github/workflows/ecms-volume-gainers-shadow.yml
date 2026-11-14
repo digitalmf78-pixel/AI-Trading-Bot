@@ -131,6 +131,9 @@ jobs:
             outputs/ecms/volume_gainers_*
             outputs/ecms/fundamental_*.csv
             outputs/ecms/fundamental_metric_verification*.csv
+            outputs/ecms/v8_fundamental_metric_verification*.csv
+            outputs/ecms/v8_fundamental_generated_evidence.csv
+            outputs/ecms/v8_fundamental_evidence_generation_diagnostics.csv
             outputs/ecms/fundamental_filing_metadata_summary.csv
             outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
