@@ -90,24 +90,3 @@ jobs:
           path: data/research/
           if-no-files-found: warn
 
-      - name: Queue next bounded batch
-        if: success()
-        env:
-          TARGET_BRANCH: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          manifest = json.loads(Path("data/research/fundamental_free_source_batch_manifest.json").read_text())
-          if int(manifest.get("symbols_processed", 0)) <= 0:
-              print("No eligible symbols remain; batch chain complete.")
-              raise SystemExit(0)
-          Path(".research-batch-trigger").write_text(
-              json.dumps({"previous_run": "${{ github.run_id }}", "next_offset": 0}, sort_keys=True) + "\\n",
-              encoding="utf-8",
-          )
-          PY
-          git add .research-batch-trigger
-          git commit -m "Research: queue next free fundamental batch"
-          git push origin "HEAD:${TARGET_BRANCH}"
