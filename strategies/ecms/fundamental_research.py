@@ -148,7 +148,10 @@ def assess_fundamental_research(frame, metric_verification=None):
                 classification = "AVERAGE"
             else:
                 classification = "WEAK"
-            scores.append(round(score, 2) if score is not None else pd.NA)
+            # Do not publish a numeric research score when metric coverage
+            # is below the minimum evidence threshold.
+            publishable_score = score if coverage >= 60 else None
+            scores.append(round(publishable_score, 2) if publishable_score is not None else pd.NA)
             coverages.append(round(coverage, 2))
             classifications.append(classification)
             missing = [m for m in (*METRIC_WEIGHTS, "TrailingPE/PEG-or-PB/EV") if (
