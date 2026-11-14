@@ -2,7 +2,10 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from strategies.ecms.eod import (calculate_rvol, _date_from_file, _equity_rows,\n                                 expected_latest_completed_session)
+from strategies.ecms.eod import (
+    calculate_rvol, _date_from_file, _equity_rows,
+    expected_latest_completed_session, classify_catalyst,
+)
 
 def _frame(symbols, volumes):
     return pd.DataFrame({
