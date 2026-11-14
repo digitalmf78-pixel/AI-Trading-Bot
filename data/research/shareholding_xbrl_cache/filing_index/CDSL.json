@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T10:46:25.946763+00:00",
+  "filing_count": 22,
+  "latest_filing": {
+    "broadcast_date": "16-OCT-2026 12:18:24",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214804",
+    "revised": "N",
+    "submission_date": "16-OCT-2026",
+    "symbol": "CDSL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1739584_16102026121818_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "CDSL"
+}

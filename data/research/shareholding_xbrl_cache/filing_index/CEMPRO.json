@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T10:46:57.845740+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "23-OCT-2026 14:24:21",
+    "date": "19-OCT-2026",
+    "period_end": "2026-10-19",
+    "record_id": "216316",
+    "revised": "N",
+    "submission_date": "23-OCT-2026",
+    "symbol": "CEMPRO",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1744487_23102026022417_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "CEMPRO"
+}

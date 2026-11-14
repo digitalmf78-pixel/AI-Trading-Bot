@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T10:45:33.248465+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "20-OCT-2026 17:01:37",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215811",
+    "revised": "N",
+    "submission_date": "20-OCT-2026",
+    "symbol": "CARBORUNIV",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1742320_20102026050130_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "CARBORUNIV"
+}

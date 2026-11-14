@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T10:47:28.096211+00:00",
+  "filing_count": 24,
+  "latest_filing": {
+    "broadcast_date": "14-OCT-2026 17:54:51",
+    "date": "08-OCT-2026",
+    "period_end": "2026-10-08",
+    "record_id": "214411",
+    "revised": "N",
+    "submission_date": "14-OCT-2026",
+    "symbol": "CENTRUM",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1737985_14102026055446_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "CENTRUM"
+}
