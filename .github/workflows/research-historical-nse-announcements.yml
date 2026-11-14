@@ -1,6 +1,11 @@
 name: Research Historical NSE Announcements Backfill
 
 on:
+  push:
+    branches:
+      - research/historical-announcements-only-2026-11-14
+    paths:
+      - ".research-announcement-trigger"
   workflow_dispatch:
     inputs:
       batch_offset:
