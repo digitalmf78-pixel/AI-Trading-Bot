@@ -182,21 +182,23 @@ def main() -> None:
         row["Symbol"]: CORE_METRICS - existing_metrics.get(row["Symbol"], set())
         for row in universe.to_dict("records")
     }
+    old_diag = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("") if DIAGNOSTICS_PATH.exists() else pd.DataFrame(columns=DIAGNOSTIC_COLUMNS)
+    attempted_symbols = set()
+    if not old_diag.empty and "Symbol" in old_diag.columns:
+        attempted_symbols = set(old_diag["Symbol"].astype(str).str.strip().str.upper())
     eligible = []
     for row in universe.to_dict("records"):
         sym = row["Symbol"]
-        # Query every symbol that is still missing one or more core metrics.
-        # A single accepted metric must not cause the rest of its fundamentals
-        # to be skipped. Recent attempts are cooled down to avoid hammering
-        # free sources while still allowing a later gap-filling pass.
-        if not missing_by_symbol[sym]:
+        # First-pass sweep: attempt every symbol with one or more missing core
+        # metrics exactly once before considering the universe pass complete.
+        # Do not let early symbols re-enter the queue while later symbols wait.
+        if not missing_by_symbol[sym] or sym in attempted_symbols:
             continue
         last = attempts.get(sym)
         if last is not None and now - last < pd.Timedelta(days=cooldown_days):
             continue
         eligible.append(row)
     batch = eligible[batch_offset:batch_offset + batch_size]
-    old_diag = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("") if DIAGNOSTICS_PATH.exists() else pd.DataFrame(columns=DIAGNOSTIC_COLUMNS)
     quarantine_path = RESEARCH_DIR / "fundamental_free_source_quarantine.csv"
     old_quarantine = pd.read_csv(quarantine_path, dtype=str).fillna("") if quarantine_path.exists() else pd.DataFrame(columns=QUARANTINE_COLUMNS)
     cache_rows, diagnostic_rows, quarantine_rows = [], [], []
