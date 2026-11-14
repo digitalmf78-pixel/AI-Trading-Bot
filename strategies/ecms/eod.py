@@ -210,20 +210,29 @@ def assess_fundamentals(candidates: pd.DataFrame, eod_date: date) -> pd.DataFram
     metrics = pd.read_csv(METRICS_PATH)
     filings = pd.read_csv(FILINGS_PATH)
     evidence = pd.read_csv(EVIDENCE_PATH, keep_default_na=False)
-    # Verify only against already cached official filing evidence. This ECMS
-    # path never invokes XBRL downloads and never writes to shared cache/ledger.
+    # Verify only candidate symbols against already cached official evidence.
+    # This path never invokes XBRL downloads and never writes to shared data.
+    metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
+    duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
+    metrics_unique = metrics.drop_duplicates("TckrSymb", keep="first").copy()
+    candidate_symbols = set(candidates["TckrSymb"].astype(str).str.upper())
+    metrics_for_verification = metrics_unique[metrics_unique["TckrSymb"].isin(candidate_symbols)]
+    filings_for_verification = filings[
+        filings["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
+    ] if "TckrSymb" in filings.columns else filings.iloc[0:0]
+    evidence_for_verification = evidence[
+        evidence["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
+    ] if "TckrSymb" in evidence.columns else evidence.iloc[0:0]
     from fundamental_metric_verification import build_metric_verification
     verification, verification_summary, filing_summary = build_metric_verification(
-        metrics, filings, evidence, repo_root=ROOT
+        metrics_for_verification, filings_for_verification, evidence_for_verification, repo_root=ROOT
     )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     verification.to_csv(OUTPUT_DIR / "fundamental_metric_verification.csv", index=False)
     verification_summary.to_csv(OUTPUT_DIR / "fundamental_metric_verification_summary.csv", index=False)
     filing_summary.to_csv(OUTPUT_DIR / "fundamental_filing_metadata_summary.csv", index=False)
     # Never refresh or mutate the shared metrics, filing register, evidence ledger or XML cache.
-    metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
-    duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
-    joined = candidates.merge(metrics, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
+    joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
         metric_verification=verification, require_explicit_thresholds=True,
