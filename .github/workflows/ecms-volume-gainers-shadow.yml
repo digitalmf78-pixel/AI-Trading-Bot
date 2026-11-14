@@ -48,10 +48,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Checkout isolated ECMS branch
+      - name: Checkout main branch
         uses: actions/checkout@v5
         with:
-          ref: ecms/phase-0-foundation
+          ref: main
       - name: Restore shared research inputs read-only
         uses: actions/cache/restore@v4
         with:
@@ -59,7 +59,6 @@ jobs:
             data/cache/universe/
             data/cache/xbrl_samples/
             data/cache/xbrl_period_pairs/
-            data/inputs/fundamental_metrics.csv
             data/inputs/fundamental_metrics.csv
             data/inputs/fundamental_thresholds.json
             data/inputs/fundamental_metric_verification_evidence.csv
@@ -109,10 +108,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Checkout isolated ECMS branch
+      - name: Checkout main branch
         uses: actions/checkout@v5
         with:
-          ref: ecms/phase-0-foundation
+          ref: main
       - name: Restore previous EOD page universe
         uses: actions/cache/restore@v4
         with:
