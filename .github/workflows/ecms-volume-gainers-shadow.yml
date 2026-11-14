@@ -53,20 +53,30 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: main
-      - name: Restore shared research inputs read-only
-        uses: actions/cache/restore@v4
+      - name: Restore shared NSE cache read-only (same cache contract as production)
+        uses: actions/cache/restore@v5
         with:
+          # Keep this path list and order identical to nse-test-scheduled.yml.
+          # Cache archives are versioned by both action implementation and path list.
           path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
             data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
             data/cache/xbrl_samples/
             data/cache/xbrl_period_pairs/
-            data/inputs/fundamental_metrics.csv
-            data/inputs/fundamental_thresholds.json
-            data/inputs/fundamental_metric_verification_evidence.csv
+            data/cache/shareholding_xbrl/
             outputs/v8_official_financial_results_filings.csv
-          key: ecms-vg-research-${{ runner.os }}-${{ github.run_id }}
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            ecms-vg-research-${{ runner.os }}-
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
             nse-bhavcopy-${{ runner.os }}-main-
       - uses: actions/setup-python@v6
         with:
