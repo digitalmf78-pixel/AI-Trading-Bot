@@ -7,7 +7,9 @@ on:
       - "rsi_retest_existing_cache.py"
       - "test_rvol_strategy_backtest.py"
       - "delivery_history_backfill.py"
-      - "test_delivery_history_backfill.py"\n      - "technical_momentum_backtest.py"\n      - "test_technical_momentum_backtest.py"
+      - "test_delivery_history_backfill.py"
+      - "technical_momentum_backtest.py"
+      - "test_technical_momentum_backtest.py"
       - ".github/workflows/rvol-historical-backtest.yml"
   workflow_dispatch:
 
@@ -69,7 +71,8 @@ jobs:
           echo "PRICE_CACHE_FILES=$PRICE_COUNT"
           echo "DELIVERY_CACHE_FILES_BEFORE_BACKFILL=$DELIVERY_COUNT"
           echo "===== EXISTING PRICE CACHE DATE RANGE ====="
-          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
+          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f
+' 2>/dev/null | sort | { head -1; tail -1; } || true
           if [ "$PRICE_COUNT" -lt 200 ]; then
             echo "::error::Existing Bhavcopy cache has fewer than 200 dates. Backfill will not download or alter price files."
             exit 1
@@ -103,13 +106,26 @@ jobs:
           echo "===== SIGNAL SAMPLE ====="
           head -11 outputs/rvol_strategy_backtest/signals.csv
 
-      - name: Test technical momentum feature calculations\n        run: python -m pytest -q test_technical_momentum_backtest.py\n\n      - name: Run technical momentum and VCP backtest (cache only)\n        run: |\n          set -euo pipefail\n          python -u technical_momentum_backtest.py\n          echo "===== TECHNICAL MOMENTUM COMPARISON ====="\n          cat outputs/technical_momentum_backtest/comparison.csv\n          echo "===== TECHNICAL CACHE COVERAGE ====="\n          cat outputs/technical_momentum_backtest/cache_coverage.csv\n\n      - name: Upload historical Delivery A/B backtest reports
+      - name: Test technical momentum feature calculations
+        run: python -m pytest -q test_technical_momentum_backtest.py
+
+      - name: Run technical momentum and VCP backtest (cache only)
+        run: |
+          set -euo pipefail
+          python -u technical_momentum_backtest.py
+          echo "===== TECHNICAL MOMENTUM COMPARISON ====="
+          cat outputs/technical_momentum_backtest/comparison.csv
+          echo "===== TECHNICAL CACHE COVERAGE ====="
+          cat outputs/technical_momentum_backtest/cache_coverage.csv
+
+      - name: Upload historical Delivery A/B backtest reports
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: delivery-ab-historical-backtest-${{ github.run_id }}
           path: |
             outputs/rvol_strategy_backtest/
-            outputs/delivery_history_backfill/\n            outputs/technical_momentum_backtest/
+            outputs/delivery_history_backfill/
+            outputs/technical_momentum_backtest/
           if-no-files-found: warn
           retention-days: 30
