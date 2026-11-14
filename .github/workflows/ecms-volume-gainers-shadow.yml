@@ -32,6 +32,8 @@ jobs:
         with:
           path: |
             data/cache/universe/
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
             data/inputs/fundamental_metrics.csv
             data/inputs/fundamental_metrics.csv
             data/inputs/fundamental_thresholds.json
@@ -68,7 +70,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ecms-volume-gainers-eod-${{ github.run_id }}
-          path: outputs/ecms/volume_gainers_*
+          path: |
+            outputs/ecms/volume_gainers_*
+            outputs/ecms/fundamental_metric_verification*.csv
+            outputs/ecms/fundamental_filing_metadata_summary.csv
+            outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
   morning:
