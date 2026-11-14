@@ -182,14 +182,14 @@ def main() -> None:
         row["Symbol"]: CORE_METRICS - existing_metrics.get(row["Symbol"], set())
         for row in universe.to_dict("records")
     }
-    eligible_symbols = set(symbols_missing_any_accepted_metric(universe["Symbol"], existing_metrics))
     eligible = []
     for row in universe.to_dict("records"):
         sym = row["Symbol"]
-        # The collection target is at least one period-valid metric per Mainboard
-        # symbol. Once a symbol is represented in either cache, do not keep
-        # re-fetching its remaining metrics in this broad-universe sweep.
-        if sym not in eligible_symbols or not missing_by_symbol[sym]:
+        # Query every symbol that is still missing one or more core metrics.
+        # A single accepted metric must not cause the rest of its fundamentals
+        # to be skipped. Recent attempts are cooled down to avoid hammering
+        # free sources while still allowing a later gap-filling pass.
+        if not missing_by_symbol[sym]:
             continue
         last = attempts.get(sym)
         if last is not None and now - last < pd.Timedelta(days=cooldown_days):
@@ -316,6 +316,20 @@ def main() -> None:
         str(row.get("Symbol", "")).strip().upper() for row in cache_rows
         if str(row.get("Symbol", "")).strip()
     }
+    metrics_after = {sym: set(values) for sym, values in existing_metrics.items()}
+    for row in cache_rows:
+        metrics_after.setdefault(str(row.get("Symbol", "")).strip().upper(), set()).add(
+            str(row.get("Metric", "")).strip()
+        )
+    symbols_with_all_core_metrics = sum(
+        1 for symbol in universe["Symbol"]
+        if CORE_METRICS.issubset(metrics_after.get(str(symbol).upper(), set()))
+    )
+    attempted_symbols_after = set()
+    if not old_diag.empty and "Symbol" in old_diag.columns:
+        attempted_symbols_after.update(old_diag["Symbol"].astype(str).str.upper())
+    attempted_symbols_after.update(str(row.get("Symbol", "")).strip().upper() for row in diagnostic_rows)
+    attempted_symbols_after.intersection_update(set(universe["Symbol"]))
     manifest = {
         "generated_at_utc": now.isoformat(),
         "universe_source": UNIVERSE_URL,
@@ -343,9 +357,12 @@ def main() -> None:
         "master_spec_modified": False,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "next_batch_offset": batch_offset + len(batch),
-        "collection_complete": len(represented_after) >= len(universe),
-        "collection_completion_criterion": "every NSE Mainboard symbol has at least one period-valid metric in production or research cache",
-        "symbols_fully_covered": int(len(universe) - sum(bool(v) for v in missing_by_symbol.values())),
+        "symbols_attempted_at_least_once": len(attempted_symbols_after),
+        "symbols_with_all_core_metrics": int(symbols_with_all_core_metrics),
+        "symbols_with_any_missing_core_metrics_after": int(len(universe) - symbols_with_all_core_metrics),
+        "collection_complete": len(attempted_symbols_after) >= len(universe),
+        "collection_completion_criterion": "every NSE Mainboard symbol has been queried at least once for its missing core fundamentals; per-metric gaps remain visible and must be audited before scanner use",
+        "symbols_fully_covered": int(symbols_with_all_core_metrics),
         "note": "Research cache only. Non-NSE provider metrics remain unverified and must be reconciled before scanner scoring/backtests. Invalid/missing periods are excluded.",
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
