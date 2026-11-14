@@ -54,6 +54,7 @@ jobs:
         with:
           ref: main
       - name: Restore shared NSE cache read-only (same cache contract as production)
+        id: shared-cache
         uses: actions/cache/restore@v5
         with:
           # Keep this path list and order identical to nse-test-scheduled.yml.
@@ -78,6 +79,11 @@ jobs:
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
             nse-bhavcopy-${{ runner.os }}-main-
+      - name: Report shared cache restore result
+        run: |
+          echo "CACHE_HIT=${{ steps.shared-cache.outputs.cache-hit }}"
+          echo "CACHE_PRIMARY_KEY=${{ steps.shared-cache.outputs.cache-primary-key }}"
+          echo "CACHE_MATCHED_KEY=${{ steps.shared-cache.outputs.cache-matched-key }}"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
