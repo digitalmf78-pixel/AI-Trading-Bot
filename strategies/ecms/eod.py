@@ -94,8 +94,13 @@ def load_prior_sessions(latest: date, count: int = LOOKBACK_SESSIONS,
             raise
     found.sort(key=lambda item: item[0], reverse=True)
     result = []
+    invalid = []
     for day, path in found:
-        frame = _read_valid_bhavcopy(path, day)
+        try:
+            frame = _read_valid_bhavcopy(path, day)
+        except Exception as exc:
+            invalid.append(f"{path.name}:{exc}")
+            continue
         result.append((day, frame))
         if len(result) == count:
             break
@@ -141,22 +146,33 @@ def calculate_rvol(current: pd.DataFrame, history: list[pd.DataFrame]) -> pd.Dat
 def load_official_mainboard_symbols(universe_dir: Path = UNIVERSE_DIR) -> tuple[set[str], str]:
     """Use only a previously restored, timestamped official NSE Main Board list."""
     main = universe_dir / "nse_main_board_equity.csv"
-    stamp = universe_dir / "nse_main_board_equity.fetched_at"
-    if not main.exists() or not stamp.exists():
-        raise RuntimeError("WAIT_FOR_DATA: restored official Main Board list/timestamp missing")
-    fetched = datetime.fromtimestamp(int(stamp.read_text().strip()), tz=ZoneInfo("UTC"))
-    age = (datetime.now(ZoneInfo("UTC")) - fetched).total_seconds()
-    if age < 0 or age > 7 * 86400:
-        raise RuntimeError(f"WAIT_FOR_DATA: official Main Board cache stale ({age/86400:.1f} days)")
-    master = pd.read_csv(main, dtype=str)
-    col = next((c for c in master.columns if str(c).strip().upper() == "SYMBOL"), None)
-    if not col:
-        raise RuntimeError("WAIT_FOR_DATA: official Main Board CSV has no SYMBOL column")
-    symbols = {str(x).strip().upper() for x in master[col].dropna()
-               if str(x).strip() and str(x).strip().lower() != "nan"}
+    main_stamp = universe_dir / "nse_main_board_equity.fetched_at"
+    sme = universe_dir / "nse_sme_equity.csv"
+    sme_stamp = universe_dir / "nse_sme_equity.fetched_at"
+    if not all(p.exists() for p in (main, main_stamp, sme, sme_stamp)):
+        raise RuntimeError("WAIT_FOR_DATA: restored official Main Board/SME lists or timestamps missing")
+    now = datetime.now(ZoneInfo("UTC"))
+    ages = []
+    for stamp in (main_stamp, sme_stamp):
+        fetched = datetime.fromtimestamp(int(stamp.read_text().strip()), tz=ZoneInfo("UTC"))
+        age = (now - fetched).total_seconds()
+        if age < 0 or age > 7 * 86400:
+            raise RuntimeError(f"WAIT_FOR_DATA: official board cache stale ({age/86400:.1f} days)")
+        ages.append(age)
+    main_frame = pd.read_csv(main, dtype=str)
+    sme_frame = pd.read_csv(sme, dtype=str)
+    main_col = next((c for c in main_frame.columns if str(c).strip().upper() == "SYMBOL"), None)
+    sme_col = next((c for c in sme_frame.columns if str(c).strip().upper() == "SYMBOL"), None)
+    if not main_col or not sme_col:
+        raise RuntimeError("WAIT_FOR_DATA: official board CSV has no SYMBOL column")
+    main_symbols = {str(x).strip().upper() for x in main_frame[main_col].dropna()
+                    if str(x).strip() and str(x).strip().lower() != "nan"}
+    sme_symbols = {str(x).strip().upper() for x in sme_frame[sme_col].dropna()
+                   if str(x).strip() and str(x).strip().lower() != "nan"}
+    symbols = main_symbols - sme_symbols
     if not symbols:
-        raise RuntimeError("WAIT_FOR_DATA: official Main Board list is empty")
-    return symbols, f"NSE_EQUITY_L_CACHE age_hours={age/3600:.1f}"
+        raise RuntimeError("WAIT_FOR_DATA: official Main Board list is empty after SME exclusion")
+    return symbols, f"NSE_EQUITY_L+SME_CACHE age_hours={max(ages)/3600:.1f}"
 
 def assess_fundamentals(candidates: pd.DataFrame, eod_date: date) -> pd.DataFrame:
     if not METRICS_PATH.exists() or not THRESHOLDS_PATH.exists() or not METRIC_VERIFICATION_PATH.exists():
@@ -281,7 +297,10 @@ def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
             "SecondaryStatus": secondary_status, "CatalystStatus": status,
             "OfficialCount": len(official), "SecondaryCount": len(secondary),
         })
-    return pd.DataFrame(all_rows), pd.DataFrame(audit)
+    news_columns = ["TckrSymb", "PublishedDate", "Headline", "Source", "SourceType", "URL", "Impact"]
+    audit_columns = ["TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
+                     "SecondaryStatus", "CatalystStatus", "OfficialCount", "SecondaryCount"]
+    return pd.DataFrame(all_rows, columns=news_columns), pd.DataFrame(audit, columns=audit_columns)
 
 def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -294,8 +313,8 @@ def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     mainboard, board_source = load_official_mainboard_symbols()
     volume["MainBoardStatus"] = volume["TckrSymb"].map(
         lambda s: "PASS_MAIN_BOARD" if s in mainboard else "EXCLUDED_NOT_IN_OFFICIAL_MAIN_BOARD")
-    volume = volume[volume["MainBoardStatus"] == "PASS_MAIN_BOARD"].copy()
-    candidates = volume[volume["VolumeScreenStatus"] == "PASS_RVOL_GE_1_5"].copy()
+    mainboard_audit = volume[volume["MainBoardStatus"] == "PASS_MAIN_BOARD"].copy()
+    candidates = mainboard_audit[mainboard_audit["VolumeScreenStatus"] == "PASS_RVOL_GE_1_5"].copy()
     candidates["EODDate"] = latest.isoformat()
     candidates["MainBoardSource"] = board_source
     fundamentals = assess_fundamentals(candidates, latest)
@@ -316,7 +335,10 @@ def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
               else "NOT_QUALIFIED"), axis=1)
     fundamentals = fundamentals.sort_values(["EODCandidateStatus", "RVOL"], ascending=[True, False])
     fundamentals.to_csv(OUTPUT_DIR / "eod_candidates.csv", index=False)
-    fundamentals.to_csv(OUTPUT_DIR / "eod_audit.csv", index=False)
+    audit = mainboard_audit.merge(
+        fundamentals.drop(columns=[c for c in mainboard_audit.columns if c in fundamentals.columns and c != "TckrSymb"]),
+        on="TckrSymb", how="left", suffixes=("", "_ecms"))
+    audit.to_csv(OUTPUT_DIR / "eod_audit.csv", index=False)
     news.to_csv(OUTPUT_DIR / "eod_catalysts.csv", index=False)
     summary = {
         "status": "PASS", "eod_date": latest.isoformat(),
