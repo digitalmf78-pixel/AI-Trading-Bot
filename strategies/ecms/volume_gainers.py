@@ -168,7 +168,7 @@ def run_eod():
     eligible["EODDate"]=eod_date.isoformat(); eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
     assessed=assess_page_fundamentals(eligible,eod_date)
-    news,news_audit=collect_catalysts(assessed,today)
+    news,news_audit=collect_catalysts(assessed,eod_date)
     assessed=assessed.merge(news_audit,on="TckrSymb",how="left")
     if "NegativeRiskCount" not in assessed: assessed["NegativeRiskCount"]=0
     assessed["NegativeRiskCount"]=pd.to_numeric(assessed["NegativeRiskCount"],errors="coerce").fillna(0)
