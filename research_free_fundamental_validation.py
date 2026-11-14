@@ -97,6 +97,70 @@ def load_recent_attempts() -> dict[str, pd.Timestamp]:
     return attempts
 
 
+
+def load_existing_metric_map(research_cache=None):
+    """Read existing metric coverage from production (read-only) and research cache."""
+    existing = {}
+    if PRODUCTION_CACHE.exists():
+        try:
+            production = pd.read_csv(PRODUCTION_CACHE, dtype=str).fillna("")
+        except Exception:
+            production = pd.DataFrame()
+        if not production.empty and "TckrSymb" in production.columns:
+            normalized = {re.sub(r"[^a-z0-9]", "", str(c).lower()): c for c in production.columns}
+            aliases = {
+                "RevenueGrowthPct": ("revenuegrowthpct", "revenuegrowth", "salesgrowthpct"),
+                "ProfitGrowthPct": ("profitgrowthpct", "profitgrowth", "netprofitgrowthpct"),
+                "ROEPercent": ("roepercent", "roe", "returnonequity"),
+                "ROCEPercent": ("rocepercent", "roce", "returnoncapitalemployed"),
+                "DebtToEquity": ("debttoequity", "debtequity"),
+                "InterestCoverage": ("interestcoverage", "interestcoverageratio"),
+                "OperatingCashFlowINR": ("operatingcashflowinr", "operatingcashflow"),
+                "FreeCashFlowINR": ("freecashflowinr", "freecashflow"),
+                "GrossMarginPct": ("grossmarginpct", "grossmargin"),
+                "OperatingMarginPct": ("operatingmarginpct", "operatingmargin"),
+                "NetProfitMarginPct": ("netprofitmarginpct", "netprofitmargin"),
+                "CurrentRatio": ("currentratio",), "QuickRatio": ("quickratio",),
+                "AssetTurnover": ("assetturnover", "assetturnoverratio"),
+                "EPS": ("eps", "earningspershare"),
+                "BookValuePerShare": ("bookvaluepershare", "bookvalue"),
+                "PromoterHoldingPct": ("promoterholdingpct", "promoterholding"),
+                "FIIHoldingPct": ("fiiholdingpct", "fiiholding"),
+                "DIIHoldingPct": ("diiholdingpct", "diiholding"),
+                "PublicHoldingPct": ("publicholdingpct", "publicholding"),
+                "PledgePct": ("pledgepct", "promoterpledgepct"),
+            }
+            for metric, names in aliases.items():
+                col = next((normalized[n] for n in names if n in normalized), None)
+                if col is None:
+                    continue
+                for _, row in production.iterrows():
+                    value = str(row.get(col, "")).strip()
+                    if value and value.lower() not in {"nan", "none", "null", "na", "n/a"}:
+                        symbol = str(row.get("TckrSymb", "")).strip().upper()
+                        if symbol:
+                            existing.setdefault(symbol, set()).add(metric)
+    cache = research_cache
+    if cache is None and CACHE_PATH.exists():
+        try:
+            cache = pd.read_csv(CACHE_PATH, dtype=str).fillna("")
+        except Exception:
+            cache = pd.DataFrame()
+    if cache is not None and not cache.empty and {"Symbol", "Metric", "Value", "FinancialPeriod"}.issubset(cache.columns):
+        for row in cache.to_dict("records"):
+            symbol = str(row.get("Symbol", "")).strip().upper()
+            metric = str(row.get("Metric", "")).strip()
+            value = str(row.get("Value", "")).strip()
+            period = str(row.get("FinancialPeriod", "")).strip()
+            try:
+                numeric = float(value.replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            if symbol and metric in CORE_METRICS and pd.notna(numeric) and valid_period(metric, period):
+                existing.setdefault(symbol, set()).add(metric)
+    return existing
+
+
 def main() -> None:
     RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
@@ -106,16 +170,22 @@ def main() -> None:
 
     universe = load_universe()
     attempts = load_recent_attempts()
+    old_cache = pd.read_csv(CACHE_PATH, dtype=str).fillna("") if CACHE_PATH.exists() else pd.DataFrame()
+    existing_metrics = load_existing_metric_map(old_cache)
+    missing_by_symbol = {
+        row["Symbol"]: CORE_METRICS - existing_metrics.get(row["Symbol"], set())
+        for row in universe.to_dict("records")
+    }
     eligible = []
     for row in universe.to_dict("records"):
         sym = row["Symbol"]
+        if not missing_by_symbol[sym]:
+            continue
         last = attempts.get(sym)
         if last is not None and now - last < pd.Timedelta(days=cooldown_days):
             continue
         eligible.append(row)
     batch = eligible[batch_offset:batch_offset + batch_size]
-
-    old_cache = pd.read_csv(CACHE_PATH, dtype=str).fillna("") if CACHE_PATH.exists() else pd.DataFrame()
     old_diag = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("") if DIAGNOSTICS_PATH.exists() else pd.DataFrame(columns=DIAGNOSTIC_COLUMNS)
     quarantine_path = RESEARCH_DIR / "fundamental_free_source_quarantine.csv"
     old_quarantine = pd.read_csv(quarantine_path, dtype=str).fillna("") if quarantine_path.exists() else pd.DataFrame(columns=QUARANTINE_COLUMNS)
@@ -134,7 +204,7 @@ def main() -> None:
         result = fetch_free_fundamental_sources(
             symbol,
             company_name=company_name or None,
-            missing_metrics=CORE_METRICS,
+            missing_metrics=missing_by_symbol.get(symbol, set()),
             pause_seconds=0.5,
             source_factories={"nse_shareholding": isolated_shareholding},
         )
@@ -236,6 +306,8 @@ def main() -> None:
         "universe_source": UNIVERSE_URL,
         "mainboard_universe_count": int(len(universe)),
         "eligible_not_recently_attempted": len(eligible),
+        "symbols_with_missing_metrics": sum(bool(v) for v in missing_by_symbol.values()),
+        "missing_metric_observations_before_batch": sum(len(v) for v in missing_by_symbol.values()),
         "batch_offset": batch_offset,
         "batch_size": batch_size,
         "batch_symbols": [x["Symbol"] for x in batch],
@@ -253,6 +325,8 @@ def main() -> None:
         "master_spec_modified": False,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "next_batch_offset": batch_offset + len(batch),
+        "collection_complete": len(eligible) == 0,
+        "symbols_fully_covered": int(len(universe) - sum(bool(v) for v in missing_by_symbol.values())),
         "note": "Research cache only. Non-NSE provider metrics remain unverified and must be reconciled before scanner scoring/backtests. Invalid/missing periods are excluded.",
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
