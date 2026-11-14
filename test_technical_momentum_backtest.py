@@ -20,7 +20,7 @@ def _frame(n=260):
 def test_features_are_point_in_time_and_require_warmup():
     f = add_point_in_time_features(_frame())
     assert pd.isna(f.loc[198, "EMA200"])
-    assert pd.notna(f.loc[199, "EMA200"])
+    assert pd.notna(f.loc[199, "EMA200"])\n    # Earlier setups can be evaluated without waiting for the 200 EMA.\n    assert bool(f.loc[100, "FEATURES_MATURE"]) is True
     # Breakout reference excludes the current session's High.
     assert f.loc[200, "PRIOR20D_HIGH"] == f.loc[199, "HIGH"]
     assert bool(f.loc[200, "BREAKOUT_20D"]) is True
