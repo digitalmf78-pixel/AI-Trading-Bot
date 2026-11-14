@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "technical_momentum_backtest.py"
+      - "delivery_momentum_research.py"
       - "test_technical_momentum_backtest.py"
       - ".github/workflows/technical-momentum-backtest.yml"
   workflow_dispatch:
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   technical-backtest:
-    name: Technical momentum/VCP backtest on restored NSE cache
+    name: Technical momentum/VCP and Delivery A/B research on cached NSE data
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -59,10 +60,15 @@ jobs:
         run: |
           set -euo pipefail
           PRICE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | wc -l || true)
+          DELIVERY_COUNT=$(find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | wc -l || true)
           echo "PRICE_CACHE_FILES=$PRICE_COUNT"
+          echo "DELIVERY_CACHE_FILES=$DELIVERY_COUNT"
           if [ "$PRICE_COUNT" -lt 200 ]; then
             echo "::error::At least 200 cached Bhavcopy sessions are required; no network backfill is attempted."
             exit 1
+          fi
+          if [ "$DELIVERY_COUNT" -lt 30 ]; then
+            echo "::warning::Fewer than 30 raw Delivery reports; A/B analysis may return WAIT_FOR_DATA."
           fi
 
       - name: Run technical feature unit tests
@@ -77,12 +83,22 @@ jobs:
           echo "===== CACHE COVERAGE ====="
           cat outputs/technical_momentum_backtest/cache_coverage.csv
 
-      - name: Upload technical momentum research artifacts
+      - name: Run historical Delivery A/B plus momentum comparison
+        run: |
+          set -euo pipefail
+          python -u delivery_momentum_research.py
+          echo "===== DELIVERY + MOMENTUM COMPARISON ====="
+          cat outputs/delivery_momentum_research/comparison.csv
+          echo "===== DELIVERY COVERAGE ====="
+          cat outputs/delivery_momentum_research/coverage.csv
+
+      - name: Upload technical and Delivery research artifacts
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: technical-momentum-backtest-${{ github.run_id }}
+          name: technical-delivery-momentum-research-${{ github.run_id }}
           path: |
             outputs/technical_momentum_backtest/
+            outputs/delivery_momentum_research/
           if-no-files-found: warn
           retention-days: 30
