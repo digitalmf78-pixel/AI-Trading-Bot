@@ -1,2 +1,2 @@
-Continue full-universe fundamental collection; collect remaining core metrics per stock.
-Automatic 30-minute loop until first-pass coverage is complete.
+Continue full-universe fundamental collection with metric-level gap diagnostics.
+Keep automatic 30-minute batches until every Mainboard symbol has been queried.
