@@ -41,6 +41,21 @@ def test_fetch_retries_transient_dns_and_writes_valid_xml(tmp_path, monkeypatch)
     assert sleeps == [1]
 
 
+
+def test_fetch_accepts_official_nse_archive_in_host(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        fetcher.socket, "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 443))],
+    )
+    target = tmp_path / "filing-in.xml"
+    result = fetcher.fetch_official_xbrl_xml(
+        "https://nsearchives.nseindia.in/xbrl/sample.xml",
+        target, session=Session(), attempts=1,
+    )
+    assert result == target
+    assert ET.parse(target).getroot().tag.endswith("xbrl")
+
+
 def test_fetch_rejects_non_nse_host(tmp_path):
     with pytest.raises(ValueError):
         fetcher.fetch_official_xbrl_xml("https://example.com/a.xml", tmp_path / "a.xml")
