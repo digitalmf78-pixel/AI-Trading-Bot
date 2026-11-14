@@ -44,8 +44,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_fundamental_research.py
+          python -m py_compile strategies/ecms/volume_gainers.py tools/ecms_gemini_research.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_gemini_research.py
 
   eod:
     if: >-
@@ -182,8 +182,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py
+          python -m py_compile strategies/ecms/volume_gainers.py tools/ecms_gemini_research.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_gemini_research.py
       - name: Run 09:20 morning recheck
         env:
           PYTHONUNBUFFERED: "1"
