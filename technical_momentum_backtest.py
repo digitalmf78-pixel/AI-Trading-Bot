@@ -39,6 +39,10 @@ def add_point_in_time_features(frame: pd.DataFrame) -> pd.DataFrame:
 
     for span in (20, 44, 50, 200):
         f[f"EMA{span}"] = close.ewm(span=span, adjust=False, min_periods=span).mean()
+    f["COMPLETE_200_CLOSE_SESSIONS"] = close.notna().rolling(200, min_periods=200).sum().eq(200)
+    f["EMA200"] = f["EMA200"].where(f["COMPLETE_200_CLOSE_SESSIONS"])
+    required_100 = f[["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "TRADED_VALUE"]].notna().all(axis=1)
+    f["COMPLETE_100_PRICE_SESSIONS"] = required_100.rolling(100, min_periods=100).sum().eq(100)
 
     for window in (20, 50, 100):
         prior_high = high.rolling(window, min_periods=window).max().shift(1)
