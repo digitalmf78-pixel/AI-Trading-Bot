@@ -535,8 +535,38 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
             & prior_rows['FilingDescription'].astype(str).str.upper().str.contains('AUDITED')
         ]
         if prior_rows.empty:
+            # The bulk NSE integrated-filings endpoint can return a short recent
+            # page even for a 730-day request. Query the exact prior fiscal year
+            # for this candidate before declaring the annual comparison missing.
+            try:
+                from fundamental_official_filings import _fetch_targeted_nse_filings
+                cutoff_text = _clean(metric.get('AsOfDate'))[:10] or current_pub
+                targeted_prior = _fetch_targeted_nse_filings(
+                    cutoff_text,
+                    [{'TckrSymb': symbol, 'FinancialPeriodEnd': previous_period}],
+                    diagnostics_path=repo_root / 'growth_prior_filing_lookup_diagnostics.csv',
+                    segments=('equities',), request_timeout=12,
+                )
+                if targeted_prior is not None and not targeted_prior.empty:
+                    targeted_prior = targeted_prior.copy()
+                    targeted_prior['TckrSymb'] = targeted_prior['TckrSymb'].astype(str).str.upper()
+                    targeted_prior = targeted_prior[
+                        targeted_prior['TckrSymb'].eq(symbol)
+                        & targeted_prior['FinancialPeriodEnd'].astype(str).str[:10].eq(previous_period)
+                        & targeted_prior['PublicationDateStatus'].astype(str).str.upper().eq('VERIFIED')
+                        & targeted_prior['FilingDescription'].astype(str).str.upper().str.contains(reporting_basis)
+                        & targeted_prior['FilingDescription'].astype(str).str.upper().str.contains('AUDITED')
+                    ]
+                    if not targeted_prior.empty:
+                        prior_rows = targeted_prior
+            except Exception as exc:
+                diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
+                                    'Status': 'PRIOR_YEAR_TARGETED_LOOKUP_FAILED',
+                                    'Reason': f'{type(exc).__name__}: {exc}'[:400]})
+        if prior_rows.empty:
             diagnostics.append({'TckrSymb': symbol, 'MetricName': 'RevenueGrowthPct|ProfitGrowthPct',
-                                'Status': 'PRIOR_YEAR_AUDITED_FILING_NOT_FOUND', 'Reason': f'No verified {reporting_basis} audited filing for {previous_period}'})
+                                'Status': 'PRIOR_YEAR_AUDITED_FILING_NOT_FOUND',
+                                'Reason': f'No verified {reporting_basis} audited filing for {previous_period}; exact prior-period NSE lookup returned no basis-matched row'})
             continue
         prior_rows = prior_rows.sort_values('PublicationDate', kind='stable')
         latest_prior = prior_rows[prior_rows['PublicationDate'].eq(prior_rows['PublicationDate'].max())]
