@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T07:01:36.087214+00:00",
+  "filing_count": 1,
+  "latest_filing": {
+    "broadcast_date": "28-OCT-2026 20:12:46",
+    "date": "22-OCT-2026",
+    "period_end": "2026-10-22",
+    "record_id": "216323",
+    "revised": "Revised",
+    "submission_date": "23-OCT-2026",
+    "symbol": "BONFIG",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1746465_27102026122203_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BONFIG"
+}

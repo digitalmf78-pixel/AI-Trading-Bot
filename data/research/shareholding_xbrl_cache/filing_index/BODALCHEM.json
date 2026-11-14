@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T07:00:28.680930+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "09-OCT-2026 16:41:35",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213615",
+    "revised": "N",
+    "submission_date": "09-OCT-2026",
+    "symbol": "BODALCHEM",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1734966_09102026044130_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BODALCHEM"
+}
