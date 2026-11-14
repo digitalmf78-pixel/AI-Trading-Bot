@@ -2,7 +2,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from strategies.ecms.eod import calculate_rvol, _date_from_file
+from strategies.ecms.eod import (calculate_rvol, _date_from_file, _equity_rows,\n                                 expected_latest_completed_session)
 
 def _frame(symbols, volumes):
     return pd.DataFrame({
@@ -34,3 +34,23 @@ def test_filename_date_parser_is_strict():
     from pathlib import Path
     assert _date_from_file(Path("bhavcopy_20261113.csv")) == date(2026, 11, 13)
     assert _date_from_file(Path("bhavcopy_latest.csv")) is None
+
+def test_equity_rows_keeps_supported_listed_equity_series_and_excludes_etfs():
+    frame = pd.DataFrame({
+        "TckrSymb": ["AAA", "BBB", "FUND"],
+        "SctySrs": ["EQ", "BE", "EQ"],
+        "TtlTradgVol": [1000, 2000, 3000],
+        "ClsPric": [100, 200, 10],
+        "ISIN": ["INE000A01001", "INE000B01001", "INF000000001"],
+        "FinInstrmNm": ["AAA LTD", "BBB LTD", "AMC - FUND"],
+    })
+    result = _equity_rows(frame)
+    assert set(result["TckrSymb"]) == {"AAA", "BBB"}
+
+def test_expected_latest_completed_session_uses_ist_market_close():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ist = ZoneInfo("Asia/Kolkata")
+    assert expected_latest_completed_session(datetime(2026, 11, 13, 15, 0, tzinfo=ist)) == date(2026, 11, 12)
+    assert expected_latest_completed_session(datetime(2026, 11, 13, 17, 0, tzinfo=ist)) == date(2026, 11, 13)
+    assert expected_latest_completed_session(datetime(2026, 11, 14, 10, 0, tzinfo=ist)) == date(2026, 11, 13)
