@@ -51,16 +51,34 @@ jobs:
         run: python -u research_free_fundamental_validation.py
 
       - name: Persist research-only cache on this branch
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/research/fundamental_free_source_cache.csv data/research/fundamental_free_source_diagnostics.csv data/research/fundamental_free_source_batch_manifest.json data/research/shareholding_xbrl_cache
+          mkdir -p data/research/shareholding_xbrl_cache
+          git add -A data/research/
           if git diff --cached --quiet; then
             echo "No research-cache changes to commit."
-          else
-            git commit -m "Research: persist free fundamental batch cache"
-            git push
+            exit 0
           fi
+          git commit -m "Research: persist free fundamental batch cache"
+          # Another run may finish its collection before this push. Rebase the
+          # research-only commit onto the latest branch and retry boundedly.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "${TARGET_BRANCH}"
+            git rebase "origin/${TARGET_BRANCH}"
+            if git push origin "HEAD:${TARGET_BRANCH}"; then
+              echo "Research cache persisted successfully."
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying after refreshing branch."
+            git rebase --abort || true
+            sleep $((attempt * 2))
+          done
+          echo "Unable to persist research cache after 5 attempts." >&2
+          exit 1
 
       - name: Upload research batch artifact
         if: always()
