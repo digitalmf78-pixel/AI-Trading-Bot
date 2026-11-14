@@ -1,46 +1,42 @@
 # ECMS — EOD Catalyst Momentum Scanner
 
-An isolated strategy module inside AI-Trading-Bot. It does not modify or replace the existing NSE V8 production scanner.
+An isolated research module inside AI-Trading-Bot. The current implementation is EOD-only and does not modify or replace the existing NSE V8 production scanner.
 
-## Objective
-Find NSE Main Board stocks with unusual EOD volume, independently verify fundamental strength and fresh catalysts, then monitor those candidates during the next session. The morning Volume Gainers list is a confirmation source, not a mandatory eligibility gate.
+## Current implementation status
+- **EOD module:** implemented in `strategies/ecms/eod.py`.
+- **Manual workflow:** `.github/workflows/ecms-eod-shadow.yml` (`workflow_dispatch` only).
+- **Unit tests:** `tests/test_ecms_eod.py` (written; not yet executed in GitHub Actions).
+- **Morning workflow:** not implemented.
+- **Automatic schedules:** disabled.
+- **Broker orders:** not supported; no auto-buy or auto-sell.
 
-## Two independent workflows
-1. **ECMS EOD** — after market close: read the shared Bhavcopy/cache, identify unusual volume, enrich with fundamentals, verify the previous five calendar days of issuer-specific announcements/news, score candidates, and write an ECMS-only EOD report.
-2. **ECMS Morning** — market session: load the latest completed ECMS EOD shortlist, obtain live NSE market data, compare live volume/price/liquidity and opening-range/VWAP behaviour, and produce a separate morning report. Start observation at 09:15 IST; do not make a final confirmation before 09:25–09:30 IST.
+## EOD pipeline
+1. Read the latest complete Bhavcopy session from the shared cache and require it to match the latest completed NSE session.
+2. Require 20 prior complete sessions; calculate full-session RVOL against the prior 20-session average.
+3. Apply the repository's listed-equity series allowlist, exclude ETF/mutual-fund-like rows, then use fresh official NSE Main Board and SME lists to exclude SME/unverified symbols.
+4. Keep RVOL >= 1.5 as an initial research threshold. It is a configurable research hypothesis, not a validated trading edge.
+5. Read cached fundamentals, official financial-result filing metadata, the evidence ledger and already cached XBRL files. Build metric verification locally without downloading or changing shared data.
+6. Check the trailing five calendar days of issuer-matched NSE announcements and secondary news. Mark strong positive headline signals and negative-risk signals for manual review; keyword triage is not proof of financial impact.
+7. Only mark `EOD_RESEARCH_SHORTLIST` when the fundamental gate passes, the source checks are available, a strong positive catalyst signal exists and no negative-risk keyword was detected. All other rows retain explicit `WAIT_FOR_DATA`, `NOT_QUALIFIED` or review statuses.
 
-## Candidate policy
-- Strong fundamentals and a strong, verified, price-relevant catalyst are primary eligibility requirements.
-- Presence in the morning Volume Gainers list is optional. EOD-qualified candidates remain eligible for observation even if absent from that list.
-- Absence from Volume Gainers is not itself a buy reason: price structure, liquidity, current market data and a defined invalidation level are still required.
-- Never chase an extended gap-up. Record gap, opening range, VWAP, traded value, live relative volume and spread/liquidity where available.
-- No broker orders, auto-buy, auto-sell or position execution.
+## Fundamental verification limitation
+The existing fundamental gate requires every required metric to be verified against official XBRL evidence. The repository currently has approved evidence mappings for only a subset of the required metrics; unsupported derived ratios remain `WAIT_FOR_DATA`. Do not weaken this gate just to force a shortlist. A separate audited derivation/mapping is needed before those metrics can pass.
 
 ## Data boundaries
-- Shared existing data is read-only: data/bhavcopy/, data/cache/delivery/, data/cache/sector_index_daily/, data/cache/sector_constituents/, data/cache/sector_quote_classifications/, data/cache/universe/, data/inputs/sector_map.csv, data/inputs/sector_history.csv, data/inputs/fundamental_metrics.csv, data/cache/fundamental_history/, data/cache/telegram_premarket_news_seen.csv, data/cache/xbrl_samples/, data/cache/xbrl_period_pairs/, data/cache/shareholding_xbrl/, and outputs/v8_official_financial_results_filings.csv.
-- These paths mirror the existing scanner's shared cache contract. Cache key/version and restore behaviour must be verified in both ECMS workflows; same path list alone is not proof that a cache was restored.
-- ECMS writes only beneath outputs/ecms/ and its own strategy state beneath data/cache/ecms/. It must not write into or mutate shared production data.
-- Existing .github/workflows/nse-test-scheduled.yml, scanner code and production outputs are out of scope and must remain untouched.
-
-## Implementation gates
-1. Build read-only data adapters and schema/coverage checks.
-2. Add EOD volume/fundamental/catalyst stages and focused tests.
-3. Add a live-market adapter only after a supported NSE source, terms/availability, timestamps and failure behaviour are verified.
-4. Add the two workflows with separate schedules and ECMS-only output paths.
-5. Run manual/shadow validation; only then enable schedules. A missing/stale feed must yield WAIT_FOR_DATA, never fabricated values.
-
-## Initial scoring proposal (research-only; calibrate by backtest)
-- Fundamentals: 30 points
-- Catalyst strength and freshness: 30 points
-- EOD/live volume and price action: 25 points
-- Sector/market context: 15 points
-The score is not a proven probability or a trading recommendation. Preserve component scores, evidence links, timestamps, source quality and missing-data status in every report.
+- Shared data is read-only: `data/bhavcopy/`, the shared `data/cache/` paths, `data/inputs/fundamental_metrics.csv`, `data/inputs/fundamental_thresholds.json`, `data/inputs/fundamental_metric_verification_evidence.csv`, and `outputs/v8_official_financial_results_filings.csv`.
+- The EOD workflow restores the same ordered shared-cache paths and uses restore prefixes compatible with the production cache.
+- ECMS writes reports only beneath `outputs/ecms/`; it does not save back into shared cache, metrics, filing registers or evidence ledgers.
+- Existing `.github/workflows/nse-test-scheduled.yml`, scanner code and production outputs remain untouched.
 
 ## Output reports
-- outputs/ecms/eod_candidates.csv
-- outputs/ecms/eod_audit.csv
-- outputs/ecms/morning_confirmation.csv
-- outputs/ecms/morning_audit.csv
+- `outputs/ecms/eod_candidates.csv` — RVOL candidates with fundamental, catalyst and final statuses.
+- `outputs/ecms/eod_audit.csv` — Main Board inclusion/exclusion and candidate audit.
+- `outputs/ecms/eod_catalysts.csv` — issuer-matched headline records and signal labels.
+- `outputs/ecms/fundamental_metric_verification.csv` and summaries.
+- `outputs/ecms/eod_run_summary.json`.
 
-## Time handling
-Use Asia/Kolkata. The EOD workflow must use the official NSE trading calendar and latest complete Bhavcopy session, not simply the machine date. Morning scan begins at 09:15 IST; final confirmation window begins no earlier than 09:25 IST.
+## Later phase — Morning confirmation
+Morning monitoring is intentionally not part of this phase. It will be built only after the EOD output is validated and a supported, timestamped live-market data source is verified. Volume Gainers presence will be optional confirmation, never a mandatory gate. The scan is expected to start at 09:15 IST and final confirmation not before 09:25–09:30 IST.
+
+## Validation gates
+The EOD workflow is manual/shadow-only. Execute tests and inspect the first real artifact before adding any schedule. Missing/stale Bhavcopy, calendar coverage, board lists, fundamentals, XBRL evidence or news source must remain visible as a failure or `WAIT_FOR_DATA`; never manufacture a pass.
