@@ -52,6 +52,22 @@ class FundamentalResearchCollectorTests(unittest.TestCase):
             self.assertEqual(found["XYZ"], {"ROEPercent"})
             self.assertTrue(production.exists())
 
+    def test_collection_targets_only_symbols_with_no_accepted_metric(self):
+        universe = ["AAA", "BBB", "CCC"]
+        existing = {"AAA": {"ROEPercent"}, "BBB": {"PromoterHoldingPct"}}
+        self.assertEqual(
+            collector.symbols_missing_any_accepted_metric(universe, existing),
+            ["CCC"],
+        )
+
+    def test_all_symbols_represented_means_no_initial_collection_targets(self):
+        universe = ["AAA", "BBB"]
+        existing = {"AAA": {"ROEPercent"}, "BBB": {"EPS"}}
+        self.assertEqual(
+            collector.symbols_missing_any_accepted_metric(universe, existing),
+            [],
+        )
+
     def test_diagnostics_prevent_retrying_symbols_with_no_metric_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             diag = Path(tmp) / "diagnostics.csv"
