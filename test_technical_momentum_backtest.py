@@ -36,3 +36,15 @@ def test_vcp_dryup_uses_only_completed_prior_blocks_and_current_block():
     out = add_point_in_time_features(f)
     assert out.loc[259, "VOLUME_RATIO_3_VS_2"] == 0.4
     assert bool(out.loc[259, "VCP_DRYUP_LT_0_5"]) is True
+
+
+def test_empty_setup_still_returns_complete_zero_observation_metrics():
+    from technical_momentum_backtest import _metric
+
+    result = _metric(pd.DataFrame(), 5)
+    assert result["OutcomeN_5D"] == 0
+    assert pd.isna(result["WinRate_5D_Pct"])
+    assert pd.isna(result["AverageReturn_5D_Pct"])
+    assert pd.isna(result["MedianReturn_5D_Pct"])
+    assert pd.isna(result["ProfitFactor_5D"])
+    assert pd.isna(result["MFE_GE_15Pct_5D_Pct"])
