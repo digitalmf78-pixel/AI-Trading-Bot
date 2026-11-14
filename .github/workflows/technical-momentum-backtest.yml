@@ -5,6 +5,8 @@ on:
     paths:
       - "technical_momentum_backtest.py"
       - "delivery_momentum_research.py"
+      - "walk_forward_momentum_validation.py"
+      - "test_walk_forward_momentum_validation.py"
       - "test_technical_momentum_backtest.py"
       - ".github/workflows/technical-momentum-backtest.yml"
   workflow_dispatch:
@@ -91,6 +93,16 @@ jobs:
           cat outputs/delivery_momentum_research/comparison.csv
           echo "===== DELIVERY COVERAGE ====="
           cat outputs/delivery_momentum_research/coverage.csv
+
+      - name: Run purged walk-forward and four-slot portfolio validation
+        run: |
+          set -euo pipefail
+          python -m pytest -q test_walk_forward_momentum_validation.py
+          python -u walk_forward_momentum_validation.py
+          echo "===== WALK-FORWARD METRICS ====="
+          cat outputs/walk_forward_momentum_validation/walk_forward_metrics.csv
+          echo "===== PORTFOLIO COST SENSITIVITY ====="
+          cat outputs/walk_forward_momentum_validation/portfolio_sensitivity.csv
 
       - name: Upload technical and Delivery research artifacts
         if: always()
