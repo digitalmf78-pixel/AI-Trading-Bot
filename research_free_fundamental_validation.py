@@ -33,7 +33,18 @@ CORE_METRICS = {
     "PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct",
     "PledgePct",
 }
-PERIOD_RE = re.compile(r"^(?:20\d{2}-\d{2}-\d{2}|FY\s?20\d{2}|Q[1-4]\s?FY\s?20\d{2})$", re.I)
+PERIOD_RE = re.compile(r"^(?:20\d{2}-\d{2}-\d{2}|FY\s?20\d{2}|Q[1-4]\s?FY\s?20\d{2}|[A-Z][a-z]{2}\s20\d{2})$", re.I)
+GROWTH_PERIOD_RE = re.compile(r"^FY\s?20\d{2}\s*->\s*FY\s?20\d{2}$", re.I)
+CACHE_COLUMNS = ["Symbol", "CompanyName", "Metric", "Value", "Provider", "SourceURL", "FinancialPeriod", "RetrievedAtUTC", "VerificationStatus", "ProviderIdentityStatus"]
+DIAGNOSTIC_COLUMNS = ["Symbol", "CompanyName", "Provider", "Status", "Reason", "MetricsObserved", "MetricsPeriodsJSON", "MetricsValuesJSON", "SourceURL", "IdentityStatus", "HTTPDiagnosticsJSON", "AttemptedAtUTC", "ElapsedSeconds"]
+QUARANTINE_COLUMNS = ["Symbol", "CompanyName", "Metric", "Value", "Provider", "SourceURL", "ObservedPeriod", "RetrievedAtUTC", "RejectionReason"]
+
+
+def valid_period(metric: str, period: str) -> bool:
+    period = str(period or "").strip()
+    if PERIOD_RE.fullmatch(period):
+        return True
+    return metric in {"RevenueGrowthPct", "ProfitGrowthPct"} and bool(GROWTH_PERIOD_RE.fullmatch(period))
 
 
 def load_universe() -> pd.DataFrame:
@@ -75,6 +86,14 @@ def load_recent_attempts() -> dict[str, pd.Timestamp]:
                 sym = str(row["Symbol"]).strip().upper()
                 if sym and pd.notna(stamp) and (sym not in attempts or stamp > attempts[sym]):
                     attempts[sym] = stamp
+    if DIAGNOSTICS_PATH.exists():
+        frame = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("")
+        if {"Symbol", "AttemptedAtUTC"}.issubset(frame.columns):
+            for _, row in frame.iterrows():
+                stamp = pd.to_datetime(row.get("AttemptedAtUTC"), errors="coerce", utc=True)
+                sym = str(row.get("Symbol", "")).strip().upper()
+                if sym and pd.notna(stamp) and (sym not in attempts or stamp > attempts[sym]):
+                    attempts[sym] = stamp
     return attempts
 
 
@@ -97,8 +116,10 @@ def main() -> None:
     batch = eligible[batch_offset:batch_offset + batch_size]
 
     old_cache = pd.read_csv(CACHE_PATH, dtype=str).fillna("") if CACHE_PATH.exists() else pd.DataFrame()
-    old_diag = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("") if DIAGNOSTICS_PATH.exists() else pd.DataFrame()
-    cache_rows, diagnostic_rows = [], []
+    old_diag = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("") if DIAGNOSTICS_PATH.exists() else pd.DataFrame(columns=DIAGNOSTIC_COLUMNS)
+    quarantine_path = RESEARCH_DIR / "fundamental_free_source_quarantine.csv"
+    old_quarantine = pd.read_csv(quarantine_path, dtype=str).fillna("") if quarantine_path.exists() else pd.DataFrame(columns=QUARANTINE_COLUMNS)
+    cache_rows, diagnostic_rows, quarantine_rows = [], [], []
     rejected_period_count = 0
     shareholding_cache = RESEARCH_DIR / "shareholding_xbrl_cache"
     shareholding_cache.mkdir(parents=True, exist_ok=True)
