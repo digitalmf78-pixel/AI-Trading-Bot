@@ -1,0 +1,81 @@
+name: Research-only NSE Bhavcopy Historical Backfill
+
+on:
+  push:
+    branches:
+      - research/stock-selection-backtest-2026-11-13
+    paths:
+      - ".github/workflows/research-bhavcopy-backfill.yml"
+      - "scripts/research_bhavcopy_backfill.py"
+      - "test_research_bhavcopy_backfill.py"
+  workflow_dispatch:
+    inputs:
+      sessions:
+        description: "Number of official NSE CM sessions to validate (220 minimum for one 200+20 test; 420 preferred)"
+        required: true
+        default: "420"
+        type: string
+      end_date:
+        description: "Inclusive end date YYYY-MM-DD (blank = today)"
+        required: false
+        default: ""
+        type: string
+      max_new_downloads:
+        description: "Optional download cap for a staged trial (blank = no cap)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-bhavcopy-historical-backfill
+  cancel-in-progress: false
+
+jobs:
+  research-backfill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v5
+      - name: Restore isolated research cache
+        uses: actions/cache/restore@v5
+        with:
+          path: data/research/bhavcopy_backtest/
+          key: research-bhavcopy-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            research-bhavcopy-v1-${{ runner.os }}-
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install research dependencies
+        run: python -m pip install --upgrade pip pandas requests pytest
+      - name: Run isolated downloader tests
+        run: python -m pytest -q test_research_bhavcopy_backfill.py
+      - name: Run historical archive backfill
+        env:
+          INPUT_SESSIONS: ${{ inputs.sessions }}
+          INPUT_END_DATE: ${{ inputs.end_date }}
+          INPUT_MAX_DOWNLOADS: ${{ inputs.max_new_downloads }}
+        run: |
+          SESSIONS="${INPUT_SESSIONS:-420}"
+          args=(--sessions "$SESSIONS")
+          if [ -n "$INPUT_END_DATE" ]; then args+=(--end-date "$INPUT_END_DATE"); fi
+          if [ -n "$INPUT_MAX_DOWNLOADS" ]; then args+=(--max-new-downloads "$INPUT_MAX_DOWNLOADS"); fi
+          python -u scripts/research_bhavcopy_backfill.py "${args[@]}"
+      - name: Save isolated research cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: data/research/bhavcopy_backtest/
+          key: research-bhavcopy-v1-${{ runner.os }}-${{ github.run_id }}
+      - name: Upload research manifest
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: research-bhavcopy-backfill-${{ github.run_id }}
+          path: outputs/research_bhavcopy_backfill/
+          if-no-files-found: warn
