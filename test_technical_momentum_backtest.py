@@ -41,10 +41,11 @@ def test_vcp_dryup_uses_only_completed_prior_blocks_and_current_block():
 def test_empty_setup_still_returns_complete_zero_observation_metrics():
     from technical_momentum_backtest import _metric
 
-    result = _metric(pd.DataFrame(), 5)
-    assert result["OutcomeN_5D"] == 0
-    assert pd.isna(result["WinRate_5D_Pct"])
-    assert pd.isna(result["AverageReturn_5D_Pct"])
-    assert pd.isna(result["MedianReturn_5D_Pct"])
-    assert pd.isna(result["ProfitFactor_5D"])
-    assert pd.isna(result["MFE_GE_15Pct_5D_Pct"])
+    for horizon in (5, 10, 20):
+        result = _metric(pd.DataFrame(), horizon)
+        assert result[f"OutcomeN_{horizon}D"] == 0
+        assert pd.isna(result[f"WinRate_{horizon}D_Pct"])
+        assert pd.isna(result[f"AverageReturn_{horizon}D_Pct"])
+        assert pd.isna(result[f"MedianReturn_{horizon}D_Pct"])
+        assert pd.isna(result[f"ProfitFactor_{horizon}D"])
+        assert pd.isna(result[f"MFE_GE_15Pct_{horizon}D_Pct"])
