@@ -1,11 +1,8 @@
 name: Research Free Fundamental Batch Collection
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "research_free_fundamental_validation.py"
-      - ".github/workflows/research-free-fundamental-validation.yml"
+  # Collection is manual only. PR commits must never trigger a live batch,
+  # otherwise every code edit can cancel or duplicate a provider collection.
   workflow_dispatch:
     inputs:
       batch_offset:
