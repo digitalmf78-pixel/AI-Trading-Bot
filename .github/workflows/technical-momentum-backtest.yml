@@ -1,0 +1,117 @@
+name: Technical Momentum Historical Backtest (Research Only)
+
+on:
+  pull_request:
+    paths:
+      - "technical_momentum_backtest.py"
+      - "delivery_momentum_research.py"
+      - "walk_forward_momentum_validation.py"
+      - "test_walk_forward_momentum_validation.py"
+      - "test_technical_momentum_backtest.py"
+      - ".github/workflows/technical-momentum-backtest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: technical-momentum-backtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  technical-backtest:
+    name: Technical momentum/VCP and Delivery A/B research on cached NSE data
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v5
+
+      - name: Restore existing NSE Bhavcopy cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-technical-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-main-
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pytest
+
+      - name: Check cache coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRICE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | wc -l || true)
+          DELIVERY_COUNT=$(find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_????????.csv' 2>/dev/null | wc -l || true)
+          echo "PRICE_CACHE_FILES=$PRICE_COUNT"
+          echo "DELIVERY_CACHE_FILES=$DELIVERY_COUNT"
+          if [ "$PRICE_COUNT" -lt 200 ]; then
+            echo "::error::At least 200 cached Bhavcopy sessions are required; no network backfill is attempted."
+            exit 1
+          fi
+          if [ "$DELIVERY_COUNT" -lt 30 ]; then
+            echo "::warning::Fewer than 30 raw Delivery reports; A/B analysis may return WAIT_FOR_DATA."
+          fi
+
+      - name: Run technical feature unit tests
+        run: python -m pytest -q test_technical_momentum_backtest.py
+
+      - name: Run point-in-time technical backtest
+        run: |
+          set -euo pipefail
+          python -u technical_momentum_backtest.py
+          echo "===== TECHNICAL MOMENTUM COMPARISON ====="
+          cat outputs/technical_momentum_backtest/comparison.csv
+          echo "===== CACHE COVERAGE ====="
+          cat outputs/technical_momentum_backtest/cache_coverage.csv
+
+      - name: Run historical Delivery A/B plus momentum comparison
+        run: |
+          set -euo pipefail
+          python -u delivery_momentum_research.py
+          echo "===== DELIVERY + MOMENTUM COMPARISON ====="
+          cat outputs/delivery_momentum_research/comparison.csv
+          echo "===== DELIVERY COVERAGE ====="
+          cat outputs/delivery_momentum_research/coverage.csv
+
+      - name: Run purged walk-forward and four-slot portfolio validation
+        run: |
+          set -euo pipefail
+          python -m pytest -q test_walk_forward_momentum_validation.py
+          python -u walk_forward_momentum_validation.py
+          echo "===== WALK-FORWARD METRICS ====="
+          cat outputs/walk_forward_momentum_validation/walk_forward_metrics.csv
+          echo "===== PORTFOLIO COST SENSITIVITY ====="
+          cat outputs/walk_forward_momentum_validation/portfolio_sensitivity.csv
+
+      - name: Upload technical and Delivery research artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: technical-delivery-momentum-research-${{ github.run_id }}
+          path: |
+            outputs/technical_momentum_backtest/
+            outputs/delivery_momentum_research/
+            outputs/walk_forward_momentum_validation/
+          if-no-files-found: warn
+          retention-days: 30
