@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T04:44:14.832952+00:00",
+  "filing_count": 1,
+  "latest_filing": {
+    "broadcast_date": "21-AUG-2026 18:40:17",
+    "date": "03-JUL-2026",
+    "period_end": "2026-07-03",
+    "record_id": "210641",
+    "revised": "Revised",
+    "submission_date": "08-JUL-2026",
+    "symbol": "AASTHA",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1716926_21082026061446_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AASTHA"
+}

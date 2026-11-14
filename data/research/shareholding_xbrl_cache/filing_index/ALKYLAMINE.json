@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:18:02.282385+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "16-OCT-2026 12:42:51",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214819",
+    "revised": "N",
+    "submission_date": "16-OCT-2026",
+    "symbol": "ALKYLAMINE",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1739621_16102026124246_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ALKYLAMINE"
+}

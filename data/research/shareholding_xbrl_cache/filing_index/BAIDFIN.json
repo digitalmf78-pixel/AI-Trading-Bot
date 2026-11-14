@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:09:34.873335+00:00",
+  "filing_count": 20,
+  "latest_filing": {
+    "broadcast_date": "07-OCT-2026 12:21:22",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213360",
+    "revised": "N",
+    "submission_date": "07-OCT-2026",
+    "symbol": "BAIDFIN",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1733677_07102026122118_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BAIDFIN"
+}

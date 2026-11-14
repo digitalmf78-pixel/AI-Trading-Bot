@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:03:42.365135+00:00",
+  "filing_count": 17,
+  "latest_filing": {
+    "broadcast_date": "11-NOV-2026 16:16:35",
+    "date": "05-NOV-2026",
+    "period_end": "2026-11-05",
+    "record_id": "216385",
+    "revised": "N",
+    "submission_date": "11-NOV-2026",
+    "symbol": "AERONEU",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1756080_11112026041628_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AERONEU"
+}

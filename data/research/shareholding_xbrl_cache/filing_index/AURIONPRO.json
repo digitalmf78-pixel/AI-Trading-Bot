@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:02:29.449281+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "21-OCT-2026 14:24:04",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215978",
+    "revised": "N",
+    "submission_date": "21-OCT-2026",
+    "symbol": "AURIONPRO",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1742719_21102026022357_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AURIONPRO"
+}

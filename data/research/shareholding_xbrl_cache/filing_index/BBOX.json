@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:22:29.953270+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 14:31:22",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214036",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "BBOX",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1736789_13102026023115_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BBOX"
+}

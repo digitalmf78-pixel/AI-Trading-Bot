@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:03:58.147809+00:00",
+  "filing_count": 8,
+  "latest_filing": {
+    "broadcast_date": "17-JUL-2026 11:35:11",
+    "date": "30-JUN-2026",
+    "period_end": "2026-06-30",
+    "record_id": "211617",
+    "revised": "N",
+    "submission_date": "17-JUL-2026",
+    "symbol": "AVL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1694830_17072026113506_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AVL"
+}

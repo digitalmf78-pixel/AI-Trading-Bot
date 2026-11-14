@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:51:45.567228+00:00",
+  "filing_count": 14,
+  "latest_filing": {
+    "broadcast_date": "08-OCT-2026 10:59:23",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213424",
+    "revised": "N",
+    "submission_date": "08-OCT-2026",
+    "symbol": "BLUEJET",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1734093_08102026105918_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BLUEJET"
+}

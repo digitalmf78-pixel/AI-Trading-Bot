@@ -1,0 +1,118 @@
+name: Research Free Fundamental Batch Collection
+
+on:
+  # PR/code commits never trigger provider calls. A dedicated marker push
+  # chains bounded batches sequentially; manual dispatch remains available.
+  push:
+    branches:
+      - research/free-fundamental-source-validation-2026-11-14
+    paths:
+      - ".research-batch-trigger"
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      batch_offset:
+        description: "Offset in the currently eligible Mainboard symbols"
+        required: false
+        default: "0"
+      batch_size:
+        description: "Symbols per batch (maximum 100)"
+        required: false
+        default: "25"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research-fundamental-batch-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether every Mainboard symbol is already represented
+        id: completion
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path("data/research/fundamental_free_source_batch_manifest.json")
+          complete = False
+          if path.exists():
+              try:
+                  complete = bool(json.loads(path.read_text(encoding="utf-8")).get("collection_complete"))
+              except Exception:
+                  complete = False
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"complete={'true' if complete else 'false'}\\n")
+          print(f"Mainboard collection already complete: {complete}")
+          PY
+
+      - name: Set up Python
+        if: steps.completion.outputs.complete != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project dependencies
+        if: steps.completion.outputs.complete != 'true'
+        run: python -m pip install --upgrade pip -r requirements.txt
+
+      - name: Run bounded free-source batch
+        if: steps.completion.outputs.complete != 'true'
+        env:
+          FUNDAMENTAL_RESEARCH_BATCH_OFFSET: ${{ github.event.inputs.batch_offset || '0' }}
+          FUNDAMENTAL_RESEARCH_BATCH_SIZE: ${{ github.event.inputs.batch_size || '25' }}
+        run: python -u research_free_fundamental_validation.py
+
+      - name: Persist research-only cache on this branch
+        if: steps.completion.outputs.complete != 'true'
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p data/research/shareholding_xbrl_cache
+          git add -A data/research/
+          if git diff --cached --quiet; then
+            echo "No research-cache changes to commit."
+            exit 0
+          fi
+          git commit -m "Research: persist free fundamental batch cache"
+          # Another run may finish its collection before this push. Rebase the
+          # research-only commit onto the latest branch and retry boundedly.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "${TARGET_BRANCH}"
+            git rebase "origin/${TARGET_BRANCH}"
+            if git push origin "HEAD:${TARGET_BRANCH}"; then
+              echo "Research cache persisted successfully."
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying after refreshing branch."
+            git rebase --abort || true
+            sleep $((attempt * 2))
+          done
+          echo "Unable to persist research cache after 5 attempts." >&2
+          exit 1
+
+      - name: Upload research batch artifact
+        if: always() && steps.completion.outputs.complete != 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: research-free-fundamental-batch
+          path: data/research/
+          if-no-files-found: warn
+

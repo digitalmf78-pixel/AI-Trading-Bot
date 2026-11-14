@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:55:27.972455+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 14:06:26",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214027",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "ARVEE",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1736770_13102026020621_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ARVEE"
+}

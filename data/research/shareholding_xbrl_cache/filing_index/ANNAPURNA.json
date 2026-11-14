@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:36:36.117889+00:00",
+  "filing_count": 12,
+  "latest_filing": {
+    "broadcast_date": "16-OCT-2026 16:29:28",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214972",
+    "revised": "N",
+    "submission_date": "16-OCT-2026",
+    "symbol": "ANNAPURNA",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1740017_16102026042923_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ANNAPURNA"
+}

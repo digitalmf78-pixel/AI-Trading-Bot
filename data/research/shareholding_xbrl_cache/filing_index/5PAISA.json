@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T04:42:58.411369+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "13-NOV-2026 23:31:36",
+    "date": "04-NOV-2026",
+    "period_end": "2026-11-04",
+    "record_id": "216392",
+    "revised": "N",
+    "submission_date": "13-NOV-2026",
+    "symbol": "5PAISA",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1758129_13112026113128_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "5PAISA"
+}

@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:03:29.522338+00:00",
+  "filing_count": 11,
+  "latest_filing": {
+    "broadcast_date": "15-OCT-2026 17:40:49",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214692",
+    "revised": "N",
+    "submission_date": "15-OCT-2026",
+    "symbol": "AVANTEL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1739142_15102026054045_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AVANTEL"
+}

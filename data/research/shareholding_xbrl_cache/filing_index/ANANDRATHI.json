@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:25:24.788402+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 18:41:22",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214187",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "ANANDRATHI",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1737231_13102026064115_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ANANDRATHI"
+}

@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T04:50:08.769750+00:00",
+  "filing_count": 7,
+  "latest_filing": {
+    "broadcast_date": "19-OCT-2026 18:28:29",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215644",
+    "revised": "N",
+    "submission_date": "19-OCT-2026",
+    "symbol": "ABLBL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1741887_19102026062823_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ABLBL"
+}

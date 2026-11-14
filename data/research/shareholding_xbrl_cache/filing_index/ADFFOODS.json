@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T04:53:00.126512+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "15-OCT-2026 18:15:28",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214721",
+    "revised": "N",
+    "submission_date": "15-OCT-2026",
+    "symbol": "ADFFOODS",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1739238_15102026061519_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ADFFOODS"
+}

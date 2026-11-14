@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:11:36.643284+00:00",
+  "filing_count": 22,
+  "latest_filing": {
+    "broadcast_date": "12-OCT-2026 16:50:00",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213874",
+    "revised": "N",
+    "submission_date": "12-OCT-2026",
+    "symbol": "AHLEAST",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1736208_12102026044955_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AHLEAST"
+}

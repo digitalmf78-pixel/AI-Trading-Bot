@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:36:33.461758+00:00",
+  "filing_count": 8,
+  "latest_filing": {
+    "broadcast_date": "19-OCT-2026 16:15:51",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215514",
+    "revised": "N",
+    "submission_date": "19-OCT-2026",
+    "symbol": "BHARATSE",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1741547_19102026041544_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BHARATSE"
+}

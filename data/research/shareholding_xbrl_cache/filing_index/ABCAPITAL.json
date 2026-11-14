@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T04:44:42.593047+00:00",
+  "filing_count": 24,
+  "latest_filing": {
+    "broadcast_date": "21-OCT-2026 16:43:23",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "216095",
+    "revised": "N",
+    "submission_date": "21-OCT-2026",
+    "symbol": "ABCAPITAL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1743057_21102026044315_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ABCAPITAL"
+}
