@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:01:54.256019+00:00",
+  "filing_count": 6,
+  "latest_filing": {
+    "broadcast_date": "08-OCT-2026 14:44:32",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213465",
+    "revised": "N",
+    "submission_date": "08-OCT-2026",
+    "symbol": "ATLANTAELE",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1734233_08102026024425_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ATLANTAELE"
+}

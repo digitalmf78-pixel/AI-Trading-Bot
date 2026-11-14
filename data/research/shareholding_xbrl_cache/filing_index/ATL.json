@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:01:29.775298+00:00",
+  "filing_count": 17,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 17:09:23",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214141",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "ATL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1737073_13102026050915_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ATL"
+}

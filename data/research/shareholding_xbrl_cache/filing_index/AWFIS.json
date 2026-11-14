@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:04:39.487756+00:00",
+  "filing_count": 11,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 17:23:33",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214154",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "AWFIS",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1737102_13102026052327_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AWFIS"
+}
