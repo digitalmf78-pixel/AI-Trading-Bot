@@ -17,7 +17,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-ALLOWED_HOSTS = {"nsearchives.nseindia.com", "www.nseindia.com", "nseindia.com"}
+ALLOWED_HOSTS = {"nsearchives.nseindia.com", "nsearchives.nseindia.in", "www.nseindia.com", "nseindia.com"}
 
 
 def build_session() -> requests.Session:
