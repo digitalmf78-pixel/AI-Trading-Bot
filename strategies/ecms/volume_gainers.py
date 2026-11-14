@@ -158,12 +158,16 @@ def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
     if eligible.empty: raise RuntimeError("WAIT_FOR_DATA: no official Main Board equity symbols found on NSE Volume Gainers page")
-    today=datetime.now(IST).date()
-    if not is_trading_session(today):
-        raise RuntimeError(f"WAIT_FOR_DATA: {today} is not an official NSE equity trading session")
-    eligible["EODDate"]=today.isoformat(); eligible["PageSource"]=NSE_PAGE
+    # Manual runs may be started on weekends/holidays. The NSE Volume Gainers
+    # page then represents the most recently completed cash-market session.
+    # Tag research with that official session date instead of rejecting today's
+    # calendar date when today is not a trading day.
+    eod_date=expected_latest_completed_session()
+    if not is_trading_session(eod_date):
+        raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
+    eligible["EODDate"]=eod_date.isoformat(); eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
-    assessed=assess_page_fundamentals(eligible,today)
+    assessed=assess_page_fundamentals(eligible,eod_date)
     news,news_audit=collect_catalysts(assessed,today)
     assessed=assessed.merge(news_audit,on="TckrSymb",how="left")
     if "NegativeRiskCount" not in assessed: assessed["NegativeRiskCount"]=0
@@ -186,7 +190,7 @@ def run_eod():
     state=eligible[["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
       "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]].copy()
     state.to_csv(STATE_FILE,index=False)
-    summary={"status":"PASS","eod_date_ist":today.isoformat(),"nse_page":NSE_PAGE,
+    summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "strong_fundamental_catalyst_review":int(assessed["EODResearchStatus"].eq("STRONG_FUNDAMENTAL_CATALYST_REVIEW").sum()),
       "wait_for_data":int(assessed["EODResearchStatus"].eq("WAIT_FOR_DATA").sum()),
