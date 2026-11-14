@@ -1,1 +1,2 @@
 Start bounded historical NSE announcement backfill; research branch only.
+Retry after end-date parsing fix.
