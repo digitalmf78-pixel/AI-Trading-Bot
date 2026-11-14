@@ -8,6 +8,7 @@ import pandas as pd
 import requests
 from strategies.ecms.eod import (
     IST, HEADERS, OUTPUT_DIR, METRICS_PATH, THRESHOLDS_PATH, FILINGS_PATH, EVIDENCE_PATH,
+    expected_latest_completed_session,
     assess_fundamentals, collect_catalysts, load_official_mainboard_symbols,
 )
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
@@ -200,6 +201,10 @@ def run_morning():
     if not STATE_FILE.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
     previous=pd.read_csv(STATE_FILE,dtype={"TckrSymb":str})
     if previous.empty or "TckrSymb" not in previous: raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
+    expected_eod = expected_latest_completed_session().isoformat()
+    stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+    if stored_dates != {expected_eod}:
+        raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
     live=fetch_volume_gainers()
     mainboard,board_source=load_official_mainboard_symbols()
     live=live[live["TckrSymb"].isin(mainboard)].copy()
