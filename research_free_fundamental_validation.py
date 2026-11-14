@@ -172,7 +172,7 @@ def main() -> None:
     now = datetime.now(timezone.utc)
     batch_size = max(1, min(100, int(os.getenv("FUNDAMENTAL_RESEARCH_BATCH_SIZE", "25"))))
     batch_offset = max(0, int(os.getenv("FUNDAMENTAL_RESEARCH_BATCH_OFFSET", "0")))
-    cooldown_days = max(1, int(os.getenv("FUNDAMENTAL_RESEARCH_RETRY_DAYS", "7")))
+    cooldown_days = max(1, int(os.getenv("FUNDAMENTAL_RESEARCH_RETRY_DAYS", "1")))
 
     universe = load_universe()
     attempts = load_recent_attempts()
