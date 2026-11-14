@@ -156,9 +156,11 @@ def main() -> None:
                 "MetricsPeriodsJSON": json.dumps(
                     {m: provider_periods.get(m, "") for m in provider_metrics}, sort_keys=True
                 ),
+                "MetricsValuesJSON": json.dumps(provider_metrics, sort_keys=True),
                 "SourceURL": detail.get("source_url", ""),
                 "IdentityStatus": detail.get("identity_status", ""),
                 "HTTPDiagnosticsJSON": json.dumps(detail.get("last_http", {}), sort_keys=True),
+                "AttemptedAtUTC": now.isoformat(),
                 "ElapsedSeconds": round(time.monotonic() - symbol_started, 3),
             })
         for metric, value in metrics.items():
@@ -166,11 +168,19 @@ def main() -> None:
                 continue
             provider = result.get("metric_sources", {}).get(metric, "")
             period = str(result.get("metric_periods", {}).get(metric, "")).strip()
-            period_ok = bool(PERIOD_RE.fullmatch(period))
+            period_ok = valid_period(metric, period)
             # Values with missing/ambiguous periods (e.g. Tickertape period "0")
             # remain in diagnostics only and are not promoted to the research cache.
             if not period_ok:
                 rejected_period_count += 1
+                detail = providers.get(provider, {})
+                quarantine_rows.append({
+                    "Symbol": symbol, "CompanyName": company_name, "Metric": metric,
+                    "Value": value, "Provider": provider,
+                    "SourceURL": result.get("metric_urls", {}).get(metric, detail.get("source_url", "")),
+                    "ObservedPeriod": period, "RetrievedAtUTC": now.isoformat(),
+                    "RejectionReason": "MISSING_OR_UNRECOGNIZED_FINANCIAL_PERIOD",
+                })
                 continue
             detail = providers.get(provider, {})
             cache_rows.append({
@@ -195,8 +205,8 @@ def main() -> None:
             "metrics_observed": sorted(metrics),
             "metrics_period_accepted": sum(
                 1 for m in metrics
-                if m in CORE_METRICS and PERIOD_RE.fullmatch(
-                    str(result.get("metric_periods", {}).get(m, "")).strip()
+                if m in CORE_METRICS and valid_period(
+                    m, str(result.get("metric_periods", {}).get(m, "")).strip()
                 )
             ),
         }, sort_keys=True))
