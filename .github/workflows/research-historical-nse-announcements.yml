@@ -16,7 +16,7 @@ on:
       batch_size:
         description: "Symbols per run (max 50)"
         required: false
-        default: "15"
+        default: "50"
       start_date:
         description: "Historical start date (IST, YYYY-MM-DD)"
         required: false
@@ -42,6 +42,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: research/historical-announcements-only-2026-11-14
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -51,11 +52,13 @@ jobs:
       - name: Run bounded official NSE announcement backfill
         env:
           ANNOUNCEMENT_BATCH_OFFSET: ${{ inputs.batch_offset || '0' }}
-          ANNOUNCEMENT_BATCH_SIZE: ${{ inputs.batch_size || '15' }}
+          ANNOUNCEMENT_BATCH_SIZE: ${{ inputs.batch_size || '50' }}
           ANNOUNCEMENT_START_DATE: ${{ inputs.start_date || '2025-11-14' }}
           ANNOUNCEMENT_END_DATE: ${{ inputs.end_date }}
         run: python -u research_historical_nse_announcements.py
       - name: Persist research-only data on this branch
+        env:
+          TARGET_BRANCH: research/historical-announcements-only-2026-11-14
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -66,7 +69,18 @@ jobs:
             exit 0
           fi
           git commit -m "Research: persist historical NSE announcement batch"
-          git push origin HEAD:research/historical-announcements-backfill-2026-11-14
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "${TARGET_BRANCH}"
+            git rebase "origin/${TARGET_BRANCH}"
+            if git push origin "HEAD:${TARGET_BRANCH}"; then
+              echo "Research announcement cache persisted successfully."
+              exit 0
+            fi
+            git rebase --abort || true
+            sleep $((attempt * 2))
+          done
+          echo "Unable to persist research announcement cache after 5 attempts." >&2
+          exit 1
       - name: Upload research ledger artifact
         if: always()
         uses: actions/upload-artifact@v5
