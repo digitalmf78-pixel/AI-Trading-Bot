@@ -1,0 +1,101 @@
+name: ECMS FUNDAMENTAL REFRESH - ONE TIME
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ecms-fundamental-refresh-once.yml"
+      - "nse_xbrl_fetch.py"
+      - "test_nse_xbrl_fetch.py"
+      - "fundamental_data_provider.py"
+      - "fundamental_metric_verification.py"
+      - "test_fundamental_metric_verification.py"
+permissions:
+  contents: read
+concurrency:
+  group: ecms-fundamental-refresh-once
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Restore shared NSE cache read-only
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+            nse-bhavcopy-${{ runner.os }}-main-
+      - name: Restore ECMS-only fundamental cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/cache/ecms/fundamental_workspace/
+          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ecms-vg-state-${{ github.ref_name }}-
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile and test ECMS
+        run: |
+          python -m py_compile strategies/ecms/volume_gainers.py fundamental_data_provider.py fundamental_metric_verification.py nse_xbrl_fetch.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py test_fundamental_metric_verification.py test_nse_xbrl_fetch.py
+      - name: Run EOD fundamentals with forced provider refresh
+        env:
+          PYTHONUNBUFFERED: "1"
+          V8_AUTO_FETCH_FUNDAMENTALS: "true"
+          V8_FREE_FUNDAMENTAL_SOURCES: "true"
+          FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN: "25"
+          FREE_FUNDAMENTAL_RETRY_DAYS: "1"
+          V8_FUNDAMENTAL_RETRY_DAYS: "1"
+          V8_FUNDAMENTAL_REFRESH_DAYS: "-3"
+        run: python -m strategies.ecms.volume_gainers --mode eod
+      - name: Save ECMS-only fundamental cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/cache/ecms/fundamental_workspace/
+          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+      - name: Upload full fundamental audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-fundamental-refresh-${{ github.run_id }}
+          path: |
+            outputs/ecms/volume_gainers_*
+            outputs/ecms/fundamental_*.csv
+            outputs/ecms/fundamental_metric_verification*.csv
+            outputs/ecms/v8_fundamental_metric_verification*.csv
+            outputs/ecms/v8_fundamental_generated_evidence.csv
+            outputs/ecms/v8_fundamental_evidence_generation_diagnostics.csv
+            outputs/ecms/fundamental_filing_metadata_summary.csv
+            outputs/ecms/xbrl_ephemeral/
+          if-no-files-found: warn
+          retention-days: 30
