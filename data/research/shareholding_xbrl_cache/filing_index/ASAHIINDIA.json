@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:55:58.185546+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "16-OCT-2026 15:08:44",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214894",
+    "revised": "N",
+    "submission_date": "16-OCT-2026",
+    "symbol": "ASAHIINDIA",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1739818_16102026030835_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ASAHIINDIA"
+}
