@@ -46,6 +46,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           path = Path("data/research/fundamental_free_source_batch_manifest.json")
           complete = False
@@ -54,7 +55,7 @@ jobs:
                   complete = bool(json.loads(path.read_text(encoding="utf-8")).get("collection_complete"))
               except Exception:
                   complete = False
-          with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as output:
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"complete={'true' if complete else 'false'}\\n")
           print(f"Mainboard collection already complete: {complete}")
           PY
