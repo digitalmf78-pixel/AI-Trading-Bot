@@ -1,15 +1,17 @@
 """NSE Volume Gainers page scanner for ECMS. No orders; shared inputs are read-only."""
 from __future__ import annotations
-import argparse, json, re
+import argparse, json, re, shutil
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from strategies.ecms.eod import (
-    IST, HEADERS, OUTPUT_DIR, assess_fundamentals, collect_catalysts,
-    load_official_mainboard_symbols,
+    IST, HEADERS, OUTPUT_DIR, METRICS_PATH, THRESHOLDS_PATH, FILINGS_PATH, EVIDENCE_PATH,
+    assess_fundamentals, collect_catalysts, load_official_mainboard_symbols,
 )
+from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
+from fundamental_shortlist import build_fundamental_shortlist
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.com/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
@@ -88,6 +90,68 @@ def _eligible_page_equities(page):
     eligible=page[page["TckrSymb"].isin(mainboard)].copy()
     eligible["PageUniverseStatus"]="PASS_MAIN_BOARD_EQUITY"
     return eligible,source
+def assess_page_fundamentals(candidates, eod_date):
+    """Verify candidate fundamentals, generating official XBRL evidence only in ECMS output."""
+    required = (METRICS_PATH, THRESHOLDS_PATH, FILINGS_PATH, EVIDENCE_PATH)
+    if not all(path.exists() for path in required):
+        return assess_fundamentals(candidates, eod_date)
+
+    metrics = pd.read_csv(METRICS_PATH)
+    filings = pd.read_csv(FILINGS_PATH)
+    evidence = pd.read_csv(EVIDENCE_PATH, keep_default_na=False)
+    metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
+    duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
+    metrics_unique = metrics.drop_duplicates("TckrSymb", keep="first").copy()
+    candidate_symbols = set(candidates["TckrSymb"].astype(str).str.upper())
+
+    # The XBRL verifier writes its XML cache beneath repo_root. Give it an ECMS-only
+    # root, and copy only referenced read-only evidence files into that root.
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ephemeral_root = OUTPUT_DIR / "xbrl_ephemeral" / eod_date.isoformat()
+    if ephemeral_root.exists():
+        shutil.rmtree(ephemeral_root)
+    ephemeral_root.mkdir(parents=True, exist_ok=True)
+    repo_root = Path(".").resolve()
+    if "EvidenceFilePath" in evidence.columns:
+        for raw_path in evidence["EvidenceFilePath"].dropna().astype(str).unique():
+            if not raw_path.strip():
+                continue
+            source = (repo_root / raw_path).resolve()
+            try:
+                source.relative_to(repo_root)
+            except ValueError:
+                continue
+            if source.is_file():
+                destination = ephemeral_root / raw_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+
+    verification, verification_summary, filing_summary = run_fundamental_xbrl_audit(
+        metrics_path=METRICS_PATH,
+        filings_path=FILINGS_PATH,
+        evidence_path=EVIDENCE_PATH,
+        output_dir=OUTPUT_DIR,
+        repo_root=ephemeral_root,
+        symbols=candidate_symbols,
+    )
+    candidate_verification = verification[
+        verification["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
+    ] if "TckrSymb" in verification.columns else verification.iloc[0:0]
+    verification_summary.to_csv(OUTPUT_DIR / "fundamental_metric_verification_summary.csv", index=False)
+    filing_summary.to_csv(OUTPUT_DIR / "fundamental_filing_metadata_summary.csv", index=False)
+
+    joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
+    assessed = build_fundamental_shortlist(
+        joined, eod_date.isoformat(), write=False,
+        metric_verification=candidate_verification,
+        require_explicit_thresholds=True,
+        thresholds_path=THRESHOLDS_PATH,
+    )
+    duplicated = assessed["TckrSymb"].astype(str).str.upper().isin(duplicate_symbols)
+    assessed.loc[duplicated, "FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+    assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
+    return assessed
+
 def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
@@ -95,7 +159,7 @@ def run_eod():
     today=datetime.now(IST).date()
     eligible["EODDate"]=today.isoformat(); eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
-    assessed=assess_fundamentals(eligible,today)
+    assessed=assess_page_fundamentals(eligible,today)
     news,news_audit=collect_catalysts(assessed,today)
     assessed=assessed.merge(news_audit,on="TckrSymb",how="left")
     if "NegativeRiskCount" not in assessed: assessed["NegativeRiskCount"]=0
