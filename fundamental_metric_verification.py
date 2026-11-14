@@ -72,6 +72,20 @@ def _clean(value: Any) -> str:
     return str(value).strip()
 
 
+def _metric_source(metric: pd.Series, metric_name: str) -> str:
+    """Return the recorded source for one metric, without trusting a mixed row label."""
+    raw = _clean(metric.get('MetricSourcesJSON'))
+    if not raw:
+        return ''
+    try:
+        sources = json.loads(raw)
+    except (TypeError, ValueError):
+        return ''
+    if not isinstance(sources, dict):
+        return ''
+    return _clean(sources.get(metric_name))
+
+
 def _number(value: Any) -> float | None:
     try:
         n = float(value)
@@ -237,6 +251,12 @@ def _generated_ocf_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
                                  & manual_evidence['FinancialPeriodEnd'].astype(str).str[:10].eq(period)
                                  & manual_evidence['OfficialFilingURL'].astype(str).eq(url)).any())
         if manual_match:
+            continue
+        metric_source = _metric_source(metric, 'OperatingCashFlowINR')
+        if metric_source and metric_source != 'Yahoo Finance via yfinance':
+            diagnostics.append({'TckrSymb': symbol, 'FinancialPeriodEnd': period,
+                                'Status': 'NON_YAHOO_METRIC_SOURCE',
+                                'Reason': f'OperatingCashFlowINR source is {metric_source}; official XBRL reconciliation is not inferred from a mixed/free-source value'})
             continue
         filing_status, filing_reason = _filing_metadata_status(metric, filings)
         if filing_status != 'OFFICIAL_FILING_METADATA_MATCHED':
@@ -515,6 +535,12 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
         for metric_name, tag in (('RevenueGrowthPct', 'RevenueFromOperations'), ('ProfitGrowthPct', 'ProfitLossForPeriod')):
             if metric_name not in metric.index or _number(metric.get(metric_name)) is None:
                 continue
+            metric_source = _metric_source(metric, metric_name)
+            if metric_source and metric_source != 'Yahoo Finance via yfinance':
+                diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
+                                    'Status': 'NON_YAHOO_METRIC_SOURCE',
+                                    'Reason': f'Metric source is {metric_source}; annual XBRL growth reconciliation is not inferred from a mixed/free-source value'})
+                continue
             manual_match = False
             keys = {'TckrSymb', 'MetricName', 'FinancialPeriodEnd', 'OfficialFilingURL'}
             if not manual_evidence.empty and keys.issubset(manual_evidence.columns):
@@ -726,6 +752,9 @@ def _match_evidence(metric: pd.Series, metric_name: str, evidence: pd.DataFrame,
             return ('OFFICIAL_FACT_MAPPING_UNRESOLVED',
                     'Competing NSE operating-cash-flow tags have not been reconciled; no direct-fact mapping is approved', {})
         return 'DERIVED_RECONCILIATION_REQUIRED', 'No approved direct-fact mapping exists; derived metrics require component-level reconciliation', {}
+    metric_source = _metric_source(metric, metric_name)
+    if metric_source and metric_source != 'Yahoo Finance via yfinance':
+        return 'PROVIDER_ONLY', f'Metric source is {metric_source}; no official XBRL verification is inferred from this secondary-source value', {}
     if basis != 'ANNUAL_ALIGNED_STATEMENTS':
         return 'DERIVED_RECONCILIATION_REQUIRED', 'Direct-fact verification requires an approved annual calculation basis; this metric/basis requires reconciliation', {}
     if evidence.empty:
@@ -884,7 +913,7 @@ def build_metric_verification(metrics: pd.DataFrame, filings: pd.DataFrame | Non
                 'TckrSymb': symbol,
                 'MetricName': metric_name,
                 'CachedMetricValue': value,
-                'MetricSource': _clean(metric.get('Source')),
+                'MetricSource': _metric_source(metric, metric_name) or _clean(metric.get('Source')),
                 'FinancialPeriodEnd': _clean(metric.get('FinancialPeriodEnd'))[:10],
                 'PublicationDate': _clean(metric.get('PublicationDate'))[:10],
                 'PublicationDateStatus': _clean(metric.get('PublicationDateStatus')),
@@ -982,5 +1011,4 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
 
