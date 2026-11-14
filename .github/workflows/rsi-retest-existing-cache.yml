@@ -20,10 +20,20 @@ jobs:
           path: |
             data/bhavcopy/
             data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
             data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
             data/inputs/fundamental_metrics.csv
-            data/inputs/fundamental_thresholds.json
-          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-main-${{ github.run_id }}
           restore-keys: |
             nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
 
@@ -49,7 +59,7 @@ jobs:
           echo "Delivery files: $(wc -l < /tmp/delivery_files.txt)"
 
       - name: Run RSI 30/40/50 retest comparison on cache only
-        if: always()
+        if: success()
         run: python rsi_retest_existing_cache.py
 
       - name: Upload research report
