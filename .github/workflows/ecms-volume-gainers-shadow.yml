@@ -1,5 +1,7 @@
 name: ECMS NSE Volume Gainers Shadow Scanner
 on:
+  push:
+    branches: [ecms/phase-0-foundation]
   workflow_dispatch:
     inputs:
       mode:
@@ -16,6 +18,29 @@ concurrency:
   group: ecms-volume-gainers-shadow
   cancel-in-progress: false
 jobs:
+  validate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout isolated ECMS branch
+        uses: actions/checkout@v5
+        with:
+          ref: ecms/phase-0-foundation
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile and test
+        run: |
+          python -m py_compile strategies/ecms/volume_gainers.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_eod.py
+
   eod:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'eod') ||
