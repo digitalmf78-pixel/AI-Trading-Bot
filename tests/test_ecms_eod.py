@@ -54,3 +54,14 @@ def test_expected_latest_completed_session_uses_ist_market_close():
     assert expected_latest_completed_session(datetime(2026, 11, 13, 15, 0, tzinfo=ist)) == date(2026, 11, 12)
     assert expected_latest_completed_session(datetime(2026, 11, 13, 17, 0, tzinfo=ist)) == date(2026, 11, 13)
     assert expected_latest_completed_session(datetime(2026, 11, 14, 10, 0, tzinfo=ist)) == date(2026, 11, 13)
+
+def test_catalyst_classifier_requires_specific_positive_signal():
+    status, _ = classify_catalyst("Company announces routine board meeting")
+    assert status == "NEWS_FOUND_NO_STRONG_CATALYST"
+    status, _ = classify_catalyst("Company receives a work order worth INR 500 crore")
+    assert status == "STRONG_POSITIVE_CATALYST_REVIEW"
+
+def test_negative_risk_overrides_positive_headline_terms():
+    status, flags = classify_catalyst("Company wins a contract but auditor resignation announced")
+    assert status == "NEGATIVE_RISK_REVIEW"
+    assert "auditor resignation" in flags
