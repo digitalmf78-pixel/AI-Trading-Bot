@@ -2,3 +2,4 @@ Start next bounded free-fundamental research batch after successful batch 435656
 
 Missing-metric-only automatic collection enabled; start first batch 2026-11-14T07:00Z.
 2026-11-14T06:58:42.512Z start mainline batch sweep until every Mainboard symbol has >=1 accepted metric
+Continue fundamental-only Mainboard collection after audit; next batch requested 2026-11-14T10:44:04.846Z.
