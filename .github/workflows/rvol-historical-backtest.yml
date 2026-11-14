@@ -8,8 +8,6 @@ on:
       - "test_rvol_strategy_backtest.py"
       - "delivery_history_backfill.py"
       - "test_delivery_history_backfill.py"
-      - "technical_momentum_backtest.py"
-      - "test_technical_momentum_backtest.py"
       - ".github/workflows/rvol-historical-backtest.yml"
   workflow_dispatch:
 
@@ -105,18 +103,6 @@ jobs:
           echo "===== SIGNAL SAMPLE ====="
           head -11 outputs/rvol_strategy_backtest/signals.csv
 
-      - name: Test technical momentum feature calculations
-        run: python -m pytest -q test_technical_momentum_backtest.py
-
-      - name: Run technical momentum and VCP backtest (cache only)
-        run: |
-          set -euo pipefail
-          python -u technical_momentum_backtest.py
-          echo "===== TECHNICAL MOMENTUM COMPARISON ====="
-          cat outputs/technical_momentum_backtest/comparison.csv
-          echo "===== TECHNICAL CACHE COVERAGE ====="
-          cat outputs/technical_momentum_backtest/cache_coverage.csv
-
       - name: Upload historical Delivery A/B backtest reports
         if: always()
         uses: actions/upload-artifact@v6
@@ -125,6 +111,5 @@ jobs:
           path: |
             outputs/rvol_strategy_backtest/
             outputs/delivery_history_backfill/
-            outputs/technical_momentum_backtest/
           if-no-files-found: warn
           retention-days: 30
