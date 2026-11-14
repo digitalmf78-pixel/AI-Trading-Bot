@@ -40,7 +40,7 @@ jobs:
       - name: Compile and test
         run: |
           python -m py_compile strategies/ecms/volume_gainers.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_eod.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_fundamental_research.py
 
   eod:
     if: >-
