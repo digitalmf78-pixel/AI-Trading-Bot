@@ -86,7 +86,7 @@ def add_point_in_time_features(frame: pd.DataFrame) -> pd.DataFrame:
         f["VCP_TWO_CONTRACTIONS_DRYUP"] & f["BREAKOUT_20D"]
     )
     f["FEATURES_MATURE"] = (
-        f["EMA50"].notna() & f["AVG_TRADED_VALUE20"].notna()
+        f["COMPLETE_100_PRICE_SESSIONS"] & f["EMA50"].notna() & f["AVG_TRADED_VALUE20"].notna()
         & f["VCP_RANGE_WIDTH_1"].notna() & f["RVOL20"].notna()
     )
     return f
