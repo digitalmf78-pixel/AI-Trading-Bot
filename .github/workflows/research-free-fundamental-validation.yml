@@ -40,21 +40,44 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check whether every Mainboard symbol is already represented
+        id: completion
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("data/research/fundamental_free_source_batch_manifest.json")
+          complete = False
+          if path.exists():
+              try:
+                  complete = bool(json.loads(path.read_text(encoding="utf-8")).get("collection_complete"))
+              except Exception:
+                  complete = False
+          with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as output:
+              output.write(f"complete={'true' if complete else 'false'}\\n")
+          print(f"Mainboard collection already complete: {complete}")
+          PY
+
       - name: Set up Python
+        if: steps.completion.outputs.complete != 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install project dependencies
+        if: steps.completion.outputs.complete != 'true'
         run: python -m pip install --upgrade pip -r requirements.txt
 
       - name: Run bounded free-source batch
+        if: steps.completion.outputs.complete != 'true'
         env:
           FUNDAMENTAL_RESEARCH_BATCH_OFFSET: ${{ github.event.inputs.batch_offset || '0' }}
           FUNDAMENTAL_RESEARCH_BATCH_SIZE: ${{ github.event.inputs.batch_size || '25' }}
         run: python -u research_free_fundamental_validation.py
 
       - name: Persist research-only cache on this branch
+        if: steps.completion.outputs.complete != 'true'
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
@@ -85,7 +108,7 @@ jobs:
           exit 1
 
       - name: Upload research batch artifact
-        if: always()
+        if: always() && steps.completion.outputs.complete != 'true'
         uses: actions/upload-artifact@v5
         with:
           name: research-free-fundamental-batch
