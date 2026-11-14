@@ -1,0 +1,77 @@
+name: Technical Momentum Historical Backtest (Research Only)
+
+on:
+  pull_request:
+    paths:
+      - "technical_momentum_backtest.py"
+      - "test_technical_momentum_backtest.py"
+      - ".github/workflows/technical-momentum-backtest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: technical-momentum-backtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  technical-backtest:
+    name: Technical momentum/VCP backtest on restored NSE cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v5
+
+      - name: Restore existing NSE Bhavcopy cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            data/bhavcopy/
+          key: nse-bhavcopy-${{ runner.os }}-technical-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-main-
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pytest
+
+      - name: Check cache coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRICE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | wc -l || true)
+          echo "PRICE_CACHE_FILES=$PRICE_COUNT"
+          if [ "$PRICE_COUNT" -lt 200 ]; then
+            echo "::error::At least 200 cached Bhavcopy sessions are required; no network backfill is attempted."
+            exit 1
+          fi
+
+      - name: Run technical feature unit tests
+        run: python -m pytest -q test_technical_momentum_backtest.py
+
+      - name: Run point-in-time technical backtest
+        run: |
+          set -euo pipefail
+          python -u technical_momentum_backtest.py
+          echo "===== TECHNICAL MOMENTUM COMPARISON ====="
+          cat outputs/technical_momentum_backtest/comparison.csv
+          echo "===== CACHE COVERAGE ====="
+          cat outputs/technical_momentum_backtest/cache_coverage.csv
+
+      - name: Upload technical momentum research artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: technical-momentum-backtest-${{ github.run_id }}
+          path: |
+            outputs/technical_momentum_backtest/
+          if-no-files-found: warn
+          retention-days: 30
