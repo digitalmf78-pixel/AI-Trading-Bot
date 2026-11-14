@@ -1,2 +1,2 @@
-Start bounded historical NSE announcement backfill; research branch only.
-Retry after end-date parsing fix.
+Start parallel NSE announcement collection; save research-only cache on this branch.
+Batch size 50; persist with retry/rebase.
