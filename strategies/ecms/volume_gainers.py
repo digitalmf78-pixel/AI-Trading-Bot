@@ -14,6 +14,7 @@ from strategies.ecms.eod import (
 )
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
+from strategies.ecms.fundamental_research import assess_fundamental_research
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -226,6 +227,9 @@ def assess_page_fundamentals(candidates, eod_date):
         require_explicit_thresholds=True,
         thresholds_path=THRESHOLDS_PATH.resolve(),
     )
+    # Independent research scoring uses available provider metrics; official XBRL
+    # verification remains a separate status and the strict shortlist stays intact.
+    assessed = assess_fundamental_research(assessed, candidate_verification)
     duplicated = assessed["TckrSymb"].astype(str).str.upper().isin(duplicate_symbols)
     assessed.loc[duplicated, "FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
     assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
