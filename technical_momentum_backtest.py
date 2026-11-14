@@ -53,9 +53,13 @@ def add_point_in_time_features(frame: pd.DataFrame) -> pd.DataFrame:
     f["AVG_TRADED_VALUE20"] = traded.shift(1).rolling(20, min_periods=20).mean()
     f["LIQUIDITY_PASS"] = f["AVG_TRADED_VALUE20"].ge(LIQUIDITY_MIN_INR)
     f["ABOVE_EMA20"] = close.gt(f["EMA20"])
-    f["EMA_STACK_20_44_50_200"] = (
+    f["ABOVE_EMA200"] = close.gt(f["EMA200"])
+    f["EMA_STACK_20_44_50"] = (
         close.gt(f["EMA20"]) & f["EMA20"].gt(f["EMA44"])
-        & f["EMA44"].gt(f["EMA50"]) & f["EMA50"].gt(f["EMA200"])
+        & f["EMA44"].gt(f["EMA50"])
+    )
+    f["EMA_STACK_20_44_50_200"] = (
+        f["EMA_STACK_20_44_50"] & f["EMA50"].gt(f["EMA200"])
     )
 
     # Three consecutive 20-session blocks: 41-60 sessions ago, 21-40 ago,
