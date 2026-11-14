@@ -632,7 +632,7 @@ def _filing_metadata_status(metric: pd.Series, filings: pd.DataFrame) -> tuple[s
     if _clean(f.get('PublicationDateStatus')).upper() != 'VERIFIED':
         return 'FILING_PUBLICATION_DATE_NOT_VERIFIED', 'Official filing register does not mark publication date VERIFIED'
     parsed_url = urlsplit(url)
-    if (parsed_url.scheme.lower() != 'https' or parsed_url.hostname.lower() != 'nsearchives.nseindia.in'
+    if (parsed_url.scheme.lower() != 'https' or str(parsed_url.hostname or '').lower() != 'nsearchives.nseindia.in'
             or not parsed_url.path.startswith('/corporate/xbrl/')):
         return 'FILING_URL_NOT_OFFICIAL_XBRL_HOST', 'Filing URL must use the exact HTTPS NSE archives host nsearchives.nseindia.in and /corporate/xbrl/ path'
     return 'OFFICIAL_FILING_METADATA_MATCHED', 'Exact symbol, period, URL and publication date matched; this does not verify metric values'
