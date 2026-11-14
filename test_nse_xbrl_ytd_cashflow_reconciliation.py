@@ -42,16 +42,16 @@ def _statement(symbol, fact):
 def test_selects_same_basis_nine_month_filing_and_prefers_revision():
     metrics = pd.DataFrame([{
         "TckrSymb": "SETCO", "FinancialPeriodEnd": "2026-03-31",
-        "OfficialFilingURL": "https://nsearchives.nseindia.com/annual-setco.xml",
+        "OfficialFilingURL": "https://nsearchives.nseindia.in/annual-setco.xml",
         "MetricCalculationBasis": "LEGACY_CACHE_BASIS_UNKNOWN",
         "OperatingCashFlowINR": 2339411000,
         "Source": "Yahoo Finance via yfinance", "CashFlowPeriodBasis": "UNKNOWN",
     }])
     filings = pd.DataFrame([
-        _filing("SETCO", "2026-03-31", "2026-10-23", "Original Standalone Audited", "https://nsearchives.nseindia.com/annual-setco.xml"),
-        _filing("SETCO", "2025-12-31", "2026-02-13", "Original Standalone Un-Audited", "https://nsearchives.nseindia.com/9m-setco-original.xml"),
-        _filing("SETCO", "2025-12-31", "2026-02-13", "Revision Standalone Un-Audited", "https://nsearchives.nseindia.com/9m-setco-revision.xml"),
-        _filing("SETCO", "2025-12-31", "2026-02-13", "Revision Consolidated Un-Audited", "https://nsearchives.nseindia.com/9m-setco-consolidated.xml"),
+        _filing("SETCO", "2026-03-31", "2026-10-23", "Original Standalone Audited", "https://nsearchives.nseindia.in/annual-setco.xml"),
+        _filing("SETCO", "2025-12-31", "2026-02-13", "Original Standalone Un-Audited", "https://nsearchives.nseindia.in/9m-setco-original.xml"),
+        _filing("SETCO", "2025-12-31", "2026-02-13", "Revision Standalone Un-Audited", "https://nsearchives.nseindia.in/9m-setco-revision.xml"),
+        _filing("SETCO", "2025-12-31", "2026-02-13", "Revision Consolidated Un-Audited", "https://nsearchives.nseindia.in/9m-setco-consolidated.xml"),
     ])
     pairs = select_annual_ytd_pairs(metrics, filings, "2026-11-02", limit=5)
     assert len(pairs) == 1
@@ -115,13 +115,13 @@ def test_does_not_derive_dimensioned_or_wrong_unit_cfo():
 def test_no_pair_when_same_reporting_basis_nine_month_filing_is_absent():
     metrics = pd.DataFrame([{
         "TckrSymb": "DONEAR", "FinancialPeriodEnd": "2026-03-31",
-        "OfficialFilingURL": "https://nsearchives.nseindia.com/annual-donear.xml",
+        "OfficialFilingURL": "https://nsearchives.nseindia.in/annual-donear.xml",
         "MetricCalculationBasis": "LEGACY_CACHE_BASIS_UNKNOWN",
         "OperatingCashFlowINR": 156047000,
     }])
     filings = pd.DataFrame([
-        _filing("DONEAR", "2026-03-31", "2026-10-13", "Revision Consolidated Audited", "https://nsearchives.nseindia.com/annual-donear.xml"),
-        _filing("DONEAR", "2025-12-31", "2026-02-09", "Original Standalone Un-Audited", "https://nsearchives.nseindia.com/9m-donear-standalone.xml"),
+        _filing("DONEAR", "2026-03-31", "2026-10-13", "Revision Consolidated Audited", "https://nsearchives.nseindia.in/annual-donear.xml"),
+        _filing("DONEAR", "2025-12-31", "2026-02-09", "Original Standalone Un-Audited", "https://nsearchives.nseindia.in/9m-donear-standalone.xml"),
     ])
     assert select_annual_ytd_pairs(metrics, filings, "2026-11-02", limit=5) == []
 
@@ -141,3 +141,19 @@ def test_missing_official_9m_cfo_fact_stays_wait_and_never_derives():
     assert "EXPECTED_EXACTLY_ONE_CFO_FACT_FOUND_0" in result["Reason"]
     assert pd.isna(result["DerivedQ4CFOINR"])
     assert result["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_rejects_non_official_archive_domain():
+    metrics = pd.DataFrame([{
+        "TckrSymb": "SETCO", "FinancialPeriodEnd": "2026-03-31",
+        "OfficialFilingURL": "https://nsearchives.nseindia.com/annual-setco.xml",
+        "MetricCalculationBasis": "LEGACY_CACHE_BASIS_UNKNOWN",
+        "OperatingCashFlowINR": 2339411000,
+    }])
+    filings = pd.DataFrame([
+        _filing("SETCO", "2026-03-31", "2026-10-23", "Original Standalone Audited",
+                "https://nsearchives.nseindia.com/annual-setco.xml"),
+        _filing("SETCO", "2025-12-31", "2026-02-13", "Original Standalone Un-Audited",
+                "https://nsearchives.nseindia.com/9m-setco.xml"),
+    ])
+    assert select_annual_ytd_pairs(metrics, filings, "2026-11-02", limit=5) == []
