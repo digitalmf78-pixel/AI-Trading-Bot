@@ -1,0 +1,90 @@
+name: Research Historical NSE Announcements Backfill
+
+on:
+  push:
+    branches:
+      - research/historical-announcements-only-2026-11-14
+    paths:
+      - ".research-announcement-trigger"
+      - "research_historical_nse_announcements.py"
+  workflow_dispatch:
+    inputs:
+      batch_offset:
+        description: "Offset among symbols not yet successfully queried"
+        required: false
+        default: "0"
+      batch_size:
+        description: "Symbols per run (max 50)"
+        required: false
+        default: "50"
+      start_date:
+        description: "Historical start date (IST, YYYY-MM-DD)"
+        required: false
+        default: "2025-11-14"
+      end_date:
+        description: "Historical end date (IST, YYYY-MM-DD; blank=today)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: historical-nse-announcements-research
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v5
+        with:
+          ref: research/historical-announcements-only-2026-11-14
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pandas requests
+      - name: Run bounded official NSE announcement backfill
+        env:
+          ANNOUNCEMENT_BATCH_OFFSET: ${{ inputs.batch_offset || '0' }}
+          ANNOUNCEMENT_BATCH_SIZE: ${{ inputs.batch_size || '50' }}
+          ANNOUNCEMENT_START_DATE: ${{ inputs.start_date || '2025-11-14' }}
+          ANNOUNCEMENT_END_DATE: ${{ inputs.end_date }}
+        run: python -u research_historical_nse_announcements.py
+      - name: Persist research-only data on this branch
+        env:
+          TARGET_BRANCH: research/historical-announcements-only-2026-11-14
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/research/historical_nse_announcement*
+          if git diff --cached --quiet; then
+            echo "No new research data to persist."
+            exit 0
+          fi
+          git commit -m "Research: persist historical NSE announcement batch"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "${TARGET_BRANCH}"
+            git rebase "origin/${TARGET_BRANCH}"
+            if git push origin "HEAD:${TARGET_BRANCH}"; then
+              echo "Research announcement cache persisted successfully."
+              exit 0
+            fi
+            git rebase --abort || true
+            sleep $((attempt * 2))
+          done
+          echo "Unable to persist research announcement cache after 5 attempts." >&2
+          exit 1
+      - name: Upload research ledger artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: historical-nse-announcements-backfill
+          path: data/research/historical_nse_announcement*
+          if-no-files-found: warn
