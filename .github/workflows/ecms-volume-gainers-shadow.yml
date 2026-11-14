@@ -1,13 +1,14 @@
-name: ECMS NSE Volume Gainers Shadow Scanner
+name: ECMS VOLUME GAINERS - MANUAL EOD RUN
 on:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       mode:
-        description: "Select isolated scanner stage"
+        description: "Choose EOD research (default) or 09:20 live recheck"
         required: true
         type: choice
+        default: eod
         options: [eod, morning]
   schedule:
     - cron: "15 11 * * 1-5" # 16:45 IST EOD page snapshot
