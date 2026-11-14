@@ -33,7 +33,7 @@ CORE_METRICS = {
     "PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct",
     "PledgePct",
 }
-PERIOD_RE = re.compile(r"^(?:20\\d{2}-\\d{2}-\\d{2}|FY\\s?20\\d{2}|Q[1-4]\\s?FY\\s?20\\d{2})$", re.I)
+PERIOD_RE = re.compile(r"^(?:20\d{2}-\d{2}-\d{2}|FY\s?20\d{2}|Q[1-4]\s?FY\s?20\d{2})$", re.I)
 
 
 def load_universe() -> pd.DataFrame:
@@ -99,6 +99,7 @@ def main() -> None:
     old_cache = pd.read_csv(CACHE_PATH, dtype=str).fillna("") if CACHE_PATH.exists() else pd.DataFrame()
     old_diag = pd.read_csv(DIAGNOSTICS_PATH, dtype=str).fillna("") if DIAGNOSTICS_PATH.exists() else pd.DataFrame()
     cache_rows, diagnostic_rows = [], []
+    rejected_period_count = 0
     shareholding_cache = RESEARCH_DIR / "shareholding_xbrl_cache"
     shareholding_cache.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -148,6 +149,7 @@ def main() -> None:
             # Values with missing/ambiguous periods (e.g. Tickertape period "0")
             # remain in diagnostics only and are not promoted to the research cache.
             if not period_ok:
+                rejected_period_count += 1
                 continue
             detail = providers.get(provider, {})
             cache_rows.append({
@@ -202,9 +204,7 @@ def main() -> None:
         "symbols_processed": len(batch),
         "observations_returned": len(cache_rows),
         "observations_added_to_research_cache": len(new_cache),
-        "observations_rejected_for_invalid_or_missing_period": int(
-            sum(1 for row in diagnostic_rows for _ in [])
-        ),
+        "observations_rejected_for_invalid_or_missing_period": rejected_period_count,
         "research_cache_path": str(CACHE_PATH),
         "diagnostics_path": str(DIAGNOSTICS_PATH),
         "production_cache_modified": False,
