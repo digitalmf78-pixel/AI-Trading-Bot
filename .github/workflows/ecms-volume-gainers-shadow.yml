@@ -84,6 +84,15 @@ jobs:
           echo "CACHE_HIT=${{ steps.shared-cache.outputs.cache-hit }}"
           echo "CACHE_PRIMARY_KEY=${{ steps.shared-cache.outputs.cache-primary-key }}"
           echo "CACHE_MATCHED_KEY=${{ steps.shared-cache.outputs.cache-matched-key }}"
+      - name: Restore ECMS-only Volume Gainers state and fundamental cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/fundamental_workspace/
+          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ecms-vg-state-${{ github.ref_name }}-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -100,11 +109,18 @@ jobs:
       - name: Run EOD page research
         env:
           PYTHONUNBUFFERED: "1"
+          V8_AUTO_FETCH_FUNDAMENTALS: "true"
+          V8_FREE_FUNDAMENTAL_SOURCES: "true"
+          FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN: "25"
+          FREE_FUNDAMENTAL_RETRY_DAYS: "7"
+          V8_FUNDAMENTAL_RETRY_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode eod
-      - name: Save previous EOD page universe for morning recheck
+      - name: Save previous EOD page universe and ECMS fundamental cache for morning recheck
         uses: actions/cache/save@v4
         with:
-          path: data/cache/ecms/volume_gainers_previous_eod.csv
+          path: |
+            data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
         if: always()
@@ -113,6 +129,7 @@ jobs:
           name: ecms-volume-gainers-eod-${{ github.run_id }}
           path: |
             outputs/ecms/volume_gainers_*
+            outputs/ecms/fundamental_*.csv
             outputs/ecms/fundamental_metric_verification*.csv
             outputs/ecms/fundamental_filing_metadata_summary.csv
             outputs/ecms/xbrl_ephemeral/
@@ -129,10 +146,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: main
-      - name: Restore previous EOD page universe
+      - name: Restore previous EOD page universe and ECMS fundamental cache
         uses: actions/cache/restore@v4
         with:
-          path: data/cache/ecms/volume_gainers_previous_eod.csv
+          path: |
+            data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
