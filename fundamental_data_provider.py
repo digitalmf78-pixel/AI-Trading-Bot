@@ -824,11 +824,9 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 )
                 if not yahoo_metrics and free_source_metrics:
                     record["SourceURL"] = metric_urls.get(free_source_metrics[0], "")
-                record["MetricCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
-                record["MetricPeriodAlignmentStatus"] = "UNVERIFIED"
-                record["QuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
-                record["ProviderFetchCalculationBasis"] = "MULTI_SOURCE_METRIC_LEVEL"
-                record["ProviderFetchQuarterlyAlignmentReason"] = "MULTI_SOURCE_METRICS_REQUIRE_METRIC_LEVEL_ALIGNMENT"
+                # Keep the Yahoo statement-alignment basis for Yahoo-sourced metrics.
+                # Per-metric source provenance below keeps free-source values unverified;
+                # a row-level MULTI_SOURCE label must not erase valid aligned evidence.
         except Exception as exc:
             record["FreeSourcesAttemptedAtUTC"] = datetime.now(timezone.utc).isoformat()
             record["FreeSourcesStatus"] = "PROVIDER_ERROR"
@@ -1341,5 +1339,4 @@ def collect_missing_fundamentals(
     pd.DataFrame(diagnostics).to_csv(DIAGNOSTICS_PATH, index=False)
     print(f"[FUNDAMENTAL PROVIDER] Delivery A/B unique symbols={len(symbols)}; provider statuses={pd.Series([d.get('ProviderStatus') for d in diagnostics]).value_counts().to_dict()}; metrics cache={path}; history snapshot={snapshot_path}; diagnostics={DIAGNOSTICS_PATH}")
     return combined
-
 
