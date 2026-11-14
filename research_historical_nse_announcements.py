@@ -110,11 +110,20 @@ def main():
             failed_recent = set(
                 failed.loc[failed["_attempted"].ge(cutoff), "Symbol"].astype(str).str.upper()
             )
-    # Avoid repeatedly retrying the same failed symbols at the head of the
-    # sorted universe; let untouched symbols progress, then retry failures later.
-    eligible = universe[
-        ~universe.Symbol.isin(completed) & ~universe.Symbol.isin(failed_recent)
+    # Always finish the untouched first-pass universe before retrying failures.
+    # This prevents repeated NSE errors on early symbols from starving later stocks.
+    attempted_symbols = set()
+    if not old_diag.empty and "Symbol" in old_diag.columns:
+        attempted_symbols = set(old_diag["Symbol"].astype(str).str.upper())
+    untouched = universe[
+        ~universe.Symbol.isin(completed) & ~universe.Symbol.isin(attempted_symbols)
     ].reset_index(drop=True)
+    if not untouched.empty:
+        eligible = untouched
+    else:
+        eligible = universe[
+            ~universe.Symbol.isin(completed) & ~universe.Symbol.isin(failed_recent)
+        ].reset_index(drop=True)
     batch = eligible.iloc[offset:offset + batch_size]
 
     session = requests.Session()
