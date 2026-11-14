@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:13:25.019472+00:00",
+  "filing_count": 10,
+  "latest_filing": {
+    "broadcast_date": "12-OCT-2026 16:41:07",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213870",
+    "revised": "N",
+    "submission_date": "12-OCT-2026",
+    "symbol": "BALAJEE",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1736195_12102026044102_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BALAJEE"
+}

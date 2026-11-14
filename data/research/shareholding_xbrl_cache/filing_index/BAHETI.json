@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:09:15.266724+00:00",
+  "filing_count": 9,
+  "latest_filing": {
+    "broadcast_date": "14-OCT-2026 19:26:56",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214448",
+    "revised": "N",
+    "submission_date": "14-OCT-2026",
+    "symbol": "BAHETI",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1738129_14102026072652_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BAHETI"
+}
