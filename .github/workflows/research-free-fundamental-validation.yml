@@ -20,6 +20,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: research-fundamental-batch-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   collect:
     if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
