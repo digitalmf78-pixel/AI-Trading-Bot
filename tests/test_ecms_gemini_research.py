@@ -4,7 +4,7 @@ from tools.ecms_gemini_research import extract_json, row_payload
 
 
 def test_extract_json_accepts_json_fenced_response():
-    result = extract_json('\\x60\\x60\\x60json\\n{"symbol":"ABC","research_classification":"GOOD"}\\n\\x60\\x60\\x60')
+    result = extract_json(chr(96) * 3 + 'json\\n{"symbol":"ABC","research_classification":"GOOD"}\\n' + chr(96) * 3)
     assert result["symbol"] == "ABC"
     assert result["research_classification"] == "GOOD"
 
