@@ -161,6 +161,12 @@ def load_existing_metric_map(research_cache=None):
     return existing
 
 
+def symbols_missing_any_accepted_metric(symbols, existing_metrics):
+    """Return symbols with no valid metric in either production or research cache."""
+    return [str(symbol).strip().upper() for symbol in symbols
+            if not existing_metrics.get(str(symbol).strip().upper(), set())]
+
+
 def main() -> None:
     RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
@@ -176,10 +182,14 @@ def main() -> None:
         row["Symbol"]: CORE_METRICS - existing_metrics.get(row["Symbol"], set())
         for row in universe.to_dict("records")
     }
+    eligible_symbols = set(symbols_missing_any_accepted_metric(universe["Symbol"], existing_metrics))
     eligible = []
     for row in universe.to_dict("records"):
         sym = row["Symbol"]
-        if not missing_by_symbol[sym]:
+        # The collection target is at least one period-valid metric per Mainboard
+        # symbol. Once a symbol is represented in either cache, do not keep
+        # re-fetching its remaining metrics in this broad-universe sweep.
+        if sym not in eligible_symbols or not missing_by_symbol[sym]:
             continue
         last = attempts.get(sym)
         if last is not None and now - last < pd.Timedelta(days=cooldown_days):
@@ -301,12 +311,20 @@ def main() -> None:
         )
     quarantine.reindex(columns=QUARANTINE_COLUMNS).to_csv(quarantine_path, index=False)
 
+    represented_before = {sym for sym, metrics in existing_metrics.items() if metrics}
+    represented_after = represented_before | {
+        str(row.get("Symbol", "")).strip().upper() for row in cache_rows
+        if str(row.get("Symbol", "")).strip()
+    }
     manifest = {
         "generated_at_utc": now.isoformat(),
         "universe_source": UNIVERSE_URL,
         "mainboard_universe_count": int(len(universe)),
         "eligible_not_recently_attempted": len(eligible),
         "symbols_with_missing_metrics": sum(bool(v) for v in missing_by_symbol.values()),
+        "symbols_with_any_accepted_metric_before": len(represented_before),
+        "symbols_with_any_accepted_metric_after": len(represented_after),
+        "symbols_without_any_accepted_metric_after": max(0, len(universe) - len(represented_after)),
         "missing_metric_observations_before_batch": sum(len(v) for v in missing_by_symbol.values()),
         "batch_offset": batch_offset,
         "batch_size": batch_size,
@@ -325,7 +343,8 @@ def main() -> None:
         "master_spec_modified": False,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "next_batch_offset": batch_offset + len(batch),
-        "collection_complete": len(eligible) == 0,
+        "collection_complete": len(represented_after) >= len(universe),
+        "collection_completion_criterion": "every NSE Mainboard symbol has at least one period-valid metric in production or research cache",
         "symbols_fully_covered": int(len(universe) - sum(bool(v) for v in missing_by_symbol.values())),
         "note": "Research cache only. Non-NSE provider metrics remain unverified and must be reconciled before scanner scoring/backtests. Invalid/missing periods are excluded.",
     }
