@@ -90,7 +90,8 @@ def main():
     batch_size = max(1, min(50, int(os.getenv("ANNOUNCEMENT_BATCH_SIZE", "15"))))
     offset = max(0, int(os.getenv("ANNOUNCEMENT_BATCH_OFFSET", "0")))
     start = pd.Timestamp(os.getenv("ANNOUNCEMENT_START_DATE", "2025-11-14")).normalize()
-    end = pd.Timestamp(os.getenv("ANNOUNCEMENT_END_DATE", pd.Timestamp.now(tz="Asia/Kolkata").date().isoformat())).normalize()
+    end_value = os.getenv("ANNOUNCEMENT_END_DATE", "").strip() or pd.Timestamp.now(tz="Asia/Kolkata").date().isoformat()
+    end = pd.Timestamp(end_value).normalize()
     if end < start:
         raise ValueError("ANNOUNCEMENT_END_DATE must be on/after ANNOUNCEMENT_START_DATE")
 
