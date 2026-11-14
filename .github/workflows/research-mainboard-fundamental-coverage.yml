@@ -1,0 +1,41 @@
+name: Research-only Dated NSE Mainboard Fundamental Coverage
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/research_mainboard_fundamental_coverage.py"
+      - "test_research_mainboard_fundamental_coverage.py"
+      - ".github/workflows/research-mainboard-fundamental-coverage.yml"
+      - "data/inputs/fundamental_metrics.csv"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-mainboard-fundamental-coverage
+  cancel-in-progress: false
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install research dependencies
+        run: python -m pip install --upgrade pip pandas pytest
+      - name: Run unit tests
+        run: python -m pytest -q test_research_mainboard_fundamental_coverage.py
+      - name: Fetch official NSE universe and compare cache
+        run: python -u scripts/research_mainboard_fundamental_coverage.py
+      - name: Upload dated coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: research-mainboard-fundamental-coverage-${{ github.run_id }}
+          path: outputs/research_mainboard_coverage/
+          if-no-files-found: error
