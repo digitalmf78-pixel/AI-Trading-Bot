@@ -5,6 +5,7 @@ on:
   # chains bounded batches sequentially; manual dispatch remains available.
   push:
     branches:
+      - main
       - research/free-fundamental-source-validation-2026-11-14
     paths:
       - ".research-batch-trigger"
