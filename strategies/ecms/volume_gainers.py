@@ -101,6 +101,7 @@ def assess_page_fundamentals(candidates, eod_date):
     never modified by this shadow scanner.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ecms_output_dir = OUTPUT_DIR.resolve()
     candidate_symbols = set(candidates["TckrSymb"].astype(str).str.strip().str.upper())
     workspace = (STATE_DIR / "fundamental_workspace").resolve()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -137,7 +138,7 @@ def assess_page_fundamentals(candidates, eod_date):
         evidence.to_csv(workspace_evidence, index=False)
 
     repo_root = Path.cwd().resolve()
-    ephemeral_root = (OUTPUT_DIR.resolve() / "xbrl_ephemeral" / eod_date.isoformat()).resolve()
+    ephemeral_root = (ecms_output_dir / "xbrl_ephemeral" / eod_date.isoformat()).resolve()
     if ephemeral_root.exists():
         shutil.rmtree(ephemeral_root)
     ephemeral_root.mkdir(parents=True, exist_ok=True)
@@ -164,7 +165,7 @@ def assess_page_fundamentals(candidates, eod_date):
         pd.DataFrame([{
             "Status": "FUNDAMENTAL_COLLECTION_ERROR",
             "Reason": f"{type(exc).__name__}: {str(exc)[:500]}",
-        }]).to_csv(OUTPUT_DIR / "fundamental_collection_error.csv", index=False)
+        }]).to_csv(ecms_output_dir / "fundamental_collection_error.csv", index=False)
         return failed
     finally:
         os.chdir(repo_root)
@@ -203,17 +204,17 @@ def assess_page_fundamentals(candidates, eod_date):
             metrics_path=workspace_metrics,
             filings_path=workspace_filings,
             evidence_path=workspace_evidence,
-            output_dir=OUTPUT_DIR.resolve(),
+            output_dir=ecms_output_dir,
             repo_root=ephemeral_root,
             symbols=candidate_symbols,
         )
-        verification_summary.to_csv(OUTPUT_DIR / "fundamental_metric_verification_summary.csv", index=False)
-        filing_summary.to_csv(OUTPUT_DIR / "fundamental_filing_metadata_summary.csv", index=False)
+        verification_summary.to_csv(ecms_output_dir / "fundamental_metric_verification_summary.csv", index=False)
+        filing_summary.to_csv(ecms_output_dir / "fundamental_filing_metadata_summary.csv", index=False)
     except Exception as exc:
         pd.DataFrame([{
             "Status": "XBRL_AUDIT_WAIT_FOR_DATA",
             "Reason": f"{type(exc).__name__}: {str(exc)[:500]}",
-        }]).to_csv(OUTPUT_DIR / "fundamental_xbrl_audit_error.csv", index=False)
+        }]).to_csv(ecms_output_dir / "fundamental_xbrl_audit_error.csv", index=False)
 
     candidate_verification = verification[
         verification["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
@@ -239,7 +240,7 @@ def assess_page_fundamentals(candidates, eod_date):
         (workspace / "outputs" / "v8_fundamental_provider_diagnostics.csv", "fundamental_provider_diagnostics.csv"),
     ]:
         if source.exists():
-            shutil.copy2(source, OUTPUT_DIR / name)
+            shutil.copy2(source, ecms_output_dir / name)
     return assessed
 
 def attach_page_rvol(candidates, eod_date):
