@@ -74,7 +74,7 @@ jobs:
           FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN: "25"
           FREE_FUNDAMENTAL_RETRY_DAYS: "1"
           V8_FUNDAMENTAL_RETRY_DAYS: "1"
-          V8_FUNDAMENTAL_REFRESH_DAYS: "0"
+          V8_FUNDAMENTAL_REFRESH_DAYS: "-1"
         run: python -m strategies.ecms.volume_gainers --mode eod
       - name: Save ECMS-only fundamental cache
         if: always()
