@@ -311,6 +311,33 @@ def fetch_secondary_news(symbol: str, company: str, start: date, end: date,
     except Exception as exc:
         return [], f"WAIT_FOR_DATA:{type(exc).__name__}:{str(exc)[:180]}"
 
+def classify_catalyst(headline: str) -> tuple[str, str]:
+    """Conservative headline triage; never treats a headline as confirmed financial impact."""
+    text = str(headline or "").lower()
+    negative_terms = (
+        "fraud", "default", "insolvency", "nclt", "sebi penalty", "penalty imposed",
+        "order cancelled", "contract terminated", "auditor resign", "auditor resignation",
+        "rating downgraded", "rating downgrade", "plant shutdown", "fire at", "investigation",
+        "show cause", "litigation", "winding up", "loan default", "pledge increased",
+        "going concern", "qualified opinion", "regulatory action", "ban on",
+    )
+    positive_terms = (
+        "work order", "purchase order", "letter of award", "letter of intent",
+        "contract worth", "contract awarded", "order worth", "received an order",
+        "bagged order", "project awarded", "commercial production", "commissioned",
+        "regulatory approval", "drug approval", "capacity expansion", "new plant",
+        "acquisition completed", "acquisition of", "merger approved", "joint venture",
+        "strategic partnership", "capex", "profit jumped", "profit rises",
+        "revenue rises", "revenue growth", "ebitda rises", "margin expansion",
+    )
+    risks = [term for term in negative_terms if term in text]
+    positives = [term for term in positive_terms if term in text]
+    if risks:
+        return "NEGATIVE_RISK_REVIEW", "|".join(risks)
+    if positives:
+        return "STRONG_POSITIVE_CATALYST_REVIEW", "|".join(positives)
+    return "NEWS_FOUND_NO_STRONG_CATALYST", ""
+
 def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
                       official_fetcher=fetch_official_announcements,
                       secondary_fetcher=fetch_secondary_news) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -330,19 +357,40 @@ def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
         official, official_status = official_fetcher(symbol, start, eod_date)
         secondary, secondary_status = secondary_fetcher(symbol, company, start, eod_date)
         rows = official + secondary
+        strong_count = 0
+        negative_count = 0
+        for row in rows:
+            signal, flags = classify_catalyst(row.get("Headline", ""))
+            row["CatalystSignalStatus"] = signal
+            row["RiskFlags"] = flags
+            strong_count += signal == "STRONG_POSITIVE_CATALYST_REVIEW"
+            negative_count += signal == "NEGATIVE_RISK_REVIEW"
         all_rows.extend(rows)
-        status = ("CATALYST_FOUND" if rows else
-                  "NO_NEWS_FOUND" if official_status == "AVAILABLE" and secondary_status == "AVAILABLE"
-                  else "WAIT_FOR_DATA")
+        if official_status != "AVAILABLE":
+            status = "WAIT_FOR_DATA"
+        elif official:
+            status = "CATALYST_FOUND"
+        elif secondary_status != "AVAILABLE":
+            status = "WAIT_FOR_DATA"
+        elif secondary:
+            status = "CATALYST_FOUND_SECONDARY_ONLY"
+        else:
+            status = "NO_NEWS_FOUND"
+        signal_status = ("NEGATIVE_RISK_REVIEW" if negative_count else
+                         "STRONG_POSITIVE_CATALYST_REVIEW" if strong_count else
+                         "NEWS_FOUND_NO_STRONG_CATALYST" if rows else "NO_CATALYST")
         audit.append({
             "TckrSymb": symbol, "NewsWindowStart": start.isoformat(),
             "NewsWindowEnd": eod_date.isoformat(), "OfficialStatus": official_status,
             "SecondaryStatus": secondary_status, "CatalystStatus": status,
+            "CatalystSignalStatus": signal_status,
+            "StrongCatalystCount": strong_count, "NegativeRiskCount": negative_count,
             "OfficialCount": len(official), "SecondaryCount": len(secondary),
         })
     news_columns = ["TckrSymb", "PublishedDate", "Headline", "Source", "SourceType", "URL", "Impact"]
     audit_columns = ["TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
-                     "SecondaryStatus", "CatalystStatus", "OfficialCount", "SecondaryCount"]
+                     "SecondaryStatus", "CatalystStatus", "CatalystSignalStatus",
+                     "StrongCatalystCount", "NegativeRiskCount", "OfficialCount", "SecondaryCount"]
     return pd.DataFrame(all_rows, columns=news_columns), pd.DataFrame(audit, columns=audit_columns)
 
 def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -372,7 +420,9 @@ def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     fundamentals["EODCandidateStatus"] = fundamentals.apply(
         lambda r: "EOD_RESEARCH_SHORTLIST" if
         str(r.get("FundamentalShortlistStatus", "")).upper() == "PASS"
-        and str(r.get("CatalystStatus", "")).upper() == "CATALYST_FOUND"
+        and str(r.get("CatalystStatus", "")).upper() in {"CATALYST_FOUND", "CATALYST_FOUND_SECONDARY_ONLY"}
+        and str(r.get("CatalystSignalStatus", "")).upper() == "STRONG_POSITIVE_CATALYST_REVIEW"
+        and pd.to_numeric(r.get("NegativeRiskCount", 0), errors="coerce") == 0
         else ("WAIT_FOR_DATA" if
               str(r.get("FundamentalShortlistStatus", "")).upper() == "WAIT_FOR_DATA"
               or str(r.get("CatalystStatus", "")).upper() == "WAIT_FOR_DATA"
