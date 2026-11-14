@@ -2,7 +2,7 @@ name: Research Historical NSE Announcements Scheduled Collection
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "17,47 * * * *"
   workflow_dispatch:
     inputs:
       batch_size:
