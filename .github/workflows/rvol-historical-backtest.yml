@@ -71,8 +71,7 @@ jobs:
           echo "PRICE_CACHE_FILES=$PRICE_COUNT"
           echo "DELIVERY_CACHE_FILES_BEFORE_BACKFILL=$DELIVERY_COUNT"
           echo "===== EXISTING PRICE CACHE DATE RANGE ====="
-          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f
-' 2>/dev/null | sort | { head -1; tail -1; } || true
+          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' 2>/dev/null | sort | { head -1; tail -1; } || true
           if [ "$PRICE_COUNT" -lt 200 ]; then
             echo "::error::Existing Bhavcopy cache has fewer than 200 dates. Backfill will not download or alter price files."
             exit 1
