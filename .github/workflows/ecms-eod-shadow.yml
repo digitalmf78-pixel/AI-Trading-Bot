@@ -1,0 +1,90 @@
+name: ECMS EOD (Manual Shadow Run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_shadow:
+        description: "Run the isolated EOD research scanner (no orders, no production writes)"
+        required: true
+        type: choice
+        options:
+          - "YES - SHADOW ONLY"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecms-eod-shadow-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  eod-shadow:
+    if: ${{ inputs.confirm_shadow == 'YES - SHADOW ONLY' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout ECMS branch
+        uses: actions/checkout@v5
+
+      - name: Restore shared NSE research cache (read-only contract)
+        id: shared-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+            nse-bhavcopy-${{ runner.os }}-main-
+
+      - name: Report cache restore result
+        run: |
+          echo "CACHE_HIT=${{ steps.shared-cache.outputs.cache-hit }}"
+          echo "CACHE_PRIMARY_KEY=${{ steps.shared-cache.outputs.cache-primary-key }}"
+          echo "CACHE_MATCHED_KEY=${{ steps.shared-cache.outputs.cache-matched-key }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile ECMS EOD module
+        run: python -m py_compile strategies/ecms/config.py strategies/ecms/eod.py
+
+      - name: Run ECMS EOD unit tests
+        run: python -m pytest -q tests/test_ecms_eod.py
+
+      - name: Run isolated EOD scanner
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: python -m strategies.ecms.eod
+
+      - name: Upload ECMS-only reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-eod-${{ github.run_id }}
+          path: outputs/ecms/
+          if-no-files-found: warn
+          retention-days: 30
