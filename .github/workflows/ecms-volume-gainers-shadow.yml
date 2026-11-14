@@ -1,0 +1,146 @@
+name: ECMS NSE Volume Gainers Shadow Scanner
+on:
+  push:
+    branches: [ecms/phase-0-foundation]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Select isolated scanner stage"
+        required: true
+        type: choice
+        options: [eod, morning]
+  schedule:
+    - cron: "15 11 * * 1-5" # 16:45 IST EOD page snapshot
+    - cron: "50 3 * * 1-5"  # 09:20 IST morning recheck
+permissions:
+  contents: read
+concurrency:
+  group: ecms-volume-gainers-shadow
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout isolated ECMS branch
+        uses: actions/checkout@v5
+        with:
+          ref: ecms/phase-0-foundation
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile and test
+        run: |
+          python -m py_compile strategies/ecms/volume_gainers.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_eod.py
+
+  eod:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'eod') ||
+      (github.event_name == 'schedule' && github.event.schedule == '15 11 * * 1-5')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout isolated ECMS branch
+        uses: actions/checkout@v5
+        with:
+          ref: ecms/phase-0-foundation
+      - name: Restore shared research inputs read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/cache/universe/
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/inputs/fundamental_metrics.csv
+            data/inputs/fundamental_thresholds.json
+            data/inputs/fundamental_metric_verification_evidence.csv
+            outputs/v8_official_financial_results_filings.csv
+          key: ecms-vg-research-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ecms-vg-research-${{ runner.os }}-
+            nse-bhavcopy-${{ runner.os }}-main-
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile and test
+        run: |
+          python -m py_compile strategies/ecms/volume_gainers.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py
+      - name: Run EOD page research
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: python -m strategies.ecms.volume_gainers --mode eod
+      - name: Save previous EOD page universe for morning recheck
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/ecms/volume_gainers_previous_eod.csv
+          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+      - name: Upload EOD reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-volume-gainers-eod-${{ github.run_id }}
+          path: |
+            outputs/ecms/volume_gainers_*
+            outputs/ecms/fundamental_metric_verification*.csv
+            outputs/ecms/fundamental_filing_metadata_summary.csv
+            outputs/ecms/xbrl_ephemeral/
+          if-no-files-found: warn
+          retention-days: 30
+  morning:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
+      (github.event_name == 'schedule' && github.event.schedule == '50 3 * * 1-5')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout isolated ECMS branch
+        uses: actions/checkout@v5
+        with:
+          ref: ecms/phase-0-foundation
+      - name: Restore previous EOD page universe
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/ecms/volume_gainers_previous_eod.csv
+          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ecms-vg-state-${{ github.ref_name }}-
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile and test
+        run: |
+          python -m py_compile strategies/ecms/volume_gainers.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py
+      - name: Run 09:20 morning recheck
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: python -m strategies.ecms.volume_gainers --mode morning
+      - name: Upload morning report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-volume-gainers-morning-${{ github.run_id }}
+          path: outputs/ecms/volume_gainers_morning_*
+          if-no-files-found: warn
+          retention-days: 30
