@@ -405,3 +405,26 @@ def test_generated_annual_growth_evidence_keeps_provider_mismatch_unverified(tmp
     assert revenue["MetricValueVerificationStatus"] == "PROVIDER_VALUE_MISMATCH"
     assert profit["MetricValueVerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
     assert diagnostics.empty
+
+def test_filing_metadata_rejects_lookalike_archive_hosts(tmp_path):
+    lookalike = 'https://nsearchives.nseindia.in.evil.example/corporate/xbrl/INTEGRATED_FILING_TEST_WEB.xml'
+    metrics = pd.DataFrame([_metric(OfficialFilingURL=lookalike)])
+    filings = _filings()
+    filings.loc[0, 'OfficialFilingURL'] = lookalike
+    detail, _, _ = build_metric_verification(
+        metrics, filings, pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path,
+    )
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['FilingMetadataStatus'] == 'FILING_URL_NOT_OFFICIAL_XBRL_HOST'
+
+
+def test_filing_metadata_rejects_wrong_nse_archive_domain(tmp_path):
+    wrong_domain = 'https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_TEST_WEB.xml'
+    metrics = pd.DataFrame([_metric(OfficialFilingURL=wrong_domain)])
+    filings = _filings()
+    filings.loc[0, 'OfficialFilingURL'] = wrong_domain
+    detail, _, _ = build_metric_verification(
+        metrics, filings, pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path,
+    )
+    row = detail[detail.MetricName.eq('OperatingCashFlowINR')].iloc[0]
+    assert row['FilingMetadataStatus'] == 'FILING_URL_NOT_OFFICIAL_XBRL_HOST'
