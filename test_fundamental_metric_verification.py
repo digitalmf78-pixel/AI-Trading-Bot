@@ -280,7 +280,8 @@ def _annual_growth_xml(path: Path, period_end: str, revenue_ops: float,
                        discontinued: float = 0.0, associates: float = 0.0,
                        entity_scheme: str = "https://www.nseindia.com",
                        entity_identifier: str = "INE000A01000",
-                       issuer_symbol: str = "", issuer_scrip_code: str = ""):
+                       issuer_symbol: str = "", issuer_scrip_code: str = "",
+                       issuer_company_name: str = ""):
     year = int(period_end[:4])
     period_start = f"{year - 1}-04-01"
     total_income = revenue_ops + other_income
@@ -295,6 +296,7 @@ def _annual_growth_xml(path: Path, period_end: str, revenue_ops: float,
   <xbrli:unit id="INR"><xbrli:measure>INR</xbrli:measure></xbrli:unit>
   {f'<Symbol contextRef="FY">{issuer_symbol}</Symbol>' if issuer_symbol else ''}
   {f'<ScripCode contextRef="FY">{issuer_scrip_code}</ScripCode>' if issuer_scrip_code else ''}
+  {f'<NameOfTheCompany contextRef="FY">{issuer_company_name}</NameOfTheCompany>' if issuer_company_name else ''}
   <RevenueFromOperations contextRef="FY" unitRef="INR">{revenue_ops}</RevenueFromOperations>
   <OtherIncome contextRef="FY" unitRef="INR">{other_income}</OtherIncome>
   <Income contextRef="FY" unitRef="INR">{total_income}</Income>
@@ -479,7 +481,7 @@ def test_growth_accepts_scheme_migration_only_with_matching_official_symbol_and_
         tmp_path / "source_current_crosswalk.xml", "2026-03-31",
         revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
         entity_scheme="http://www.sebi.gov.in/in-capmkt/ScripCode",
-        entity_identifier="532768", issuer_symbol="AAA", issuer_scrip_code="532768",
+        entity_identifier="532768", issuer_symbol="AAA", issuer_scrip_code="000000", issuer_company_name="AAA Limited", issuer_company_name="AAA Limited",
     )
     prior_xml = _annual_growth_xml(
         tmp_path / "source_prior_crosswalk.xml", "2025-03-31",
@@ -531,7 +533,7 @@ def test_growth_scheme_migration_rejects_mismatched_scripcode(tmp_path, monkeypa
         tmp_path / "source_prior_wrong_code.xml", "2025-03-31",
         revenue_ops=100.0, other_income=5.0, profit_continuing=20.0,
         entity_scheme="http://www.bseindia.com/in-capmkt/Symbol",
-        entity_identifier="AAA", issuer_symbol="AAA", issuer_scrip_code="532769",
+        entity_identifier="AAA", issuer_symbol="AAA", issuer_scrip_code="532769", issuer_company_name="AAA Limited",
     )
     source_by_url = {current_url: current_xml, prior_url: prior_xml}
 
