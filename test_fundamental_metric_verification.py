@@ -364,6 +364,63 @@ def test_generated_annual_growth_evidence_reconciles_two_official_fy_filings(tmp
     assert set(growth["MetricValueVerificationStatus"]) == {"OFFICIAL_XBRL_VERIFIED"}
 
 
+
+
+def test_growth_fetches_missing_prior_year_filing_by_exact_symbol_period(tmp_path, monkeypatch):
+    import nse_xbrl_fetch
+    import fundamental_official_filings
+    from fundamental_metric_verification import _generated_growth_evidence
+
+    current_url = URL
+    prior_url = "https://nsearchives.nseindia.in/corporate/xbrl/INTEGRATED_FILING_PRIOR_TARGETED.xml"
+    current_xml = _annual_growth_xml(
+        tmp_path / "source_current_targeted.xml", "2026-03-31",
+        revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
+    )
+    prior_xml = _annual_growth_xml(
+        tmp_path / "source_prior_targeted.xml", "2025-03-31",
+        revenue_ops=100.0, other_income=5.0, profit_continuing=20.0,
+    )
+    source_by_url = {current_url: current_xml, prior_url: prior_xml}
+
+    def fake_xml_fetch(url, destination):
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source_by_url[url].read_bytes())
+        return destination
+
+    targeted_calls = []
+    def fake_targeted(asof_date, candidates, **kwargs):
+        targeted_calls.append((asof_date, candidates, kwargs))
+        return pd.DataFrame([{
+            "TckrSymb": "AAA", "FinancialPeriodEnd": "2025-03-31",
+            "PublicationDate": "2025-05-22", "PublicationDateStatus": "VERIFIED",
+            "FilingDescription": "AAA Original Standalone Audited Financial Results",
+            "OfficialFilingURL": prior_url, "OfficialSource": "NSE targeted lookup",
+            "RetrievedAtUTC": "2026-11-14T00:00:00Z",
+        }])
+
+    monkeypatch.setattr(nse_xbrl_fetch, "fetch_official_xbrl_xml", fake_xml_fetch)
+    monkeypatch.setattr(fundamental_official_filings, "_fetch_targeted_nse_filings", fake_targeted)
+    metrics = pd.DataFrame([_metric(
+        AsOfDate="2026-11-13", RevenueGrowthPct=20.0, ProfitGrowthPct=25.0,
+    )])
+    current_filings_only = pd.DataFrame([{
+        "TckrSymb": "AAA", "FinancialPeriodEnd": "2026-03-31",
+        "PublicationDate": "2026-05-20", "PublicationDateStatus": "VERIFIED",
+        "OfficialFilingURL": current_url, "FilingDescription": "AAA Original Standalone Audited Financial Results",
+    }])
+    generated, diagnostics = _generated_growth_evidence(
+        metrics, current_filings_only, pd.DataFrame(columns=EVIDENCE_COLUMNS), tmp_path, {"AAA"}
+    )
+    assert len(targeted_calls) == 1
+    assert targeted_calls[0][1] == [{"TckrSymb": "AAA", "FinancialPeriodEnd": "2025-03-31"}]
+    assert set(generated["MetricName"]) == {"RevenueGrowthPct", "ProfitGrowthPct"}
+    assert diagnostics.empty
+    detail, _, _ = build_metric_verification(metrics, current_filings_only, generated, repo_root=tmp_path)
+    growth = detail[detail["MetricName"].isin(["RevenueGrowthPct", "ProfitGrowthPct"])]
+    assert set(growth["MetricValueVerificationStatus"]) == {"OFFICIAL_XBRL_VERIFIED"}
+
 def test_generated_annual_growth_evidence_keeps_provider_mismatch_unverified(tmp_path, monkeypatch):
     import nse_xbrl_fetch
     from fundamental_metric_verification import _generated_growth_evidence
