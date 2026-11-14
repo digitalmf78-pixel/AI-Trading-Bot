@@ -136,7 +136,7 @@ def assess_fundamental_research(frame, metric_verification=None):
             valuation_points, valuation_available = _valuation_points(row)
             available += valuation_available
             earned += valuation_points
-            coverage = available
+            coverage = available / 105.0 * 100.0
             score = (earned / available * 100.0) if available else None
             if coverage < 60 or score is None:
                 classification = "INSUFFICIENT_DATA"
