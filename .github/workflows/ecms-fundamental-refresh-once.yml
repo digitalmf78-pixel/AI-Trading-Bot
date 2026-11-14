@@ -52,6 +52,11 @@ jobs:
         run: |
           python -m py_compile strategies/ecms/volume_gainers.py fundamental_data_provider.py fundamental_metric_verification.py nse_xbrl_fetch.py
           python -m pytest -q tests/test_ecms_volume_gainers.py test_nse_xbrl_fetch.py
+      - name: Remove stale shared and ECMS fundamentals from this isolated runner
+        run: |
+          rm -f data/inputs/fundamental_metrics.csv
+          rm -rf data/cache/fundamental_history/
+          rm -rf data/cache/ecms/fundamental_workspace/
       - name: Run EOD fundamentals from clean candidate-only cache
         env:
           PYTHONUNBUFFERED: "1"
