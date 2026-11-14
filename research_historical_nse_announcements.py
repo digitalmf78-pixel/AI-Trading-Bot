@@ -99,9 +99,22 @@ def main():
     old_diag = pd.read_csv(DIAGNOSTICS, dtype=str).fillna("") if DIAGNOSTICS.exists() else pd.DataFrame(columns=DIAG_COLUMNS)
     completed = set(old.loc[old.get("IdentityStatus", pd.Series(dtype=str)).eq("EXACT_SYMBOL"), "Symbol"].astype(str).str.upper()) if not old.empty else set()
     # Also remember symbols that were queried successfully but had zero announcements.
+    failed_recent = set()
+    retry_cooldown_hours = max(1, int(os.getenv("ANNOUNCEMENT_FAILED_RETRY_HOURS", "24")))
     if not old_diag.empty and {"Symbol", "Status"}.issubset(old_diag.columns):
         completed.update(old_diag.loc[old_diag.Status.isin(["SUCCESS", "SUCCESS_EMPTY"]), "Symbol"].astype(str).str.upper())
-    eligible = universe[~universe.Symbol.isin(completed)].reset_index(drop=True)
+        if "AttemptedAtUTC" in old_diag.columns:
+            failed = old_diag[old_diag.Status.eq("FAILED")].copy()
+            failed["_attempted"] = pd.to_datetime(failed["AttemptedAtUTC"], errors="coerce", utc=True)
+            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=retry_cooldown_hours)
+            failed_recent = set(
+                failed.loc[failed["_attempted"].ge(cutoff), "Symbol"].astype(str).str.upper()
+            )
+    # Avoid repeatedly retrying the same failed symbols at the head of the
+    # sorted universe; let untouched symbols progress, then retry failures later.
+    eligible = universe[
+        ~universe.Symbol.isin(completed) & ~universe.Symbol.isin(failed_recent)
+    ].reset_index(drop=True)
     batch = eligible.iloc[offset:offset + batch_size]
 
     session = requests.Session()
@@ -189,6 +202,8 @@ def main():
         "symbols_attempted_this_batch": len(batch),
         "symbols_successfully_queried_total": len(success_symbols),
         "symbols_remaining_or_failed": len(failed_symbols),
+        "symbols_failed_recently_deferred": len(failed_recent),
+        "failed_retry_cooldown_hours": retry_cooldown_hours,
         "announcement_rows_total": int(len(combined)),
         "collection_complete": len(success_symbols) >= len(universe),
         "ledger_path": str(LEDGER), "diagnostics_path": str(DIAGNOSTICS),
