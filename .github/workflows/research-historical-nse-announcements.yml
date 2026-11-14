@@ -6,6 +6,7 @@ on:
       - research/historical-announcements-only-2026-11-14
     paths:
       - ".research-announcement-trigger"
+      - "research_historical_nse_announcements.py"
   workflow_dispatch:
     inputs:
       batch_offset:
