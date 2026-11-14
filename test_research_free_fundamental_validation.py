@@ -22,6 +22,36 @@ class FundamentalResearchCollectorTests(unittest.TestCase):
         self.assertTrue(collector.valid_period("ProfitGrowthPct", "FY 2025 -> FY 2026"))
         self.assertFalse(collector.valid_period("ROEPercent", "FY2025->FY2026"))
 
+
+    def test_existing_research_metrics_are_not_requested_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "research.csv"
+            pd.DataFrame([{
+                "Symbol": "ABC", "Metric": "ROEPercent", "Value": "18.2",
+                "FinancialPeriod": "2026-09-30",
+            }, {
+                "Symbol": "ABC", "Metric": "EPS", "Value": "2.4",
+                "FinancialPeriod": "0",
+            }]).to_csv(cache, index=False)
+            with patch.object(collector, "PRODUCTION_CACHE", Path(tmp) / "no-production.csv"), \
+                 patch.object(collector, "CACHE_PATH", cache):
+                found = collector.load_existing_metric_map()
+            self.assertIn("ROEPercent", found["ABC"])
+            self.assertNotIn("EPS", found["ABC"])
+            self.assertEqual(collector.CORE_METRICS - found["ABC"], collector.CORE_METRICS - {"ROEPercent"})
+
+    def test_production_cache_is_read_only_source_for_existing_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            production = Path(tmp) / "production.csv"
+            pd.DataFrame([{
+                "TckrSymb": "XYZ", "ROEPercent": "12.5", "EPS": "",
+            }]).to_csv(production, index=False)
+            with patch.object(collector, "PRODUCTION_CACHE", production), \
+                 patch.object(collector, "CACHE_PATH", Path(tmp) / "no-research.csv"):
+                found = collector.load_existing_metric_map()
+            self.assertEqual(found["XYZ"], {"ROEPercent"})
+            self.assertTrue(production.exists())
+
     def test_diagnostics_prevent_retrying_symbols_with_no_metric_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             diag = Path(tmp) / "diagnostics.csv"
