@@ -17,8 +17,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: free-fundamental-live-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   live-smoke:
+    if: false # Superseded by the bounded research batch collector on PR #99.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
