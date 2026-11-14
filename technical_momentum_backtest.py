@@ -116,8 +116,18 @@ def _profit_factor(values: pd.Series) -> float:
 
 
 def _metric(group: pd.DataFrame, horizon: int) -> dict:
-    ret = pd.to_numeric(group[f"Return{horizon}D_Pct"], errors="coerce").dropna()
-    mfe = pd.to_numeric(group[f"MFE{horizon}D_Pct"], errors="coerce").dropna()
+    # Some setups legitimately produce zero signals. Preserve a complete
+    # comparison row instead of indexing missing columns on an empty frame.
+    return_col = f"Return{horizon}D_Pct"
+    mfe_col = f"MFE{horizon}D_Pct"
+    if return_col not in group.columns:
+        ret = pd.Series(dtype=float)
+    else:
+        ret = pd.to_numeric(group[return_col], errors="coerce").dropna()
+    if mfe_col not in group.columns:
+        mfe = pd.Series(dtype=float)
+    else:
+        mfe = pd.to_numeric(group[mfe_col], errors="coerce").dropna()
     out = {
         f"OutcomeN_{horizon}D": int(len(ret)),
         f"WinRate_{horizon}D_Pct": round(float(ret.gt(0).mean() * 100), 2) if len(ret) else np.nan,
