@@ -112,5 +112,6 @@ jobs:
           path: |
             outputs/technical_momentum_backtest/
             outputs/delivery_momentum_research/
+            outputs/walk_forward_momentum_validation/
           if-no-files-found: warn
           retention-days: 30
