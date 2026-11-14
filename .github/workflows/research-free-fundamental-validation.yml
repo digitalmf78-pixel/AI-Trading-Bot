@@ -8,6 +8,8 @@ on:
       - research/free-fundamental-source-validation-2026-11-14
     paths:
       - ".research-batch-trigger"
+  schedule:
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       batch_offset:
@@ -28,7 +30,7 @@ concurrency:
 
 jobs:
   collect:
-    if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
