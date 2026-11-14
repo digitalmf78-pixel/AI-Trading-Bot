@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:10:48.539758+00:00",
+  "filing_count": 2,
+  "latest_filing": {
+    "broadcast_date": "23-OCT-2026 12:50:56",
+    "date": "09-OCT-2026",
+    "period_end": "2026-10-09",
+    "record_id": "215620",
+    "revised": "Revised",
+    "submission_date": "19-OCT-2026",
+    "symbol": "AGOL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1744408_23102026123249_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AGOL"
+}
