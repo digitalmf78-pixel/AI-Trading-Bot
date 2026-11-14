@@ -4,6 +4,10 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/ecms-fundamental-refresh-once.yml"
+      - "nse_xbrl_fetch.py"
+      - "test_nse_xbrl_fetch.py"
+      - "fundamental_data_provider.py"
+      - "fundamental_metric_verification.py"
 permissions:
   contents: read
 concurrency:
