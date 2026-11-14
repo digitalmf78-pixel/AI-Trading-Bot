@@ -1,5 +1,2 @@
-Start next bounded free-fundamental research batch after successful batch 43565614767 (25 symbols; 394 period-accepted observations; 4 quarantined). Triggered 2026-11-14.
-
-Missing-metric-only automatic collection enabled; start first batch 2026-11-14T07:00Z.
-2026-11-14T06:58:42.512Z start mainline batch sweep until every Mainboard symbol has >=1 accepted metric
-Continue fundamental-only Mainboard collection after audit; next batch requested 2026-11-14T10:44:04.846Z.
+Continue full-universe fundamental collection; collect remaining core metrics per stock.
+Automatic 30-minute loop until first-pass coverage is complete.
