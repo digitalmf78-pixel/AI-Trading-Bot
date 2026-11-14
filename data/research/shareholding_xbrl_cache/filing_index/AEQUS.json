@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:03:14.046265+00:00",
+  "filing_count": 5,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 17:03:21",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214133",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "AEQUS",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1737058_13102026050313_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "AEQUS"
+}
