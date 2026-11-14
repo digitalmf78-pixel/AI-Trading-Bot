@@ -1,2 +1,1 @@
-Continue full-universe fundamental collection with metric-level gap diagnostics.
-Keep automatic 30-minute batches until every Mainboard symbol has been queried.
+Continue first-pass fundamental coverage for all Mainboard stocks; do not re-queue previously attempted symbols before untouched symbols.
