@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T04:51:18.445623+00:00",
+  "filing_count": 1,
+  "latest_filing": {
+    "broadcast_date": "06-OCT-2026 17:48:32",
+    "date": "01-OCT-2026",
+    "period_end": "2026-10-01",
+    "record_id": "213279",
+    "revised": "N",
+    "submission_date": "05-OCT-2026",
+    "symbol": "ACEVECTOR",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1733209_05102026091456_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ACEVECTOR"
+}
