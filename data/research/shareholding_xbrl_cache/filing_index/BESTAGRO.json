@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:31:55.963929+00:00",
+  "filing_count": 12,
+  "latest_filing": {
+    "broadcast_date": "14-OCT-2026 17:28:28",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214401",
+    "revised": "N",
+    "submission_date": "14-OCT-2026",
+    "symbol": "BESTAGRO",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1737924_14102026052823_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BESTAGRO"
+}
