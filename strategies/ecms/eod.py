@@ -141,7 +141,7 @@ def _equity_rows(frame: pd.DataFrame) -> pd.DataFrame:
         data = data[~isin.str.startswith("INF")]
     if "FinInstrmNm" in data.columns:
         names = data["FinInstrmNm"].fillna("").astype(str)
-        data = data[~names.str.contains(r"\\bAMC\\s*-\\s*", case=False, regex=True, na=False)]
+        data = data[~names.str.contains(r"\bAMC\s*-\s*", case=False, regex=True, na=False)]
     data = data[data["SctySrs"].isin({"EQ", "BE", "SM", "ST", "SZ"})]
     data = data[data["TckrSymb"].ne("") & data["TckrSymb"].ne("NAN") &
                 data["TtlTradgVol"].gt(0) & data["ClsPric"].gt(0)]
