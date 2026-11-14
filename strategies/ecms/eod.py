@@ -356,7 +356,8 @@ def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     mainboard, board_source = load_official_mainboard_symbols()
     volume["MainBoardStatus"] = volume["TckrSymb"].map(
         lambda s: "PASS_MAIN_BOARD" if s in mainboard else "EXCLUDED_NOT_IN_OFFICIAL_MAIN_BOARD")
-    mainboard_audit = volume[volume["MainBoardStatus"] == "PASS_MAIN_BOARD"].copy()
+    board_universe_audit = volume.copy()
+    mainboard_audit = board_universe_audit[board_universe_audit["MainBoardStatus"] == "PASS_MAIN_BOARD"].copy()
     candidates = mainboard_audit[mainboard_audit["VolumeScreenStatus"] == "PASS_RVOL_GE_1_5"].copy()
     candidates["EODDate"] = latest.isoformat()
     candidates["MainBoardSource"] = board_source
@@ -378,8 +379,8 @@ def run_eod(eod_date: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
               else "NOT_QUALIFIED"), axis=1)
     fundamentals = fundamentals.sort_values(["EODCandidateStatus", "RVOL"], ascending=[True, False])
     fundamentals.to_csv(OUTPUT_DIR / "eod_candidates.csv", index=False)
-    audit = mainboard_audit.merge(
-        fundamentals.drop(columns=[c for c in mainboard_audit.columns if c in fundamentals.columns and c != "TckrSymb"]),
+    audit = board_universe_audit.merge(
+        fundamentals.drop(columns=[c for c in board_universe_audit.columns if c in fundamentals.columns and c != "TckrSymb"]),
         on="TckrSymb", how="left", suffixes=("", "_ecms"))
     audit.to_csv(OUTPUT_DIR / "eod_audit.csv", index=False)
     news.to_csv(OUTPUT_DIR / "eod_catalysts.csv", index=False)
