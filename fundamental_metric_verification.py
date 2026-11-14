@@ -444,23 +444,46 @@ def _same_xbrl_entity_identity(current: dict, prior: dict) -> bool:
 
 
 def _xbrl_issuer_crosswalk(facts: list[ET.Element]) -> dict[str, str] | None:
-    """Return a strict issuer crosswalk only when the filing states one Symbol and one real ScripCode."""
-    values: dict[str, set[str]] = {'Symbol': set(), 'ScripCode': set()}
+    """Extract issuer facts explicitly reported in the official XBRL filing."""
+    values: dict[str, set[str]] = {'Symbol': set(), 'ScripCode': set(), 'NameOfTheCompany': set()}
     for fact in facts:
         tag = _local(fact.tag)
         if tag not in values or not fact.attrib.get('contextRef'):
             continue
-        value = _clean(fact.text).upper() if tag == 'Symbol' else _clean(fact.text)
+        value = _clean(fact.text)
+        if tag == 'Symbol':
+            value = value.upper()
+        elif tag == 'NameOfTheCompany':
+            value = ''.join(ch for ch in value.upper() if ch.isalnum())
         if value:
             values[tag].add(value)
-    symbols, codes = values['Symbol'], values['ScripCode']
-    if len(symbols) != 1 or len(codes) != 1:
+    symbols, codes, names = values['Symbol'], values['ScripCode'], values['NameOfTheCompany']
+    if len(symbols) != 1 or len(names) != 1 or len(codes) > 1:
         return None
-    symbol, code = next(iter(symbols)), next(iter(codes))
-    # NSE XBRL sometimes emits 000000 as a placeholder; never use it as identity proof.
-    if not symbol or not code.isdigit() or code == '000000':
+    symbol, company_name = next(iter(symbols)), next(iter(names))
+    code = next(iter(codes)) if codes else ''
+    # 000000 is an NSE XBRL placeholder, not a usable security-code identity.
+    if code == '000000':
+        code = ''
+    if not symbol or not company_name or (code and not code.isdigit()):
         return None
-    return {'Symbol': symbol, 'ScripCode': code}
+    return {'Symbol': symbol, 'CompanyName': company_name, 'ScripCode': code}
+
+
+def _matching_xbrl_issuer_crosswalk(current: dict | None, prior: dict | None) -> dict[str, str] | None:
+    """Match filings by exact XBRL Symbol + legal company name, and by ScripCode when both report it."""
+    if not current or not prior:
+        return None
+    if current.get('Symbol') != prior.get('Symbol') or current.get('CompanyName') != prior.get('CompanyName'):
+        return None
+    current_code, prior_code = current.get('ScripCode', ''), prior.get('ScripCode', '')
+    if current_code and prior_code and current_code != prior_code:
+        return None
+    return {
+        'Symbol': current['Symbol'],
+        'CompanyName': current['CompanyName'],
+        'ScripCode': current_code or prior_code,
+    }
 
 
 def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
@@ -609,7 +632,7 @@ def _generated_growth_evidence(metrics: pd.DataFrame, filings: pd.DataFrame,
             same_identity = _same_xbrl_entity_identity(current_component, prior_component)
             current_issuer = _xbrl_issuer_crosswalk(current_facts)
             prior_issuer = _xbrl_issuer_crosswalk(prior_facts)
-            issuer_crosswalk = current_issuer if current_issuer and current_issuer == prior_issuer else None
+            issuer_crosswalk = _matching_xbrl_issuer_crosswalk(current_issuer, prior_issuer)
             if not same_identity and issuer_crosswalk is None:
                 diagnostics.append({'TckrSymb': symbol, 'MetricName': metric_name,
                                     'Status': 'XBRL_ENTITY_MISMATCH', 'Reason': 'Current/prior context identifiers differ and no matching non-placeholder Symbol + ScripCode pair exists in both official filings'})
@@ -770,10 +793,8 @@ def _verify_derived_growth_evidence(metric: pd.Series, metric_name: str,
         recorded_crosswalk = details.get('issuerCrosswalk')
         current_issuer = _xbrl_issuer_crosswalk(parsed[0][2])
         prior_issuer = _xbrl_issuer_crosswalk(parsed[1][2])
-        crosswalk_match = bool(
-            recorded_crosswalk and current_issuer and current_issuer == prior_issuer
-            and current_issuer == recorded_crosswalk
-        )
+        matched_crosswalk = _matching_xbrl_issuer_crosswalk(current_issuer, prior_issuer)
+        crosswalk_match = bool(recorded_crosswalk and matched_crosswalk == recorded_crosswalk)
         if (not same_identity and not crosswalk_match) or parsed[0][3]['UnitMeasure'] != parsed[1][3]['UnitMeasure']:
             return 'XBRL_ENTITY_MISMATCH', 'Current/prior context identity differs and no hash-verified matching Symbol + ScripCode crosswalk exists', ev
         ok, reason = _check_growth_components(metric_name, parsed[0][3], parsed[1][3],
