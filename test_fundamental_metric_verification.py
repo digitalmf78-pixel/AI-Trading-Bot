@@ -13,7 +13,7 @@ from fundamental_metric_verification import (
 )
 
 NS = 'http://www.nseindia.com/xbrl/test'
-URL = 'https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_TEST_WEB.xml'
+URL = 'https://nsearchives.nseindia.in/corporate/xbrl/INTEGRATED_FILING_TEST_WEB.xml'
 
 
 def _metric(**overrides):
@@ -307,7 +307,7 @@ def test_generated_annual_growth_evidence_reconciles_two_official_fy_filings(tmp
     from fundamental_metric_verification import _generated_growth_evidence
 
     current_url = URL
-    prior_url = "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_PRIOR_TEST_WEB.xml"
+    prior_url = "https://nsearchives.nseindia.in/corporate/xbrl/INTEGRATED_FILING_PRIOR_TEST_WEB.xml"
     current_xml = _annual_growth_xml(
         tmp_path / "source_current.xml", "2026-03-31",
         revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
@@ -365,7 +365,7 @@ def test_generated_annual_growth_evidence_keeps_provider_mismatch_unverified(tmp
     from fundamental_metric_verification import _generated_growth_evidence
 
     current_url = URL
-    prior_url = "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_PRIOR_TEST_WEB.xml"
+    prior_url = "https://nsearchives.nseindia.in/corporate/xbrl/INTEGRATED_FILING_PRIOR_TEST_WEB.xml"
     current_xml = _annual_growth_xml(
         tmp_path / "source_current.xml", "2026-03-31",
         revenue_ops=120.0, other_income=10.0, profit_continuing=25.0,
