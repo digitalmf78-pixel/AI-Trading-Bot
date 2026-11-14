@@ -60,6 +60,7 @@ def _number(value):
 def fetch_volume_gainers(session=None):
     client = session or requests.Session()
     client.headers.update(HEADERS)
+    client.headers["Referer"] = NSE_PAGE
     landing = client.get(NSE_PAGE, timeout=REQUEST_TIMEOUT); landing.raise_for_status()
     response = client.get(NSE_API, timeout=REQUEST_TIMEOUT); response.raise_for_status()
     rows = _find_records(response.json())
@@ -123,7 +124,7 @@ def run_eod():
       "wait_for_data":int(assessed["EODResearchStatus"].eq("WAIT_FOR_DATA").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
-    (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\\n",encoding="utf-8")
+    (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def run_morning():
     if not STATE_FILE.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
@@ -168,7 +169,7 @@ def run_morning():
       "disappeared":int(report["MorningStatus"].eq("DISAPPEARED").sum()),
       "new_entries":int(report["MorningStatus"].eq("NEW_ENTRY").sum()),"nse_page":NSE_PAGE,
       "note":"Snapshot at workflow execution time; not a full-day volume comparison."}
-    (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\\n",encoding="utf-8")
+    (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
