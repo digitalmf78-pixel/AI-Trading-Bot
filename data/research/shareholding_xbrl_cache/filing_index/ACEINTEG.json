@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T10:52:07.118239+00:00",
+  "filing_count": 20,
+  "latest_filing": {
+    "broadcast_date": "07-OCT-2026 11:24:34",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213349",
+    "revised": "N",
+    "submission_date": "07-OCT-2026",
+    "symbol": "ACEINTEG",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1733651_07102026112430_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ACEINTEG"
+}
