@@ -6,7 +6,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -62,6 +62,16 @@ def _read_valid_bhavcopy(path: Path, expected: date) -> pd.DataFrame:
         raise ValueError(f"{expected} is not an official NSE equity session")
     return frame
 
+def expected_latest_completed_session(now: datetime | None = None) -> date:
+    """Most recent NSE session whose cash-market EOD data should be complete."""
+    local_now = now.astimezone(IST) if now and now.tzinfo else (now.replace(tzinfo=IST) if now else datetime.now(IST))
+    day = local_now.date()
+    if is_trading_session(day) and local_now.time() < datetime_time(16, 30):
+        day -= timedelta(days=1)
+    while not is_trading_session(day):
+        day -= timedelta(days=1)
+    return day
+
 def discover_latest_session(bhavcopy_dir: Path = BHAVCOPY_DIR) -> tuple[date, Path]:
     if not bhavcopy_dir.exists():
         raise FileNotFoundError("Bhavcopy cache directory is missing")
@@ -81,7 +91,14 @@ def discover_latest_session(bhavcopy_dir: Path = BHAVCOPY_DIR) -> tuple[date, Pa
             errors.append(f"{path.name}:{exc}")
     if not valid:
         raise RuntimeError("WAIT_FOR_DATA: no valid latest complete Bhavcopy session; " + "; ".join(errors[:5]))
-    return max(valid, key=lambda item: item[0])
+    latest_day, latest_path = max(valid, key=lambda item: item[0])
+    expected_day = expected_latest_completed_session()
+    if latest_day != expected_day:
+        raise RuntimeError(
+            f"WAIT_FOR_DATA: latest cached Bhavcopy is {latest_day}; "
+            f"most recent completed NSE session should be {expected_day}"
+        )
+    return latest_day, latest_path
 
 def load_prior_sessions(latest: date, count: int = LOOKBACK_SESSIONS,
                         bhavcopy_dir: Path = BHAVCOPY_DIR) -> list[tuple[date, pd.DataFrame]]:
@@ -112,17 +129,23 @@ def load_prior_sessions(latest: date, count: int = LOOKBACK_SESSIONS,
     return result
 
 def _equity_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    # Match the repository's established listed-equity series allowlist.
+    # Main Board membership is applied separately using official NSE lists.
     data = frame.copy()
     data["TckrSymb"] = data["TckrSymb"].astype(str).str.strip().str.upper()
     data["SctySrs"] = data["SctySrs"].astype(str).str.strip().str.upper()
     data["TtlTradgVol"] = pd.to_numeric(data["TtlTradgVol"], errors="coerce")
     data["ClsPric"] = pd.to_numeric(data["ClsPric"], errors="coerce")
     if "ISIN" in data.columns:
-        isin = data["ISIN"].astype(str).str.upper()
+        isin = data["ISIN"].fillna("").astype(str).str.strip().str.upper()
         data = data[~isin.str.startswith("INF")]
-    data = data[(data["SctySrs"] == "EQ") & data["TckrSymb"].ne("") &
-                data["TckrSymb"].ne("NAN") & data["TtlTradgVol"].gt(0)]
-    return data.drop_duplicates("TckrSymb", keep="last")
+    if "FinInstrmNm" in data.columns:
+        names = data["FinInstrmNm"].fillna("").astype(str)
+        data = data[~names.str.contains(r"\\bAMC\\s*-\\s*", case=False, regex=True, na=False)]
+    data = data[data["SctySrs"].isin({"EQ", "BE", "SM", "ST", "SZ"})]
+    data = data[data["TckrSymb"].ne("") & data["TckrSymb"].ne("NAN") &
+                data["TtlTradgVol"].gt(0) & data["ClsPric"].gt(0)]
+    return data.drop_duplicates("TckrSymb", keep="first")
 
 def calculate_rvol(current: pd.DataFrame, history: list[pd.DataFrame]) -> pd.DataFrame:
     """Current full-session volume divided by mean volume of prior complete sessions."""
