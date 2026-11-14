@@ -212,7 +212,18 @@ def run_backtest(price_dir: Path = PRICE_DIR, output_dir: Path = OUTPUT_DIR) -> 
                     rec[f"OutcomeEndDate{h}D"] = ""
             feature_rows.append(rec)
 
-    signals = pd.DataFrame(feature_rows)
+    signal_columns = [
+        "Date", "Symbol", "Close", "RVOL20", "AvgTradedValue20D_INR",
+        "EMA20", "EMA44", "EMA50", "EMA200",
+        "VCPRangeWidth1Pct", "VCPRangeWidth2Pct", "VCPRangeWidth3Pct",
+        "VCPVolumeRatio3vs2", "Setups",
+        *SETUPS,
+        *[f"Return{h}D_Pct" for h in HORIZONS],
+        *[f"MFE{h}D_Pct" for h in HORIZONS],
+        *[f"MAE{h}D_Pct" for h in HORIZONS],
+        *[f"OutcomeEndDate{h}D" for h in HORIZONS],
+    ]
+    signals = pd.DataFrame(feature_rows, columns=signal_columns)
     signals.to_csv(output_dir / "signals.csv", index=False)
     comparisons = []
     for setup in SETUPS:
