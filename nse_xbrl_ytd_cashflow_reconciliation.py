@@ -21,7 +21,7 @@ from nse_xbrl_fetch import fetch_official_xbrl_xml
 from nse_xbrl_statement_reconciliation import inspect_statement
 
 CFO_TAG = "CashFlowsFromUsedInOperatingActivities"
-ALLOWED_HOST = "nsearchives.nseindia.com"
+ALLOWED_HOST = "nsearchives.nseindia.in"
 DEFAULT_PRIORITY = ("SETCO", "NIRAJ", "LAL", "DONEAR", "DNAMEDIA")
 
 
