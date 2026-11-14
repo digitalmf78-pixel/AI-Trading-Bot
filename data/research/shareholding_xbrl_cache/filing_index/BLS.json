@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:50:51.506868+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "21-OCT-2026 16:41:54",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "216092",
+    "revised": "N",
+    "submission_date": "21-OCT-2026",
+    "symbol": "BLS",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1743046_21102026044149_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BLS"
+}

@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:49:23.510986+00:00",
+  "filing_count": 22,
+  "latest_filing": {
+    "broadcast_date": "09-OCT-2026 10:53:13",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213537",
+    "revised": "N",
+    "submission_date": "09-OCT-2026",
+    "symbol": "BIOFILCHEM",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1734637_09102026105307_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BIOFILCHEM"
+}

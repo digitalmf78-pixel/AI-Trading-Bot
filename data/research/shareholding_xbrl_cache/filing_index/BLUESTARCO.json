@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T06:51:55.674782+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "17-OCT-2026 20:46:12",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215310",
+    "revised": "N",
+    "submission_date": "17-OCT-2026",
+    "symbol": "BLUESTARCO",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1741009_17102026084603_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "BLUESTARCO"
+}
