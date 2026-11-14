@@ -396,7 +396,8 @@ def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
             "StrongCatalystCount": strong_count, "NegativeRiskCount": negative_count,
             "OfficialCount": len(official), "SecondaryCount": len(secondary),
         })
-    news_columns = ["TckrSymb", "PublishedDate", "Headline", "Source", "SourceType", "URL", "Impact"]
+    news_columns = ["TckrSymb", "PublishedDate", "Headline", "Source", "SourceType",
+                    "URL", "Impact", "CatalystSignalStatus", "RiskFlags"]
     audit_columns = ["TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
                      "SecondaryStatus", "CatalystStatus", "CatalystSignalStatus",
                      "StrongCatalystCount", "NegativeRiskCount", "OfficialCount", "SecondaryCount"]
