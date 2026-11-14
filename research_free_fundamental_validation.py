@@ -215,14 +215,21 @@ def main() -> None:
 
     new_cache = pd.DataFrame(cache_rows)
     new_diag = pd.DataFrame(diagnostic_rows)
-    if not old_cache.empty or not new_cache.empty:
-        combined = pd.concat([old_cache, new_cache], ignore_index=True).fillna("")
+    combined = pd.concat([old_cache, pd.DataFrame(cache_rows, columns=CACHE_COLUMNS)], ignore_index=True).fillna("")
+    if not combined.empty:
         keys = ["Symbol", "Metric", "Provider", "FinancialPeriod"]
         combined = combined.drop_duplicates(keys, keep="last").sort_values(keys)
-        combined.to_csv(CACHE_PATH, index=False)
-    if not old_diag.empty or not new_diag.empty:
-        diagnostics = pd.concat([old_diag, new_diag], ignore_index=True).fillna("")
-        diagnostics.to_csv(DIAGNOSTICS_PATH, index=False)
+    combined.reindex(columns=CACHE_COLUMNS).to_csv(CACHE_PATH, index=False)
+
+    diagnostics = pd.concat([old_diag, pd.DataFrame(diagnostic_rows, columns=DIAGNOSTIC_COLUMNS)], ignore_index=True).fillna("")
+    diagnostics.reindex(columns=DIAGNOSTIC_COLUMNS).to_csv(DIAGNOSTICS_PATH, index=False)
+
+    quarantine = pd.concat([old_quarantine, pd.DataFrame(quarantine_rows, columns=QUARANTINE_COLUMNS)], ignore_index=True).fillna("")
+    if not quarantine.empty:
+        quarantine = quarantine.drop_duplicates(
+            ["Symbol", "Metric", "Provider", "ObservedPeriod", "RetrievedAtUTC"], keep="last"
+        )
+    quarantine.reindex(columns=QUARANTINE_COLUMNS).to_csv(quarantine_path, index=False)
 
     manifest = {
         "generated_at_utc": now.isoformat(),
@@ -238,6 +245,8 @@ def main() -> None:
         "observations_rejected_for_invalid_or_missing_period": rejected_period_count,
         "research_cache_path": str(CACHE_PATH),
         "diagnostics_path": str(DIAGNOSTICS_PATH),
+        "quarantine_path": str(quarantine_path),
+        "quarantined_observations": len(quarantine_rows),
         "production_cache_modified": False,
         "production_scanner_modified": False,
         "bhavcopy_or_delivery_cache_modified": False,
