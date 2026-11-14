@@ -155,6 +155,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, output_dir: Path = OUTPUT_DIR) -> 
 
     prices = prices.sort_values(["SYMBOL", "DATE"]).reset_index(drop=True)
     market_dates = official_market_session_dates(prices["DATE"].min(), prices["DATE"].max())
+    pd.DataFrame({"SessionDate": [d.date().isoformat() for d in market_dates]}).to_csv(output_dir / "market_sessions.csv", index=False)
     date_pos = {d: i for i, d in enumerate(market_dates)}
     feature_rows = []
     outcome_rows = []
@@ -199,6 +200,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, output_dir: Path = OUTPUT_DIR) -> 
                 rec[setup] = bool(row.get(setup, False)) if pd.notna(row.get(setup, False)) else False
             for h in HORIZONS:
                 future_dates = market_dates[pos + 1:pos + 1 + h]
+                rec[f"EntryDate{h}D"] = future_dates[0].date().isoformat() if len(future_dates) == h else ""
                 future = indexed.loc[future_dates] if len(future_dates) == h else pd.DataFrame()
                 if len(future) == h and _valid_future(future):
                     entry = float(future.iloc[0]["OPEN"])
@@ -222,6 +224,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, output_dir: Path = OUTPUT_DIR) -> 
         "VCPRangeWidth1Pct", "VCPRangeWidth2Pct", "VCPRangeWidth3Pct",
         "VCPVolumeRatio3vs2", "Setups",
         *SETUPS,
+        *[f"EntryDate{h}D" for h in HORIZONS],
         *[f"Return{h}D_Pct" for h in HORIZONS],
         *[f"MFE{h}D_Pct" for h in HORIZONS],
         *[f"MAE{h}D_Pct" for h in HORIZONS],
