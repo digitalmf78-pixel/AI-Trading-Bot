@@ -40,11 +40,10 @@ def make_folds(sessions, start_idx, end_idx, train_len=20, embargo=20, test_len=
     """Two expanding-window folds, with a 20-session purge before each test."""
     available = end_idx - start_idx + 1
     folds = []
-    cursor = start_idx
+    train_start = start_idx
+    train_end = start_idx + train_len - 1
     fold_no = 1
-    while cursor + train_len + embargo + test_len - 1 <= end_idx:
-        train_start = cursor
-        train_end = cursor + train_len - 1
+    while train_end + embargo + test_len <= end_idx:
         test_start = train_end + embargo + 1
         test_end = test_start + test_len - 1
         folds.append({
@@ -60,7 +59,9 @@ def make_folds(sessions, start_idx, end_idx, train_len=20, embargo=20, test_len=
             "test_start_idx": test_start,
             "test_end_idx": test_end,
         })
-        cursor = test_start
+        # Expanding window: once a test block has elapsed, it becomes
+        # historical training data for the next fold.
+        train_end = test_end
         fold_no += 1
     return folds
 
@@ -122,18 +123,8 @@ def simulate_portfolio(frame, sessions, horizon, cost_bps=0):
     cost_rate = cost_bps / 10_000.0
     for day in sessions:
         day = pd.Timestamp(day)
-        still_open = []
-        for pos in open_positions:
-            if pos["exit_date"] == day:
-                pnl_gross = pos["notional"] * pos["return_pct"] / 100.0
-                cost = pos["notional"] * cost_rate
-                cash += pos["notional"] + pnl_gross - cost
-                completed.append({**pos, "gross_pnl": pnl_gross, "cost": cost,
-                                  "net_pnl": pnl_gross - cost})
-            else:
-                still_open.append(pos)
-        open_positions = still_open
-
+        # Entries execute at today's Open. Positions scheduled to exit at
+        # today's Close still consume cash and a slot at the Open.
         candidates = by_entry.get(day, [])
         for row in candidates:
             if len(open_positions) >= MAX_POSITIONS or cash + 1e-9 < POSITION_SIZE:
@@ -152,6 +143,19 @@ def simulate_portfolio(frame, sessions, horizon, cost_bps=0):
             }
             cash -= pos["notional"]
             open_positions.append(pos)
+
+        # Exits are booked at today's Close, after today's Open entries.
+        still_open = []
+        for pos in open_positions:
+            if pos["exit_date"] == day:
+                pnl_gross = pos["notional"] * pos["return_pct"] / 100.0
+                cost = pos["notional"] * cost_rate
+                cash += pos["notional"] + pnl_gross - cost
+                completed.append({**pos, "gross_pnl": pnl_gross, "cost": cost,
+                                  "net_pnl": pnl_gross - cost})
+            else:
+                still_open.append(pos)
+        open_positions = still_open
 
     # The input cohort is restricted to complete outcomes, so any remaining
     # open position indicates malformed/missing session alignment and is not
@@ -193,7 +197,7 @@ def run(signals_path=SIGNALS, sessions_path=SESSIONS, output_dir=OUT):
         raise ValueError("No complete 20-session outcomes; cannot form temporal folds.")
     start_idx = min(session_pos[x] for x in complete["Date"])
     end_idx = max(session_pos[x] for x in complete["Date"])
-    folds = make_folds(sessions, start_idx, end_idx)
+    folds = make_folds(sessions, start_idx, end_idx, train_len=10, embargo=20, test_len=15)
     if not folds:
         raise ValueError("Insufficient session history for train + 20-session embargo + test folds.")
     fold_rows, portfolio_rows, trade_rows = [], [], []
@@ -241,8 +245,9 @@ def run(signals_path=SIGNALS, sessions_path=SESSIONS, output_dir=OUT):
         "Reason": "Candidate rules were selected after reviewing the prior full-sample comparison; this chronological split is not a pristine holdout.",
         "SessionCount": len(sessions), "SignalDateStart": complete["Date"].min().date(),
         "SignalDateEnd20DComplete": complete["Date"].max().date(),
-        "FoldCount": len(folds), "TrainSessionsPerFold": 20,
-        "EmbargoSessionsPerFold": 20, "TestSessionsPerFold": 20,
+        "FoldCount": len(folds), "InitialTrainSessions": 10,
+        "EmbargoSessionsPerFold": 20, "TestSessionsPerFold": 15,
+        "TrainWindow": "Expanding; each prior test block becomes historical training data",
         "CapitalINR": CAPITAL, "PositionSizeINR": POSITION_SIZE,
         "MaxPositions": MAX_POSITIONS,
         "CostSensitivity": "0, 25, 50 bps round trip; illustrative sensitivity, not broker-calculated charges",
