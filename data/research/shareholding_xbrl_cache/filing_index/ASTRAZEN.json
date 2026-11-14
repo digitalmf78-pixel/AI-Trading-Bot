@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:58:35.874472+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "16-OCT-2026 22:44:40",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215144",
+    "revised": "N",
+    "submission_date": "16-OCT-2026",
+    "symbol": "ASTRAZEN",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1740511_16102026104434_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ASTRAZEN"
+}

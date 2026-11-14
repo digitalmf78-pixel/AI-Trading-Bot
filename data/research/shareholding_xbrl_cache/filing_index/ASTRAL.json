@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:58:30.506655+00:00",
+  "filing_count": 23,
+  "latest_filing": {
+    "broadcast_date": "19-OCT-2026 18:01:04",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215617",
+    "revised": "N",
+    "submission_date": "19-OCT-2026",
+    "symbol": "ASTRAL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1741816_19102026060057_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ASTRAL"
+}

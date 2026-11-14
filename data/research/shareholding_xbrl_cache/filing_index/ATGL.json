@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:58:47.155938+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "10-OCT-2026 13:53:53",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "213702",
+    "revised": "N",
+    "submission_date": "10-OCT-2026",
+    "symbol": "ATGL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1735353_10102026015343_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ATGL"
+}
