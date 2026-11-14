@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T10:55:03.480818+00:00",
+  "filing_count": 21,
+  "latest_filing": {
+    "broadcast_date": "17-OCT-2026 19:32:14",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "215306",
+    "revised": "N",
+    "submission_date": "17-OCT-2026",
+    "symbol": "APOLSINHOT",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1740990_17102026073209_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "APOLSINHOT"
+}
