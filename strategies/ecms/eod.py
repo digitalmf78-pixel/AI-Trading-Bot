@@ -52,6 +52,8 @@ def _read_valid_bhavcopy(path: Path, expected: date) -> pd.DataFrame:
     missing = REQUIRED_BHAVCOPY - set(frame.columns)
     if missing:
         raise ValueError(f"{path.name}: missing columns {sorted(missing)}")
+    if len(frame) < 500:
+        raise ValueError(f"{path.name}: suspiciously incomplete Bhavcopy ({len(frame)} rows; expected at least 500)")
     raw_dates = pd.to_datetime(frame["BizDt"], errors="coerce").dt.date.dropna().unique()
     if set(raw_dates) != {expected}:
         raise ValueError(f"{path.name}: internal BizDt does not match filename/session {expected}")
@@ -183,12 +185,17 @@ def assess_fundamentals(candidates: pd.DataFrame, eod_date: date) -> pd.DataFram
     metrics = pd.read_csv(METRICS_PATH)
     verification = pd.read_csv(METRIC_VERIFICATION_PATH)
     # Never refresh the shared metrics cache from this isolated workflow.
+    metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
+    duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
     joined = candidates.merge(metrics, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
         metric_verification=verification, require_explicit_thresholds=True,
         thresholds_path=THRESHOLDS_PATH,
     )
+    duplicated = assessed["TckrSymb"].astype(str).str.upper().isin(duplicate_symbols)
+    assessed.loc[duplicated, "FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+    assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
     return assessed
 
 def _exact_issuer_match(text: str, symbol: str, company: str = "") -> bool:
