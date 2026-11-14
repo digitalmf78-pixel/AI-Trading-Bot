@@ -12,8 +12,9 @@ from strategies.ecms.eod import (
 )
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
+from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
-NSE_API = "https://www.nseindia.com/api/live-analysis-volume-gainers"
+NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
 STATE_FILE = STATE_DIR / "volume_gainers_previous_eod.csv"
 REQUEST_TIMEOUT = (8, 20)
@@ -157,6 +158,8 @@ def run_eod():
     eligible,board_source=_eligible_page_equities(page)
     if eligible.empty: raise RuntimeError("WAIT_FOR_DATA: no official Main Board equity symbols found on NSE Volume Gainers page")
     today=datetime.now(IST).date()
+    if not is_trading_session(today):
+        raise RuntimeError(f"WAIT_FOR_DATA: {today} is not an official NSE equity trading session")
     eligible["EODDate"]=today.isoformat(); eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
     assessed=assess_page_fundamentals(eligible,today)
@@ -191,6 +194,9 @@ def run_eod():
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def run_morning():
+    today = datetime.now(IST).date()
+    if not is_trading_session(today):
+        raise RuntimeError(f"WAIT_FOR_DATA: {today} is not an official NSE equity trading session")
     if not STATE_FILE.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
     previous=pd.read_csv(STATE_FILE,dtype={"TckrSymb":str})
     if previous.empty or "TckrSymb" not in previous: raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
