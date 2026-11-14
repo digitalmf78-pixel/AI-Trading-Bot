@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:39:13.639199+00:00",
+  "filing_count": 26,
+  "latest_filing": {
+    "broadcast_date": "21-OCT-2026 18:01:52",
+    "date": "17-OCT-2026",
+    "period_end": "2026-10-17",
+    "record_id": "216179",
+    "revised": "N",
+    "submission_date": "21-OCT-2026",
+    "symbol": "APOLLOPIPE",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1743224_21102026060149_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "APOLLOPIPE"
+}

@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:37:25.637235+00:00",
+  "filing_count": 6,
+  "latest_filing": {
+    "broadcast_date": "13-OCT-2026 14:58:05",
+    "date": "30-SEP-2026",
+    "period_end": "2026-09-30",
+    "record_id": "214047",
+    "revised": "N",
+    "submission_date": "13-OCT-2026",
+    "symbol": "ANTHEM",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_1736823_13102026025758_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ANTHEM"
+}

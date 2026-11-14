@@ -1,0 +1,16 @@
+{
+  "checked_at_utc": "2026-11-14T05:36:23.374101+00:00",
+  "filing_count": 10,
+  "latest_filing": {
+    "broadcast_date": "20-APR-2024 13:35:34",
+    "date": "31-MAR-2024",
+    "period_end": "2024-03-31",
+    "record_id": "188127",
+    "revised": "N",
+    "submission_date": "20-APR-2024",
+    "symbol": "ANKITMETAL",
+    "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/SHP_188127_1103567_20042024013533_WEB.xml"
+  },
+  "status": "DATA_FOUND",
+  "symbol": "ANKITMETAL"
+}
