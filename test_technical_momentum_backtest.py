@@ -49,3 +49,13 @@ def test_empty_setup_still_returns_complete_zero_observation_metrics():
         assert pd.isna(result[f"MedianReturn_{horizon}D_Pct"])
         assert pd.isna(result[f"ProfitFactor_{horizon}D"])
         assert pd.isna(result[f"MFE_GE_15Pct_{horizon}D_Pct"])
+
+
+def test_declared_ema_setups_are_populated_and_200_ema_requires_warmup():
+    f = add_point_in_time_features(_frame())
+    assert pd.isna(f.loc[198, "EMA200"])
+    assert bool(f.loc[198, "ABOVE_EMA200"]) is False
+    assert bool(f.loc[259, "ABOVE_EMA20"]) is True
+    assert bool(f.loc[259, "EMA_STACK_20_44_50"]) is True
+    assert bool(f.loc[259, "ABOVE_EMA200"]) is True
+    assert bool(f.loc[259, "EMA_STACK_20_44_50_200"]) is True
