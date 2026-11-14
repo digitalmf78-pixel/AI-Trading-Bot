@@ -1,0 +1,112 @@
+name: Research Historical NSE Announcements Scheduled Collection
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Symbols per run (max 50)"
+        required: false
+        default: "50"
+      start_date:
+        description: "Historical start date (IST, YYYY-MM-DD)"
+        required: false
+        default: "2025-11-14"
+      end_date:
+        description: "Historical end date (IST, YYYY-MM-DD; blank=today)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: historical-nse-announcements-research
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout announcement research branch
+        uses: actions/checkout@v5
+        with:
+          ref: research/historical-announcements-only-2026-11-14
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether all Mainboard symbols were queried successfully
+        id: completion
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path("data/research/historical_nse_announcement_manifest.json")
+          complete = False
+          if path.exists():
+              try:
+                  complete = bool(json.loads(path.read_text(encoding="utf-8")).get("collection_complete"))
+              except Exception:
+                  complete = False
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"complete={'true' if complete else 'false'}\\n")
+          print(f"Announcement collection already complete: {complete}")
+          PY
+
+      - name: Set up Python
+        if: steps.completion.outputs.complete != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.completion.outputs.complete != 'true'
+        run: python -m pip install --upgrade pip pandas requests
+
+      - name: Run bounded official NSE announcement batch
+        if: steps.completion.outputs.complete != 'true'
+        env:
+          ANNOUNCEMENT_BATCH_OFFSET: "0"
+          ANNOUNCEMENT_BATCH_SIZE: ${{ inputs.batch_size || '50' }}
+          ANNOUNCEMENT_START_DATE: ${{ inputs.start_date || '2025-11-14' }}
+          ANNOUNCEMENT_END_DATE: ${{ inputs.end_date }}
+          ANNOUNCEMENT_FAILED_RETRY_HOURS: "24"
+        run: python -u research_historical_nse_announcements.py
+
+      - name: Persist research-only announcement data
+        if: steps.completion.outputs.complete != 'true'
+        env:
+          TARGET_BRANCH: research/historical-announcements-only-2026-11-14
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/research/historical_nse_announcement*
+          if git diff --cached --quiet; then
+            echo "No new research announcement data to persist."
+            exit 0
+          fi
+          git commit -m "Research: persist historical NSE announcement batch"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "${TARGET_BRANCH}"
+            git rebase "origin/${TARGET_BRANCH}"
+            if git push origin "HEAD:${TARGET_BRANCH}"; then
+              echo "Announcement research cache persisted successfully."
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying after refresh."
+            git rebase --abort || true
+            sleep $((attempt * 2))
+          done
+          echo "Unable to persist announcement research cache after 5 attempts." >&2
+          exit 1
+
+      - name: Upload announcement research artifact
+        if: always() && steps.completion.outputs.complete != 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: historical-nse-announcements-research
+          path: data/research/historical_nse_announcement*
+          if-no-files-found: warn
