@@ -21,7 +21,8 @@ BHAVCOPY_DIR = ROOT / "data/bhavcopy"
 UNIVERSE_DIR = ROOT / "data/cache/universe"
 METRICS_PATH = ROOT / "data/inputs/fundamental_metrics.csv"
 THRESHOLDS_PATH = ROOT / "data/inputs/fundamental_thresholds.json"
-METRIC_VERIFICATION_PATH = ROOT / "outputs/v8_fundamental_metric_verification.csv"
+FILINGS_PATH = ROOT / "outputs/v8_official_financial_results_filings.csv"
+EVIDENCE_PATH = ROOT / "data/inputs/fundamental_metric_verification_evidence.csv"
 OUTPUT_DIR = ROOT / "outputs/ecms"
 LOOKBACK_SESSIONS = 20
 MIN_RVOL = 1.5
@@ -177,14 +178,26 @@ def load_official_mainboard_symbols(universe_dir: Path = UNIVERSE_DIR) -> tuple[
     return symbols, f"NSE_EQUITY_L+SME_CACHE age_hours={max(ages)/3600:.1f}"
 
 def assess_fundamentals(candidates: pd.DataFrame, eod_date: date) -> pd.DataFrame:
-    if not METRICS_PATH.exists() or not THRESHOLDS_PATH.exists() or not METRIC_VERIFICATION_PATH.exists():
+    required = (METRICS_PATH, THRESHOLDS_PATH, FILINGS_PATH, EVIDENCE_PATH)
+    if not all(path.exists() for path in required):
         out = candidates.copy()
         out["FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
-        out["FundamentalShortlistReason"] = "FUNDAMENTAL_METRICS_OR_EXPLICIT_THRESHOLDS_OR_XBRL_VERIFICATION_MISSING"
+        out["FundamentalShortlistReason"] = "FUNDAMENTAL_METRICS_THRESHOLDS_OFFICIAL_FILINGS_OR_EVIDENCE_LEDGER_MISSING"
         return out
     metrics = pd.read_csv(METRICS_PATH)
-    verification = pd.read_csv(METRIC_VERIFICATION_PATH)
-    # Never refresh the shared metrics cache from this isolated workflow.
+    filings = pd.read_csv(FILINGS_PATH)
+    evidence = pd.read_csv(EVIDENCE_PATH, keep_default_na=False)
+    # Verify only against already cached official filing evidence. This ECMS
+    # path never invokes XBRL downloads and never writes to shared cache/ledger.
+    from fundamental_metric_verification import build_metric_verification
+    verification, verification_summary, filing_summary = build_metric_verification(
+        metrics, filings, evidence, repo_root=ROOT
+    )
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    verification.to_csv(OUTPUT_DIR / "fundamental_metric_verification.csv", index=False)
+    verification_summary.to_csv(OUTPUT_DIR / "fundamental_metric_verification_summary.csv", index=False)
+    filing_summary.to_csv(OUTPUT_DIR / "fundamental_filing_metadata_summary.csv", index=False)
+    # Never refresh or mutate the shared metrics, filing register, evidence ledger or XML cache.
     metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
     duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
     joined = candidates.merge(metrics, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
