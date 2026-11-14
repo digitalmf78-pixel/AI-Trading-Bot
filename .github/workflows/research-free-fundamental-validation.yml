@@ -1,8 +1,13 @@
 name: Research Free Fundamental Batch Collection
 
 on:
-  # Collection is manual only. PR commits must never trigger a live batch,
-  # otherwise every code edit can cancel or duplicate a provider collection.
+  # PR/code commits never trigger provider calls. A dedicated marker push
+  # chains bounded batches sequentially; manual dispatch remains available.
+  push:
+    branches:
+      - research/free-fundamental-source-validation-2026-11-14
+    paths:
+      - ".research-batch-trigger"
   workflow_dispatch:
     inputs:
       batch_offset:
@@ -18,8 +23,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: research-fundamental-batch-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: research-fundamental-batch-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   collect:
@@ -84,3 +89,25 @@ jobs:
           name: research-free-fundamental-batch
           path: data/research/
           if-no-files-found: warn
+
+      - name: Queue next bounded batch
+        if: success()
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("data/research/fundamental_free_source_batch_manifest.json").read_text())
+          if int(manifest.get("symbols_processed", 0)) <= 0:
+              print("No eligible symbols remain; batch chain complete.")
+              raise SystemExit(0)
+          Path(".research-batch-trigger").write_text(
+              json.dumps({"previous_run": "${{ github.run_id }}", "next_offset": 0}, sort_keys=True) + "\\n",
+              encoding="utf-8",
+          )
+          PY
+          git add .research-batch-trigger
+          git commit -m "Research: queue next free fundamental batch"
+          git push origin "HEAD:${TARGET_BRANCH}"
