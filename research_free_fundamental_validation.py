@@ -116,7 +116,7 @@ def main() -> None:
     (OUT_DIR / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
     )
-    print("RESEARCH_FREE_FUNDAMENTAL_VALIDATION=" + json.dumps(summary, sort_keys=True))
+    # Keep the existing PR-gated live-smoke artifact contract while storing\n    # the full research report in its dedicated directory.\n    (Path("outputs") / "free_fundamental_live_smoke.csv").write_bytes(\n        (OUT_DIR / "provider_results.csv").read_bytes()\n    )\n    (Path("outputs") / "free_fundamental_live_smoke_summary.json").write_bytes(\n        (OUT_DIR / "summary.json").read_bytes()\n    )\n    print("RESEARCH_FREE_FUNDAMENTAL_VALIDATION=" + json.dumps(summary, sort_keys=True))
 
 
 if __name__ == "__main__":
