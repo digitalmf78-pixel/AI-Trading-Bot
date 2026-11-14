@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout ECMS branch
         uses: actions/checkout@v5
+        with:
+          ref: ecms/phase-0-foundation
 
       - name: Restore shared NSE research cache (read-only contract)
         id: shared-cache
