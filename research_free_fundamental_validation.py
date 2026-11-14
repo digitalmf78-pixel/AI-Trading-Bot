@@ -36,7 +36,7 @@ CORE_METRICS = {
 PERIOD_RE = re.compile(r"^(?:20\d{2}-\d{2}-\d{2}|FY\s?20\d{2}|Q[1-4]\s?FY\s?20\d{2}|[A-Z][a-z]{2}\s20\d{2})$", re.I)
 GROWTH_PERIOD_RE = re.compile(r"^FY\s?20\d{2}\s*->\s*FY\s?20\d{2}$", re.I)
 CACHE_COLUMNS = ["Symbol", "CompanyName", "Metric", "Value", "Provider", "SourceURL", "FinancialPeriod", "RetrievedAtUTC", "VerificationStatus", "ProviderIdentityStatus"]
-DIAGNOSTIC_COLUMNS = ["Symbol", "CompanyName", "Provider", "Status", "Reason", "MetricsObserved", "MetricsPeriodsJSON", "MetricsValuesJSON", "SourceURL", "IdentityStatus", "HTTPDiagnosticsJSON", "AttemptedAtUTC", "ElapsedSeconds"]
+DIAGNOSTIC_COLUMNS = ["Symbol", "CompanyName", "Provider", "Status", "Reason", "RequestedMissingMetricsJSON", "MetricsObserved", "MetricsPeriodsJSON", "MetricsValuesJSON", "SourceURL", "IdentityStatus", "HTTPDiagnosticsJSON", "AttemptedAtUTC", "ElapsedSeconds"]
 QUARANTINE_COLUMNS = ["Symbol", "CompanyName", "Metric", "Value", "Provider", "SourceURL", "ObservedPeriod", "RetrievedAtUTC", "RejectionReason"]
 
 
@@ -232,6 +232,7 @@ def main() -> None:
                 "Provider": provider,
                 "Status": detail.get("status", "UNKNOWN"),
                 "Reason": str(detail.get("reason", ""))[:500],
+                "RequestedMissingMetricsJSON": json.dumps(sorted(missing_by_symbol.get(symbol, set()))),
                 "MetricsObserved": ";".join(sorted(provider_metrics)),
                 "MetricsPeriodsJSON": json.dumps(
                     {m: provider_periods.get(m, "") for m in provider_metrics}, sort_keys=True
