@@ -829,7 +829,12 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 source_value_rows = [{
                     "source": free_source_result.get("metric_sources", {}).get(observed_metric, ""),
                     "value": observed_value,
+                    # Keep the source's own reporting period beside its value.
+                    # Without this, the primary Moneycontrol observation loses
+                    # its period while alternate observations retain theirs.
+                    "period": free_source_result.get("metric_periods", {}).get(observed_metric, ""),
                     "source_url": free_source_result.get("metric_urls", {}).get(observed_metric, ""),
+                    "currency": free_source_result.get("metric_currencies", {}).get(observed_metric, ""),
                 }]
                 source_value_rows.extend(free_source_result.get("metric_alternates", {}).get(observed_metric, []))
                 free_source_values[observed_metric] = source_value_rows
