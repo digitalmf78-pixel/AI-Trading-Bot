@@ -10,8 +10,8 @@ For each eligible NSE Volume Gainer, publish only these seven information groups
 2. **Last five days' company news:** issuer-matched news/announcements, with official and secondary sources clearly distinguished.
 3. **Upcoming company events:** only explicitly announced/confirmed events, with date and source.
 4. **Upcoming result:** next result date only when announced by the company/exchange; otherwise `NOT ANNOUNCED`.
-5. **Valuation:** Cheap / Fair / Expensive only when comparable valuation evidence is available; otherwise `NOT AVAILABLE`. Share price alone is not valuation.
-6. **Bulk deals / Block deals:** exchange-disclosed deal date, buyer, seller, quantity and price. Show this information for fundamental-PASS stocks; it is informational and never a rejection condition.
+5. **Valuation:** Indicative Cheap / Fair / Expensive from available P/E, PEG, P/B or EV/EBITDA multiples, with source, as-of date and basis shown; otherwise `NOT AVAILABLE`. These fixed multiple bands are not peer-adjusted and share price alone is not valuation.
+6. **Bulk deals / Block deals:** NSE exchange-disclosed deals over the latest 30 calendar days, including deal date, client name/side, quantity and price. Show this information for fundamental-PASS stocks; it is informational and never a rejection condition.
 7. **RVOL:** current volume relative to the prior 20 completed sessions' average volume. Display the value and data status; RVOL is informational only and never a rejection condition.
 
 **No non-fundamental field may reject, qualify, rank-gate or suppress a stock.** News sentiment, upcoming events/results, valuation, bulk/block deals and RVOL are context only. Missing context is shown as `NOT AVAILABLE` and does not reject a fundamental-PASS stock. Do not add technical, sector, catalyst, volume or research-score rejection gates.
