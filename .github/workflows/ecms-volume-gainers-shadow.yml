@@ -10,11 +10,6 @@ on:
         type: choice
         default: eod
         options: [eod, morning]
-      ai_research:
-        description: "Run optional Gemini web-grounded research on the EOD stock list (requires GEMINI_API_KEY secret)"
-        required: false
-        type: boolean
-        default: false
   schedule:
     - cron: "15 11 * * 1-5" # 16:45 IST EOD page snapshot
     - cron: "50 3 * * 1-5"  # 09:20 IST morning recheck
@@ -44,8 +39,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py tools/ecms_gemini_research.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_gemini_research.py
+          python -m py_compile strategies/ecms/volume_gainers.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py
 
   eod:
     if: >-
@@ -109,7 +104,7 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py tools/ecms_gemini_research.py
+          python -m py_compile strategies/ecms/volume_gainers.py
           python -m pytest -q tests/test_ecms_volume_gainers.py
       - name: Run EOD page research
         env:
@@ -121,12 +116,6 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode eod
-      - name: Optional Gemini web-grounded fundamental research pilot
-        if: ${{ inputs.ai_research == true }}
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.8-flash
-        run: python tools/ecms_gemini_research.py
       - name: Save previous EOD page universe and ECMS fundamental cache for morning recheck
         uses: actions/cache/save@v4
         with:
@@ -148,7 +137,6 @@ jobs:
             outputs/ecms/v8_fundamental_evidence_generation_diagnostics.csv
             outputs/ecms/fundamental_filing_metadata_summary.csv
             outputs/ecms/xbrl_ephemeral/
-            outputs/ecms_gemini/
           if-no-files-found: warn
           retention-days: 30
   morning:
@@ -182,8 +170,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py tools/ecms_gemini_research.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_gemini_research.py
+          python -m py_compile strategies/ecms/volume_gainers.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py
       - name: Run 09:20 morning recheck
         env:
           PYTHONUNBUFFERED: "1"
