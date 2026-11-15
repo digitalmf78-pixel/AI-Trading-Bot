@@ -197,6 +197,22 @@ def build_fundamental_source_compilation(
     result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     result["TckrSymb"] = result["TckrSymb"].astype(str).str.strip().str.upper()
     result["MetricName"] = result["MetricName"].astype(str).str.strip()
+    # Compare only observations with an identical symbol, metric, period, basis,
+    # and unit. Missing/misaligned metadata is deliberately not compared.
+    comparable = ["TckrSymb", "MetricName", "FinancialPeriodEnd", "CalculationBasis", "Unit"]
+    for _, group in result.groupby(comparable, dropna=False, sort=False):
+        values = pd.to_numeric(group["MetricValue"], errors="coerce").dropna()
+        if len(group) < 2 or len(values) < 2:
+            continue
+        spread = float(values.max() - values.min())
+        tolerance = max(0.01, float(values.abs().max()) * 0.005)
+        if spread > tolerance:
+            reason = (
+                f"Aligned-source values differ by {spread:g}; "
+                f"comparison tolerance {tolerance:g} (0.5% relative / 0.01 absolute)"
+            )
+            result.loc[group.index, "MismatchStatus"] = "MISMATCH"
+            result.loc[group.index, "MismatchReason"] = reason
     return result.sort_values(
         ["TckrSymb", "MetricName", "Source", "FinancialPeriodEnd"], kind="stable"
     ).reset_index(drop=True)
