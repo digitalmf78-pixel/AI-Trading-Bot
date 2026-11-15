@@ -17,8 +17,8 @@ from typing import Any
 import pandas as pd
 import requests
 
-INPUT_PATH = Path("outputs/volume_gainers_eod_research.csv")
-NEWS_PATH = Path("outputs/volume_gainers_catalysts.csv")
+INPUT_PATH = Path("outputs/ecms/volume_gainers_eod_research.csv")
+NEWS_PATH = Path("outputs/ecms/volume_gainers_catalysts.csv")
 OUTPUT_DIR = Path("outputs/ecms_gemini")
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 DEFAULT_MODEL = "gemini-2.5-flash"
