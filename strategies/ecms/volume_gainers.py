@@ -305,8 +305,26 @@ def run_eod():
     page.to_csv(OUTPUT_DIR/"volume_gainers_page_raw.csv",index=False)
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
     STATE_DIR.mkdir(parents=True,exist_ok=True)
-    state=eligible[["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
-      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]].copy()
+    state_columns=["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
+      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]
+    for column in ("FundamentalShortlistStatus","FundamentalResearchClassification",
+                   "FundamentalResearchScore","FundamentalResearchCoveragePct",
+                   "FundamentalResearchProvenanceStatus"):
+        if column in assessed.columns:
+            state_columns.append(column)
+    state=assessed[state_columns].copy()
+    state=state.rename(columns={
+      "FundamentalShortlistStatus":"EODFundamentalShortlistStatus",
+      "FundamentalResearchClassification":"EODFundamentalResearchClassification",
+      "FundamentalResearchScore":"EODFundamentalResearchScore",
+      "FundamentalResearchCoveragePct":"EODFundamentalResearchCoveragePct",
+      "FundamentalResearchProvenanceStatus":"EODFundamentalResearchProvenanceStatus"})
+    state["EODStrongFundamentalStatus"]=state.apply(
+      lambda r: "STRONG_EOD" if
+        str(r.get("EODFundamentalShortlistStatus","")).upper()=="PASS" and
+        str(r.get("EODFundamentalResearchClassification","")).upper()=="STRONG" and
+        _number(r.get("EODFundamentalResearchCoveragePct")) is not None and
+        float(r.get("EODFundamentalResearchCoveragePct"))>=80 else "NOT_STRONG_EOD",axis=1)
     state.to_csv(STATE_FILE,index=False)
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
@@ -316,6 +334,15 @@ def run_eod():
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
+def _strong_fundamental_mask(frame):
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    shortlist = frame.get("FundamentalShortlistStatus", pd.Series("", index=frame.index)).astype(str).str.upper()
+    classification = frame.get("FundamentalResearchClassification", pd.Series("", index=frame.index)).astype(str).str.upper()
+    coverage = pd.to_numeric(frame.get("FundamentalResearchCoveragePct", pd.Series(pd.NA, index=frame.index)), errors="coerce")
+    return shortlist.eq("PASS") & classification.eq("STRONG") & coverage.ge(80)
+
+
 def run_morning():
     today = datetime.now(IST).date()
     if not is_trading_session(today):
@@ -330,42 +357,91 @@ def run_morning():
     live=fetch_volume_gainers()
     mainboard,board_source=load_official_mainboard_symbols()
     live=live[live["TckrSymb"].isin(mainboard)].copy()
+    if live.empty:
+        raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
+
+    # Run the same fundamental framework on every eligible symbol visible now,
+    # including repeated EOD symbols and new morning entries. The collector
+    # reuses complete ECMS cache rows and retries incomplete rows under ECMS policy.
+    live["EODDate"]=expected_eod
+    live["MorningDate"]=today.isoformat()
+    live["MainBoardSource"]=board_source
+    morning_assessed=assess_page_fundamentals(live,today)
+    if "FundamentalShortlistStatus" not in morning_assessed:
+        morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
+    if "FundamentalResearchClassification" not in morning_assessed:
+        morning_assessed["FundamentalResearchClassification"]="INSUFFICIENT_DATA"
+    morning_assessed["MorningStrongFundamentalStatus"] = (
+        _strong_fundamental_mask(morning_assessed).map({True:"STRONG_MORNING",False:"NOT_STRONG_MORNING"})
+    )
+
     previous_symbols=set(previous["TckrSymb"].astype(str).str.upper())
     live_symbols=set(live["TckrSymb"].astype(str).str.upper())
     live_by_symbol=live.set_index("TckrSymb",drop=False)
+    morning_by_symbol=morning_assessed.set_index("TckrSymb",drop=False)
+    previous_by_symbol=previous.set_index("TckrSymb",drop=False)
     rows=[]
-    for _,old in previous.iterrows():
-        symbol=str(old["TckrSymb"]).upper()
+    all_symbols=sorted(previous_symbols | live_symbols)
+    for symbol in all_symbols:
+        old=previous_by_symbol.loc[symbol].to_dict() if symbol in previous_by_symbol.index else {}
         current=live_by_symbol.loc[symbol].to_dict() if symbol in live_by_symbol.index else {}
+        assessed=morning_by_symbol.loc[symbol].to_dict() if symbol in morning_by_symbol.index else {}
         present=symbol in live_symbols
-        rows.append({"TckrSymb":symbol,"CompanyName":old.get("CompanyName",""),
-          "EODDate":old.get("EODDate",""),"MorningDate":datetime.now(IST).date().isoformat(),
-          "MorningStatus":"REPEATED" if present else "DISAPPEARED",
-          "EODPageVolume":old.get("PageVolume"),"MorningPageVolume":current.get("PageVolume"),
+        eod_strong=str(old.get("EODStrongFundamentalStatus","")).upper()=="STRONG_EOD"
+        morning_strong=str(assessed.get("MorningStrongFundamentalStatus","")).upper()=="STRONG_MORNING"
+        if eod_strong and present and morning_strong:
+            confirmation="DOUBLE_CONFIRMED_EOD_MORNING"
+        elif morning_strong:
+            confirmation="UNDER_OBSERVATION_MORNING"
+        elif eod_strong and present:
+            confirmation="EOD_STRONG_MORNING_NOT_CONFIRMED"
+        elif eod_strong and not present:
+            confirmation="STRONG_EOD_DISAPPEARED_MORNING"
+        else:
+            confirmation="NOT_STRONG"
+        rows.append({
+          "TckrSymb":symbol,
+          "CompanyName":current.get("CompanyName",old.get("CompanyName","")),
+          "EODDate":old.get("EODDate",""),
+          "MorningDate":today.isoformat(),
+          "MorningStatus":"REPEATED" if symbol in previous_symbols and present else
+             "DISAPPEARED" if symbol in previous_symbols else "NEW_ENTRY",
+          "EODPageVolume":old.get("PageVolume"),
+          "MorningPageVolume":current.get("PageVolume"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
+          "EODFundamentalShortlistStatus":old.get("EODFundamentalShortlistStatus",""),
+          "EODFundamentalResearchClassification":old.get("EODFundamentalResearchClassification",""),
+          "EODFundamentalResearchScore":old.get("EODFundamentalResearchScore"),
+          "EODFundamentalResearchCoveragePct":old.get("EODFundamentalResearchCoveragePct"),
+          "EODStrongFundamentalStatus":old.get("EODStrongFundamentalStatus",""),
+          "MorningFundamentalShortlistStatus":assessed.get("FundamentalShortlistStatus",""),
+          "MorningFundamentalResearchClassification":assessed.get("FundamentalResearchClassification",""),
+          "MorningFundamentalResearchScore":assessed.get("FundamentalResearchScore"),
+          "MorningFundamentalResearchCoveragePct":assessed.get("FundamentalResearchCoveragePct"),
+          "MorningStrongFundamentalStatus":assessed.get("MorningStrongFundamentalStatus","NOT_ASSESSED"),
+          "ConfirmationStatus":confirmation,
           "MorningChangePct":current.get("ChangePct"),
           "MorningVolumeChangeTimes1W":current.get("VolumeChangeTimes1W"),
           "MorningVolumeChangeTimes2W":current.get("VolumeChangeTimes2W"),
-          "DataQuality":"LIVE_PAGE_DATA" if present and current.get("PageVolume") is not None else
-            ("PARTIAL_LIVE_DATA" if present else "NOT_ON_CURRENT_PAGE")})
-    for symbol in sorted(live_symbols-previous_symbols):
-        current=live_by_symbol.loc[symbol].to_dict()
-        rows.append({"TckrSymb":symbol,"CompanyName":current.get("CompanyName",""),
-          "EODDate":"","MorningDate":datetime.now(IST).date().isoformat(),"MorningStatus":"NEW_ENTRY",
-          "EODPageVolume":None,"MorningPageVolume":current.get("PageVolume"),"EODLTP":None,
-          "MorningLTP":current.get("LTP"),"MorningChangePct":current.get("ChangePct"),
-          "MorningVolumeChangeTimes1W":current.get("VolumeChangeTimes1W"),
-          "MorningVolumeChangeTimes2W":current.get("VolumeChangeTimes2W"),
-          "DataQuality":"LIVE_PAGE_DATA" if current.get("PageVolume") is not None else "PARTIAL_LIVE_DATA"})
-    report=pd.DataFrame(rows); report["MainBoardSource"]=board_source
+          "DataQuality":"LIVE_PAGE_AND_FUNDAMENTALS" if present and assessed else
+            "NOT_ON_CURRENT_PAGE" if not present else "PARTIAL_LIVE_DATA"})
+    report=pd.DataFrame(rows)
     OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
     report.to_csv(OUTPUT_DIR/"volume_gainers_morning_recheck.csv",index=False)
+    # Preserve the original EOD snapshot; only the fundamental workspace cache
+    # is enriched by the morning assessment.
     summary={"status":"PASS","morning_time_ist":datetime.now(IST).isoformat(),
       "previous_eod_symbols":len(previous_symbols),"current_page_eligible_symbols":len(live_symbols),
       "repeated":int(report["MorningStatus"].eq("REPEATED").sum()),
       "disappeared":int(report["MorningStatus"].eq("DISAPPEARED").sum()),
-      "new_entries":int(report["MorningStatus"].eq("NEW_ENTRY").sum()),"nse_page":NSE_PAGE,
-      "note":"Snapshot at workflow execution time; not a full-day volume comparison."}
+      "new_entries":int(report["MorningStatus"].eq("NEW_ENTRY").sum()),
+      "morning_strong":int(report["MorningStrongFundamentalStatus"].eq("STRONG_MORNING").sum()),
+      "under_observation":int(report["ConfirmationStatus"].eq("UNDER_OBSERVATION_MORNING").sum()),
+      "double_confirmed":int(report["ConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
+      "eod_strong_not_confirmed":int(report["ConfirmationStatus"].isin(
+        ["EOD_STRONG_MORNING_NOT_CONFIRMED","STRONG_EOD_DISAPPEARED_MORNING"]).sum()),
+      "nse_page":NSE_PAGE,
+      "note":"Every eligible 09:20 page candidate receives the ECMS fundamental assessment. DOUBLE_CONFIRMED requires strict PASS and independent STRONG at both EOD and morning checkpoints."}
     (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def main():
