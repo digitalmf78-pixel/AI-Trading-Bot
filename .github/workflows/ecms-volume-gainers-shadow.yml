@@ -139,6 +139,40 @@ jobs:
             outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
+      - name: Send separate ECMS EOD Telegram report
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ECMS_MODE: EOD
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUMMARY_PATH: outputs/ecms/volume_gainers_eod_summary.json
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import requests
+          token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+          if not token or not chat_id:
+              print("ECMS Telegram skipped: Telegram secrets are not configured.")
+              raise SystemExit(0)
+          lines = [f"📊 ECMS EOD FUNDAMENTAL RESEARCH", f"Status: {os.getenv('JOB_STATUS', 'unknown').upper()}"]
+          path = Path(os.getenv("SUMMARY_PATH", ""))
+          if path.is_file():
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("strong_fundamental_handoff","Strong fundamental"),("wait_for_data","Wait for data")]:
+                      if key in data: lines.append(f"{label}: {data[key]}")
+              except Exception as exc:
+                  lines.append(f"Summary unavailable: {type(exc).__name__}")
+          lines.append(f"Run / logs / artifact: {os.getenv('RUN_URL','')}")
+          response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat_id,"text":"\n".join(lines)}, timeout=25)
+          response.raise_for_status()
+          result = response.json()
+          if result.get("ok") is not True: raise RuntimeError(f"Telegram API rejected ECMS EOD message: {result}")
+          print(f"ECMS EOD Telegram delivered. message_id={result.get('result',{}).get('message_id')}")
+          PY
   morning:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
@@ -203,3 +237,36 @@ jobs:
             outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
+      - name: Send separate ECMS 09:20 morning Telegram report
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUMMARY_PATH: outputs/ecms/volume_gainers_morning_summary.json
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import requests
+          token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+          if not token or not chat_id:
+              print("ECMS Telegram skipped: Telegram secrets are not configured.")
+              raise SystemExit(0)
+          lines = ["🌅 ECMS 09:20 MORNING FUNDAMENTAL RECHECK", f"Status: {os.getenv('JOB_STATUS','unknown').upper()}"]
+          path = Path(os.getenv("SUMMARY_PATH", ""))
+          if path.is_file():
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("morning_strong","Strong morning"),("under_observation","Under observation"),("double_confirmed","Double confirmed EOD + morning"),("morning_wait_for_data","Wait for data")]:
+                      if key in data: lines.append(f"{label}: {data[key]}")
+              except Exception as exc:
+                  lines.append(f"Summary unavailable: {type(exc).__name__}")
+          lines.append(f"Run / logs / artifact: {os.getenv('RUN_URL','')}")
+          response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat_id,"text":"\n".join(lines)}, timeout=25)
+          response.raise_for_status()
+          result = response.json()
+          if result.get("ok") is not True: raise RuntimeError(f"Telegram API rejected ECMS morning message: {result}")
+          print(f"ECMS morning Telegram delivered. message_id={result.get('result',{}).get('message_id')}")
+          PY
