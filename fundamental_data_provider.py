@@ -1089,12 +1089,12 @@ def collect_missing_fundamentals(
         last_free_attempt = pd.to_datetime(current.get("FreeSourcesAttemptedAtUTC"), errors="coerce", utc=True)
         last_free_status = current.get("FreeSourcesStatus", "")
         last_free_status_text = str(last_free_status).strip().upper() if _present(last_free_status) else ""
-        force_retry_symbol = bool(force_retry_incomplete and (missing or free_source_missing))
+        free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
+        force_retry_symbol = bool(force_retry_incomplete and bool(free_source_missing))
         in_free_cooldown = (
             _free_source_cooldown_active(last_free_attempt, last_free_status, free_source_retry_days)
             and not force_retry_symbol
         )
-        free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
         free_source_pending = (
             free_sources_enabled and free_source_attempts < free_source_budget
             and not in_free_cooldown and bool(free_source_missing)
