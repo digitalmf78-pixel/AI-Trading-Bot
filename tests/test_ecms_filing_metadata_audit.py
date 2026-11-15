@@ -128,7 +128,8 @@ def test_candidate_lookup_uses_exact_symbol_period_and_keeps_details_separate():
     assert result.iloc[0]["audited"] == "Audited"
     assert result.iloc[0]["consolidated"] == "Standalone"
     assert session.calls[-1][1]["params"]["symbol"] == "ABC"
-    assert session.calls[-1][1]["params"]["from_date"] == "31-03-2026"
+    assert session.calls[-1][1]["params"]["period_ended"] == "all"
+    assert "from_date" not in session.calls[-1][1]["params"]
 
 
 def test_candidate_lookup_never_accepts_future_publication_date():
@@ -151,7 +152,7 @@ def test_candidate_lookup_never_accepts_future_publication_date():
         pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"}]),
         "2026-11-15", session=Session(),
     )
-    assert result.iloc[0]["FilingMetadataStatus"] == "NO_EXACT_NSE_API_ROW"
+    assert result.iloc[0]["FilingMetadataStatus"] == "NO_ELIGIBLE_NSE_FILING"
     assert result.iloc[0]["VerificationStatus"] == "NOT_VERIFIED"
 
 
@@ -189,3 +190,46 @@ def test_nse_date_parser_uses_explicit_formats_without_ambiguous_dayfirst_guessi
     assert _parse_nse_date("31-03-2026") == date(2026, 3, 31)
     assert _parse_nse_date("2026-31-03") is None
     assert _parse_nse_date("") is None
+
+
+
+def test_candidate_lookup_discovers_latest_period_without_cached_period_and_keeps_bases_separate():
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_candidate_filing_metadata
+
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data": [
+                {"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-old.xml","audited":"Audited","consolidated":"Standalone","seq_Id":"10","type_Sub":"Original"},
+                {"symbol":"ABC","qe_Date":"30-Jun-2026","creation_Date":"12-Aug-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-standalone.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-s.html","audited":"Un-Audited","consolidated":"Standalone","seq_Id":"11","type_Sub":"Original"},
+                {"symbol":"ABC","qe_Date":"30-Jun-2026","creation_Date":"12-Aug-2026 18:01:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-consolidated.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-c.html","audited":"Un-Audited","consolidated":"Consolidated","seq_Id":"12","type_Sub":"Original"},
+                {"symbol":"ABCD","qe_Date":"30-Jun-2026","creation_Date":"12-Aug-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/OTHER.xml","audited":"Audited","consolidated":"Standalone"},
+                {"symbol":"ABC","qe_Date":"30-Sep-2026","creation_Date":"20-Nov-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/future.xml","audited":"Un-Audited","consolidated":"Standalone"},
+            ]}
+
+    class Session:
+        def __init__(self): self.headers = {}; self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return Response()
+
+    session = Session()
+    result = fetch_ecms_candidate_filing_metadata(
+        pd.DataFrame([{"TckrSymb":"ABC"}]), "2026-11-15", session=session
+    )
+    assert len(result) == 2
+    assert set(result["FinancialPeriodEnd"]) == {"2026-06-30"}
+    assert set(result["consolidated"]) == {"Standalone", "Consolidated"}
+    assert set(result["VerificationStatus"]) == {"NOT_VERIFIED"}
+    assert session.calls[-1][1]["params"]["period_ended"] == "all"
+    assert "from_date" not in session.calls[-1][1]["params"]
+
+
+def test_latest_period_audit_does_not_confuse_standalone_and_consolidated_rows():
+    raw = pd.DataFrame([
+        {"TckrSymb":"ABC","FinancialPeriodEnd":"2026-06-30","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-s.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-s.html","audited":"Un-Audited","consolidated":"Standalone","FilingMetadataStatus":"RAW_LATEST_PERIOD_NSE_API_ROW"},
+        {"TckrSymb":"ABC","FinancialPeriodEnd":"2026-06-30","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-c.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-c.html","audited":"Un-Audited","consolidated":"Consolidated","FilingMetadataStatus":"RAW_LATEST_PERIOD_NSE_API_ROW"},
+    ])
+    out = audit_ecms_filing_metadata(raw)
+    assert set(out["FilingMetadataStatus"]) == {"EXPLICIT_METADATA_CAPTURED"}
+    assert set(out["VerificationStatus"]) == {"NOT_VERIFIED"}
