@@ -1,6 +1,6 @@
 import pandas as pd
 
-from tools.ecms_gemini_research import extract_json, row_payload
+from tools.ecms_gemini_research import DEFAULT_MODEL, extract_json, row_payload
 
 
 def test_extract_json_accepts_json_fenced_response():
@@ -29,3 +29,7 @@ def test_row_payload_excludes_internal_metric_source_json():
     assert result["TckrSymb"] == "ABC"
     assert result["RevenueGrowthPct"] == 18.5
     assert "MetricSourcesJSON" not in result
+
+
+def test_default_gemini_model_uses_current_supported_flash_model():
+    assert DEFAULT_MODEL == "gemini-3.8-flash"
