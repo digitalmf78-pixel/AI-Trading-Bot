@@ -156,6 +156,7 @@ def assess_page_fundamentals(candidates, eod_date):
             enabled=True,
             asof_date=eod_date,
             free_source_fetcher=fetch_ecms_free_fundamental_sources,
+            force_retry_incomplete=True,
         )
     except Exception as exc:
         failed = candidates.copy()
@@ -232,6 +233,27 @@ def assess_page_fundamentals(candidates, eod_date):
     # Independent research scoring uses available provider metrics; official XBRL
     # verification remains a separate status and the strict shortlist stays intact.
     assessed = assess_fundamental_research(assessed, candidate_verification)
+    expected_symbols = candidates["TckrSymb"].astype(str).str.strip().str.upper().tolist()
+    actual_symbols = assessed["TckrSymb"].astype(str).str.strip().str.upper().tolist()
+    if len(actual_symbols) != len(expected_symbols) or set(actual_symbols) != set(expected_symbols) or len(actual_symbols) != len(set(actual_symbols)):
+        raise RuntimeError(
+            "ECMS_ASSESSMENT_INTEGRITY_ERROR: candidate and assessment row/symbol sets differ"
+        )
+    strong_mask = (
+        assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("PASS")
+        & assessed["FundamentalResearchClassification"].astype(str).str.upper().eq("STRONG")
+        & pd.to_numeric(assessed["FundamentalResearchCoveragePct"], errors="coerce").ge(80)
+    )
+    assessed["StrongFundamentalHandOffStatus"] = strong_mask.map({
+        True: "PASS_STRONG_FUNDAMENTAL", False: "NOT_FORWARDED"
+    })
+    assessed["StrongFundamentalNotForwardedReason"] = assessed.apply(
+        lambda row: "" if bool(strong_mask.loc[row.name]) else
+        "STRICT_SHORTLIST_" + str(row.get("FundamentalShortlistStatus", "MISSING")).upper()
+        if str(row.get("FundamentalShortlistStatus", "")).upper() != "PASS" else
+        "RESEARCH_" + str(row.get("FundamentalResearchClassification", "MISSING")).upper(),
+        axis=1,
+    )
     duplicated = assessed["TckrSymb"].astype(str).str.upper().isin(duplicate_symbols)
     assessed.loc[duplicated, "FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
     assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
@@ -328,6 +350,7 @@ def run_eod():
     state.to_csv(STATE_FILE,index=False)
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
+      "strong_fundamental_handoff":int(assessed["StrongFundamentalHandOffStatus"].eq("PASS_STRONG_FUNDAMENTAL").sum()),
       "strong_fundamental_catalyst_review":int(assessed["EODResearchStatus"].eq("STRONG_FUNDAMENTAL_CATALYST_REVIEW").sum()),
       "wait_for_data":int(assessed["EODResearchStatus"].eq("WAIT_FOR_DATA").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
