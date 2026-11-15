@@ -102,3 +102,34 @@ def test_compilation_flags_mismatch_only_when_period_basis_and_unit_align():
     result = build_fundamental_source_compilation(metrics, manual_observations=manual)
     assert result["MismatchStatus"].eq("MISMATCH").all()
     assert result["MismatchReason"].str.contains("comparison tolerance").all()
+
+
+
+def test_verification_audit_does_not_label_mismatching_cached_value_as_official_fact():
+    metrics = pd.DataFrame([{"TckrSymb": "AAA", "ROEPercent": 18.0}])
+    verification = pd.DataFrame([
+        {
+            "TckrSymb": "AAA", "MetricName": "ROEPercent",
+            "CachedMetricValue": 18.0,
+            "MetricValueVerificationStatus": "PROVIDER_VALUE_MISMATCH",
+            "MetricValueVerificationReason": "Provider growth differs from official calculation",
+            "FinancialPeriodEnd": "2026-03-31",
+            "OfficialFilingURL": "https://nsearchives.nseindia.com/example.xml",
+        },
+        {
+            "TckrSymb": "AAA", "MetricName": "RevenueGrowthPct",
+            "CachedMetricValue": 12.0,
+            "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED",
+            "MetricValueVerificationReason": "Exact verified value",
+            "FinancialPeriodEnd": "2026-03-31",
+            "OfficialFilingURL": "https://nsearchives.nseindia.com/example.xml",
+        },
+    ])
+    result = build_fundamental_source_compilation(metrics, verification)
+    audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_AUDIT"].set_index("MetricName")
+
+    assert pd.isna(audit.loc["ROEPercent", "MetricValue"])
+    assert audit.loc["ROEPercent", "VerificationStatus"] == "PROVIDER_VALUE_MISMATCH"
+    assert audit.loc["ROEPercent", "MismatchReason"] == "Provider growth differs from official calculation"
+    assert audit.loc["RevenueGrowthPct", "MetricValue"] == 12.0
+    assert audit.loc["RevenueGrowthPct", "VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
