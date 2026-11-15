@@ -617,6 +617,8 @@ def attach_information(assessed, as_of_date):
     if not news_audit.empty:
         result = result.drop(columns=[c for c in news_audit.columns if c != "TckrSymb" and c in result.columns])
         result = result.merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
+    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA"), "Last5DayNews"] = "WAIT_FOR_DATA"
+    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("NO_NEWS_FOUND"), "Last5DayNews"] = "NO_NEWS_FOUND"
     for column, default in {
         "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
         "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
@@ -632,6 +634,7 @@ def attach_information(assessed, as_of_date):
         "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
         "BulkDealCount": 0, "BlockDealCount": 0,
         "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
+        "BulkBlockDealSummary": "",
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
     }.items():
         result[column] = default
@@ -680,7 +683,8 @@ def run_eod():
     deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
     STATE_DIR.mkdir(parents=True,exist_ok=True)
     state_columns=["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
-      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]
+      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","AvgVolume20D","RVOL",
+      "RVOLDataStatus","EODDate"]
     for column in ("FundamentalShortlistStatus", "StrongFundamentalNotForwardedReason",
                    "FundamentalPassStatus"):
         if column in assessed.columns:
@@ -806,6 +810,25 @@ def run_morning():
           "EODPageVolume":old.get("PageVolume"),
           "MorningPageVolume":current.get("PageVolume"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
+          "EODRVOL":old.get("RVOL"),
+          "MorningRVOL":"NOT AVAILABLE",
+          "MorningRVOLDataStatus":"PARTIAL_SESSION_NOT_COMPARABLE_TO_FULL_DAY_20D_AVERAGE",
+          "ValuationLabel":assessed.get("ValuationLabel","NOT AVAILABLE"),
+          "ValuationBasis":assessed.get("ValuationBasis","NOT AVAILABLE"),
+          "Last5DayNews":assessed.get("Last5DayNews","NOT AVAILABLE"),
+          "CatalystStatus":assessed.get("CatalystStatus","NOT AVAILABLE"),
+          "UpcomingEventsStatus":assessed.get("UpcomingEventsStatus","NOT AVAILABLE"),
+          "UpcomingEvents":assessed.get("UpcomingEvents","NOT AVAILABLE"),
+          "NextResultDate":assessed.get("NextResultDate","NOT ANNOUNCED"),
+          "NextResultDetails":assessed.get("NextResultDetails",""),
+          "BulkBlockDealStatus":assessed.get("BulkBlockDealStatus","NOT AVAILABLE"),
+          "BulkDealCount":assessed.get("BulkDealCount",0),
+          "BlockDealCount":assessed.get("BlockDealCount",0),
+          "BulkBuyers":assessed.get("BulkBuyers",""),
+          "BulkSellers":assessed.get("BulkSellers",""),
+          "BlockBuyers":assessed.get("BlockBuyers",""),
+          "BlockSellers":assessed.get("BlockSellers",""),
+          "BulkBlockDealSummary":assessed.get("BulkBlockDealSummary",""),
           "EODFundamentalShortlistStatus":old.get("EODFundamentalShortlistStatus",""),
           "EODStrongFundamentalStatus":old.get("EODStrongFundamentalStatus",""),
           "EODFundamentalNotForwardedReason":old.get("EODFundamentalNotForwardedReason",""),
