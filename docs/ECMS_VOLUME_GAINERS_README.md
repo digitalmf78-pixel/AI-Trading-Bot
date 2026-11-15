@@ -210,7 +210,9 @@ Statuses reflect code inspected on 15-Nov-2026. They are not claims that a live 
 - [ ] Every scored metric has valid metric-level provenance and period; stale/future/invalid evidence is blocked.
 - [ ] Official XBRL verification remains fail-closed and is never inferred from provider data.
 - [ ] Reports include every candidate and explain every non-forwarded result.
-- [ ] Morning comparison correctly reports REPEATED / DISAPPEARED / NEW_ENTRY.\n- [ ] Every eligible 09:20 candidate receives the same fundamental assessment framework as EOD (with safe complete-cache reuse).\n- [ ] EOD-only, morning under-observation and DOUBLE_CONFIRMED_EOD_MORNING labels are independently recorded; double confirmation requires strict PASS + STRONG at both checkpoints.
+- [ ] Morning comparison correctly reports REPEATED / DISAPPEARED / NEW_ENTRY.
+- [ ] Every eligible 09:20 candidate receives the same fundamental assessment framework as EOD (with safe complete-cache reuse).
+- [ ] EOD-only, morning under-observation and DOUBLE_CONFIRMED_EOD_MORNING labels are independently recorded; double confirmation requires strict PASS + STRONG at both checkpoints.
 - [ ] ECMS validation tests pass and V8 regression tests pass.
 - [ ] .github/workflows/nse-test-scheduled.yml is unchanged.
 - [ ] A real EOD run and a real morning run each produce audited artifacts before operational success is claimed.
