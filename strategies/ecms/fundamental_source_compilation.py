@@ -119,7 +119,7 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
         )
         unit = str(item.get("Unit", "") or "").strip()
         if not unit:
-            unit = "PERCENT" if metric.endswith("Pct") else "RATIO" if metric in {"DebtToEquity", "InterestCoverage"} else "INR"
+            unit = _metric_unit(metric)
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
@@ -156,9 +156,9 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
             "MetricName": "DebtToEquity",
             "MetricValue": _number(item.get("OfficialDebtToEquity")),
             "Source": "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT",
-            "SourceURL": str(item.get("EvidenceFilePath", "") or "").strip(),
+            "SourceURL": str(item.get("OfficialFilingURL", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
-            "PublicationDate": "",
+            "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
             "CalculationBasis": str(item.get("ReportingBasis", "") or "").strip(),
             "Unit": "RATIO",
             "SourceStatus": "OFFICIAL_AUDIT_RESULT",
