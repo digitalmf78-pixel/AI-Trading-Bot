@@ -599,24 +599,15 @@ def run_eod():
     provider_diag = pd.read_csv(provider_diag_path) if provider_diag_path.exists() and provider_diag_path.stat().st_size else pd.DataFrame()
     provider_status = provider_diag.get("ProviderStatus", pd.Series(dtype=str)).astype(str).str.upper()
     free_attempted = provider_diag.get("FreeSourcesAttempted", pd.Series(False, index=provider_diag.index)).astype(str).str.lower().isin({"true", "1", "yes"})
-    research_class = assessed["FundamentalResearchClassification"].astype(str).str.upper()
     shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
-    provenance_status = assessed["FundamentalResearchProvenanceStatus"].astype(str).str.upper()
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "assessment_rows":int(len(assessed)),
       "assessment_unique_symbols":int(assessed["TckrSymb"].astype(str).str.upper().nunique()),
       "assessment_missing_or_duplicate_count":int(max(0, len(eligible) - assessed["TckrSymb"].astype(str).str.upper().nunique())),
-      "strong_fundamental_handoff":int(assessed["StrongFundamentalHandOffStatus"].eq("PASS_STRONG_FUNDAMENTAL").sum()),
-      "strong_eod":int(assessed["EODConfirmationLabel"].eq("STRONG_EOD").sum()),
-      "research_strong":int(research_class.eq("STRONG").sum()),
-      "research_good":int(research_class.eq("GOOD").sum()),
-      "research_average":int(research_class.eq("AVERAGE").sum()),
-      "research_weak":int(research_class.eq("WEAK").sum()),
-      "shortlist_fail":int(shortlist_status.eq("FAIL").sum()),
+      "fundamental_pass":int(shortlist_status.eq("PASS").sum()),
+      "fundamental_fail":int(shortlist_status.eq("FAIL").sum()),
       "wait_for_data":int(shortlist_status.eq("WAIT_FOR_DATA").sum()),
-      "research_insufficient_data":int(research_class.eq("INSUFFICIENT_DATA").sum()),
-      "research_provenance_blocked":int(provenance_status.eq("PARTIAL_OR_BLOCKED").sum()),
       "official_xbrl_fully_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("FULLY_VERIFIED").sum()),
       "official_xbrl_partially_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("PARTIALLY_VERIFIED").sum()),
       "official_xbrl_not_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("NOT_VERIFIED").sum()),
@@ -625,7 +616,6 @@ def run_eod():
       "provider_cooldown_deferred":int(provider_status.eq("RETRY_COOLDOWN").sum()),
       "provider_failed":int(provider_status.str.contains("ERROR|FAILED", regex=True).sum()),
       "free_source_attempted":int(free_attempted.sum()),
-      "strong_fundamental_catalyst_review":int(assessed["EODResearchStatus"].eq("STRONG_FUNDAMENTAL_CATALYST_REVIEW").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
@@ -676,8 +666,6 @@ def run_morning():
     morning_assessed=assess_page_fundamentals(live,today)
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
-    if "FundamentalResearchClassification" not in morning_assessed:
-        morning_assessed["FundamentalResearchClassification"]="INSUFFICIENT_DATA"
     morning_assessed["MorningStrongFundamentalStatus"] = (
         _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
