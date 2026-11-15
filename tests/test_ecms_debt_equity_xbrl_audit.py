@@ -12,8 +12,8 @@ def _xml(report_basis="Standalone", split_components=False):
     instant_a = """<xbrli:context id="instantA"><xbrli:entity><xbrli:identifier scheme="https://www.nseindia.com">INE000A01000</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period></xbrli:context>"""
     instant_b = """<xbrli:context id="instantB"><xbrli:entity><xbrli:identifier scheme="https://www.nseindia.com">INE000A01000</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period></xbrli:context>"""
     duration = """<xbrli:context id="annual"><xbrli:entity><xbrli:identifier scheme="https://www.nseindia.com">INE000A01000</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2025-04-01</xbrli:startDate><xbrli:endDate>2026-03-31</xbrli:endDate></xbrli:period></xbrli:context>"""
-    equity_tag = "Equity" if report_basis == "Standalone" else "EquityAttributableToOwnersOfParent"
     equity_context = "instantB" if split_components else "instantA"
+    total_equity = "100" if report_basis == "Standalone" else "110"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
     <xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:in="urn:test:in-gaap">
       {instant_a}{instant_b}{duration}
@@ -21,7 +21,8 @@ def _xml(report_basis="Standalone", split_components=False):
       <in:NatureOfReportStandaloneConsolidated contextRef="annual"> {report_basis} </in:NatureOfReportStandaloneConsolidated>
       <in:BorrowingsCurrent contextRef="instantA" unitRef="INR" decimals="INF">20</in:BorrowingsCurrent>
       <in:BorrowingsNoncurrent contextRef="instantA" unitRef="INR" decimals="INF">30</in:BorrowingsNoncurrent>
-      <in:{equity_tag} contextRef="{equity_context}" unitRef="INR" decimals="INF">100</in:{equity_tag}>
+      <in:Equity contextRef="{equity_context}" unitRef="INR" decimals="INF">{total_equity}</in:Equity>
+      <in:EquityAttributableToOwnersOfParent contextRef="{equity_context}" unitRef="INR" decimals="INF">100</in:EquityAttributableToOwnersOfParent>
     </xbrli:xbrl>"""
 
 
@@ -86,7 +87,9 @@ def test_consolidated_basis_uses_parent_equity_tag(tmp_path):
         filing_basis="Consolidated",
     )
 
-    assert row["DebtToEquityAuditStatus"] == "OFFICIAL_XBRL_VERIFIED"
+    assert row["DebtToEquityAuditStatus"] == "PROVIDER_VALUE_MISMATCH"
+    assert row["OfficialDebtToEquity"] == 50 / 110
+    assert row["EquityINR"] == 110
     assert row["EquityFactTag"] == "Equity"
 
 
