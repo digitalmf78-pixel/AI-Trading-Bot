@@ -192,10 +192,10 @@ Statuses reflect code inspected on 15-Nov-2026. They are not claims that a live 
 | 2 | EOD session date, page RVOL context, raw page snapshot and candidate state | Implemented |
 | 3 | Free-source fundamental collection, metric-level provenance and source URLs | Implemented; provider availability varies |
 | 4 | Official filing/XBRL verification, strict shortlist and separate research scoring | Implemented; data coverage may be incomplete |
-| 5 | Per-candidate completeness guarantee, retry/cooldown handling and one-row-per-candidate assertion | Needs final hardening |
-| 6 | Combined strict-PASS + independent-STRONG hand-off and explicit not-forwarded reasons | Needs final enforcement |
+| 5 | Per-candidate completeness guarantee, ECMS opt-in retry for incomplete rows, complete-cache reuse and one-row-per-candidate assertion | Implemented in code; automated validation pending |
+| 6 | Combined strict-PASS + independent-STRONG (coverage >=80%) hand-off and explicit not-forwarded reasons | Implemented in code; automated validation pending |
 | 7 | Candidate-specific catalyst/news and negative-risk review | Implemented; source coverage varies |
-| 8 | 09:20 IST membership comparison plus same-framework fundamental reassessment and EOD/Morning confirmation labels | Membership comparison implemented; morning fundamental reassessment and double-confirmation need implementation/operational verification |
+| 8 | 09:20 IST membership comparison plus same-framework fundamental reassessment and EOD/Morning confirmation labels | Implemented in code; live schedule/run verification pending |
 | 9 | End-to-end EOD and morning artifact audit on actual runs | Pending operational sign-off |
 
 ### Completion checklist — ECMS is final only when all pass
@@ -230,17 +230,16 @@ Statuses reflect code inspected on 15-Nov-2026. They are not claims that a live 
 
 ## 10. Next ECMS-only implementation tasks
 
-The current ECMS code calls the shared collect_missing_fundamentals() for eligible page candidates and joins the cache back to the candidate list. However, the shared collector has per-symbol retry cooldowns and can emit RETRY_COOLDOWN for missing metrics. Also, the EOD final status currently checks strict shortlist PASS and catalyst status but does not explicitly require FundamentalResearchClassification=STRONG.
+The ECMS scanner now opts into retrying incomplete candidate data without changing the shared collector's default behavior, preserves complete-cache reuse, asserts exact candidate-to-assessment row integrity, and exposes a strict PASS + independent STRONG (coverage >=80%) hand-off gate. The 09:20 job now runs the same fundamental assessment for every eligible current-page candidate and compares its result with the preserved EOD assessment.
 
-Close these gaps only within ECMS scope:
+Remaining ECMS-only work:
 
-1. Add opt-in ECMS-only retry behavior for missing/incomplete candidate fundamentals; leave V8 defaults unchanged.
-2. Reuse fresh complete cached rows; do not needlessly download complete data again.
-3. Record every missing metric, provider attempt/defer/error and cache reuse per candidate.
-4. Assert candidate-to-assessment row count and unique symbol set match exactly.
-5. Add explicit strong-fundamental hand-off requiring strict shortlist PASS and independent research STRONG with required coverage/provenance.
-6. Ensure WAIT_FOR_DATA, FAIL, GOOD, AVERAGE, WEAK, INSUFFICIENT_DATA and sector-model-pending stocks cannot enter the strong hand-off.
-7. Test cooldown with missing metrics, complete-cache reuse, all-candidate row preservation, strict-PASS-but-not-STRONG rejection and true STRONG acceptance.
-8. Implement morning fundamental reassessment for every eligible 09:20 page candidate, preserve both checkpoint assessments, and create the EOD-only / morning-under-observation / DOUBLE_CONFIRMED_EOD_MORNING labels.\n9. Only then run ECMS EOD manually for an end-to-end artifact audit; run morning mode separately on a valid trading day with valid prior state.
+1. Validate the opt-in retry behavior, complete-cache reuse, all-candidate row preservation, strict-PASS-but-not-STRONG rejection and true STRONG acceptance in CI.
+2. Verify the 09:20 report emits distinct EOD, morning-under-observation and DOUBLE_CONFIRMED_EOD_MORNING statuses; the latter requires strict PASS + STRONG at both checkpoints.
+3. Review provider diagnostics to ensure every missing metric, provider attempt/defer/error and cache reuse is visible per candidate.
+4. Run ECMS EOD manually for an end-to-end artifact audit; run morning mode separately on a valid trading day with valid prior state.
+5. Confirm actual morning artifacts contain every eligible current-page candidate's fundamental assessment and accurate EOD/Morning confirmation counts.
+
+The code changes remain ECMS-only; the V8 production workflow and its default collector behavior are not changed.
 
 **Do not broaden ECMS work beyond these requirements.**
