@@ -202,6 +202,10 @@ def assess_page_fundamentals(candidates, eod_date):
             asof_date=eod_date,
             free_source_fetcher=fetch_ecms_free_fundamental_sources,
             force_retry_incomplete=True,
+            free_source_audit_metrics=[
+                "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+                "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+            ],
         )
     except Exception as exc:
         failed = candidates.copy()
@@ -510,6 +514,52 @@ def assess_page_fundamentals(candidates, eod_date):
     # Publish current-page candidate snapshots, not the full persistent cache
     # or filing register. The workspace itself remains intact for later reuse.
     candidate_metrics.to_csv(ecms_output_dir / "fundamental_metrics_ecms.csv", index=False)
+    comparison_rows = []
+    comparison_metrics = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ]
+    for _, metric_row in candidate_metrics.iterrows():
+        raw_comparison = metric_row.get("FreeSourcesComparisonJSON", "{}")
+        try:
+            comparison = json.loads(str(raw_comparison)) if pd.notna(raw_comparison) else {}
+        except (TypeError, ValueError):
+            comparison = {}
+        for metric_name in comparison_metrics:
+            observed = comparison.get(metric_name, {}) if isinstance(comparison, dict) else {}
+            yahoo = observed.get("YahooFinance", {}) if isinstance(observed, dict) else {}
+            secondary = observed.get("secondary_sources", []) if isinstance(observed, dict) else []
+            base = {
+                "TckrSymb": str(metric_row.get("TckrSymb", "")).strip().upper(),
+                "MetricName": metric_name,
+                "YahooValue": yahoo.get("value", metric_row.get(metric_name, "")),
+                "YahooSource": yahoo.get("source", "NOT_AVAILABLE"),
+                "YahooPeriod": yahoo.get("period", ""),
+                "YahooCalculationBasis": yahoo.get("calculation_basis", ""),
+                "ComparisonStatus": observed.get("comparison_status", "NO_SECONDARY_OBSERVATION") if isinstance(observed, dict) else "NO_SECONDARY_OBSERVATION",
+            }
+            if isinstance(secondary, list) and secondary:
+                for item in secondary:
+                    comparison_rows.append({
+                        **base,
+                        "SecondarySource": item.get("source", ""),
+                        "SecondaryValue": item.get("value", ""),
+                        "SecondaryPeriod": item.get("period", ""),
+                        "SecondarySourceURL": item.get("source_url", ""),
+                        "ReconciliationStatus": "NOT_OFFICIALLY_VERIFIED",
+                    })
+            else:
+                comparison_rows.append({
+                    **base, "SecondarySource": "", "SecondaryValue": "",
+                    "SecondaryPeriod": "", "SecondarySourceURL": "",
+                    "ReconciliationStatus": "NO_SECONDARY_OBSERVATION",
+                })
+    pd.DataFrame(comparison_rows, columns=[
+        "TckrSymb", "MetricName", "YahooValue", "YahooSource", "YahooPeriod",
+        "YahooCalculationBasis", "SecondarySource", "SecondaryValue",
+        "SecondaryPeriod", "SecondarySourceURL", "ComparisonStatus",
+        "ReconciliationStatus",
+    ]).to_csv(ecms_output_dir / "fundamental_source_comparison_ecms.csv", index=False)
     candidate_filings.to_csv(ecms_output_dir / "fundamental_filings_ecms.csv", index=False)
     candidate_evidence.to_csv(ecms_output_dir / "fundamental_evidence_ecms.csv", index=False)
 
