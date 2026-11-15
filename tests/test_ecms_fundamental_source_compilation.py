@@ -156,3 +156,25 @@ def test_provider_metric_unit_is_not_inferred_from_source_currency():
     assert result.loc["DebtToEquity", "Unit"] == "RATIO"
     assert result.loc["InterestCoverage", "Unit"] == "RATIO"
     assert result.loc["OperatingCashFlowINR", "Unit"] == "INR"
+
+
+def test_manual_observation_rejects_missing_period_basis_and_unit():
+    manual = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 18.0,
+        "Source": "SCREENER_FREE_MANUAL", "SourceURL": "https://www.screener.in/company/AAA/",
+        "FinancialPeriodEnd": "", "PublicationDate": "2026-05-10",
+        "CalculationBasis": "", "Unit": "", "ObservationNotes": "",
+    }], columns=MANUAL_COLUMNS)
+    with pytest.raises(ValueError, match="missing required fields"):
+        build_fundamental_source_compilation(pd.DataFrame([{"TckrSymb": "AAA"}]), manual_observations=manual)
+
+
+def test_manual_observation_rejects_metric_unit_mismatch():
+    manual = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 18.0,
+        "Source": "SCREENER_FREE_MANUAL", "SourceURL": "https://www.screener.in/company/AAA/",
+        "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-10",
+        "CalculationBasis": "CONSOLIDATED", "Unit": "INR", "ObservationNotes": "",
+    }], columns=MANUAL_COLUMNS)
+    with pytest.raises(ValueError, match="Unit for ROEPercent must be PERCENT"):
+        build_fundamental_source_compilation(pd.DataFrame([{"TckrSymb": "AAA"}]), manual_observations=manual)
