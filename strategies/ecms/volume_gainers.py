@@ -617,6 +617,8 @@ def attach_information(assessed, as_of_date):
     if not news_audit.empty:
         result = result.drop(columns=[c for c in news_audit.columns if c != "TckrSymb" and c in result.columns])
         result = result.merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in news_defaults.items():
+        result[column] = result[column].fillna(default)
     result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA"), "Last5DayNews"] = "WAIT_FOR_DATA"
     result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("NO_NEWS_FOUND"), "Last5DayNews"] = "NO_NEWS_FOUND"
     for column, default in {
@@ -627,9 +629,18 @@ def attach_information(assessed, as_of_date):
         "EventCalendarSourceURL": "",
     }.items():
         result[column] = default
+    event_defaults = {
+        "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NextResultDate": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NextResultDetails": "",
+        "EventCalendarSourceURL": "",
+    }
     if not event_audit.empty:
         result = result.drop(columns=[c for c in event_audit.columns if c != "TckrSymb" and c in result.columns])
         result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in event_defaults.items():
+        result[column] = result[column].fillna(default)
     for column, default in {
         "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
         "BulkDealCount": 0, "BlockDealCount": 0,
@@ -638,9 +649,18 @@ def attach_information(assessed, as_of_date):
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
     }.items():
         result[column] = default
+    deal_defaults = {
+        "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "BulkDealCount": 0, "BlockDealCount": 0,
+        "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
+        "BulkBlockDealSummary": "",
+        "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
+    }
     if not deal_audit.empty:
         result = result.drop(columns=[c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns])
         result = result.merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in deal_defaults.items():
+        result[column] = result[column].fillna(default)
     result["RVOLInformationStatus"] = result.get("RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index))
     return result, news, events, deals
 
@@ -769,6 +789,7 @@ def run_morning():
     morning_assessed=assess_page_fundamentals(live,today)
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     morning_assessed, morning_news, morning_events, morning_deals = attach_information(morning_assessed, today)
     morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
     morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
