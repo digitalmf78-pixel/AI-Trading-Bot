@@ -185,8 +185,11 @@ def assess_page_fundamentals(candidates, eod_date):
 
     # Copy only prior evidence XMLs referenced by the candidate ledger into an
     # ephemeral root. New XBRL downloads are also written there by run_audit.
-    if workspace_evidence.exists():
+    if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0:
         evidence = pd.read_csv(workspace_evidence, keep_default_na=False)
+        if "TckrSymb" in evidence.columns:
+            evidence["TckrSymb"] = evidence["TckrSymb"].astype(str).str.strip().str.upper()
+            evidence = evidence[evidence["TckrSymb"].isin(candidate_symbols)].copy()
         if "EvidenceFilePath" in evidence.columns:
             for raw_path in evidence["EvidenceFilePath"].dropna().astype(str).unique():
                 if not raw_path.strip():
@@ -208,12 +211,50 @@ def assess_page_fundamentals(candidates, eod_date):
     duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
     metrics_unique = metrics.drop_duplicates("TckrSymb", keep="first").copy()
 
+    # The ECMS workspace cache is intentionally persistent and may contain
+    # symbols seen on earlier Volume Gainers pages. The verifier's symbols
+    # argument limits generated XML evidence, not the rows it audits. Build
+    # candidate-scoped input snapshots so this run's verification detail and
+    # summaries can never include stale/non-page symbols. Keep the persistent
+    # workspace untouched for safe cache reuse on later runs.
+    audit_input_dir = ephemeral_root / "audit_input"
+    audit_input_dir.mkdir(parents=True, exist_ok=True)
+    candidate_metrics = metrics[metrics["TckrSymb"].isin(candidate_symbols)].copy()
+    audit_metrics_path = audit_input_dir / "fundamental_metrics.csv"
+    candidate_metrics.to_csv(audit_metrics_path, index=False)
+
+    candidate_filings = (
+        pd.read_csv(workspace_filings)
+        if workspace_filings.exists() and workspace_filings.stat().st_size > 0 else pd.DataFrame()
+    )
+    if "TckrSymb" in candidate_filings.columns:
+        candidate_filings["TckrSymb"] = candidate_filings["TckrSymb"].astype(str).str.strip().str.upper()
+        candidate_filings = candidate_filings[
+            candidate_filings["TckrSymb"].isin(candidate_symbols)
+        ].copy()
+    audit_filings_path = audit_input_dir / "official_filings.csv"
+    if len(candidate_filings.columns):
+        candidate_filings.to_csv(audit_filings_path, index=False)
+
+    candidate_evidence = (
+        pd.read_csv(workspace_evidence, keep_default_na=False)
+        if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0 else pd.DataFrame()
+    )
+    if "TckrSymb" in candidate_evidence.columns:
+        candidate_evidence["TckrSymb"] = candidate_evidence["TckrSymb"].astype(str).str.strip().str.upper()
+        candidate_evidence = candidate_evidence[
+            candidate_evidence["TckrSymb"].isin(candidate_symbols)
+        ].copy()
+    audit_evidence_path = audit_input_dir / "metric_verification_evidence.csv"
+    if len(candidate_evidence.columns):
+        candidate_evidence.to_csv(audit_evidence_path, index=False)
+
     verification = pd.DataFrame()
     try:
         verification, verification_summary, filing_summary = run_fundamental_xbrl_audit(
-            metrics_path=workspace_metrics,
-            filings_path=workspace_filings,
-            evidence_path=workspace_evidence,
+            metrics_path=audit_metrics_path,
+            filings_path=audit_filings_path,
+            evidence_path=audit_evidence_path,
             output_dir=ecms_output_dir,
             repo_root=ephemeral_root,
             symbols=candidate_symbols,
@@ -266,15 +307,22 @@ def assess_page_fundamentals(candidates, eod_date):
         axis=1,
     )
 
-    # Publish ECMS-owned copies for the workflow artifact; production files remain untouched.
-    for source, name in [
-        (workspace_metrics, "fundamental_metrics_ecms.csv"),
-        (workspace_filings, "fundamental_filings_ecms.csv"),
-        (workspace_evidence, "fundamental_evidence_ecms.csv"),
-        (workspace / "outputs" / "v8_fundamental_provider_diagnostics.csv", "fundamental_provider_diagnostics.csv"),
-    ]:
-        if source.exists():
-            shutil.copy2(source, ecms_output_dir / name)
+    # Publish current-page candidate snapshots, not the full persistent cache
+    # or filing register. The workspace itself remains intact for later reuse.
+    candidate_metrics.to_csv(ecms_output_dir / "fundamental_metrics_ecms.csv", index=False)
+    candidate_filings.to_csv(ecms_output_dir / "fundamental_filings_ecms.csv", index=False)
+    candidate_evidence.to_csv(ecms_output_dir / "fundamental_evidence_ecms.csv", index=False)
+
+    provider_diagnostics = workspace / "outputs" / "v8_fundamental_provider_diagnostics.csv"
+    if provider_diagnostics.exists():
+        diagnostics = pd.read_csv(provider_diagnostics)
+        symbol_column = "TckrSymb" if "TckrSymb" in diagnostics.columns else (
+            "Symbol" if "Symbol" in diagnostics.columns else None
+        )
+        if symbol_column:
+            diagnostics[symbol_column] = diagnostics[symbol_column].astype(str).str.strip().str.upper()
+            diagnostics = diagnostics[diagnostics[symbol_column].isin(candidate_symbols)].copy()
+        diagnostics.to_csv(ecms_output_dir / "fundamental_provider_diagnostics.csv", index=False)
     return assessed
 
 def attach_page_rvol(candidates, eod_date):
