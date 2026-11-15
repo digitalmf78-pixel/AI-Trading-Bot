@@ -39,8 +39,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/debt_equity_xbrl_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py strategies/ecms/filing_metadata_audit.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py test_fundamental_data_provider.py
+          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/debt_equity_xbrl_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py strategies/ecms/filing_metadata_audit.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py test_fundamental_data_provider.py
 
   eod:
     if: >-
@@ -104,8 +104,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/filing_metadata_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py
+          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/filing_metadata_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py
       - name: Run EOD page research
         env:
           PYTHONUNBUFFERED: "1"
@@ -159,7 +159,7 @@ jobs:
           if not token or not chat_id:
               print("ECMS Telegram skipped: Telegram secrets are not configured.")
               raise SystemExit(0)
-          lines = [f"📊 ECMS EOD FUNDAMENTAL REPORT", f"Status: {os.getenv('JOB_STATUS', 'unknown').upper()}"]
+          lines = [f"📊 ECMS EOD FUNDAMENTAL + INFORMATION REPORT", f"Status: {os.getenv('JOB_STATUS', 'unknown').upper()}"]
           path = Path(os.getenv("SUMMARY_PATH", ""))
           if path.is_file():
               try:
@@ -182,9 +182,23 @@ jobs:
                           reason = (row.get("FundamentalShortlistReason") or "").strip().replace("\n", " ")
                           if len(reason) > 100:
                               reason = reason[:97] + "..."
+                          context = ""
+                          if shortlist.upper() == "PASS":
+                              valuation = (row.get("ValuationLabel") or "NOT AVAILABLE").strip()
+                              news = (row.get("Last5DayNews") or "NOT AVAILABLE").strip().replace("\n", " ")
+                              events = (row.get("UpcomingEvents") or "NOT AVAILABLE").strip().replace("\n", " ")
+                              result_date = (row.get("NextResultDate") or "NOT ANNOUNCED").strip()
+                              deal_status = (row.get("BulkBlockDealStatus") or "NOT AVAILABLE").strip()
+                              deal_summary = (row.get("BulkBlockDealSummary") or "").strip().replace("\n", " ")
+                              rvol = (row.get("RVOL") or "NOT AVAILABLE").strip()
+                              context = (
+                                  f"; valuation={valuation}; news={news[:110]}; events={events[:100]}"
+                                  f"; next_result={result_date}; deals={deal_status}:{deal_summary[:100]}; RVOL={rvol}"
+                              )
                           stock_lines.append(
                               f"{symbol}: fundamental={shortlist}; official_XBRL={verified}"
-                              + (f"; note={reason}" if reason else "")
+                              + context
+                              + (f"; note={reason}" if reason and shortlist.upper() != "PASS" else "")
                           )
               except Exception as exc:
                   stock_lines.append(f"Stock-level research report unavailable: {type(exc).__name__}")
@@ -290,9 +304,10 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SUMMARY_PATH: outputs/ecms/volume_gainers_morning_summary.json
+          RESEARCH_PATH: outputs/ecms/volume_gainers_morning_recheck.csv
         run: |
           python - <<'PY'
-          import json, os
+          import csv, json, os
           from pathlib import Path
           import requests
           token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
@@ -308,10 +323,41 @@ jobs:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
+          report_path = Path(os.getenv("RESEARCH_PATH", ""))
+          if report_path.is_file():
+              try:
+                  with report_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                      for row in csv.DictReader(handle):
+                          symbol = (row.get("TckrSymb") or "").strip()
+                          if not symbol:
+                              continue
+                          lines.append(
+                              f"{symbol}: {row.get('MorningStatus','')}; EOD={row.get('EODFundamentalShortlistStatus','')}; "
+                              f"morning={row.get('MorningFundamentalShortlistStatus','')}; "
+                              f"valuation={row.get('ValuationLabel','NOT AVAILABLE')}; "
+                              f"news={str(row.get('Last5DayNews','NOT AVAILABLE'))[:90]}; "
+                              f"events={str(row.get('UpcomingEvents','NOT AVAILABLE'))[:80]}; "
+                              f"result={row.get('NextResultDate','NOT ANNOUNCED')}; "
+                              f"deals={row.get('BulkBlockDealStatus','NOT AVAILABLE')} "
+                              f"RVOL(EOD)={row.get('EODRVOL','NOT AVAILABLE')}"
+                          )
+              except Exception as exc:
+                  lines.append(f"Morning stock report unavailable: {type(exc).__name__}")
           lines.append(f"Run / logs / artifact: {os.getenv('RUN_URL','')}")
-          response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat_id,"text":"\n".join(lines)}, timeout=25)
-          response.raise_for_status()
-          result = response.json()
-          if result.get("ok") is not True: raise RuntimeError(f"Telegram API rejected ECMS morning message: {result}")
-          print(f"ECMS morning Telegram delivered. message_id={result.get('result',{}).get('message_id')}")
+          chunks, current = [], ""
+          for line in lines:
+              candidate = line if not current else current + "\n" + line
+              if len(candidate) > 3500 and current:
+                  chunks.append(current)
+                  current = line
+              else:
+                  current = candidate
+          if current:
+              chunks.append(current)
+          for index, chunk in enumerate(chunks, start=1):
+              response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat_id,"text":chunk}, timeout=25)
+              response.raise_for_status()
+              result = response.json()
+              if result.get("ok") is not True: raise RuntimeError(f"Telegram API rejected ECMS morning message part {index}: {result}")
+              print(f"ECMS morning Telegram part {index}/{len(chunks)} delivered. message_id={result.get('result',{}).get('message_id')}")
           PY
