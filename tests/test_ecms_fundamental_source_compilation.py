@@ -78,11 +78,15 @@ def test_compilation_includes_exact_debt_equity_audit_as_its_own_source_row():
         "TckrSymb": "AAA", "DebtToEquityAuditStatus": "OFFICIAL_XBRL_VERIFIED",
         "OfficialDebtToEquity": 0.5, "FinancialPeriodEnd": "2026-03-31",
         "ReportingBasis": "STANDALONE", "DebtToEquityAuditReason": "Exact same-context match",
+        "OfficialFilingURL": "https://nsearchives.nseindia.in/example.xml",
+        "PublicationDate": "2026-05-20", "EvidenceFilePath": "data/cache/private.xml",
     }])
     result = build_fundamental_source_compilation(metrics, debt_equity_audit=debt_audit)
     audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT"].iloc[0]
     assert audit["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
     assert audit["MetricValue"] == 0.5
+    assert audit["SourceURL"] == "https://nsearchives.nseindia.in/example.xml"
+    assert audit["PublicationDate"] == "2026-05-20"
 
 
 def test_compilation_flags_mismatch_only_when_period_basis_and_unit_align():
@@ -129,6 +133,7 @@ def test_verification_audit_does_not_label_mismatching_cached_value_as_official_
     audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_AUDIT"].set_index("MetricName")
 
     assert pd.isna(audit.loc["ROEPercent", "MetricValue"])
+    assert audit.loc["ROEPercent", "Unit"] == "PERCENT"
     assert audit.loc["ROEPercent", "VerificationStatus"] == "PROVIDER_VALUE_MISMATCH"
     assert audit.loc["ROEPercent", "MismatchReason"] == "Provider growth differs from official calculation"
     assert audit.loc["RevenueGrowthPct", "MetricValue"] == 12.0
