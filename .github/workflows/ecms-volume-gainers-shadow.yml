@@ -125,7 +125,7 @@ jobs:
         if: ${{ inputs.ai_research == true }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.5-flash
+          GEMINI_MODEL: gemini-3.8-flash
         run: python tools/ecms_gemini_research.py
       - name: Save previous EOD page universe and ECMS fundamental cache for morning recheck
         uses: actions/cache/save@v4
