@@ -12,11 +12,16 @@ XML = b"""<?xml version="1.0" encoding="UTF-8"?>
     <entity><identifier scheme="https://www.nseindia.com">INE000A01000</identifier></entity>
     <period><startDate>2025-04-01</startDate><endDate>2026-03-31</endDate></period>
   </context>
+  <context id="FY25">
+    <entity><identifier scheme="https://www.nseindia.com">INE000A01000</identifier></entity>
+    <period><startDate>2024-04-01</startDate><endDate>2025-03-31</endDate></period>
+  </context>
   <unit id="pure"><measure>xbrli:pure</measure></unit>
   <in-gaap:ReturnOnEquityRatio contextRef="FY26" unitRef="pure" decimals="2">14.25</in-gaap:ReturnOnEquityRatio>
   <in-gaap:ReturnOnCapitalEmployed contextRef="FY26" unitRef="pure" decimals="2">18.50</in-gaap:ReturnOnCapitalEmployed>
   <in-gaap:InterestServiceCoverageRatio contextRef="FY26" unitRef="pure" decimals="2">3.75</in-gaap:InterestServiceCoverageRatio>
   <in-gaap:RevenueFromOperations contextRef="FY26" unitRef="pure" decimals="2">100</in-gaap:RevenueFromOperations>
+  <in-gaap:ReturnOnEquityRatio contextRef="FY25" unitRef="pure" decimals="2">12.00</in-gaap:ReturnOnEquityRatio>
 </xbrl>
 """
 
@@ -53,8 +58,12 @@ def test_discovers_ratio_fact_candidates_but_never_marks_them_verified(tmp_path)
     }
     assert set(result["DiscoveryStatus"]) == {"CANDIDATE_FACT_DISCOVERY_ONLY"}
     assert not result["DiscoveryStatus"].astype(str).str.contains("VERIFIED").any()
-    assert set(result["PeriodEnd"]) == {"2026-03-31"}
+    assert set(result["PeriodEnd"]) == {"2026-03-31", "2025-03-31"}
     assert result["EvidenceSHA256"].astype(str).str.len().eq(64).all()
+    assert result.loc[result["PeriodEnd"].eq("2026-03-31"), "ContextPeriodEndMatchesCandidate"].all()
+    assert not result.loc[result["PeriodEnd"].eq("2025-03-31"), "ContextPeriodEndMatchesCandidate"].any()
+    assert set(result["ContextPeriodKind"]) == {"DURATION"}
+    assert set(result["ContextDimensionStatus"]) == {"UNSEGMENTED"}
 
 
 def test_rejects_non_official_filing_url_before_fetch(tmp_path):
