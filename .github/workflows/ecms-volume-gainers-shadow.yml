@@ -52,7 +52,7 @@ jobs:
       - name: Checkout main branch
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.ref }}
       - name: Restore shared NSE cache read-only (same cache contract as production)
         id: shared-cache
         uses: actions/cache/restore@v5
@@ -183,7 +183,7 @@ jobs:
       - name: Checkout main branch
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.ref }}
       - name: Restore previous EOD page universe and ECMS fundamental cache
         uses: actions/cache/restore@v4
         with:
