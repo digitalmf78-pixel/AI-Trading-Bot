@@ -360,3 +360,38 @@ def test_attach_information_enriches_only_fundamental_pass_symbols(monkeypatch):
     assert rows.loc["AAA", "Last5DayNews"].startswith("2026-11-14:")
     assert rows.loc["BBB", "CatalystStatus"] == "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS"
     assert rows.loc["BBB", "BulkBlockDealStatus"] == "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS"
+
+
+def test_attach_information_handles_zero_fundamental_pass_without_missing_columns(monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("Informational feeds must not run when there are no Fundamental PASS stocks")
+
+    monkeypatch.setattr(scanner, "collect_catalysts", unexpected_call)
+    monkeypatch.setattr(scanner, "collect_upcoming_events", unexpected_call)
+    monkeypatch.setattr(scanner, "collect_bulk_block_deals", unexpected_call)
+    monkeypatch.setattr(scanner, "attach_valuation", lambda frame: frame.assign(
+        ValuationLabel="NOT AVAILABLE", ValuationBasis="INSUFFICIENT_DATA"
+    ))
+
+    assessed = pd.DataFrame([
+        {"TckrSymb": "AAA", "FundamentalShortlistStatus": "FAIL"},
+        {"TckrSymb": "BBB", "FundamentalShortlistStatus": "WAIT_FOR_DATA"},
+    ])
+    result, news, events, deals = scanner.attach_information(
+        assessed, __import__("datetime").date(2026, 11, 13)
+    )
+
+    assert result["UpcomingEventsStatus"].tolist() == [
+        "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+    ]
+    assert result["UpcomingEvents"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
+    assert result["NextResultDate"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
+    assert result["BulkBlockDealStatus"].eq("NOT_COLLECTED_FUNDAMENTAL_NOT_PASS").all()
+    assert result["BulkDealCount"].eq(0).all()
+    assert result["BlockDealCount"].eq(0).all()
+    assert result["Last5DayNews"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
+    assert result["FundamentalShortlistStatus"].tolist() == ["FAIL", "WAIT_FOR_DATA"]
+    assert news.empty and events.empty and deals.empty

@@ -632,7 +632,10 @@ def attach_information(assessed, as_of_date):
         result = result.drop(columns=[c for c in event_audit.columns if c != "TckrSymb" and c in result.columns])
         result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in event_defaults.items():
-        result[column] = result[column].fillna(default)
+        if column not in result.columns:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
     deal_defaults = {
         "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
         "BulkDealCount": 0, "BlockDealCount": 0,
@@ -644,7 +647,10 @@ def attach_information(assessed, as_of_date):
         result = result.drop(columns=[c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns])
         result = result.merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in deal_defaults.items():
-        result[column] = result[column].fillna(default)
+        if column not in result.columns:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
     result["RVOLInformationStatus"] = result.get("RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index))
     return result, news, events, deals
 
