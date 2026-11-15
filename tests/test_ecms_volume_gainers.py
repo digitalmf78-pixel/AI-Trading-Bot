@@ -132,6 +132,42 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
 
 
 
+def test_ecms_free_source_budget_expands_to_cover_every_current_candidate(tmp_path, monkeypatch):
+    import os
+    import sys
+    import types
+    from pathlib import Path
+    import strategies.ecms.volume_gainers as scanner
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scanner, "OUTPUT_DIR", Path("outputs/ecms"))
+    monkeypatch.setattr(scanner, "STATE_DIR", Path("data/cache/ecms"))
+    monkeypatch.setattr(scanner, "METRICS_PATH", Path("data/inputs/production_metrics.csv"))
+    monkeypatch.setenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "1")
+
+    def fake_collect(candidates, **kwargs):
+        assert len(candidates) == 2
+        assert os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] == "2"
+        raise RuntimeError("stop after verifying ECMS-scoped budget")
+
+    fake_provider = types.ModuleType("fundamental_data_provider")
+    fake_provider.collect_missing_fundamentals = fake_collect
+    monkeypatch.setitem(sys.modules, "fundamental_data_provider", fake_provider)
+
+    result = scanner.assess_page_fundamentals(
+        pd.DataFrame([
+            {"TckrSymb": "AAA", "CompanyName": "AAA Limited"},
+            {"TckrSymb": "BBB", "CompanyName": "BBB Limited"},
+        ]),
+        __import__("datetime").date(2026, 11, 13),
+    )
+
+    assert set(result["TckrSymb"]) == {"AAA", "BBB"}
+    assert result["FundamentalShortlistStatus"].eq("WAIT_FOR_DATA").all()
+    assert os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] == "1"
+    assert (tmp_path / "outputs/ecms/fundamental_collection_error.csv").exists()
+
+
 def test_strong_fundamental_mask_requires_strict_pass_strong_and_80pct_coverage():
     from strategies.ecms.volume_gainers import _strong_fundamental_mask
 
