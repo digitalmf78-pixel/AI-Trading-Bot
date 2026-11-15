@@ -149,11 +149,13 @@ def assess_page_fundamentals(candidates, eod_date):
         # data/cache/ecms/fundamental_workspace, not production data/inputs/outputs.
         os.chdir(workspace)
         from fundamental_data_provider import collect_missing_fundamentals
+        from strategies.ecms.free_fundamental_sources import fetch_ecms_free_fundamental_sources
         collect_missing_fundamentals(
             candidates,
             metrics_path=Path("data/inputs/fundamental_metrics.csv"),
             enabled=True,
             asof_date=eod_date,
+            free_source_fetcher=fetch_ecms_free_fundamental_sources,
         )
     except Exception as exc:
         failed = candidates.copy()
