@@ -621,14 +621,6 @@ def attach_information(assessed, as_of_date):
         result[column] = result[column].fillna(default)
     result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA"), "Last5DayNews"] = "WAIT_FOR_DATA"
     result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("NO_NEWS_FOUND"), "Last5DayNews"] = "NO_NEWS_FOUND"
-    for column, default in {
-        "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "NextResultDate": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "NextResultDetails": "",
-        "EventCalendarSourceURL": "",
-    }.items():
-        result[column] = default
     event_defaults = {
         "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
         "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
@@ -641,14 +633,6 @@ def attach_information(assessed, as_of_date):
         result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in event_defaults.items():
         result[column] = result[column].fillna(default)
-    for column, default in {
-        "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "BulkDealCount": 0, "BlockDealCount": 0,
-        "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
-        "BulkBlockDealSummary": "",
-        "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
-    }.items():
-        result[column] = default
     deal_defaults = {
         "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
         "BulkDealCount": 0, "BlockDealCount": 0,
