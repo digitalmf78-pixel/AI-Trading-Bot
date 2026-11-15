@@ -579,6 +579,7 @@ def test_cached_fundamentals_refresh_valuation_without_full_provider_fetch(tmp_p
         pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
         pause_seconds=0, asof_date="2026-11-13",
         filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        force_retry_incomplete=True,
     )
     cached = result.set_index("TckrSymb").loc["AAA"]
     assert valuation_calls == [("AAA", "2026-11-13")]
