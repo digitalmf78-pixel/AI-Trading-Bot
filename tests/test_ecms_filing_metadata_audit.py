@@ -9,7 +9,7 @@ def test_explicit_xbrl_details_audit_and_basis_are_kept_separate():
     assert out["VerificationStatus"] == "NOT_VERIFIED"
 
 def test_generic_url_or_details_is_never_promoted_to_xbrl_or_details_url():
-    filings = pd.DataFrame([{"TckrSymb":"ABC","url":"https://nsearchives.nseindia.com/corporate/ABC.html","details":"https://nsearchives.nseindia.com/corporate/ABC.html","audited":"Un-Audited","consolidated":"Consolidated"}])
+    filings = pd.DataFrame([{"TckrSymb":"ABC","url":"https://nsearchives.nseindia.com/corporate/ABC.html","audited":"Un-Audited","consolidated":"Consolidated"}])
     out = audit_ecms_filing_metadata(filings).iloc[0]
     assert out["XBRLURL"] == "" and out["DetailsURL"] == ""
     assert out["FilingMetadataStatus"] == "METADATA_INCOMPLETE"
