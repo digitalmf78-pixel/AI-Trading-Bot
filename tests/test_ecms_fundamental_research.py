@@ -97,7 +97,7 @@ def test_mixed_source_metrics_need_a_valid_period_and_metric_level_basis():
             "RevenueGrowthPct": "Moneycontrol", "ProfitGrowthPct": "Tickertape",
         }),
         "MetricSourcePeriodsJSON": json.dumps({
-            "RevenueGrowthPct": "2025-03-31", "ProfitGrowthPct": "",
+            "RevenueGrowthPct": "FY2024->FY2025", "ProfitGrowthPct": "",
         }),
         "MetricCalculationBasis": "MULTI_SOURCE_METRIC_LEVEL",
         "MetricPeriodAlignmentStatus": "UNVERIFIED",
@@ -157,3 +157,26 @@ def test_free_source_fiscal_growth_period_must_be_consecutive_and_not_latest_lab
     assert result["FundamentalResearchEligibleMetricCount"] == 1
     assert "RevenueGrowthPct:PERIOD_MISSING_OR_INVALID" in result["FundamentalResearchNotes"]
     assert "ROEPercent:PERIOD_MISSING_OR_INVALID" in result["FundamentalResearchNotes"]
+
+
+def test_third_party_growth_requires_two_consecutive_fiscal_years():
+    base = {
+        "TckrSymb": "GROWTH", "ProviderSector": "Industrials",
+        "RevenueGrowthPct": 20,
+        "MetricSourcesJSON": json.dumps({"RevenueGrowthPct": "Moneycontrol"}),
+        "MetricCalculationBasis": "MULTI_SOURCE_METRIC_LEVEL",
+        "MetricCalculationBasesJSON": json.dumps({
+            "RevenueGrowthPct": "MULTI_SOURCE_METRIC_LEVEL",
+        }),
+    }
+    for period in ("2025-03-31", "FY2025", "FY2024->FY2026"):
+        row = dict(base)
+        row["MetricSourcePeriodsJSON"] = json.dumps({"RevenueGrowthPct": period})
+        result = assess_fundamental_research(pd.DataFrame([row])).iloc[0]
+        assert result["FundamentalResearchEligibleMetricCount"] == 0
+        assert "RevenueGrowthPct:PERIOD_MISSING_OR_INVALID" in result["FundamentalResearchNotes"]
+
+    row = dict(base)
+    row["MetricSourcePeriodsJSON"] = json.dumps({"RevenueGrowthPct": "FY2024->FY2025"})
+    result = assess_fundamental_research(pd.DataFrame([row])).iloc[0]
+    assert result["FundamentalResearchEligibleMetricCount"] == 1
