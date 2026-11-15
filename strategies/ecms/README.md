@@ -1,50 +1,47 @@
-# ECMS — EOD Catalyst Momentum Scanner
+# ECMS — NSE Volume Gainers Research
 
-An isolated research module inside AI-Trading-Bot. The current implementation is EOD-only and does not modify or replace the existing NSE V8 production scanner.
+ECMS is an isolated, research-only workflow for stocks appearing on the NSE Volume Gainers page. It does not place orders and must not change or depend on the production NSE V8 scanner.
 
-## Current implementation status
-- **EOD module:** implemented in `strategies/ecms/eod.py`.
-- **Manual workflow:** `.github/workflows/ecms-eod-shadow.yml` (`workflow_dispatch` only).
-- **Unit tests:** `tests/test_ecms_eod.py` (written; not yet executed in GitHub Actions).
-- **Morning workflow:** not implemented.
-- **Automatic schedules:** disabled.
-- **Broker orders:** not supported; no auto-buy or auto-sell.
+## Exact ECMS scope
 
-## EOD pipeline
-1. Read the latest complete Bhavcopy session from the shared cache and require it to match the latest completed NSE session.
-2. Require 20 prior complete sessions; calculate full-session RVOL against the prior 20-session average.
-3. Apply the repository's listed-equity series allowlist, exclude ETF/mutual-fund-like rows, then use fresh official NSE Main Board and SME lists to exclude SME/unverified symbols.
-4. Keep RVOL >= 1.5 as an initial research threshold. It is a configurable research hypothesis, not a validated trading edge.
-5. Read cached fundamentals, official financial-result filing metadata, the evidence ledger and already cached XBRL files. Build metric verification locally without downloading or changing shared data.
-6. Check the trailing five calendar days of issuer-matched NSE announcements and secondary news. Mark strong positive headline signals and negative-risk signals for manual review; keyword triage is not proof of financial impact.
-7. Only mark `EOD_RESEARCH_SHORTLIST` when the fundamental gate passes, the source checks are available, a strong positive catalyst signal exists and no negative-risk keyword was detected. All other rows retain explicit `WAIT_FOR_DATA`, `NOT_QUALIFIED` or review statuses.
+For each eligible NSE Volume Gainer, publish only these seven information groups:
 
-## Fundamental verification limitation
-The existing fundamental gate requires every required metric to be verified against official XBRL evidence. The repository currently has approved evidence mappings for only a subset of the required metrics; unsupported derived ratios remain `WAIT_FOR_DATA`. Do not weaken this gate just to force a shortlist. A separate audited derivation/mapping is needed before those metrics can pass.
+1. **Fundamentals (the only rejection filter):** Revenue Growth, Profit Growth, ROE, ROCE, Debt/Equity, Interest Coverage and Operating Cash Flow. Apply the configured fundamental thresholds and sector-specific applicability. A stock is included in the fundamental-pass set only when the required applicable fundamental checks pass. Missing or unverified required fundamental data is `WAIT_FOR_DATA`, not a pass.
+2. **Last five days' company news:** issuer-matched news/announcements, with official and secondary sources clearly distinguished.
+3. **Upcoming company events:** only explicitly announced/confirmed events, with date and source.
+4. **Upcoming result:** next result date only when announced by the company/exchange; otherwise `NOT ANNOUNCED`.
+5. **Valuation:** Cheap / Fair / Expensive only when comparable valuation evidence is available; otherwise `NOT AVAILABLE`. Share price alone is not valuation.
+6. **Bulk deals / Block deals:** exchange-disclosed deal date, buyer, seller, quantity and price. Show this information for fundamental-PASS stocks; it is informational and never a rejection condition.
+7. **RVOL:** current volume relative to the prior 20 completed sessions' average volume. Display the value and data status; RVOL is informational only and never a rejection condition.
 
-## Multi-source fundamental compilation (ECMS-only)
-- `strategies/ecms/fundamental_source_compilation.py` compiles per-metric provider provenance, existing NSE XBRL audit statuses, and optional manually captured observations into separate rows.
-- Free Screener observations are entered manually from the publicly viewable company page using `SCREENER_FREE_MANUAL`; no Premium CSV, paid API, login automation, or website scraping is used.
-- BSE financial-results XBRL may require the BSE Listing Centre filing workflow. Until a public official filing/XBRL document is actually available for a symbol and period, enter no BSE value; if manually captured from an official filing, use `BSE_OFFICIAL_FILING_MANUAL`.
-- Manual BSE/Screener observations remain `NOT_OFFICIALLY_VERIFIED`. They are cross-checks only and cannot pass the strict official-XBRL gate. Keep period, standalone/consolidated basis and unit explicit. Never average conflicting values.
-- Template: `strategies/ecms/templates/fundamental_manual_observations.csv`. To add observations, copy it to `strategies/ecms/inputs/fundamental_manual_observations.csv` and enter one row per symbol/metric/source. The ECMS Volume Gainers EOD run writes `outputs/ecms/fundamental_source_compilation.csv` automatically.
+**No non-fundamental field may reject, qualify, rank-gate or suppress a stock.** News sentiment, upcoming events/results, valuation, bulk/block deals and RVOL are context only. Missing context is shown as `NOT AVAILABLE` and does not reject a fundamental-PASS stock. Do not add technical, sector, catalyst, volume or research-score rejection gates.
 
-## Data boundaries
-- Shared data is read-only: `data/bhavcopy/`, the shared `data/cache/` paths, `data/inputs/fundamental_metrics.csv`, `data/inputs/fundamental_thresholds.json`, `data/inputs/fundamental_metric_verification_evidence.csv`, and `outputs/v8_official_financial_results_filings.csv`.
-- The EOD workflow restores the same ordered shared-cache paths and uses restore prefixes compatible with the production cache.
-- ECMS writes reports only beneath `outputs/ecms/`; it does not save back into shared cache, metrics, filing registers or evidence ledgers.
-- Existing `.github/workflows/nse-test-scheduled.yml`, scanner code and production outputs remain untouched.
+## Daily checkpoints (Asia/Kolkata)
 
-## Output reports
-- `outputs/ecms/eod_candidates.csv` — RVOL candidates with fundamental, catalyst and final statuses.
-- `outputs/ecms/eod_audit.csv` — Main Board inclusion/exclusion and candidate audit.
-- `outputs/ecms/eod_catalysts.csv` — issuer-matched headline records and signal labels.
-- `outputs/ecms/fundamental_metric_verification.csv` and summaries.
-- `outputs/ecms/fundamental_source_compilation.csv` — separate per-metric rows for provider, NSE XBRL audit, and optional manual Free Screener/BSE observations.
-- `outputs/ecms/eod_run_summary.json`.
+- **EOD:** weekday schedule at **16:45 IST**. Read the completed NSE Volume Gainers page, calculate/display 20-session RVOL, assess fundamentals, and collect the information groups above. Save the EOD symbol/fundamental snapshot in ECMS-owned state.
+- **Morning:** weekday schedule at **09:20 IST**. Re-read the current NSE Volume Gainers page and reassess current-page stocks using the same fundamental-only gate.
+- **Morning repeat marking:** if a stock that passed fundamentals at EOD appears again on the 09:20 page, mark it explicitly as `EOD_FUNDAMENTAL_PASS_REPEAT` (separate from a new morning entry). Also retain clear labels for new entries, EOD names no longer present, and morning fundamental status. A repeat label is informational, not an extra filter.
+- EOD and morning reports/Telegram messages remain separate. The morning run must restore the previous EOD snapshot and ECMS fundamental workspace.
 
-## Later phase — Morning confirmation
-Morning monitoring is intentionally not part of this phase. It will be built only after the EOD output is validated and a supported, timestamped live-market data source is verified. Volume Gainers presence will be optional confirmation, never a mandatory gate. The scan is expected to start at 09:15 IST and final confirmation not before 09:25–09:30 IST.
+GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-5` = 09:20 IST. These schedules belong only to `.github/workflows/ecms-volume-gainers-shadow.yml`.
 
-## Validation gates
-The EOD workflow is manual/shadow-only. Execute tests and inspect the first real artifact before adding any schedule. Missing/stale Bhavcopy, calendar coverage, board lists, fundamentals, XBRL evidence or news source must remain visible as a failure or `WAIT_FOR_DATA`; never manufacture a pass.
+## Fundamental data quality and sources
+
+- Prefer official NSE XBRL / issuer filings; use official BSE filings as an official cross-check where available.
+- Free Screener.in observations may be manually captured from publicly visible pages. No Screener Premium, paid API, login automation or scraping.
+- Yahoo Finance/yfinance is third-party comparison data, never described as official verification.
+- Preserve metric-level source, URL, financial period, publication date, calculation basis and unit. Do not average conflicting sources or silently promote provider/manual observations to official verification.
+- For banks/NBFCs/insurers, mark metrics that are not applicable under the approved sector treatment; do not force industrial-company ratios onto financial institutions.
+- Missing, stale, conflicting or unverified required fundamental evidence remains `WAIT_FOR_DATA`. Never manufacture a pass.
+- For non-fundamental information, distinguish `NOT AVAILABLE`, `NOT ANNOUNCED` and source-unavailable states; these do not change the fundamental result.
+
+## ECMS isolation
+
+- Shared NSE inputs and production caches are read-only.
+- ECMS-owned state/cache stays under `data/cache/ecms/`; reports stay under `outputs/ecms/`.
+- Do not modify `.github/workflows/nse-test-scheduled.yml`, NSE V8, shared provider behavior, shared thresholds, production scanner logic or unrelated workflows.
+- No broker integration, order placement, auto-buy or auto-sell.
+
+## Current implementation / delivery status
+
+The EOD and 09:20 workflow jobs and schedules are already present in `.github/workflows/ecms-volume-gainers-shadow.yml`. The existing implementation still contains legacy catalyst/research-score gating and does not yet produce every requested informational field or the explicit EOD-fundamental-pass repeat label. These are implementation tasks; documentation does not claim they are complete. Validate with focused ECMS tests and inspect EOD and morning artifacts before treating the requested behavior as live.
