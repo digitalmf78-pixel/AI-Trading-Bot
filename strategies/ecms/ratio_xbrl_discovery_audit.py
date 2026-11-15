@@ -18,6 +18,7 @@ OUTPUT_COLUMNS = [
     "TckrSymb", "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL",
     "MetricCandidate", "DiscoveryStatus", "FactTag", "TaxonomyNamespace",
     "FactValue", "UnitMeasure", "ContextRef", "PeriodStart", "PeriodEnd",
+    "ContextPeriodEndMatchesCandidate", "ContextPeriodKind", "ContextDimensionStatus",
     "DimensionsJSON", "EntityIdentifier", "EvidenceFilePath", "EvidenceSHA256",
     "VerificationWarning",
 ]
@@ -166,13 +167,16 @@ def discover_ecms_ratio_xbrl_facts(
                 "ContextRef": context_ref,
                 "PeriodStart": context.get("PeriodStart", ""),
                 "PeriodEnd": context.get("PeriodEnd", ""),
+                "ContextPeriodEndMatchesCandidate": str(context.get("PeriodEnd", "")).strip()[:10] == period,
+                "ContextPeriodKind": "DURATION" if context.get("PeriodStart") else "INSTANT_OR_UNKNOWN",
+                "ContextDimensionStatus": "DIMENSIONED" if context.get("DimensionsJSON", "[]") not in {"", "[]"} else "UNSEGMENTED",
                 "DimensionsJSON": context.get("DimensionsJSON", ""),
                 "EntityIdentifier": context.get("EntityIdentifier", ""),
                 "EvidenceFilePath": str(cache_path),
                 "EvidenceSHA256": digest,
                 "VerificationWarning": (
-                    "Discovery only: verify taxonomy definition, formula, period, "
-                    "basis, dimensions and provider reconciliation before any approval"
+                    "Discovery only: context end-date must match candidate period; also verify taxonomy "
+                    "definition, formula, duration, basis, dimensions and provider reconciliation"
                 ),
             })
         if found == 0:
