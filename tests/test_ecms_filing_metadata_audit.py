@@ -326,3 +326,30 @@ def test_nse_remarks_heading_with_only_blank_rows_is_explicitly_empty():
     assert out["RemarksStatus"] == "REMARKS_SECTION_EMPTY"
     assert out["RemarksText"] == ""
     assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_ixbrl_is_preferred_over_non_url_details_and_non_html_details_are_blocked():
+    from strategies.ecms.filing_metadata_audit import audit_ecms_filing_metadata
+
+    ixbrl_url = "https://nsearchives.nseindia.com/corporate/ixbrl/ABC_iXBRL_WEB.html"
+    preferred = audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "ABC",
+        "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+        "details": "Details(88.4 KB)",
+        "ixbrl": ixbrl_url,
+        "audited": "Un-Audited",
+        "consolidated": "Standalone",
+    }])).iloc[0]
+    assert preferred["DetailsURL"] == ixbrl_url
+    assert preferred["DetailsURLStatus"] == "PASS"
+
+    pdf_only = audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "XYZ",
+        "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/XYZ.xml",
+        "details": "https://nsearchives.nseindia.com/corporate/XYZ.pdf",
+        "audited": "Un-Audited",
+        "consolidated": "Standalone",
+    }])).iloc[0]
+    assert pdf_only["DetailsURL"] == ""
+    assert pdf_only["DetailsURLStatus"] == "BLOCKED"
+    assert pdf_only["VerificationStatus"] == "NOT_VERIFIED"
