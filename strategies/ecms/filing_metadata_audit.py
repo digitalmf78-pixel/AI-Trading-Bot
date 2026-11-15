@@ -41,6 +41,8 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
             if _official_https_url(possible) and urlsplit(possible).path.lower().endswith(".xml"):
                 xbrl = possible
         details = _value(row, ("details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL", "details"))
+        if not _official_https_url(details) or urlsplit(details).path.lower().endswith(".xml"):
+            details = ""
         audited = _value(row, ("audited", "auditStatus", "audit_status", "AuditedLabel"))
         consolidation = _value(row, ("consolidated", "consolidation", "reportingBasis", "reporting_basis", "ConsolidationLabel"))
         xbrl_ok = _official_https_url(xbrl) and urlsplit(xbrl).path.lower().endswith(".xml")
