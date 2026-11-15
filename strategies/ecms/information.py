@@ -18,7 +18,7 @@ NSE_EVENT_CALENDAR_URL = "https://www.nseindia.com/api/event-calendar"
 NSE_DEALS_URL = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
 NSE_EVENT_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar"
 NSE_DEALS_PAGE = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
-EVENT_LOOKAHEAD_DAYS = 30
+EVENT_LOOKAHEAD_DAYS = 90
 DEAL_LOOKBACK_DAYS = 30
 
 
@@ -122,8 +122,8 @@ def collect_upcoming_events(symbols, as_of_date: date, lookahead_days=EVENT_LOOK
             "Source", "SourceType", "SourceURL", "IsResultEvent",
         ])
         for symbol in symbols:
-            symbol_rows = events[events["TckrSymb"].eq(symbol)] if not events.empty else pd.DataFrame()
-            result_rows = symbol_rows[symbol_rows["IsResultEvent"].astype(bool)] if not symbol_rows.empty else pd.DataFrame()
+            symbol_rows = events[events["TckrSymb"].eq(symbol)].sort_values("EventDate") if not events.empty else pd.DataFrame()
+            result_rows = symbol_rows[symbol_rows["IsResultEvent"].astype(bool)].sort_values("EventDate") if not symbol_rows.empty else pd.DataFrame()
             audit.append({
                 "TckrSymb": symbol,
                 "UpcomingEventsStatus": "AVAILABLE" if not symbol_rows.empty else "NO_CONFIRMED_UPCOMING_EVENTS",
