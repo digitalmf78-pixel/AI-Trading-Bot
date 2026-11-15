@@ -432,10 +432,10 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
     import fundamental_data_provider as provider
 
     result = {
-        "metrics": {"GrossMarginPct": 35.0, "ROEPercent": 18.5},
-        "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol"},
-        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/"},
-        "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026"},
+        "metrics": {"GrossMarginPct": 35.0, "ROEPercent": 18.5, "ProfitGrowthPct": 12.0},
+        "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol", "ProfitGrowthPct": "Moneycontrol"},
+        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/", "ProfitGrowthPct": "https://www.moneycontrol.com/"},
+        "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026", "ProfitGrowthPct": "Mar 2026"},
         "metric_currencies": {"GrossMarginPct": "", "ROEPercent": ""},
         "metric_alternates": {"ROEPercent": [{"source": "Tickertape", "value": 19.0, "period": "FY2026", "source_url": "https://www.tickertape.in/"}]},
         "providers": {"Moneycontrol": {"status": "DATA_FOUND"}, "Tickertape": {"status": "DATA_FOUND"}},
@@ -452,12 +452,17 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
         "ok": False, "values": {}, "reason": "NO_ALIGNED_ANNUAL_STATEMENTS",
     })
 
+    def ticker_without_profit_growth(symbol):
+        ticker = FakeTicker(symbol)
+        ticker.info.pop("earningsGrowth", None)
+        return ticker
+
     record, diagnostic = provider._fetch_one(
         "AAA",
-        ticker_factory=FakeTicker,
+        ticker_factory=ticker_without_profit_growth,
         missing_metrics={"GrossMarginPct"},
         allow_free_sources=True,
-        free_source_audit_metrics={"ROEPercent"},
+        free_source_audit_metrics={"ROEPercent", "ProfitGrowthPct"},
     )
 
     assert float(record["GrossMarginPct"]) == 35.0
@@ -467,6 +472,9 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
     assert comparison["ROEPercent"]["secondary_sources"][0]["source"] == "Moneycontrol"
     assert comparison["ROEPercent"]["secondary_sources"][1]["source"] == "Tickertape"
     assert comparison["ROEPercent"]["comparison_status"] == "OBSERVATIONS_AVAILABLE_RECONCILIATION_REQUIRED"
+    assert comparison["ProfitGrowthPct"]["YahooFinance"]["value"] is None
+    assert comparison["ProfitGrowthPct"]["YahooFinance"]["source"] == "NOT_AVAILABLE"
+    assert comparison["ProfitGrowthPct"]["secondary_sources"][0]["source"] == "Moneycontrol"
     assert record["FreeSourcesStatus"] == "DATA_FOUND"
     assert diagnostic["FreeSourcesStatus"] == "DATA_FOUND"
     assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct;ROEPercent"
