@@ -262,3 +262,8 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 - Failed requests and empty responses are never cached. An expired cache is never used as a fallback when the official refresh fails; unresolved classifications remain unavailable under the existing fail-closed behavior.
 - GitHub Actions restores and saves this cache alongside existing sector caches. The cache reduces repeated quote HTTP calls only; it does not change Mainboard/Delivery/Liquidity eligibility, sector taxonomy, mapping precedence, candidate counts, or the Master Specification.
 - Regression coverage verifies cache hits, expiry/refetch, invalid symbol/source rejection, and no caching of failed/empty responses. Live runtime benefit must be measured on the next EOD run; no speed improvement is claimed before that measurement.
+
+
+## Separate ECMS Volume Gainers project
+
+ECMS is an isolated NSE Volume Gainers fundamental-research workflow. Its complete scope, source hierarchy, mandatory fundamental rules, strong-stock hand-off criteria, reports, roadmap, known gaps and change-control rules are documented in [ECMS Volume Gainers README](docs/ECMS_VOLUME_GAINERS_README.md). Read that document before making any ECMS changes. ECMS must not be confused with the NSE V8 production scanner or IPO V8.
