@@ -179,3 +179,13 @@ def test_duplicate_exact_filing_rows_are_flagged_ambiguous():
     assert set(out["FilingMetadataStatus"]) == {"AMBIGUOUS_EXACT_FILING_MATCH"}
     assert set(out["NSELookupStatus"]) == {"RAW_EXACT_NSE_API_ROW"}
     assert set(out["VerificationStatus"]) == {"NOT_VERIFIED"}
+
+def test_nse_date_parser_uses_explicit_formats_without_ambiguous_dayfirst_guessing():
+    from strategies.ecms.filing_metadata_audit import _parse_nse_date
+    from datetime import date
+
+    assert _parse_nse_date("2026-03-31") == date(2026, 3, 31)
+    assert _parse_nse_date("31-Mar-2026 18:00:00") == date(2026, 3, 31)
+    assert _parse_nse_date("31-03-2026") == date(2026, 3, 31)
+    assert _parse_nse_date("2026-31-03") is None
+    assert _parse_nse_date("") is None
