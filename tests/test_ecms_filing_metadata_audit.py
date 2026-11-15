@@ -353,3 +353,77 @@ def test_ixbrl_is_preferred_over_non_url_details_and_non_html_details_are_blocke
     assert pdf_only["DetailsURL"] == ""
     assert pdf_only["DetailsURLStatus"] == "BLOCKED"
     assert pdf_only["VerificationStatus"] == "NOT_VERIFIED"
+
+
+
+def test_details_fetch_retries_transient_read_timeout_without_relaxing_validation(monkeypatch):
+    from requests.exceptions import ReadTimeout
+    from strategies.ecms import filing_metadata_audit as module
+
+    details_url = "https://nsearchives.nseindia.com/corporate/ixbrl/ABC_iXBRL_WEB.html"
+    source = module.audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "ABC",
+        "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+        "ixbrl": details_url,
+        "audited": "Un-Audited",
+        "consolidated": "Standalone",
+    }]))
+
+    class Response:
+        url = details_url
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+        content = b"<html><body><h3>Remarks</h3><table><tr><td>Debt equity ratio</td><td>Borrowings / equity</td></tr></table></body></html>"
+        def raise_for_status(self):
+            pass
+
+    class Session:
+        def __init__(self):
+            self.calls = 0
+            self.headers_seen = []
+        def get(self, _url, **kwargs):
+            self.calls += 1
+            self.headers_seen.append(kwargs.get("headers", {}))
+            assert kwargs.get("timeout") == (8, 35)
+            if self.calls == 1:
+                raise ReadTimeout("temporary NSE archive stall")
+            return Response()
+
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    session = Session()
+    out = module.fetch_ecms_details_remarks(source, session=session).iloc[0]
+    assert session.calls == 2
+    assert session.headers_seen[0].get("Referer") == module.NSE_FILINGS_PAGE
+    assert out["RemarksStatus"] == "REMARKS_EXTRACTED"
+    assert "Borrowings / equity" in out["RemarksText"]
+    assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_details_fetch_does_not_retry_non_transient_http_error():
+    from requests.exceptions import HTTPError
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_details_remarks
+
+    details_url = "https://nsearchives.nseindia.com/corporate/ixbrl/ABC_iXBRL_WEB.html"
+    source = audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "ABC", "ixbrl": details_url,
+    }]))
+
+    class Response:
+        url = details_url
+        headers = {"Content-Type": "text/html"}
+        content = b"<html></html>"
+        def raise_for_status(self):
+            error = HTTPError("not found")
+            error.response = type("ErrorResponse", (), {"status_code": 404, "headers": {}})()
+            raise error
+
+    class Session:
+        calls = 0
+        def get(self, *_args, **_kwargs):
+            self.calls += 1
+            return Response()
+
+    session = Session()
+    out = fetch_ecms_details_remarks(source, session=session).iloc[0]
+    assert session.calls == 1
+    assert out["RemarksStatus"] == "FETCH_OR_PARSE_ERROR:HTTPError"
+    assert out["VerificationStatus"] == "NOT_VERIFIED"
