@@ -50,9 +50,10 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     monkeypatch.setattr(scanner, "EVIDENCE_PATH", Path("data/inputs/production_evidence.csv"))
     monkeypatch.setattr(scanner, "THRESHOLDS_PATH", Path("data/inputs/thresholds.json"))
 
-    def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None):
+    def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None, force_retry_incomplete=False):
         assert enabled is True
         assert callable(free_source_fetcher)
+        assert force_retry_incomplete is True
         assert set(candidates["TckrSymb"]) == {"AAA"}
         path = Path(metrics_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,3 +97,24 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     assert not (tmp_path / "data/inputs/production_metrics.csv").exists()
     assert result.iloc[0]["FundamentalShortlistStatus"] == "PASS"
     assert (tmp_path / "outputs/ecms/fundamental_metrics_ecms.csv").exists()
+
+
+
+def test_strong_fundamental_mask_requires_strict_pass_strong_and_80pct_coverage():
+    from strategies.ecms.volume_gainers import _strong_fundamental_mask
+
+    frame = pd.DataFrame({
+        "FundamentalShortlistStatus": ["PASS", "PASS", "FAIL", "PASS"],
+        "FundamentalResearchClassification": ["STRONG", "GOOD", "STRONG", "STRONG"],
+        "FundamentalResearchCoveragePct": [80, 95, 90, 79.9],
+    })
+    assert _strong_fundamental_mask(frame).tolist() == [True, False, False, False]
+
+
+def test_confirmation_status_distinguishes_double_confirmed_and_morning_only():
+    from strategies.ecms.volume_gainers import _confirmation_status
+
+    assert _confirmation_status(True, True, True) == "DOUBLE_CONFIRMED_EOD_MORNING"
+    assert _confirmation_status(False, True, True) == "UNDER_OBSERVATION_MORNING"
+    assert _confirmation_status(True, True, False) == "EOD_STRONG_MORNING_NOT_CONFIRMED"
+    assert _confirmation_status(True, False, False) == "STRONG_EOD_DISAPPEARED_MORNING"
