@@ -622,17 +622,22 @@ def test_primary_provider_missing_data_is_throttled_and_retried_after_cooldown(t
         {column: pd.NA for column in provider.VALUATION_COLUMNS},
         {"TckrSymb": "AAA", "ProviderStatus": "VALUATION_MISSING"},
     ))
-    def run(day):
+    def run(day, force_retry=False):
         return provider.collect_missing_fundamentals(
             pd.DataFrame({"TckrSymb": ["AAA"]}), metrics_path=path, enabled=True,
             pause_seconds=0, asof_date=day, filings_fetcher=lambda _cutoff: pd.DataFrame(),
+            force_retry_incomplete=force_retry,
         )
     run("2026-11-13")
     assert calls == ["AAA"]
     run("2026-11-14")
     assert calls == ["AAA"]
-    run("2026-11-22")
+    # ECMS can opt in to retry an incomplete symbol before the shared cooldown;
+    # callers that omit the flag retain the existing V8/default behavior.
+    run("2026-11-14", force_retry=True)
     assert calls == ["AAA", "AAA"]
+    run("2026-11-22")
+    assert calls == ["AAA", "AAA", "AAA"]
 
 
 def test_provider_error_uses_shorter_retry_cooldown():
