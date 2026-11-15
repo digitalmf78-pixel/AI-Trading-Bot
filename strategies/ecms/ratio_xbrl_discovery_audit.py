@@ -124,7 +124,7 @@ def discover_ecms_ratio_xbrl_facts(
             rows.append({
                 **{column: "" for column in OUTPUT_COLUMNS},
                 "TckrSymb": symbol, "FinancialPeriodEnd": period,
-                "DiscoveryStatus": "EXACT_OFFICIAL_FILING_NOT_UNIQUE_OR_NOT_ELIGIBLE",
+                "DiscoveryStatus": "EXACT_OFFICIAL_FILING_NOT_UNIQUE",
                 "VerificationWarning": "No eligible exact-symbol/period NSE filing variant; missing or ambiguous metadata stays blocked",
             })
             continue
