@@ -126,3 +126,16 @@ def test_missing_source_provenance_fails_closed(tmp_path):
     )
 
     assert result.iloc[0]["DebtToEquityAuditStatus"] == "PROVIDER_SOURCE_NOT_APPROVED"
+
+
+
+def test_missing_provider_metric_is_reported_not_silently_dropped(tmp_path):
+    metrics, filings = _inputs()
+    metrics.loc[0, "DebtToEquity"] = ""
+    result = audit_ecms_debt_to_equity(
+        metrics, filings, tmp_path,
+        fetch_xml=lambda _url, _path: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+
+    assert len(result) == 1
+    assert result.iloc[0]["DebtToEquityAuditStatus"] == "PROVIDER_METRIC_MISSING"
