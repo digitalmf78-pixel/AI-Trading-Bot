@@ -166,6 +166,12 @@ def assess_page_fundamentals(candidates, eod_date):
         )
         failed["FundamentalAssessmentStatus"] = failed["FundamentalShortlistStatus"]
         failed["FundamentalAssessmentReason"] = failed["FundamentalShortlistReason"]
+        failed["FundamentalResearchClassification"] = "INSUFFICIENT_DATA"
+        failed["FundamentalResearchScore"] = pd.NA
+        failed["FundamentalResearchCoveragePct"] = 0.0
+        failed["FundamentalResearchProvenanceStatus"] = "NO_ELIGIBLE_METRICS"
+        failed["StrongFundamentalHandOffStatus"] = "NOT_FORWARDED"
+        failed["StrongFundamentalNotForwardedReason"] = "FUNDAMENTAL_COLLECTION_ERROR"
         pd.DataFrame([{
             "Status": "FUNDAMENTAL_COLLECTION_ERROR",
             "Reason": f"{type(exc).__name__}: {str(exc)[:500]}",
