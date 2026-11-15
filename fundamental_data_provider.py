@@ -1239,7 +1239,7 @@ def collect_missing_fundamentals(
         if newly_stored_metric_names:
             # Persist per-metric provenance independently; a mixed-provider row
             # must never imply that one source supplied every metric.
-            for field in ("MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON"):
+            for field in ("MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "MetricCalculationBasesJSON"):
                 try:
                     prior_map = json.loads(str(merged.get(field) or "{}"))
                     if not isinstance(prior_map, dict):
