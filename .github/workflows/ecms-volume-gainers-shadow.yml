@@ -1,4 +1,4 @@
-name: ECMS VOLUME GAINERS - MANUAL EOD RUN
+name: ECMS NSE VOLUME GAINERS - EOD + 09:20 MORNING
 on:
   push:
     branches: [main]
@@ -159,12 +159,12 @@ jobs:
           if not token or not chat_id:
               print("ECMS Telegram skipped: Telegram secrets are not configured.")
               raise SystemExit(0)
-          lines = [f"📊 ECMS EOD FUNDAMENTAL RESEARCH", f"Status: {os.getenv('JOB_STATUS', 'unknown').upper()}"]
+          lines = [f"📊 ECMS EOD FUNDAMENTAL REPORT", f"Status: {os.getenv('JOB_STATUS', 'unknown').upper()}"]
           path = Path(os.getenv("SUMMARY_PATH", ""))
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("strong_fundamental_handoff","Strong fundamental"),("wait_for_data","Wait for data")]:
+                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("fundamental_pass","Fundamental PASS"),("fundamental_fail","Fundamental FAIL"),("wait_for_data","Wait for data")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
@@ -177,22 +177,20 @@ jobs:
                           symbol = (row.get("TckrSymb") or row.get("Symbol") or "").strip()
                           if not symbol:
                               continue
-                          grade = (row.get("FundamentalResearchClassification") or "NOT_AVAILABLE").strip()
-                          verified = (row.get("FundamentalVerificationStatus") or "NOT_AVAILABLE").strip()
                           shortlist = (row.get("FundamentalShortlistStatus") or "NOT_AVAILABLE").strip()
-                          coverage = (row.get("FundamentalResearchCoveragePct") or "").strip()
-                          notes = (row.get("FundamentalResearchNotes") or "").strip().replace("\n", " ")
-                          if len(notes) > 105:
-                              notes = notes[:102] + "..."
+                          verified = (row.get("FundamentalVerificationStatus") or "NOT_AVAILABLE").strip()
+                          reason = (row.get("FundamentalShortlistReason") or "").strip().replace("\n", " ")
+                          if len(reason) > 100:
+                              reason = reason[:97] + "..."
                           stock_lines.append(
-                              f"{symbol}: research={grade}; XBRL={verified}; coverage={coverage or 'NA'}%; gate={shortlist}"
-                              + (f"; blocker={notes}" if notes else "")
+                              f"{symbol}: fundamental={shortlist}; official_XBRL={verified}"
+                              + (f"; note={reason}" if reason else "")
                           )
               except Exception as exc:
                   stock_lines.append(f"Stock-level research report unavailable: {type(exc).__name__}")
           if stock_lines:
               lines.append("")
-              lines.append("STOCK-WISE FUNDAMENTAL STATUS (research grade is not XBRL approval):")
+              lines.append("STOCK-WISE FUNDAMENTAL DECISION (only rejection gate):")
               lines.extend(stock_lines)
           else:
               lines.append("Stock-wise fundamental CSV unavailable; inspect the run artifact.")
@@ -306,7 +304,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("morning_strong","Strong morning"),("under_observation","Under observation"),("double_confirmed","Double confirmed EOD + morning"),("morning_wait_for_data","Wait for data")]:
+                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
