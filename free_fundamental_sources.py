@@ -279,6 +279,7 @@ def fetch_free_fundamental_sources(
     missing_metrics=None,
     pause_seconds: float = 0.5,
     source_factories=None,
+    capture_metric_source_urls: bool = False,
 ) -> dict:
     """Query all enabled no-key sources; official NSE XBRL has first priority.
 
@@ -288,6 +289,8 @@ def fetch_free_fundamental_sources(
        "tickertape": callable returning a Tickertape-like object}
     When source_factories is supplied, the official NSE source is skipped unless
     explicitly injected, so unit tests never perform unexpected network calls.
+    capture_metric_source_urls records the actual provider request URL per metric;
+    missing request URLs remain blank instead of using a generic homepage.
     """
     symbol = str(symbol).strip().upper()
     wanted = set(missing_metrics or ALIASES)
@@ -370,6 +373,7 @@ def fetch_free_fundamental_sources(
 
     for source, factory in clients:
         frames = {}
+        frame_source_urls = {}
         errors = []
         try:
             client = _instantiate_bounded_client(factory)
@@ -450,6 +454,16 @@ def fetch_free_fundamental_sources(
             for name, call in calls:
                 try:
                     frames[name] = _safe_frame(call())
+                    if capture_metric_source_urls:
+                        request_meta = getattr(client, "_free_source_last_http", {})
+                        request_url = str(request_meta.get("url", "") or "").strip()
+                        allowed_host = "moneycontrol.com" if source == "Moneycontrol" else "tickertape.in"
+                        from urllib.parse import urlparse
+                        parsed_url = urlparse(request_url)
+                        if (parsed_url.scheme == "https" and parsed_url.hostname
+                                and (parsed_url.hostname == allowed_host
+                                     or parsed_url.hostname.endswith("." + allowed_host))):
+                            frame_source_urls[name] = request_url[:1000]
                 except Exception as exc:
                     errors.append(f"{name}: {type(exc).__name__}: {str(exc)[:160]}")
                 if pause_seconds:
@@ -479,30 +493,34 @@ def fetch_free_fundamental_sources(
                 "table_schema": table_schema,
                 "errors": errors,
                 "source_url": SOURCE_URLS[source],
+                **({"frame_source_urls": frame_source_urls} if capture_metric_source_urls else {}),
             }
             for metric in wanted:
                 candidate_frames = [
-                    frames.get("ratios", pd.DataFrame()),
-                    frames.get("overview", pd.DataFrame()),
-                    frames.get("scorecard", pd.DataFrame()),
-                    frames.get("income", pd.DataFrame()),
-                    frames.get("income_annual", pd.DataFrame()),
-                    frames.get("balance_sheet", pd.DataFrame()),
-                    frames.get("cash_flow", pd.DataFrame()),
+                    ("ratios", frames.get("ratios", pd.DataFrame())),
+                    ("overview", frames.get("overview", pd.DataFrame())),
+                    ("scorecard", frames.get("scorecard", pd.DataFrame())),
+                    ("income", frames.get("income", pd.DataFrame())),
+                    ("income_annual", frames.get("income_annual", pd.DataFrame())),
+                    ("balance_sheet", frames.get("balance_sheet", pd.DataFrame())),
+                    ("cash_flow", frames.get("cash_flow", pd.DataFrame())),
                 ]
                 if metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
-                    candidate_frames.insert(0, frames.get("income_growth", pd.DataFrame()))
-                    candidate_frames.insert(1, frames.get("income_annual_growth", pd.DataFrame()))
+                    candidate_frames.insert(0, ("income_growth", frames.get("income_growth", pd.DataFrame())))
+                    candidate_frames.insert(1, ("income_annual_growth", frames.get("income_annual_growth", pd.DataFrame())))
                 if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
-                    candidate_frames.insert(0, frames.get("shareholding", pd.DataFrame()))
+                    candidate_frames.insert(0, ("shareholding", frames.get("shareholding", pd.DataFrame())))
                 value = None
                 observation_period = ""
+                observation_frame = ""
                 if source == "Moneycontrol" and metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
                     growth_aliases = ("revenue", "sales") if metric == "RevenueGrowthPct" else ("net profit", "profit after tax")
                     value, observation_period = _extract_annual_growth(
                         frames.get("overview", pd.DataFrame()), growth_aliases,
                     )
-                for frame in candidate_frames:
+                    if value is not None:
+                        observation_frame = "overview"
+                for frame_name, frame in candidate_frames:
                     if value is not None:
                         break
                     if metric in {"PromoterHoldingPct", "FIIHoldingPct", "DIIHoldingPct", "PublicHoldingPct", "PledgePct"}:
@@ -510,17 +528,20 @@ def fetch_free_fundamental_sources(
                         observation_period = ""
                     else:
                         value, observation_period = _extract_ratio_observation(frame, ALIASES[metric])
+                    if value is not None:
+                        observation_frame = frame_name
                 if value is None:
                     continue
+                metric_source_url = frame_source_urls.get(observation_frame, "") if capture_metric_source_urls else SOURCE_URLS[source]
                 if metric in result["metrics"]:
                     result["metric_alternates"].setdefault(metric, []).append({
                         "source": source, "value": value, "period": observation_period,
-                        "source_url": SOURCE_URLS[source],
+                        "source_url": metric_source_url,
                     })
                     continue
                 result["metrics"][metric] = value
                 result["metric_sources"][metric] = source
-                result["metric_urls"][metric] = SOURCE_URLS[source]
+                result["metric_urls"][metric] = metric_source_url
                 result["metric_periods"][metric] = observation_period
                 result["metric_currencies"][metric] = ""
         except Exception as exc:

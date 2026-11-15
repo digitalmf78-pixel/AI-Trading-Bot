@@ -94,4 +94,5 @@ def fetch_ecms_free_fundamental_sources(
         missing_metrics=missing_metrics,
         pause_seconds=pause_seconds,
         source_factories=factories,
+        capture_metric_source_urls=True,
     )

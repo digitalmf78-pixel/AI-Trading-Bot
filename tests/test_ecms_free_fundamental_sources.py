@@ -1,6 +1,10 @@
 import sys
 from types import SimpleNamespace
 
+import pandas as pd
+
+import free_fundamental_sources as shared_free_sources
+
 from strategies.ecms.free_fundamental_sources import (
     _select_exact_moneycontrol_hit,
     _strict_moneycontrol_factory,
@@ -73,3 +77,60 @@ def test_ecms_moneycontrol_factory_fails_closed_when_no_exact_hit(monkeypatch):
 
     assert ticker_id == ""
     assert raw_hits == hits
+
+
+
+def test_ecms_metric_provenance_records_actual_moneycontrol_request_url(monkeypatch):
+    class FakeMoneyControl:
+        def __init__(self):
+            self.session = None
+            self._free_source_last_http = {}
+
+        def _frame(self, reference_id, frame):
+            self._free_source_last_http = {
+                "url": (
+                    "https://www.moneycontrol.com/mc/widget/mcfinancials/"
+                    f"getFinancialData?referenceId={reference_id}&scId=MC123"
+                )
+            }
+            return frame
+
+        def get_ticker(self, search_text):
+            return "MC123", {"ticker": "ABC", "sc_id": "MC123", "stock_name": "ABC Limited"}
+
+        def get_ratios_mini_statement(self, ticker, statement_type="consolidated"):
+            return self._frame("ratios", pd.DataFrame({"Mar 2026": [12.5]}, index=["EPS"]))
+
+        def get_overview_mini_statement(self, ticker, statement_type="consolidated", statement_frequency=12):
+            return self._frame("overview", pd.DataFrame())
+
+        def get_income_mini_statement(self, ticker, statement_type="consolidated", statement_frequency=3):
+            return self._frame("income", pd.DataFrame())
+
+        def get_balance_sheet_mini_statement(self, ticker, statement_type="consolidated"):
+            return self._frame("balance-sheet", pd.DataFrame())
+
+        def get_cash_flow_mini_statement(self, ticker, statement_type="consolidated"):
+            return self._frame("cash-flow", pd.DataFrame())
+
+    fake_client = FakeMoneyControl()
+    monkeypatch.setattr(
+        shared_free_sources, "_instantiate_bounded_client", lambda factory: fake_client
+    )
+    result = shared_free_sources.fetch_free_fundamental_sources(
+        "ABC",
+        company_name="ABC Limited",
+        missing_metrics={"EPS"},
+        pause_seconds=0,
+        source_factories={"moneycontrol": lambda: fake_client},
+        capture_metric_source_urls=True,
+    )
+
+    assert result["metrics"]["EPS"] == 12.5
+    assert result["metric_periods"]["EPS"] == "Mar 2026"
+    assert result["metric_urls"]["EPS"].startswith(
+        "https://www.moneycontrol.com/mc/widget/mcfinancials/getFinancialData?"
+    )
+    assert "referenceId=ratios" in result["metric_urls"]["EPS"]
+    assert "scId=MC123" in result["metric_urls"]["EPS"]
+    assert result["metric_urls"]["EPS"] != "https://www.moneycontrol.com/"
