@@ -42,7 +42,7 @@ EQUITY_TAG_BY_BASIS = {
 AUDIT_COLUMNS = [
     "TckrSymb", "ProviderDebtToEquity", "OfficialDebtToEquity",
     "DebtToEquityAuditStatus", "DebtToEquityAuditReason",
-    "FinancialPeriodEnd", "ReportingBasis", "XbrlContextRef",
+    "FinancialPeriodEnd", "PublicationDate", "OfficialFilingURL", "ReportingBasis", "XbrlContextRef",
     "EntityIdentifier", "EntityIdentifierScheme", "DimensionsJSON",
     "BorrowingsCurrentINR", "BorrowingsNoncurrentINR", "EquityINR",
     "BorrowingsCurrentFactTag", "BorrowingsNoncurrentFactTag",
@@ -149,6 +149,8 @@ def _row(symbol: str, metric: pd.Series, status: str, reason: str, **extra) -> d
         "DebtToEquityAuditStatus": status,
         "DebtToEquityAuditReason": reason,
         "FinancialPeriodEnd": _clean(metric.get("FinancialPeriodEnd"))[:10],
+        "PublicationDate": _clean(metric.get("PublicationDate"))[:10],
+        "OfficialFilingURL": _clean(metric.get("OfficialFilingURL")),
     })
     row.update(extra)
     return row
