@@ -475,7 +475,10 @@ def run_morning():
       "repeated":int(report["MorningStatus"].eq("REPEATED").sum()),
       "disappeared":int(report["MorningStatus"].eq("DISAPPEARED").sum()),
       "new_entries":int(report["MorningStatus"].eq("NEW_ENTRY").sum()),
+      "morning_assessed_candidates":int(len(morning_assessed)),
+      "morning_assessment_rows":int(report["MorningStrongFundamentalStatus"].ne("NOT_ASSESSED").sum()),
       "morning_strong":int(report["MorningStrongFundamentalStatus"].eq("STRONG_MORNING").sum()),
+      "morning_wait_for_data":int(morning_assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA").sum()),
       "under_observation":int(report["ConfirmationStatus"].eq("UNDER_OBSERVATION_MORNING").sum()),
       "double_confirmed":int(report["ConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
       "eod_strong_not_confirmed":int(report["ConfirmationStatus"].isin(
