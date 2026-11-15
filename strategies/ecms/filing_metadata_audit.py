@@ -36,7 +36,11 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
     for _, source in filings.iterrows():
         row = source.to_dict()
         xbrl = _value(row, ("xbrl", "xbrl_Link", "xbrlLink", "xbrl_url", "xbrlUrl", "OfficialXBRLURL"))
-        details = _value(row, ("details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL"))
+        if not xbrl:
+            possible = _value(row, ("OfficialFilingURL",))
+            if _official_https_url(possible) and urlsplit(possible).path.lower().endswith(".xml"):
+                xbrl = possible
+        details = _value(row, ("details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL", "details"))
         audited = _value(row, ("audited", "auditStatus", "audit_status", "AuditedLabel"))
         consolidation = _value(row, ("consolidated", "consolidation", "reportingBasis", "reporting_basis", "ConsolidationLabel"))
         xbrl_ok = _official_https_url(xbrl) and urlsplit(xbrl).path.lower().endswith(".xml")
@@ -139,3 +143,119 @@ def fetch_ecms_details_remarks(
             result["RemarksStatus"] = f"FETCH_OR_PARSE_ERROR:{type(exc).__name__}"
         rows.append(result)
     return pd.DataFrame(rows)
+
+
+NSE_HOME = "https://www.nseindia.com/"
+NSE_RESULTS_API = "https://www.nseindia.com/api/integrated-filing-results"
+NSE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-integrated-filing"
+
+
+def _parse_nse_date(value):
+    parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
+    return None if pd.isna(parsed) else parsed.date()
+
+
+def fetch_ecms_candidate_filing_metadata(
+    candidates: pd.DataFrame,
+    asof_date,
+    session=None,
+    timeout=35,
+) -> pd.DataFrame:
+    """Fetch raw NSE filing rows for exact ECMS symbol + period pairs.
+
+    Only explicit API fields are retained. The function never derives a Details
+    URL from an XBRL URL, never uses a generic URL field, and preserves multiple
+    exact matches so downstream logic can flag ambiguity.
+    """
+    client = session or requests.Session()
+    client.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": NSE_FILINGS_PAGE,
+        "X-Requested-With": "XMLHttpRequest",
+    })
+    cutoff = _parse_nse_date(asof_date)
+    if cutoff is None:
+        return pd.DataFrame([{"TckrSymb": "", "FilingMetadataStatus": "INVALID_ASOF_DATE", "VerificationStatus": "NOT_VERIFIED", "VerificationWarning": "As-of date could not be parsed"}])
+    try:
+        client.get(NSE_HOME, timeout=timeout)
+    except Exception:
+        # The API request below remains the authoritative test; homepage warm-up
+        # failure is not converted into source data.
+        pass
+    output = []
+    for _, candidate in candidates.iterrows():
+        symbol = str(candidate.get("TckrSymb", "") or "").strip().upper()
+        period = _parse_nse_date(candidate.get("FinancialPeriodEnd"))
+        if not symbol or period is None or period > cutoff:
+            output.append({
+                "TckrSymb": symbol,
+                "FinancialPeriodEnd": str(candidate.get("FinancialPeriodEnd", "")),
+                "FilingMetadataStatus": "CANDIDATE_SYMBOL_OR_PERIOD_INVALID",
+                "VerificationStatus": "NOT_VERIFIED",
+                "VerificationWarning": "Exact symbol and period are required before NSE lookup",
+            })
+            continue
+        params = {
+            "index": "equities",
+            "symbol": symbol,
+            "from_date": period.strftime("%d-%m-%Y"),
+            "to_date": cutoff.strftime("%d-%m-%Y"),
+            "period_ended": "all",
+            "type": "Integrated Filing- Financials",
+            "page": 0,
+            "size": 1000,
+        }
+        try:
+            response = client.get(NSE_RESULTS_API, params=params, timeout=timeout)
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, list):
+                items = [item for item in payload if isinstance(item, dict)]
+            elif isinstance(payload, dict):
+                raw = payload.get("data", payload.get("results", payload.get("records", [])))
+                if isinstance(raw, dict):
+                    raw = raw.get("data", raw.get("results", raw.get("records", [])))
+                items = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+            else:
+                items = []
+            exact = []
+            for item in items:
+                item_symbol = str(item.get("symbol", item.get("TckrSymb", "")) or "").strip().upper()
+                item_period = _parse_nse_date(item.get("qe_Date", item.get("FinancialPeriodEnd", "")))
+                pub_date = _parse_nse_date(item.get("creation_Date", item.get("PublicationDate", "")))
+                if item_symbol == symbol and item_period == period and pub_date is not None and pub_date <= cutoff:
+                    exact.append({
+                        "TckrSymb": symbol,
+                        "FinancialPeriodEnd": period.isoformat(),
+                        "PublicationDate": pub_date.isoformat(),
+                        "xbrl": item.get("xbrl", item.get("xbrl_Link", item.get("xbrlLink", ""))),
+                        "details": item.get("details", ""),
+                        "audited": item.get("audited", ""),
+                        "consolidated": item.get("consolidated", ""),
+                        "seq_Id": item.get("seq_Id", ""),
+                        "type_Sub": item.get("type_Sub", ""),
+                        "OfficialSource": "NSE Integrated Filing - Financials",
+                        "FilingMetadataStatus": "RAW_EXACT_NSE_API_ROW",
+                        "VerificationStatus": "NOT_VERIFIED",
+                        "VerificationWarning": "Raw API metadata only; Remarks/formula and XBRL facts still require reconciliation",
+                    })
+            if exact:
+                output.extend(exact)
+            else:
+                output.append({
+                    "TckrSymb": symbol,
+                    "FinancialPeriodEnd": period.isoformat(),
+                    "FilingMetadataStatus": "NO_EXACT_NSE_API_ROW",
+                    "VerificationStatus": "NOT_VERIFIED",
+                    "VerificationWarning": "No exact symbol + period + publication-before-cutoff filing returned",
+                })
+        except Exception as exc:
+            output.append({
+                "TckrSymb": symbol,
+                "FinancialPeriodEnd": period.isoformat(),
+                "FilingMetadataStatus": "NSE_API_LOOKUP_ERROR",
+                "VerificationStatus": "NOT_VERIFIED",
+                "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:240]}",
+            })
+    return pd.DataFrame(output)
