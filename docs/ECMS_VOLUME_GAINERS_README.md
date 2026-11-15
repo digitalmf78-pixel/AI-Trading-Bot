@@ -42,14 +42,26 @@ This file is the source of truth for ECMS scope, rules, roadmap and hand-off. Re
 10. Produce one final EOD assessment row per eligible candidate plus raw/provider/filing/verification/catalyst diagnostics. Provider failure must not silently drop a candidate.
 11. Save the EOD candidate snapshot for the morning comparison.
 
-### 09:20 IST morning recheck
+### 09:20 IST morning recheck and second fundamental assessment
 
-1. Load the previous valid EOD Volume Gainers snapshot from ECMS state.
+1. Load the previous valid EOD Volume Gainers snapshot **and its per-symbol fundamental assessment** from ECMS state.
 2. Confirm its EOD date matches the latest completed NSE session.
 3. Fetch the current NSE Volume Gainers page and apply the same official Main Board eligibility rule.
-4. For each prior EOD symbol report REPEATED (still present) or DISAPPEARED (absent).
-5. Report current symbols not present in the prior EOD snapshot as NEW_ENTRY.
-6. Morning is a page-membership/market-observation report; do not silently rerun or rewrite EOD fundamentals.
+4. Compare membership: prior EOD symbols are REPEATED or DISAPPEARED; current symbols absent from the prior EOD snapshot are NEW_ENTRY.
+5. **Run the same fundamental assessment framework on every eligible company on the current 09:20 page**, including both REPEATED and NEW_ENTRY companies. Keep strict shortlist status and independent research score/classification separate.
+6. Reuse fresh, complete, provenance-bearing ECMS fundamental data where valid. Reassess it against the morning candidate; attempt missing/incomplete data under ECMS retry rules and keep unresolved cases WAIT_FOR_DATA. Do not treat cache presence or a prior EOD STRONG label as a morning pass.
+7. Save morning fundamental results alongside the membership comparison and preserve the original EOD assessment for direct comparison.
+8. Apply the confirmation labels below. A company must independently satisfy strict shortlist PASS and research STRONG at both checkpoints to receive DOUBLE_CONFIRMED.
+
+### EOD + Morning confirmation labels
+
+- `STRONG_EOD`: the EOD assessment has strict shortlist PASS and independent research classification STRONG with required coverage/provenance.
+- `UNDER_OBSERVATION_MORNING`: the company appears on the 09:20 Volume Gainers page and its morning assessment is independently STRONG + strict PASS, but it did not qualify as STRONG at EOD (for example, it is a NEW_ENTRY).
+- `DOUBLE_CONFIRMED_EOD_MORNING`: the same symbol was present and qualified as STRONG + strict PASS in the EOD assessment, appears again on the 09:20 page, and independently qualifies as STRONG + strict PASS in the morning assessment.
+- Keep EOD-only, morning-only and double-confirmed labels distinct. Do not collapse a repeated symbol into an undifferentiated duplicate or overwrite its EOD record.
+- If the symbol is present in both runs but either checkpoint is not STRONG + strict PASS, it is **not** DOUBLE_CONFIRMED. Show the two checkpoint results and the reason (FAIL, WAIT_FOR_DATA, incomplete provenance, or non-STRONG classification).
+- A disappeared EOD candidate retains its EOD record but cannot be double-confirmed for that morning.
+- DOUBLE_CONFIRMED is a research-priority/consistency label, not a buy signal or trade instruction.
 
 ## 3. Fundamental data to collect
 
@@ -183,7 +195,7 @@ Statuses reflect code inspected on 15-Nov-2026. They are not claims that a live 
 | 5 | Per-candidate completeness guarantee, retry/cooldown handling and one-row-per-candidate assertion | Needs final hardening |
 | 6 | Combined strict-PASS + independent-STRONG hand-off and explicit not-forwarded reasons | Needs final enforcement |
 | 7 | Candidate-specific catalyst/news and negative-risk review | Implemented; source coverage varies |
-| 8 | 09:20 IST REPEATED / DISAPPEARED / NEW_ENTRY comparison | Implemented; live schedule/run still needs operational verification |
+| 8 | 09:20 IST membership comparison plus same-framework fundamental reassessment and EOD/Morning confirmation labels | Membership comparison implemented; morning fundamental reassessment and double-confirmation need implementation/operational verification |
 | 9 | End-to-end EOD and morning artifact audit on actual runs | Pending operational sign-off |
 
 ### Completion checklist — ECMS is final only when all pass
@@ -198,7 +210,7 @@ Statuses reflect code inspected on 15-Nov-2026. They are not claims that a live 
 - [ ] Every scored metric has valid metric-level provenance and period; stale/future/invalid evidence is blocked.
 - [ ] Official XBRL verification remains fail-closed and is never inferred from provider data.
 - [ ] Reports include every candidate and explain every non-forwarded result.
-- [ ] Morning comparison correctly reports REPEATED / DISAPPEARED / NEW_ENTRY.
+- [ ] Morning comparison correctly reports REPEATED / DISAPPEARED / NEW_ENTRY.\n- [ ] Every eligible 09:20 candidate receives the same fundamental assessment framework as EOD (with safe complete-cache reuse).\n- [ ] EOD-only, morning under-observation and DOUBLE_CONFIRMED_EOD_MORNING labels are independently recorded; double confirmation requires strict PASS + STRONG at both checkpoints.
 - [ ] ECMS validation tests pass and V8 regression tests pass.
 - [ ] .github/workflows/nse-test-scheduled.yml is unchanged.
 - [ ] A real EOD run and a real morning run each produce audited artifacts before operational success is claimed.
@@ -229,6 +241,6 @@ Close these gaps only within ECMS scope:
 5. Add explicit strong-fundamental hand-off requiring strict shortlist PASS and independent research STRONG with required coverage/provenance.
 6. Ensure WAIT_FOR_DATA, FAIL, GOOD, AVERAGE, WEAK, INSUFFICIENT_DATA and sector-model-pending stocks cannot enter the strong hand-off.
 7. Test cooldown with missing metrics, complete-cache reuse, all-candidate row preservation, strict-PASS-but-not-STRONG rejection and true STRONG acceptance.
-8. Only then run ECMS EOD manually for an end-to-end artifact audit; run morning mode separately on a valid trading day with valid prior state.
+8. Implement morning fundamental reassessment for every eligible 09:20 page candidate, preserve both checkpoint assessments, and create the EOD-only / morning-under-observation / DOUBLE_CONFIRMED_EOD_MORNING labels.\n9. Only then run ECMS EOD manually for an end-to-end artifact audit; run morning mode separately on a valid trading day with valid prior state.
 
 **Do not broaden ECMS work beyond these requirements.**
