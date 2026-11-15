@@ -44,4 +44,37 @@ GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-
 
 ## Current implementation / delivery status
 
-The EOD and 09:20 workflow jobs and schedules are present in `.github/workflows/ecms-volume-gainers-shadow.yml`. The ECMS branch implementation now uses the fundamental shortlist as the sole decision gate, marks EOD fundamental-PASS repeats in the morning report, and adds informational enrichment for five-day news, the NSE event calendar, result dates, indicative valuation and official NSE bulk/block deal disclosures. Morning RVOL is deliberately shown as unavailable because a partial 09:20 session is not comparable with a full-day 20-session average; the prior EOD RVOL is retained for reference. These changes are under focused CI validation and have not yet been verified by a fresh live EOD/morning run.
+The EOD and 09:20 workflow jobs and schedules are present in `.github/workflows/ecms-volume-gainers-shadow.yml`. The ECMS implementation uses the fundamental shortlist as the sole decision gate, marks EOD fundamental-PASS repeats in the morning report, and adds informational enrichment for five-day news, the NSE event calendar, result dates, indicative valuation and official NSE bulk/block deal disclosures. Morning RVOL is deliberately shown as unavailable because a partial 09:20 session is not comparable with a full-day 20-session average; the prior EOD RVOL is retained for reference. The zero-Fundamental-PASS enrichment crash fix and regression test were merged in PR #123. A fresh live EOD/morning run is still required to verify real-source behavior.
+
+
+## External repository reference audit — 2026-11-15
+
+Reviewed public reference repository: [vinay123kum/nse-stock-screener](https://github.com/vinay123kum/nse-stock-screener).
+
+### What the reference implementation does
+
+- Reads the NSE equity symbol list from local CSV files (`EQUITY_L.csv` and `total.csv`).
+- Fetches Screener.in consolidated company pages, falls back to standalone when consolidated statements are empty, and parses the visible profit-and-loss, balance-sheet, cash-flow, quarterly and shareholding tables.
+- Stores one JSON cache file per symbol and skips symbols already cached, allowing a run to resume after interruption.
+- Uses retry/backoff for HTTP 429 and transient request failures.
+- Separates data fetching, screening, ranking and HTML report generation into `fetch.py`, `screen.py`, `rank.py` and `report.py`.
+
+### ECMS reuse decision
+
+**Do not copy or execute the reference `fetch.py` in ECMS.** It automatically scrapes Screener.in, which conflicts with the ECMS source policy in this README (manual free-page observations only; no scraping, login automation or Premium access). Its market-cap/fall/debt/FCF filters and percentile ranking are also unrelated to ECMS's required fundamental-only decision gate and must not be imported.
+
+Potentially reusable engineering patterns, subject to ECMS-specific tests:
+
+1. Per-symbol resumable cache/state so a failed run does not unnecessarily refetch every completed symbol.
+2. Explicit consolidated-versus-standalone basis tracking; never silently mix the two.
+3. Retry/backoff and per-symbol error records for transient source failures.
+4. Keep fetch/parse/assessment/report stages separate and retain raw source evidence alongside normalized values.
+
+### Important limitations found
+
+- The repository is a small local Python script pipeline (`requests`, `BeautifulSoup`); its README instructs the user to run scripts locally.
+- The inspected root contains no GitHub Actions workflow, web-server entry point, Dockerfile, Procfile, or hosted deployment configuration. It is not a ready-to-deploy hosted application based on the files inspected.
+- Screener.in values are scraped observations, not exchange-verified XBRL facts. The code extracts a subset of visible fields and does not establish official filing provenance or metric-level verification.
+- Consolidated-to-standalone fallback is useful for coverage, but the resulting basis must remain visible in every metric audit.
+
+**Conclusion:** Use this repository only as an engineering reference for resumability, retries, source-basis labeling and pipeline separation. Do not adopt its scraper, filters, ranking logic or data as official fundamental evidence. No external code or data provider has been added to ECMS by this audit.
