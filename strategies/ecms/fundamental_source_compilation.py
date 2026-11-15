@@ -166,7 +166,7 @@ def build_fundamental_source_compilation(
         raise ValueError("Metrics input must contain TckrSymb")
     rows = _provider_rows(metrics)
     rows.extend(_verification_rows(verification if verification is not None else pd.DataFrame()))
-    rows.extend(_manual_rows(manual_observations if manual_observations is not None else pd.DataFrame()))
+    rows.extend(_manual_rows(manual_observations if manual_observations is not None else pd.DataFrame()))\n    rows.extend(_debt_equity_rows(debt_equity_audit))
     if not rows:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
     result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
@@ -190,7 +190,7 @@ def write_fundamental_source_compilation(
         pd.read_csv(manual_observations_path, keep_default_na=False)
         if manual_observations_path and Path(manual_observations_path).is_file() else pd.DataFrame()
     )
-    result = build_fundamental_source_compilation(metrics, verification, manual)
+    result = build_fundamental_source_compilation(metrics, verification, manual, debt_equity_audit)
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(destination, index=False)
