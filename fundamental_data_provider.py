@@ -84,6 +84,17 @@ BASE_COLUMNS += AUXILIARY_FUNDAMENTAL_COLUMNS
 BASE_COLUMNS += VALUATION_COLUMNS
 
 
+def _free_source_observation_row(metric: str, value: Any, result: dict) -> dict:
+    """Keep value, period, URL and currency attached to one secondary observation."""
+    return {
+        "source": result.get("metric_sources", {}).get(metric, ""),
+        "value": value,
+        "period": result.get("metric_periods", {}).get(metric, ""),
+        "source_url": result.get("metric_urls", {}).get(metric, ""),
+        "currency": result.get("metric_currencies", {}).get(metric, ""),
+    }
+
+
 def _present(value: Any) -> bool:
     if value is None or value is pd.NA:
         return False
@@ -826,11 +837,9 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
             free_source_values = {}
             free_source_comparison = {}
             for observed_metric, observed_value in free_source_result.get("metrics", {}).items():
-                source_value_rows = [{
-                    "source": free_source_result.get("metric_sources", {}).get(observed_metric, ""),
-                    "value": observed_value,
-                    "source_url": free_source_result.get("metric_urls", {}).get(observed_metric, ""),
-                }]
+                source_value_rows = [
+                    _free_source_observation_row(observed_metric, observed_value, free_source_result)
+                ]
                 source_value_rows.extend(free_source_result.get("metric_alternates", {}).get(observed_metric, []))
                 free_source_values[observed_metric] = source_value_rows
                 free_source_comparison[observed_metric] = {
