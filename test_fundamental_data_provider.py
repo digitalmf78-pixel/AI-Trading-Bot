@@ -478,7 +478,7 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
     assert record["FreeSourcesStatus"] == "DATA_FOUND"
     assert diagnostic["FreeSourcesStatus"] == "DATA_FOUND"
     assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct;ROEPercent;ProfitGrowthPct"
-    assert diagnostic["FreeSourcesMetricsFilled"] == "GrossMarginPct"
+    assert diagnostic["FreeSourcesMetricsFilled"] == "GrossMarginPct;ProfitGrowthPct"
     assert diagnostic["ProviderStatus"] == "DATA_FOUND"
     assert "PROVIDER_ERROR" not in record["FreeSourcesStatus"]
 
