@@ -33,9 +33,11 @@ ALLOWED_SOURCE = "Yahoo Finance via yfinance"
 REPORTING_BASIS_TAG = "NatureOfReportStandaloneConsolidated"
 BORROWINGS_CURRENT_TAG = "BorrowingsCurrent"
 BORROWINGS_NONCURRENT_TAG = "BorrowingsNoncurrent"
+# Use total equity for both bases. In consolidated statements, EquityAttributableToOwnersOfParent
+# can differ from total Equity because it excludes non-controlling interests.
 EQUITY_TAG_BY_BASIS = {
     "STANDALONE": "Equity",
-    "CONSOLIDATED": "EquityAttributableToOwnersOfParent",
+    "CONSOLIDATED": "Equity",
 }
 AUDIT_COLUMNS = [
     "TckrSymb", "ProviderDebtToEquity", "OfficialDebtToEquity",
@@ -60,7 +62,9 @@ def _basis_value(value: str) -> str:
 
 
 def _is_financial_sector(metric: pd.Series) -> bool:
-    sector = _clean(metric.get("ProviderSector") or metric.get("Sector")).upper()
+    sector = _clean(metric.get("ProviderSector")).upper()
+    if not sector:
+        sector = _clean(metric.get("Sector")).upper()
     return any(token in sector for token in (
         "BANK", "FINANCIAL", "INSURANCE", "NBFC", "NON-BANK",
     ))
