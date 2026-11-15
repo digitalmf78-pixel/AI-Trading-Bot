@@ -824,7 +824,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 free_source_values[observed_metric] = source_value_rows
                 free_source_comparison[observed_metric] = {
                     "YahooFinance": {
-                        "value": record.get(observed_metric),
+                        "value": record.get(observed_metric) if _present(record.get(observed_metric)) else None,
                         "source": metric_sources.get(observed_metric, "Yahoo Finance via yfinance") if _present(record.get(observed_metric)) else "NOT_AVAILABLE",
                         "period": metric_periods.get(observed_metric, ""),
                         "calculation_basis": metric_bases.get(observed_metric, ""),
