@@ -182,24 +182,26 @@ def test_ecms_free_source_budget_expands_to_cover_every_current_candidate(tmp_pa
     assert (tmp_path / "outputs/ecms/fundamental_collection_error.csv").exists()
 
 
-def test_strong_fundamental_mask_requires_strict_pass_strong_and_80pct_coverage():
+def test_fundamental_pass_is_the_only_morning_gate_even_if_other_scores_are_weak():
     from strategies.ecms.volume_gainers import _strong_fundamental_mask
 
     frame = pd.DataFrame({
-        "FundamentalShortlistStatus": ["PASS", "PASS", "FAIL", "PASS"],
-        "FundamentalResearchClassification": ["STRONG", "GOOD", "STRONG", "STRONG"],
-        "FundamentalResearchCoveragePct": [80, 95, 90, 79.9],
+        "FundamentalShortlistStatus": ["PASS", "PASS", "FAIL", "WAIT_FOR_DATA"],
+        "FundamentalResearchClassification": ["WEAK", "INSUFFICIENT_DATA", "STRONG", "STRONG"],
+        "FundamentalResearchCoveragePct": [0, 1, 100, 100],
+        "RVOL": [0.1, None, 10, 20],
+        "CatalystStatus": ["NEGATIVE", "WAIT_FOR_DATA", "FOUND", "FOUND"],
     })
-    assert _strong_fundamental_mask(frame).tolist() == [True, False, False, False]
+    assert _strong_fundamental_mask(frame).tolist() == [True, True, False, False]
 
 
-def test_confirmation_status_distinguishes_double_confirmed_and_morning_only():
+def test_confirmation_status_uses_only_fundamental_pass_and_presence():
     from strategies.ecms.volume_gainers import _confirmation_status
 
     assert _confirmation_status(True, True, True) == "DOUBLE_CONFIRMED_EOD_MORNING"
-    assert _confirmation_status(False, True, True) == "UNDER_OBSERVATION_MORNING"
-    assert _confirmation_status(True, True, False) == "EOD_STRONG_MORNING_NOT_CONFIRMED"
-    assert _confirmation_status(True, False, False) == "STRONG_EOD_DISAPPEARED_MORNING"
+    assert _confirmation_status(False, True, True) == "MORNING_FUNDAMENTAL_PASS"
+    assert _confirmation_status(True, True, False) == "EOD_PASS_MORNING_NOT_PASS"
+    assert _confirmation_status(True, False, False) == "EOD_PASS_NOT_ON_MORNING_PAGE"
 
 
 
@@ -216,10 +218,7 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         "TckrSymb": "AAA", "CompanyName": "AAA Ltd", "PageVolume": 100,
         "LTP": 10, "EODDate": "2026-11-13",
         "EODFundamentalShortlistStatus": "PASS",
-        "EODFundamentalResearchClassification": "STRONG",
-        "EODFundamentalResearchScore": 82,
-        "EODFundamentalResearchCoveragePct": 90,
-        "EODStrongFundamentalStatus": "STRONG_EOD",
+        "EODStrongFundamentalStatus": "EOD_FUNDAMENTAL_PASS",
     }]).to_csv(state_path, index=False)
 
     monkeypatch.setattr(scanner, "STATE_FILE", state_path)
@@ -248,11 +247,13 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     assert set(assessed_symbols) == {"AAA", "BBB"}
     report = pd.read_csv(output_dir / "volume_gainers_morning_recheck.csv").set_index("TckrSymb")
     assert report.loc["AAA", "ConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
-    assert report.loc["BBB", "ConfirmationStatus"] == "UNDER_OBSERVATION_MORNING"
+    assert report.loc["BBB", "ConfirmationStatus"] == "MORNING_FUNDAMENTAL_PASS"
+    assert report.loc["AAA", "MorningStatus"] == "EOD_FUNDAMENTAL_PASS_REPEAT"
+    assert report.loc["BBB", "MorningStatus"] == "NEW_MORNING_ENTRY"
     assert summary["double_confirmed"] == 1
-    assert summary["under_observation"] == 1
+    assert summary["eod_fundamental_pass_repeats"] == 1
     saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
-    assert saved_summary["morning_strong"] == 2
+    assert saved_summary["morning_fundamental_pass"] == 2
 
 
 def test_ecms_free_source_evidence_preserves_historical_alternates_when_latest_attempt_empty():
