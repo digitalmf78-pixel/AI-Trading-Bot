@@ -16,6 +16,7 @@ from fundamental_metric_verification import run_audit as run_fundamental_xbrl_au
 from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_research import assess_fundamental_research
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
+from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -369,6 +370,30 @@ def assess_page_fundamentals(candidates, eod_date):
     debt_equity_audit.to_csv(
         ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
     )
+    # ECMS-only discovery: preserve likely ROE/ROCE/interest-coverage XBRL facts
+    # with issuer/period provenance. This report is diagnostic only and never
+    # changes metric verification or the strict shortlist gate.
+    try:
+        ratio_discovery = discover_ecms_ratio_xbrl_facts(
+            candidates=candidate_metrics,
+            filings=candidate_filings,
+            repo_root=ephemeral_root,
+            symbols=candidate_symbols,
+        )
+    except Exception as exc:
+        ratio_discovery = pd.DataFrame([
+            {
+                **{column: "" for column in RATIO_XBRL_DISCOVERY_COLUMNS},
+                "TckrSymb": symbol,
+                "DiscoveryStatus": "DISCOVERY_EXECUTION_ERROR",
+                "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:300]}",
+            }
+            for symbol in sorted(candidate_symbols)
+        ], columns=RATIO_XBRL_DISCOVERY_COLUMNS)
+    ratio_discovery.to_csv(
+        ecms_output_dir / "fundamental_ratio_xbrl_discovery.csv", index=False
+    )
+
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
