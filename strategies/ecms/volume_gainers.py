@@ -400,26 +400,14 @@ def assess_page_fundamentals(candidates, eod_date):
     # The current shared cache may not contain these fields; that is reported
     # as incomplete and never promotes any metric to verified.
     try:
-        # Start from every current ECMS page candidate, not the cached filing
-        # ledger. Attach only an exact candidate-scoped period already present
-        # in the fundamental metrics cache; never guess a period. This ensures
-        # every page symbol receives either an NSE API lookup or an explicit
-        # missing-period status in the audit output.
+        # Discover filings by symbol even when the fundamental cache has no
+        # FinancialPeriodEnd. The NSE API's period_ended=all response is filtered
+        # locally to the latest eligible period at/before the ECMS as-of date.
+        # Standalone/consolidated and original/revised variants remain separate.
         filing_lookup_candidates = candidates[["TckrSymb"]].copy()
         filing_lookup_candidates["TckrSymb"] = (
             filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
         )
-        if "FinancialPeriodEnd" in metrics_unique.columns:
-            period_lookup = metrics_unique[["TckrSymb", "FinancialPeriodEnd"]].copy()
-            period_lookup["TckrSymb"] = (
-                period_lookup["TckrSymb"].astype(str).str.strip().str.upper()
-            )
-            period_lookup = period_lookup.drop_duplicates("TckrSymb", keep="first")
-            filing_lookup_candidates = filing_lookup_candidates.merge(
-                period_lookup, on="TckrSymb", how="left", validate="one_to_one"
-            )
-        else:
-            filing_lookup_candidates["FinancialPeriodEnd"] = ""
         filing_metadata_source = fetch_ecms_candidate_filing_metadata(
             filing_lookup_candidates, eod_date.isoformat()
         )
