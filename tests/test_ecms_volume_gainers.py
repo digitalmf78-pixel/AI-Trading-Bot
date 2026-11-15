@@ -50,9 +50,10 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     monkeypatch.setattr(scanner, "EVIDENCE_PATH", Path("data/inputs/production_evidence.csv"))
     monkeypatch.setattr(scanner, "THRESHOLDS_PATH", Path("data/inputs/thresholds.json"))
 
-    def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None):
+    def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None, force_retry_incomplete=False):
         assert enabled is True
         assert callable(free_source_fetcher)
+        assert force_retry_incomplete is True
         assert set(candidates["TckrSymb"]) == {"AAA"}
         path = Path(metrics_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,3 +97,77 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     assert not (tmp_path / "data/inputs/production_metrics.csv").exists()
     assert result.iloc[0]["FundamentalShortlistStatus"] == "PASS"
     assert (tmp_path / "outputs/ecms/fundamental_metrics_ecms.csv").exists()
+
+
+
+def test_strong_fundamental_mask_requires_strict_pass_strong_and_80pct_coverage():
+    from strategies.ecms.volume_gainers import _strong_fundamental_mask
+
+    frame = pd.DataFrame({
+        "FundamentalShortlistStatus": ["PASS", "PASS", "FAIL", "PASS"],
+        "FundamentalResearchClassification": ["STRONG", "GOOD", "STRONG", "STRONG"],
+        "FundamentalResearchCoveragePct": [80, 95, 90, 79.9],
+    })
+    assert _strong_fundamental_mask(frame).tolist() == [True, False, False, False]
+
+
+def test_confirmation_status_distinguishes_double_confirmed_and_morning_only():
+    from strategies.ecms.volume_gainers import _confirmation_status
+
+    assert _confirmation_status(True, True, True) == "DOUBLE_CONFIRMED_EOD_MORNING"
+    assert _confirmation_status(False, True, True) == "UNDER_OBSERVATION_MORNING"
+    assert _confirmation_status(True, True, False) == "EOD_STRONG_MORNING_NOT_CONFIRMED"
+    assert _confirmation_status(True, False, False) == "STRONG_EOD_DISAPPEARED_MORNING"
+
+
+
+def test_morning_reassesses_every_current_candidate_and_marks_double_confirmation(tmp_path, monkeypatch):
+    import json
+    from datetime import date
+    from pathlib import Path
+    import strategies.ecms.volume_gainers as scanner
+
+    state_path = tmp_path / "state" / "volume_gainers_previous_eod.csv"
+    output_dir = tmp_path / "outputs" / "ecms"
+    state_path.parent.mkdir(parents=True)
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "CompanyName": "AAA Ltd", "PageVolume": 100,
+        "LTP": 10, "EODDate": "2026-11-13",
+        "EODFundamentalShortlistStatus": "PASS",
+        "EODFundamentalResearchClassification": "STRONG",
+        "EODFundamentalResearchScore": 82,
+        "EODFundamentalResearchCoveragePct": 90,
+        "EODStrongFundamentalStatus": "STRONG_EOD",
+    }]).to_csv(state_path, index=False)
+
+    monkeypatch.setattr(scanner, "STATE_FILE", state_path)
+    monkeypatch.setattr(scanner, "OUTPUT_DIR", output_dir)
+    monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 13))
+    monkeypatch.setattr(scanner, "fetch_volume_gainers", lambda: pd.DataFrame([
+        {"TckrSymb": "AAA", "CompanyName": "AAA Ltd", "PageVolume": 120, "LTP": 11, "ChangePct": 5},
+        {"TckrSymb": "BBB", "CompanyName": "BBB Ltd", "PageVolume": 90, "LTP": 8, "ChangePct": 3},
+    ]))
+    monkeypatch.setattr(scanner, "load_official_mainboard_symbols", lambda: ({"AAA", "BBB"}, "test-mainboard"))
+    assessed_symbols = []
+
+    def fake_assess(candidates, asof_date):
+        assessed_symbols.extend(candidates["TckrSymb"].tolist())
+        result = candidates.copy()
+        result["FundamentalShortlistStatus"] = "PASS"
+        result["FundamentalResearchClassification"] = "STRONG"
+        result["FundamentalResearchScore"] = 80.0
+        result["FundamentalResearchCoveragePct"] = 85.0
+        return result
+
+    monkeypatch.setattr(scanner, "assess_page_fundamentals", fake_assess)
+    summary = scanner.run_morning()
+
+    assert set(assessed_symbols) == {"AAA", "BBB"}
+    report = pd.read_csv(output_dir / "volume_gainers_morning_recheck.csv").set_index("TckrSymb")
+    assert report.loc["AAA", "ConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
+    assert report.loc["BBB", "ConfirmationStatus"] == "UNDER_OBSERVATION_MORNING"
+    assert summary["double_confirmed"] == 1
+    assert summary["under_observation"] == 1
+    saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
+    assert saved_summary["morning_strong"] == 2
