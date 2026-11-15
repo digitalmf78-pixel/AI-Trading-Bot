@@ -208,8 +208,10 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
         symbol_rows = deal_frame[deal_frame["TckrSymb"].eq(symbol)] if not deal_frame.empty else pd.DataFrame()
         bulk = symbol_rows[symbol_rows["DealType"].eq("BULK")] if not symbol_rows.empty else pd.DataFrame()
         block = symbol_rows[symbol_rows["DealType"].eq("BLOCK")] if not symbol_rows.empty else pd.DataFrame()
-        if len(symbol_rows):
+        if len(symbol_rows) and all(value == "AVAILABLE" for value in type_status.values()) and len(type_status) == 2:
             status = "AVAILABLE"
+        elif len(symbol_rows):
+            status = "PARTIAL_DATA"
         elif all(value == "AVAILABLE" for value in type_status.values()) and len(type_status) == 2:
             status = "NO_DISCLOSED_DEALS_IN_LOOKBACK"
         elif any(value == "AVAILABLE" for value in type_status.values()):
