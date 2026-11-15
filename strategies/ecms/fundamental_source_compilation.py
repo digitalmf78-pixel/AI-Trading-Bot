@@ -21,7 +21,6 @@ JSON_FIELDS = {
     "url": "MetricSourceURLsJSON",
     "period": "MetricSourcePeriodsJSON",
     "basis": "MetricCalculationBasesJSON",
-    "currency": "MetricSourceCurrenciesJSON",
 }
 MANUAL_COLUMNS = [
     "TckrSymb", "MetricName", "MetricValue", "Source", "SourceURL",
@@ -42,6 +41,17 @@ def _mapping(value):
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _metric_unit(metric: str) -> str:
+    """Return the financial unit; source currency is not a metric unit."""
+    if metric.endswith(("Pct", "Percent")):
+        return "PERCENT"
+    if metric in {"DebtToEquity", "InterestCoverage"}:
+        return "RATIO"
+    if metric.endswith("INR"):
+        return "INR"
+    return ""
 
 
 def _number(value):
@@ -78,7 +88,7 @@ def _provider_rows(metrics: pd.DataFrame) -> list[dict]:
                 "FinancialPeriodEnd": str(maps["period"].get(metric, "") or "").strip(),
                 "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
                 "CalculationBasis": str(maps["basis"].get(metric, item.get("MetricCalculationBasis", "")) or "").strip(),
-                "Unit": str(maps["currency"].get(metric, "PERCENT" if metric.endswith("Pct") else "RATIO" if metric in {"DebtToEquity", "InterestCoverage"} else "INR") or "").strip(),
+                "Unit": _metric_unit(metric),
                 "SourceStatus": "OBSERVATION_ONLY",
                 "VerificationStatus": "NOT_OFFICIALLY_VERIFIED",
                 "MismatchStatus": "NOT_ASSESSED",
