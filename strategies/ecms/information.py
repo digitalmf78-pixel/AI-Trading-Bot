@@ -67,7 +67,9 @@ def _nse_session(session=None, landing_url=NSE_EVENT_PAGE):
 
 
 def _as_date(value):
-    stamp = pd.to_datetime(value, errors="coerce", dayfirst=True)
+    raw = str(value or "").strip()
+    dayfirst = not bool(re.match(r"^\\d{4}-\\d{2}-\\d{2}", raw))
+    stamp = pd.to_datetime(raw, errors="coerce", dayfirst=dayfirst)
     if pd.isna(stamp):
         return None
     if stamp.tzinfo is not None:
