@@ -48,6 +48,9 @@ def _payload_rows(response):
             value = payload.get(key)
             if isinstance(value, list):
                 return value
+            if isinstance(value, str) and value.strip():
+                return pd.read_csv(StringIO(value)).to_dict("records")
+        raise ValueError("NSE JSON response did not contain a recognized data array")
     text = str(getattr(response, "text", "") or "").strip()
     if not text or text.startswith("<"):
         raise ValueError("NSE response was empty or HTML, not a data payload")
