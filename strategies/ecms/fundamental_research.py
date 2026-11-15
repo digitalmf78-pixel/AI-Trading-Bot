@@ -91,11 +91,19 @@ def _metric_provenance(row):
         if not source:
             blocked.append(metric + ":SOURCE_MISSING")
             continue
-        if not _valid_period(period, metric):
+        source_key = source.lower()
+        is_yahoo = "yahoo finance" in source_key or "yfinance" in source_key
+        if metric in {"RevenueGrowthPct", "ProfitGrowthPct"} and not is_yahoo:
+            # A third-party growth percentage must identify both consecutive
+            # fiscal years used in its calculation, not just one as-of date.
+            match = re.fullmatch(r"FY\\s*(20\\d{2})\\s*->\\s*FY\\s*(20\\d{2})", str(period or "").strip(), re.IGNORECASE)
+            period_valid = bool(match and int(match.group(2)) == int(match.group(1)) + 1)
+        else:
+            period_valid = _valid_period(period, metric)
+        if not period_valid:
             blocked.append(metric + ":PERIOD_MISSING_OR_INVALID")
             continue
-        source_key = source.lower()
-        if "yahoo finance" in source_key or "yfinance" in source_key:
+        if is_yahoo:
             if metric_basis not in ALIGNED_PROVIDER_BASES or alignment != "VERIFIED":
                 blocked.append(metric + ":YAHOO_STATEMENT_ALIGNMENT_NOT_VERIFIED")
                 continue
