@@ -180,7 +180,7 @@ jobs:
                           verified = (row.get("FundamentalVerificationStatus") or "NOT_AVAILABLE").strip()
                           shortlist = (row.get("FundamentalShortlistStatus") or "NOT_AVAILABLE").strip()
                           coverage = (row.get("FundamentalResearchCoveragePct") or "").strip()
-                          notes = (row.get("FundamentalResearchNotes") or "").strip().replace("\\n", " ")
+                          notes = (row.get("FundamentalResearchNotes") or "").strip().replace("\n", " ")
                           if len(notes) > 105:
                               notes = notes[:102] + "..."
                           stock_lines.append(
@@ -199,7 +199,7 @@ jobs:
           # Telegram sendMessage has a 4096-character limit. Split without cutting a stock row.
           chunks, current = [], ""
           for line in lines:
-              candidate = line if not current else current + "\\n" + line
+              candidate = line if not current else current + "\n" + line
               if len(candidate) > 3500 and current:
                   chunks.append(current)
                   current = line
