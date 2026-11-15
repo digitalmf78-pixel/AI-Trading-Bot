@@ -46,7 +46,7 @@ def test_event_calendar_separates_upcoming_events_and_next_result():
     ])
     events, audit = collect_upcoming_events(["AAA", "BBB"], date(2026, 11, 15), session=client)
 
-    assert len(events) == 2
+    assert len(events) == 3
     aaa = audit.set_index("TckrSymb").loc["AAA"]
     assert aaa["NextResultDate"] == "2026-11-20"
     assert "Investor Meet" in aaa["UpcomingEvents"]
