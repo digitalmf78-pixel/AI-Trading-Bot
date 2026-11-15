@@ -959,6 +959,7 @@ def collect_missing_fundamentals(
     asof_date=None,
     filings_fetcher: Callable | None = None,
     free_source_fetcher: Callable | None = None,
+    force_retry_incomplete: bool = False,
 ) -> pd.DataFrame:
     """Fetch missing fundamentals for every unique Delivery A/B symbol.
 
@@ -1088,8 +1089,10 @@ def collect_missing_fundamentals(
         last_free_attempt = pd.to_datetime(current.get("FreeSourcesAttemptedAtUTC"), errors="coerce", utc=True)
         last_free_status = current.get("FreeSourcesStatus", "")
         last_free_status_text = str(last_free_status).strip().upper() if _present(last_free_status) else ""
-        in_free_cooldown = _free_source_cooldown_active(
-            last_free_attempt, last_free_status, free_source_retry_days,
+        force_retry_symbol = bool(force_retry_incomplete and (missing or free_source_missing))
+        in_free_cooldown = (
+            _free_source_cooldown_active(last_free_attempt, last_free_status, free_source_retry_days)
+            and not force_retry_symbol
         )
         free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
         free_source_pending = (
@@ -1107,7 +1110,8 @@ def collect_missing_fundamentals(
         # treat that as cache invalidation and allow immediate repair.
         cache_metric_invalidated = bool(previously_fetched_metrics.intersection(missing))
         provider_retry_active = (
-            not cache_metric_invalidated
+            not force_retry_symbol
+            and not cache_metric_invalidated
             and _provider_retry_cooldown_active(
                 current.get("ProviderLastAttemptAtUTC"), current.get("ProviderLastAttemptStatus"),
                 provider_retry_days, provider_error_retry_hours,
