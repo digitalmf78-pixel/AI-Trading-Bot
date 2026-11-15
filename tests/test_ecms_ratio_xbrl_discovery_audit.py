@@ -90,3 +90,71 @@ def test_requires_unique_exact_symbol_and_period_filing(tmp_path):
         candidates, filings, tmp_path, fetch_xml=must_not_fetch,
     )
     assert result.loc[0, "DiscoveryStatus"] == "EXACT_OFFICIAL_FILING_NOT_UNIQUE"
+
+
+def test_fresh_nse_metadata_discovers_each_explicit_reporting_basis_separately(tmp_path):
+    candidates, _ = _inputs()
+    filings = pd.DataFrame([
+        {
+            "TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31",
+            "PublicationDate": "2026-05-20", "PublicationDateStatus": "VERIFIED",
+            "OfficialFilingURL": "https://nsearchives.nseindia.com/xbrl/ABC-standalone.xml",
+            "AuditedLabel": "Audited", "ConsolidationLabel": "Standalone",
+            "SequenceId": "101", "RevisedDate": "",
+            "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED", "XBRLURLStatus": "PASS",
+        },
+        {
+            "TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31",
+            "PublicationDate": "2026-05-20", "PublicationDateStatus": "VERIFIED",
+            "OfficialFilingURL": "https://nsearchives.nseindia.com/xbrl/ABC-consolidated.xml",
+            "AuditedLabel": "Audited", "ConsolidationLabel": "Consolidated",
+            "SequenceId": "102", "RevisedDate": "",
+            "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED", "XBRLURLStatus": "PASS",
+        },
+    ])
+
+    def fake_fetch(_url, destination: Path):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(XML)
+        return destination
+
+    result = discover_ecms_ratio_xbrl_facts(
+        candidates, filings, tmp_path, fetch_xml=fake_fetch,
+    )
+    assert len(result) == 6
+    assert set(result["ConsolidationLabel"]) == {"Standalone", "Consolidated"}
+    assert set(result["DiscoveryStatus"]) == {"CANDIDATE_FACT_DISCOVERY_ONLY"}
+    assert set(result["OfficialFilingURL"]) == {
+        "https://nsearchives.nseindia.com/xbrl/ABC-standalone.xml",
+        "https://nsearchives.nseindia.com/xbrl/ABC-consolidated.xml",
+    }
+
+
+def test_same_variant_duplicate_filing_rows_remain_blocked(tmp_path):
+    candidates, _ = _inputs()
+    filing = {
+        "TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31",
+        "PublicationDate": "2026-05-20", "PublicationDateStatus": "VERIFIED",
+        "OfficialFilingURL": "https://nsearchives.nseindia.com/xbrl/ABC.xml",
+        "AuditedLabel": "Audited", "ConsolidationLabel": "Standalone",
+        "SequenceId": "101", "RevisedDate": "",
+        "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED", "XBRLURLStatus": "PASS",
+    }
+    filings = pd.DataFrame([filing, filing])
+
+    def must_not_fetch(*_args):
+        raise AssertionError("ambiguous duplicate variant must not be fetched")
+
+    result = discover_ecms_ratio_xbrl_facts(
+        candidates, filings, tmp_path, fetch_xml=must_not_fetch,
+    )
+    assert result.iloc[0]["DiscoveryStatus"] == "EXACT_OFFICIAL_FILING_NOT_UNIQUE"
+
+
+def test_missing_nse_period_is_reported_not_silently_dropped(tmp_path):
+    candidates = pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": ""}])
+    result = discover_ecms_ratio_xbrl_facts(
+        candidates, pd.DataFrame(), tmp_path,
+        fetch_xml=lambda *_args: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+    assert result.iloc[0]["DiscoveryStatus"] == "NO_ELIGIBLE_FILING_PERIOD"
