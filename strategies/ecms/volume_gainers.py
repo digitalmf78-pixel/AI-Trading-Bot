@@ -344,7 +344,7 @@ def run_eod():
       "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]
     for column in ("FundamentalShortlistStatus","FundamentalResearchClassification",
                    "FundamentalResearchScore","FundamentalResearchCoveragePct",
-                   "FundamentalResearchProvenanceStatus"):
+                   "FundamentalResearchProvenanceStatus","StrongFundamentalNotForwardedReason"):
         if column in assessed.columns:
             state_columns.append(column)
     state=assessed[state_columns].copy()
@@ -353,7 +353,8 @@ def run_eod():
       "FundamentalResearchClassification":"EODFundamentalResearchClassification",
       "FundamentalResearchScore":"EODFundamentalResearchScore",
       "FundamentalResearchCoveragePct":"EODFundamentalResearchCoveragePct",
-      "FundamentalResearchProvenanceStatus":"EODFundamentalResearchProvenanceStatus"})
+      "FundamentalResearchProvenanceStatus":"EODFundamentalResearchProvenanceStatus",
+      "StrongFundamentalNotForwardedReason":"EODFundamentalNotForwardedReason"})
     state["EODStrongFundamentalStatus"]=state.apply(
       lambda r: "STRONG_EOD" if
         str(r.get("EODFundamentalShortlistStatus","")).upper()=="PASS" and
@@ -454,10 +455,12 @@ def run_morning():
           "EODFundamentalResearchScore":old.get("EODFundamentalResearchScore"),
           "EODFundamentalResearchCoveragePct":old.get("EODFundamentalResearchCoveragePct"),
           "EODStrongFundamentalStatus":old.get("EODStrongFundamentalStatus",""),
+          "EODFundamentalNotForwardedReason":old.get("EODFundamentalNotForwardedReason",""),
           "MorningFundamentalShortlistStatus":assessed.get("FundamentalShortlistStatus",""),
           "MorningFundamentalResearchClassification":assessed.get("FundamentalResearchClassification",""),
           "MorningFundamentalResearchScore":assessed.get("FundamentalResearchScore"),
           "MorningFundamentalResearchCoveragePct":assessed.get("FundamentalResearchCoveragePct"),
+          "MorningFundamentalNotForwardedReason":assessed.get("StrongFundamentalNotForwardedReason",""),
           "MorningStrongFundamentalStatus":assessed.get("MorningStrongFundamentalStatus","NOT_ASSESSED"),
           "ConfirmationStatus":confirmation,
           "MorningChangePct":current.get("ChangePct"),
