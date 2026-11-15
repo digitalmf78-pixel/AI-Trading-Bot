@@ -239,6 +239,11 @@ def assess_page_fundamentals(candidates, eod_date):
         raise RuntimeError(
             "ECMS_ASSESSMENT_INTEGRITY_ERROR: candidate and assessment row/symbol sets differ"
         )
+    duplicated = assessed["TckrSymb"].astype(str).str.upper().isin(duplicate_symbols)
+    assessed.loc[duplicated, "FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
+    assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
+    assessed.loc[duplicated, "FundamentalAssessmentStatus"] = assessed.loc[duplicated, "FundamentalShortlistStatus"]
+    assessed.loc[duplicated, "FundamentalAssessmentReason"] = assessed.loc[duplicated, "FundamentalShortlistReason"]
     strong_mask = (
         assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("PASS")
         & assessed["FundamentalResearchClassification"].astype(str).str.upper().eq("STRONG")
@@ -254,11 +259,6 @@ def assess_page_fundamentals(candidates, eod_date):
         "RESEARCH_" + str(row.get("FundamentalResearchClassification", "MISSING")).upper(),
         axis=1,
     )
-    duplicated = assessed["TckrSymb"].astype(str).str.upper().isin(duplicate_symbols)
-    assessed.loc[duplicated, "FundamentalShortlistStatus"] = "WAIT_FOR_DATA"
-    assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
-    assessed.loc[duplicated, "FundamentalAssessmentStatus"] = assessed.loc[duplicated, "FundamentalShortlistStatus"]
-    assessed.loc[duplicated, "FundamentalAssessmentReason"] = assessed.loc[duplicated, "FundamentalShortlistReason"]
 
     # Publish ECMS-owned copies for the workflow artifact; production files remain untouched.
     for source, name in [
@@ -366,6 +366,18 @@ def _strong_fundamental_mask(frame):
     return shortlist.eq("PASS") & classification.eq("STRONG") & coverage.ge(80)
 
 
+def _confirmation_status(eod_strong, present, morning_strong):
+    if eod_strong and present and morning_strong:
+        return "DOUBLE_CONFIRMED_EOD_MORNING"
+    if morning_strong:
+        return "UNDER_OBSERVATION_MORNING"
+    if eod_strong and present:
+        return "EOD_STRONG_MORNING_NOT_CONFIRMED"
+    if eod_strong and not present:
+        return "STRONG_EOD_DISAPPEARED_MORNING"
+    return "NOT_STRONG"
+
+
 def run_morning():
     today = datetime.now(IST).date()
     if not is_trading_session(today):
@@ -412,16 +424,7 @@ def run_morning():
         present=symbol in live_symbols
         eod_strong=str(old.get("EODStrongFundamentalStatus","")).upper()=="STRONG_EOD"
         morning_strong=str(assessed.get("MorningStrongFundamentalStatus","")).upper()=="STRONG_MORNING"
-        if eod_strong and present and morning_strong:
-            confirmation="DOUBLE_CONFIRMED_EOD_MORNING"
-        elif morning_strong:
-            confirmation="UNDER_OBSERVATION_MORNING"
-        elif eod_strong and present:
-            confirmation="EOD_STRONG_MORNING_NOT_CONFIRMED"
-        elif eod_strong and not present:
-            confirmation="STRONG_EOD_DISAPPEARED_MORNING"
-        else:
-            confirmation="NOT_STRONG"
+        confirmation=_confirmation_status(eod_strong,present,morning_strong)
         rows.append({
           "TckrSymb":symbol,
           "CompanyName":current.get("CompanyName",old.get("CompanyName","")),
