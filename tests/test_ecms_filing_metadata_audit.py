@@ -244,3 +244,112 @@ def test_original_and_revised_same_basis_are_kept_as_distinct_filing_variants():
     assert len(out) == 2
     assert set(out["FilingMetadataStatus"]) == {"EXPLICIT_METADATA_CAPTURED"}
     assert set(out["VerificationStatus"]) == {"NOT_VERIFIED"}
+
+
+def test_nse_ixbrl_field_maps_to_official_details_html_and_remarks_heading_is_extracted():
+    from strategies.ecms.filing_metadata_audit import (
+        audit_ecms_filing_metadata,
+        fetch_ecms_candidate_filing_metadata,
+        fetch_ecms_details_remarks,
+    )
+
+    details_url = "https://nsearchives.nseindia.com/corporate/ixbrl/ABC_iXBRL_WEB.html"
+
+    class LookupResponse:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data": [{
+                "symbol": "ABC", "qe_Date": "30-Sep-2026",
+                "creation_Date": "12-Nov-2026 18:00:00",
+                "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+                "ixbrl": details_url,
+                "audited": "Un-Audited", "consolidated": "Standalone",
+                "seq_Id": "123", "type_Sub": "Original",
+            }]}
+
+    class LookupSession:
+        def __init__(self): self.headers = {}
+        def get(self, *_args, **_kwargs): return LookupResponse()
+
+    lookup = fetch_ecms_candidate_filing_metadata(
+        pd.DataFrame([{"TckrSymb": "ABC"}]), "2026-11-15",
+        session=LookupSession(),
+    )
+    assert lookup.iloc[0]["details"] == details_url
+
+    class DetailsResponse:
+        url = details_url
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+        content = (
+            b"<html><body><h3>Remarks</h3><table>"
+            b"<tr><td>Debt equity ratio</td><td>Borrowings divided by equity</td></tr>"
+            b"<tr><td>Interest service coverage ratio</td><td>EBIT divided by finance cost</td></tr>"
+            b"</table><h3>Statement of Asset and Liabilities</h3></body></html>"
+        )
+        def raise_for_status(self): pass
+
+    class DetailsSession:
+        def get(self, *_args, **_kwargs): return DetailsResponse()
+
+    audit = audit_ecms_filing_metadata(lookup)
+    out = fetch_ecms_details_remarks(audit, session=DetailsSession()).iloc[0]
+    assert out["DetailsURL"] == details_url
+    assert out["DetailsURLStatus"] == "PASS"
+    assert out["RemarksStatus"] == "REMARKS_EXTRACTED"
+    assert "Borrowings divided by equity" in out["RemarksText"]
+    assert "EBIT divided by finance cost" in out["RemarksText"]
+    assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_nse_remarks_heading_with_only_blank_rows_is_explicitly_empty():
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_details_remarks
+
+    details_url = "https://nsearchives.nseindia.com/corporate/ixbrl/ABC_iXBRL_WEB.html"
+    source = audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "ABC",
+        "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+        "ixbrl": details_url,
+        "audited": "Un-Audited",
+        "consolidated": "Standalone",
+    }]))
+
+    class Response:
+        url = details_url
+        headers = {"Content-Type": "text/html"}
+        content = b"<html><body><h3>Remarks</h3><table><tr><td>Debt equity ratio</td><td></td></tr></table><h3>Next</h3></body></html>"
+        def raise_for_status(self): pass
+
+    class Session:
+        def get(self, *_args, **_kwargs): return Response()
+
+    out = fetch_ecms_details_remarks(source, session=Session()).iloc[0]
+    assert out["RemarksStatus"] == "REMARKS_SECTION_EMPTY"
+    assert out["RemarksText"] == ""
+    assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_ixbrl_is_preferred_over_non_url_details_and_non_html_details_are_blocked():
+    from strategies.ecms.filing_metadata_audit import audit_ecms_filing_metadata
+
+    ixbrl_url = "https://nsearchives.nseindia.com/corporate/ixbrl/ABC_iXBRL_WEB.html"
+    preferred = audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "ABC",
+        "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/ABC.xml",
+        "details": "Details(88.4 KB)",
+        "ixbrl": ixbrl_url,
+        "audited": "Un-Audited",
+        "consolidated": "Standalone",
+    }])).iloc[0]
+    assert preferred["DetailsURL"] == ixbrl_url
+    assert preferred["DetailsURLStatus"] == "PASS"
+
+    pdf_only = audit_ecms_filing_metadata(pd.DataFrame([{
+        "TckrSymb": "XYZ",
+        "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/XYZ.xml",
+        "details": "https://nsearchives.nseindia.com/corporate/XYZ.pdf",
+        "audited": "Un-Audited",
+        "consolidated": "Standalone",
+    }])).iloc[0]
+    assert pdf_only["DetailsURL"] == ""
+    assert pdf_only["DetailsURLStatus"] == "BLOCKED"
+    assert pdf_only["VerificationStatus"] == "NOT_VERIFIED"
