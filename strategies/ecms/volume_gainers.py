@@ -525,6 +525,13 @@ def assess_page_fundamentals(candidates, eod_date):
             comparison = json.loads(str(raw_comparison)) if pd.notna(raw_comparison) else {}
         except (TypeError, ValueError):
             comparison = {}
+        metadata_maps = {}
+        for field_name in ("MetricSourcesJSON", "MetricSourcePeriodsJSON", "MetricCalculationBasesJSON"):
+            try:
+                parsed = json.loads(str(metric_row.get(field_name, "{}")))
+                metadata_maps[field_name] = parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError):
+                metadata_maps[field_name] = {}
         for metric_name in comparison_metrics:
             observed = comparison.get(metric_name, {}) if isinstance(comparison, dict) else {}
             yahoo = observed.get("YahooFinance", {}) if isinstance(observed, dict) else {}
@@ -533,9 +540,9 @@ def assess_page_fundamentals(candidates, eod_date):
                 "TckrSymb": str(metric_row.get("TckrSymb", "")).strip().upper(),
                 "MetricName": metric_name,
                 "YahooValue": yahoo.get("value", metric_row.get(metric_name, "")),
-                "YahooSource": yahoo.get("source", "NOT_AVAILABLE"),
-                "YahooPeriod": yahoo.get("period", ""),
-                "YahooCalculationBasis": yahoo.get("calculation_basis", ""),
+                "YahooSource": yahoo.get("source", metadata_maps["MetricSourcesJSON"].get(metric_name, "NOT_AVAILABLE")),
+                "YahooPeriod": yahoo.get("period", metadata_maps["MetricSourcePeriodsJSON"].get(metric_name, "")),
+                "YahooCalculationBasis": yahoo.get("calculation_basis", metadata_maps["MetricCalculationBasesJSON"].get(metric_name, "")),
                 "ComparisonStatus": observed.get("comparison_status", "NO_SECONDARY_OBSERVATION") if isinstance(observed, dict) else "NO_SECONDARY_OBSERVATION",
             }
             if isinstance(secondary, list) and secondary:
