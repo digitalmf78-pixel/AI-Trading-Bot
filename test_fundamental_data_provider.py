@@ -432,13 +432,13 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
     import fundamental_data_provider as provider
 
     result = {
-        "metrics": {"GrossMarginPct": 35.0},
-        "metric_sources": {"GrossMarginPct": "Moneycontrol"},
-        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/"},
-        "metric_periods": {"GrossMarginPct": "Mar 2026"},
-        "metric_currencies": {"GrossMarginPct": ""},
-        "metric_alternates": {},
-        "providers": {"Moneycontrol": {"status": "DATA_FOUND"}},
+        "metrics": {"GrossMarginPct": 35.0, "ROEPercent": 18.5},
+        "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol"},
+        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/"},
+        "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026"},
+        "metric_currencies": {"GrossMarginPct": "", "ROEPercent": ""},
+        "metric_alternates": {"ROEPercent": [{"source": "Tickertape", "value": 19.0, "period": "FY2026", "source_url": "https://www.tickertape.in/"}]},
+        "providers": {"Moneycontrol": {"status": "DATA_FOUND"}, "Tickertape": {"status": "DATA_FOUND"}},
         "attempted_at_utc": "2026-11-11T10:00:00+00:00",
     }
     adapter = types.ModuleType("free_fundamental_sources")
@@ -457,12 +457,19 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
         ticker_factory=FakeTicker,
         missing_metrics={"GrossMarginPct"},
         allow_free_sources=True,
+        free_source_audit_metrics={"ROEPercent"},
     )
 
     assert float(record["GrossMarginPct"]) == 35.0
+    assert float(record["ROEPercent"]) == 16.0
+    comparison = json.loads(record["FreeSourcesComparisonJSON"])
+    assert comparison["ROEPercent"]["YahooFinance"]["value"] == 16.0
+    assert comparison["ROEPercent"]["secondary_sources"][0]["source"] == "Moneycontrol"
+    assert comparison["ROEPercent"]["secondary_sources"][1]["source"] == "Tickertape"
+    assert comparison["ROEPercent"]["comparison_status"] == "OBSERVATIONS_AVAILABLE_RECONCILIATION_REQUIRED"
     assert record["FreeSourcesStatus"] == "DATA_FOUND"
     assert diagnostic["FreeSourcesStatus"] == "DATA_FOUND"
-    assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct"
+    assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct;ROEPercent"
     assert diagnostic["FreeSourcesMetricsFilled"] == "GrossMarginPct"
     assert diagnostic["ProviderStatus"] == "DATA_FOUND"
     assert "PROVIDER_ERROR" not in record["FreeSourcesStatus"]
