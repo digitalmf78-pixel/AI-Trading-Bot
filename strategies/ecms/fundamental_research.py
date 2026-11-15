@@ -27,6 +27,67 @@ VERIFICATION_METRICS = (
 )
 SPECIAL_SECTOR_TERMS = ("bank", "nbfc", "insurance", "insurer", "financial")
 
+ALIGNED_PROVIDER_BASES = {"ANNUAL_ALIGNED_STATEMENTS", "QUARTERLY_TTM_ALIGNED_STATEMENTS"}
+
+
+def _valid_period(value):
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "none", "<na>"}:
+        return False
+    parsed = pd.to_datetime(text, errors="coerce", utc=True)
+    return not pd.isna(parsed)
+
+
+def _metric_provenance(row):
+    """Return score-eligible metrics and explicit provenance exclusions.
+
+    Yahoo metrics require a verified aligned statement basis. Other named
+    providers remain third-party evidence and require their own reported period;
+    they are never promoted to official verification by this research layer.
+    Legacy rows without per-metric provenance are excluded from scoring.
+    """
+    import json
+
+    raw = row.get("MetricSourcesJSON")
+    try:
+        sources = json.loads(str(raw)) if raw is not None and str(raw).strip() else {}
+    except (TypeError, ValueError):
+        sources = {}
+    try:
+        periods = json.loads(str(row.get("MetricSourcePeriodsJSON") or "{}"))
+    except (TypeError, ValueError):
+        periods = {}
+    if not isinstance(sources, dict):
+        sources = {}
+    if not isinstance(periods, dict):
+        periods = {}
+
+    basis = str(row.get("MetricCalculationBasis", "") or "").strip().upper()
+    alignment = str(row.get("MetricPeriodAlignmentStatus", "") or "").strip().upper()
+    eligible, blocked = set(), []
+    for metric in METRIC_WEIGHTS:
+        if _number(row.get(metric)) is None:
+            continue
+        source = str(sources.get(metric, "") or "").strip()
+        period = periods.get(metric, "")
+        if not source:
+            blocked.append(metric + ":SOURCE_MISSING")
+            continue
+        if not _valid_period(period):
+            blocked.append(metric + ":PERIOD_MISSING_OR_INVALID")
+            continue
+        source_key = source.lower()
+        if "yahoo finance" in source_key or "yfinance" in source_key:
+            if basis not in ALIGNED_PROVIDER_BASES or alignment != "VERIFIED":
+                blocked.append(metric + ":YAHOO_STATEMENT_ALIGNMENT_NOT_VERIFIED")
+                continue
+        elif basis != "MULTI_SOURCE_METRIC_LEVEL":
+            blocked.append(metric + ":NON_YAHOO_BASIS_NOT_METRIC_LEVEL")
+            continue
+        eligible.add(metric)
+    return eligible, blocked
+
+
 
 def _number(value):
     try:
@@ -64,6 +125,12 @@ def _metric_points(name, value):
 
 
 def _valuation_points(row):
+    # Valuation figures are point-in-time data; do not score them without a
+    # named source and a valid as-of date.
+    source = str(row.get("ValuationSource", "") or "").strip()
+    as_of = row.get("ValuationAsOfDate", "")
+    if not source or not _valid_period(as_of):
+        return 0.0, 0.0
     points = 0.0
     available = 0.0
     pe = _number(row.get("TrailingPE"))
@@ -127,9 +194,10 @@ def assess_fundamental_research(frame, metric_verification=None):
         else:
             earned = 0.0
             available = 0.0
+            eligible_metrics, blocked_metrics = _metric_provenance(row)
             for metric, weight in METRIC_WEIGHTS.items():
                 value = _number(row.get(metric))
-                if value is None:
+                if value is None or metric not in eligible_metrics:
                     continue
                 available += weight
                 earned += _metric_points(metric, value)
@@ -157,7 +225,13 @@ def assess_fundamental_research(frame, metric_verification=None):
             missing = [m for m in (*METRIC_WEIGHTS, "TrailingPE/PEG-or-PB/EV") if (
                 m == "TrailingPE/PEG-or-PB/EV" and valuation_available == 0
             ) or (m != "TrailingPE/PEG-or-PB/EV" and _number(row.get(m)) is None)]
-            notes.append("MISSING_INPUTS:" + ",".join(missing) if missing else "AVAILABLE_INPUTS_SCORED")
+            blocked = sorted(set(blocked_metrics))
+            note_parts = []
+            if missing:
+                note_parts.append("MISSING_INPUTS:" + ",".join(missing))
+            if blocked:
+                note_parts.append("PROVENANCE_BLOCKED:" + ",".join(blocked))
+            notes.append(";".join(note_parts) if note_parts else "AVAILABLE_INPUTS_SCORED")
 
         symbol = str(row.get("TckrSymb", "")).strip().upper()
         status, count, total = _verification_summary(verification_by_symbol.get(symbol, pd.DataFrame()))
@@ -172,4 +246,12 @@ def assess_fundamental_research(frame, metric_verification=None):
     result["FundamentalVerifiedMetricCount"] = verified_counts
     result["FundamentalVerificationMetricCount"] = verification_counts
     result["FundamentalResearchNotes"] = notes
+    result["FundamentalResearchEligibleMetricCount"] = [
+        len(_metric_provenance(row)[0]) for _, row in result.iterrows()
+    ]
+    result["FundamentalResearchProvenanceStatus"] = [
+        "PROVENANCE_OK" if not _metric_provenance(row)[1] else
+        "PARTIAL_OR_BLOCKED" if _metric_provenance(row)[0] else "NO_ELIGIBLE_METRICS"
+        for _, row in result.iterrows()
+    ]
     return result
