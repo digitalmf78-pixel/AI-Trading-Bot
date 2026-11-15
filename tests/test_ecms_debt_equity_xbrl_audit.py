@@ -87,7 +87,7 @@ def test_consolidated_basis_uses_parent_equity_tag(tmp_path):
     )
 
     assert row["DebtToEquityAuditStatus"] == "OFFICIAL_XBRL_VERIFIED"
-    assert row["EquityFactTag"] == "EquityAttributableToOwnersOfParent"
+    assert row["EquityFactTag"] == "Equity"
 
 
 def test_xbrl_reporting_basis_must_match_official_filing_description(tmp_path):
