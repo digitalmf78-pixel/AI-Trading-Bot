@@ -22,6 +22,13 @@ An isolated research module inside AI-Trading-Bot. The current implementation is
 ## Fundamental verification limitation
 The existing fundamental gate requires every required metric to be verified against official XBRL evidence. The repository currently has approved evidence mappings for only a subset of the required metrics; unsupported derived ratios remain `WAIT_FOR_DATA`. Do not weaken this gate just to force a shortlist. A separate audited derivation/mapping is needed before those metrics can pass.
 
+## Multi-source fundamental compilation (ECMS-only)
+- `strategies/ecms/fundamental_source_compilation.py` compiles per-metric provider provenance, existing NSE XBRL audit statuses, and optional manually captured observations into separate rows.
+- Free Screener observations are entered manually from the publicly viewable company page using `SCREENER_FREE_MANUAL`; no Premium CSV, paid API, login automation, or website scraping is used.
+- BSE financial-results XBRL may require the BSE Listing Centre filing workflow. Until a public official filing/XBRL document is actually available for a symbol and period, enter no BSE value; if manually captured from an official filing, use `BSE_OFFICIAL_FILING_MANUAL`.
+- Manual BSE/Screener observations remain `NOT_OFFICIALLY_VERIFIED`. They are cross-checks only and cannot pass the strict official-XBRL gate. Keep period, standalone/consolidated basis and unit explicit. Never average conflicting values.
+- Template: `strategies/ecms/templates/fundamental_manual_observations.csv`. To add observations, copy it to `strategies/ecms/inputs/fundamental_manual_observations.csv` and enter one row per symbol/metric/source. The ECMS Volume Gainers EOD run writes `outputs/ecms/fundamental_source_compilation.csv` automatically.
+
 ## Data boundaries
 - Shared data is read-only: `data/bhavcopy/`, the shared `data/cache/` paths, `data/inputs/fundamental_metrics.csv`, `data/inputs/fundamental_thresholds.json`, `data/inputs/fundamental_metric_verification_evidence.csv`, and `outputs/v8_official_financial_results_filings.csv`.
 - The EOD workflow restores the same ordered shared-cache paths and uses restore prefixes compatible with the production cache.
@@ -33,6 +40,7 @@ The existing fundamental gate requires every required metric to be verified agai
 - `outputs/ecms/eod_audit.csv` — Main Board inclusion/exclusion and candidate audit.
 - `outputs/ecms/eod_catalysts.csv` — issuer-matched headline records and signal labels.
 - `outputs/ecms/fundamental_metric_verification.csv` and summaries.
+- `outputs/ecms/fundamental_source_compilation.csv` — separate per-metric rows for provider, NSE XBRL audit, and optional manual Free Screener/BSE observations.
 - `outputs/ecms/eod_run_summary.json`.
 
 ## Later phase — Morning confirmation
