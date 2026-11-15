@@ -78,3 +78,23 @@ Potentially reusable engineering patterns, subject to ECMS-specific tests:
 - Consolidated-to-standalone fallback is useful for coverage, but the resulting basis must remain visible in every metric audit.
 
 **Conclusion:** Use this repository only as an engineering reference for resumability, retries, source-basis labeling and pipeline separation. Do not adopt its scraper, filters, ranking logic or data as official fundamental evidence. No external code or data provider has been added to ECMS by this audit.
+
+
+## Manual EOD Run #242 — free-data findings (2026-11-15)
+
+Run `43733545877` completed successfully on merge commit `c2276bed20a8e2df2b105c5e9fa0b4d19e8c1a93`; the EOD research step, state save, artifact upload and Telegram delivery all passed. This was a Sunday manual run using the latest available NSE page snapshot dated 2026-11-13, not a live trading-session observation.
+
+- NSE page returned 25 rows; 18 eligible Main Board equities were assessed with no duplicate/missing assessment rows.
+- Fundamental outcome: 0 PASS, 0 FAIL, 18 WAIT_FOR_DATA. No stock was fully verified across the seven required metrics.
+- Third-party provider status was `DATA_FOUND` for all 18 symbols. Provider availability in the 18-row research output: Revenue Growth 18/18, Profit Growth 15/18, ROE 18/18, ROCE 17/18, Debt/Equity 18/18, Interest Coverage 17/18, Operating Cash Flow 18/18. These are observations, not verified facts.
+- Free-source diagnostics showed Moneycontrol and, for some symbols, Tickertape returning populated statement/ratio frames, including visible labels for ROE, ROCE, Debt/Equity, Interest Coverage and cash flow. Yet the merged ECMS status was `EMPTY_OR_UNMAPPED` for 18/18 symbols and no free-source metric was mapped into the fundamental fields. This identifies source-to-metric extraction/mapping as a priority debugging target; do not describe these returned frames as verified values.
+- Official XBRL verification summary: 9 metric rows `OFFICIAL_XBRL_VERIFIED`, 84 `DERIVED_RECONCILIATION_REQUIRED`, 26 `PROVIDER_VALUE_MISMATCH`, 16 `FILING_METADATA_NOT_CONFIRMED`, 3 `PROVIDER_ONLY`, and 1 `PROVIDER_VALUE_WITHIN_XBRL_ACCURACY` (summary rows are metric-level, not stock-level).
+- The three informational datasets (news, events, bulk/block deals) were empty because no stock passed the fundamental gate; this is expected under the current policy, not proof that the feeds are broken.
+
+### Next free-data engineering sequence
+
+1. Reproduce the `EMPTY_OR_UNMAPPED` result with fixture tables matching the exact Moneycontrol/Tickertape frame schemas captured in provider diagnostics; add label-normalization and source-specific mapping tests.
+2. Map only fields with explicit labels, periods, units and consolidated/standalone basis. Preserve provider and URL per metric; keep them `NOT_OFFICIALLY_VERIFIED`.
+3. Separately improve official NSE integrated-filing XBRL fact extraction and formula/context validation. Use the public NSE filing index and downloadable XBRL/Details documents as the free primary source; BSE issuer filings are a free official cross-check. Do not treat provider ratio tables as official verification.
+4. Add resumable per-symbol caching and bounded retry/backoff, following the reference repository's engineering pattern, but keep ECMS cache under `data/cache/ecms/`.
+5. Do not weaken fundamental thresholds or the `WAIT_FOR_DATA` fail-closed rule to increase PASS counts. No paid data/API, Screener Premium, login automation or automatic Screener scraping.
