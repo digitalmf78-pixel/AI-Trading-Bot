@@ -125,6 +125,12 @@ def _metric_points(name, value):
 
 
 def _valuation_points(row):
+    # Valuation figures are point-in-time data; do not score them without a
+    # named source and a valid as-of date.
+    source = str(row.get("ValuationSource", "") or "").strip()
+    as_of = row.get("ValuationAsOfDate", "")
+    if not source or not _valid_period(as_of):
+        return 0.0, 0.0
     points = 0.0
     available = 0.0
     pe = _number(row.get("TrailingPE"))
