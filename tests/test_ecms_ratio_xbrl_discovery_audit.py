@@ -121,7 +121,8 @@ def test_fresh_nse_metadata_discovers_each_explicit_reporting_basis_separately(t
     result = discover_ecms_ratio_xbrl_facts(
         candidates, filings, tmp_path, fetch_xml=fake_fetch,
     )
-    assert len(result) == 6
+    assert len(result) == 8  # 4 numeric candidate facts per filing variant
+    assert result.groupby("ConsolidationLabel").size().to_dict() == {"Consolidated": 4, "Standalone": 4}
     assert set(result["ConsolidationLabel"]) == {"Standalone", "Consolidated"}
     assert set(result["DiscoveryStatus"]) == {"CANDIDATE_FACT_DISCOVERY_ONLY"}
     assert set(result["OfficialFilingURL"]) == {
