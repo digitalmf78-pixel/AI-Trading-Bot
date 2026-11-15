@@ -432,10 +432,10 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
     import fundamental_data_provider as provider
 
     result = {
-        "metrics": {"GrossMarginPct": 35.0, "ROEPercent": 18.5},
-        "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol"},
-        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/"},
-        "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026"},
+        "metrics": {"GrossMarginPct": 35.0, "ROEPercent": 18.5, "ProfitGrowthPct": 12.0},
+        "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol", "ProfitGrowthPct": "Moneycontrol"},
+        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/", "ProfitGrowthPct": "https://www.moneycontrol.com/"},
+        "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026", "ProfitGrowthPct": "Mar 2026"},
         "metric_currencies": {"GrossMarginPct": "", "ROEPercent": ""},
         "metric_alternates": {"ROEPercent": [{"source": "Tickertape", "value": 19.0, "period": "FY2026", "source_url": "https://www.tickertape.in/"}]},
         "providers": {"Moneycontrol": {"status": "DATA_FOUND"}, "Tickertape": {"status": "DATA_FOUND"}},
@@ -452,12 +452,17 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
         "ok": False, "values": {}, "reason": "NO_ALIGNED_ANNUAL_STATEMENTS",
     })
 
+    def ticker_without_profit_growth(symbol):
+        ticker = FakeTicker(symbol)
+        ticker.info.pop("earningsGrowth", None)
+        return ticker
+
     record, diagnostic = provider._fetch_one(
         "AAA",
-        ticker_factory=FakeTicker,
+        ticker_factory=ticker_without_profit_growth,
         missing_metrics={"GrossMarginPct"},
         allow_free_sources=True,
-        free_source_audit_metrics={"ROEPercent"},
+        free_source_audit_metrics={"ROEPercent", "ProfitGrowthPct"},
     )
 
     assert float(record["GrossMarginPct"]) == 35.0
@@ -467,10 +472,13 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
     assert comparison["ROEPercent"]["secondary_sources"][0]["source"] == "Moneycontrol"
     assert comparison["ROEPercent"]["secondary_sources"][1]["source"] == "Tickertape"
     assert comparison["ROEPercent"]["comparison_status"] == "OBSERVATIONS_AVAILABLE_RECONCILIATION_REQUIRED"
+    assert comparison["ProfitGrowthPct"]["YahooFinance"]["value"] is None
+    assert comparison["ProfitGrowthPct"]["YahooFinance"]["source"] == "NOT_AVAILABLE"
+    assert comparison["ProfitGrowthPct"]["secondary_sources"][0]["source"] == "Moneycontrol"
     assert record["FreeSourcesStatus"] == "DATA_FOUND"
     assert diagnostic["FreeSourcesStatus"] == "DATA_FOUND"
-    assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct;ROEPercent"
-    assert diagnostic["FreeSourcesMetricsFilled"] == "GrossMarginPct"
+    assert diagnostic["FreeSourcesMetricsObserved"] == "GrossMarginPct;ROEPercent;ProfitGrowthPct"
+    assert diagnostic["FreeSourcesMetricsFilled"] == "GrossMarginPct;ProfitGrowthPct"
     assert diagnostic["ProviderStatus"] == "DATA_FOUND"
     assert "PROVIDER_ERROR" not in record["FreeSourcesStatus"]
 
@@ -657,3 +665,39 @@ def test_provider_error_uses_shorter_retry_cooldown():
     assert not _provider_retry_cooldown_active(
         "2026-11-13T10:00:00Z", "PROVIDER_ERROR", 7, 24, now="2026-11-14T11:00:00Z"
     )
+
+
+def test_ecms_secondary_audit_metrics_are_supported_in_collection_scope(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("V8_FREE_FUNDAMENTAL_SOURCES", "false")
+    path = Path("data/inputs/fundamental_metrics.csv")
+    received = {}
+
+    def fake_fetch(symbol, ticker_factory=None, **kwargs):
+        received.update(kwargs)
+        row = {column: pd.NA for column in provider.BASE_COLUMNS}
+        row.update({"TckrSymb": symbol, "Source": "Yahoo Finance via yfinance"})
+        diagnostic = {
+            "TckrSymb": symbol, "ProviderStatus": "MISSING_DATA",
+            "ProviderReason": "test stub", "AttemptedAtUTC": "2026-11-15T10:00:00Z",
+        }
+        return row, diagnostic
+
+    monkeypatch.setattr(provider, "_fetch_one", fake_fetch)
+    audit_metrics = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ]
+    provider.collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}),
+        metrics_path=path,
+        enabled=True,
+        pause_seconds=0,
+        asof_date="2026-11-13",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        force_retry_incomplete=True,
+        free_source_audit_metrics=audit_metrics,
+    )
+    assert received["free_source_audit_metrics"] == audit_metrics
