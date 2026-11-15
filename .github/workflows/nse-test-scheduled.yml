@@ -256,6 +256,7 @@ jobs:
           python -u signal_history_persistence.py restore
 
       - name: Run NSE Volume Gainer
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         id: nse_scan
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -280,7 +281,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
+          SCAN_MODE: ${{ github.event_name == 'push' && 'VALIDATION' || (github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD') }}
         run: |
           python - <<'PY'
           import os, sys, time, requests
@@ -289,7 +290,7 @@ jobs:
           if not token or not chat_id:
               print("Telegram failure alert unavailable: configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets.")
               sys.exit(1)
-          message = ("❌ NSE V8 scan FAILED\n"
+          message = ("❌ NSE V8 workflow FAILED\n"
                      f"Mode: {os.getenv('SCAN_MODE', 'UNKNOWN')}\n"
                      f"Repository: {os.getenv('GITHUB_REPOSITORY', 'unknown')}\n"
                      f"Run: {os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID', '')}\n"
@@ -387,7 +388,7 @@ jobs:
           fi
 
       - name: Run RSI 30/40/50 retest comparison from existing cache
-        if: always()
+        if: always() && steps.nse_scan.outcome == 'success'
         run: |
           set -e
           echo "===== RSI RETEST BACKTEST (NO NETWORK; unit tests already ran pre-scan) ====="
@@ -398,7 +399,7 @@ jobs:
           if [ -f outputs/rsi_retest/cache_coverage.csv ]; then cat outputs/rsi_retest/cache_coverage.csv; fi
 
       - name: Diagnose NSE V8 data files
-        if: always()
+        if: always() && steps.nse_scan.outcome == 'success'
         run: |
           echo "===== LAYER STATUS SUMMARY PREVIEW ====="
           if [ -f outputs/v8_layer_status_summary.csv ]; then head -12 outputs/v8_layer_status_summary.csv; else echo "Layer status summary not found"; fi
@@ -586,11 +587,11 @@ jobs:
 
       - name: Redact account-derived position sizing from public report artifacts
         id: artifact_redaction
-        if: always()
+        if: always() && steps.nse_scan.outcome != 'skipped'
         run: python -u sanitize_public_artifacts.py --root outputs
 
       - name: Upload NSE V8 reports and input templates
-        if: always() && steps.artifact_redaction.outcome == 'success'
+        if: always() && steps.nse_scan.outcome != 'skipped' && steps.artifact_redaction.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: nse-v8-reports-${{ github.run_id }}
