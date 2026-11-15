@@ -15,6 +15,8 @@ def _with_yahoo_provenance(row):
     row["MetricSourcePeriodsJSON"] = json.dumps({m: "2025-03-31" for m in metrics if m in row})
     row["MetricCalculationBasis"] = "ANNUAL_ALIGNED_STATEMENTS"
     row["MetricPeriodAlignmentStatus"] = "VERIFIED"
+    row["ValuationSource"] = "Yahoo Finance via yfinance"
+    row["ValuationAsOfDate"] = "2025-03-31"
     return row
 
 
