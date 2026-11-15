@@ -242,6 +242,18 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         return result
 
     monkeypatch.setattr(scanner, "assess_page_fundamentals", fake_assess)
+    def fake_information(frame, as_of_date):
+        result = frame.copy()
+        result["ValuationLabel"] = "NOT AVAILABLE"
+        result["Last5DayNews"] = "NO_NEWS_FOUND"
+        result["UpcomingEventsStatus"] = "NO_CONFIRMED_UPCOMING_EVENTS"
+        result["UpcomingEvents"] = ""
+        result["NextResultDate"] = "NOT ANNOUNCED"
+        result["BulkBlockDealStatus"] = "NO_DISCLOSED_DEALS_IN_LOOKBACK"
+        result["BulkDealCount"] = 0
+        result["BlockDealCount"] = 0
+        return result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    monkeypatch.setattr(scanner, "attach_information", fake_information)
     summary = scanner.run_morning()
 
     assert set(assessed_symbols) == {"AAA", "BBB"}
