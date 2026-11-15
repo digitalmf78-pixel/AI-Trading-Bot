@@ -96,7 +96,7 @@ def _metric_provenance(row):
         if metric in {"RevenueGrowthPct", "ProfitGrowthPct"} and not is_yahoo:
             # A third-party growth percentage must identify both consecutive
             # fiscal years used in its calculation, not just one as-of date.
-            match = re.fullmatch(r"FY\\s*(20\\d{2})\\s*->\\s*FY\\s*(20\\d{2})", str(period or "").strip(), re.IGNORECASE)
+            match = re.fullmatch(r"FY\s*(20\d{2})\s*->\s*FY\s*(20\d{2})", str(period or "").strip(), re.IGNORECASE)
             period_valid = bool(match and int(match.group(2)) == int(match.group(1)) + 1)
         else:
             period_valid = _valid_period(period, metric)
