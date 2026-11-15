@@ -414,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     audit.to_csv(output_path, index=False)
     summary = build_debt_equity_summary(audit, candidate_count=candidate_count)
     summary["output_csv"] = str(output_path)
-    summary_path.write_text(json.dumps(summary, indent=2) + "\\n", encoding="utf-8")
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0
 
