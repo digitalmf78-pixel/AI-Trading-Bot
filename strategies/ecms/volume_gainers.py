@@ -144,6 +144,17 @@ def assess_page_fundamentals(candidates, eod_date):
         shutil.rmtree(ephemeral_root)
     ephemeral_root.mkdir(parents=True, exist_ok=True)
 
+    previous_free_budget = os.environ.get("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN")
+    try:
+        configured_budget = int(previous_free_budget or "10")
+    except (TypeError, ValueError):
+        configured_budget = 10
+    # The shared provider has a per-run secondary-source budget. Raise it only
+    # inside this ECMS process to at least the current page size, so no current
+    # Volume Gainers candidate is deferred solely because the page grew.
+    os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] = str(
+        max(0, configured_budget, len(candidate_symbols))
+    )
     try:
         # Relative paths used by the production collector now resolve beneath
         # data/cache/ecms/fundamental_workspace, not production data/inputs/outputs.
@@ -179,6 +190,10 @@ def assess_page_fundamentals(candidates, eod_date):
         return failed
     finally:
         os.chdir(repo_root)
+        if previous_free_budget is None:
+            os.environ.pop("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", None)
+        else:
+            os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] = previous_free_budget
 
     if not workspace_metrics.exists():
         raise RuntimeError("Fundamental provider completed without creating its ECMS metrics cache")
