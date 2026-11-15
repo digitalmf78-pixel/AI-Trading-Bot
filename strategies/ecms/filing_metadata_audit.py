@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 import hashlib
+import time
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -77,8 +78,10 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
 def fetch_ecms_details_remarks(
     audit: pd.DataFrame,
     session=None,
-    timeout=25,
+    timeout=(8, 35),
     max_bytes=2_000_000,
+    max_attempts=2,
+    retry_backoff=1.0,
 ) -> pd.DataFrame:
     """Fetch only explicit, allowlisted Details URLs and capture visible Remarks.
 
@@ -102,8 +105,34 @@ def fetch_ecms_details_remarks(
             rows.append(result)
             continue
         try:
-            response = client.get(url, timeout=timeout, allow_redirects=True)
-            response.raise_for_status()
+            # Retry transient NSE archive network failures without relaxing validation.
+            response = None
+            attempts = max(1, int(max_attempts))
+            for attempt in range(attempts):
+                try:
+                    response = client.get(
+                        url, timeout=timeout, allow_redirects=True,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            "Referer": NSE_FILINGS_PAGE,
+                        },
+                    )
+                    response.raise_for_status()
+                    break
+                except requests.exceptions.RequestException as exc:
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    retryable = isinstance(exc, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)) or status_code in {429, 500, 502, 503, 504}
+                    if not retryable or attempt + 1 >= attempts:
+                        raise
+                    retry_after = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                    try:
+                        delay = min(8.0, max(0.0, float(retry_after)))
+                    except (TypeError, ValueError):
+                        delay = min(8.0, max(0.0, float(retry_backoff)) * (2 ** attempt))
+                    time.sleep(delay)
+            if response is None:
+                raise RuntimeError("NSE_DETAILS_FETCH_NO_RESPONSE")
             final_url = str(getattr(response, "url", url) or url)
             if not _official_https_url(final_url):
                 result["RemarksStatus"] = "REDIRECTED_OFFICIAL_HOST_CHECK_FAILED"
