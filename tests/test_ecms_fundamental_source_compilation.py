@@ -70,3 +70,16 @@ def test_manual_source_rejects_unknown_or_premium_scrape_source():
 
 def test_empty_manual_template_has_only_expected_columns():
     assert list(empty_manual_observation_template().columns) == MANUAL_COLUMNS
+
+
+def test_compilation_includes_exact_debt_equity_audit_as_its_own_source_row():
+    metrics = pd.DataFrame([{"TckrSymb": "AAA", "DebtToEquity": 0.5}])
+    debt_audit = pd.DataFrame([{
+        "TckrSymb": "AAA", "DebtToEquityAuditStatus": "OFFICIAL_XBRL_VERIFIED",
+        "OfficialDebtToEquity": 0.5, "FinancialPeriodEnd": "2026-03-31",
+        "ReportingBasis": "STANDALONE", "DebtToEquityAuditReason": "Exact same-context match",
+    }])
+    result = build_fundamental_source_compilation(metrics, debt_equity_audit=debt_audit)
+    audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT"].iloc[0]
+    assert audit["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
+    assert audit["MetricValue"] == 0.5
