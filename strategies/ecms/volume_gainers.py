@@ -95,6 +95,34 @@ def _eligible_page_equities(page):
     eligible=page[page["TckrSymb"].isin(mainboard)].copy()
     eligible["PageUniverseStatus"]="PASS_MAIN_BOARD_EQUITY"
     return eligible,source
+def _ecms_free_source_evidence(row):
+    """Describe free-source evidence without rewriting the shared provider status."""
+    raw = row.get("FreeSourcesAlternatesJSON", "")
+    try:
+        parsed = json.loads(str(raw)) if str(raw).strip() not in {"", "nan", "None"} else {}
+    except (TypeError, ValueError):
+        parsed = {}
+    observed = {
+        str(metric): values for metric, values in parsed.items()
+        if isinstance(values, list) and values
+    } if isinstance(parsed, dict) else {}
+    count = len(observed)
+    existing = str(row.get("FreeSourcesStatus", "") or "").strip().upper()
+    if existing == "DATA_FOUND":
+        status = "DATA_FOUND_CURRENT_ATTEMPT"
+    elif count:
+        status = "HISTORICAL_ALTERNATES_PRESENT_NO_CURRENT_METRICS"
+    elif existing:
+        status = existing
+    else:
+        status = "NO_RECORDED_FREE_SOURCE_EVIDENCE"
+    return pd.Series({
+        "ECMSFreeSourcesEvidenceStatus": status,
+        "ECMSFreeSourcesObservedMetricCount": count,
+        "ECMSFreeSourcesObservedMetrics": ";".join(sorted(observed)),
+    })
+
+
 def assess_page_fundamentals(candidates, eod_date):
     """Collect and verify fundamentals for Volume Gainers candidates only.
 
@@ -236,7 +264,7 @@ def assess_page_fundamentals(candidates, eod_date):
     audit_input_dir = ephemeral_root / "audit_input"
     audit_input_dir.mkdir(parents=True, exist_ok=True)
     candidate_metrics = metrics[metrics["TckrSymb"].isin(candidate_symbols)].copy()
-    audit_metrics_path = audit_input_dir / "fundamental_metrics.csv"
+    if not candidate_metrics.empty:\n        free_source_evidence = candidate_metrics.apply(_ecms_free_source_evidence, axis=1)\n        candidate_metrics = pd.concat([candidate_metrics, free_source_evidence], axis=1)\n    else:\n        candidate_metrics["ECMSFreeSourcesEvidenceStatus"] = pd.Series(dtype=str)\n        candidate_metrics["ECMSFreeSourcesObservedMetricCount"] = pd.Series(dtype=int)\n        candidate_metrics["ECMSFreeSourcesObservedMetrics"] = pd.Series(dtype=str)\n    audit_metrics_path = audit_input_dir / "fundamental_metrics.csv"
     candidate_metrics.to_csv(audit_metrics_path, index=False)
 
     candidate_filings = (
