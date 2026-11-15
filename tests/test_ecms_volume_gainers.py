@@ -283,3 +283,36 @@ def test_ecms_free_source_evidence_reports_no_alternates_without_inventing_data(
     assert result["ECMSFreeSourcesEvidenceStatus"] == "EMPTY_OR_UNMAPPED"
     assert result["ECMSFreeSourcesObservedMetricCount"] == 0
     assert result["ECMSFreeSourcesObservedMetrics"] == ""
+
+
+def test_ecms_debt_equity_exact_xbrl_audit_bridges_into_strict_verification_only():
+    from strategies.ecms.volume_gainers import _merge_ecms_debt_equity_verification
+
+    verification = pd.DataFrame([
+        {"TckrSymb": "AAA", "MetricName": "DebtToEquity",
+         "MetricValueVerificationStatus": "DERIVED_RECONCILIATION_REQUIRED"},
+        {"TckrSymb": "AAA", "MetricName": "RevenueGrowthPct",
+         "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED"},
+        {"TckrSymb": "BBB", "MetricName": "DebtToEquity",
+         "MetricValueVerificationStatus": "DERIVED_RECONCILIATION_REQUIRED"},
+    ])
+    debt_audit = pd.DataFrame([
+        {"TckrSymb": "AAA", "DebtToEquityAuditStatus": "OFFICIAL_XBRL_VERIFIED",
+         "ProviderDebtToEquity": 0.5, "OfficialDebtToEquity": 0.5,
+         "EvidenceFilePath": "data/cache/ecms_debt_equity_xbrl/a.xml",
+         "EvidenceSHA256": "a" * 64,
+         "DebtToEquityAuditReason": "Exact same-context XBRL match"},
+        {"TckrSymb": "BBB", "DebtToEquityAuditStatus": "PROVIDER_VALUE_MISMATCH",
+         "ProviderDebtToEquity": 0.8, "OfficialDebtToEquity": 0.5},
+    ])
+
+    result = _merge_ecms_debt_equity_verification(verification, debt_audit)
+    aaa_de = result[(result["TckrSymb"] == "AAA") & (result["MetricName"] == "DebtToEquity")]
+    bbb_de = result[(result["TckrSymb"] == "BBB") & (result["MetricName"] == "DebtToEquity")]
+
+    assert len(aaa_de) == 1
+    assert aaa_de.iloc[0]["MetricValueVerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
+    assert aaa_de.iloc[0]["OfficialMetricValue"] == 0.5
+    assert len(bbb_de) == 1
+    assert bbb_de.iloc[0]["MetricValueVerificationStatus"] == "DERIVED_RECONCILIATION_REQUIRED"
+    assert len(result[(result["TckrSymb"] == "AAA") & (result["MetricName"] == "RevenueGrowthPct")]) == 1
