@@ -18,6 +18,9 @@ from strategies.ecms.fundamental_source_compilation import build_fundamental_sou
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
+from strategies.ecms.information import (
+    attach_valuation, collect_upcoming_events, collect_bulk_block_deals,
+)
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -544,6 +547,101 @@ def attach_page_rvol(candidates, eod_date):
         result["RVOLDataStatus"] = f"WAIT_FOR_DATA:{type(exc).__name__}:{str(exc)[:180]}"
     return result
 
+def attach_information(assessed, as_of_date):
+    """Attach the six informational groups without changing fundamental decisions."""
+    result = attach_valuation(assessed)
+    symbols = result["TckrSymb"].astype(str).str.strip().str.upper()
+    passed = result.get(
+        "FundamentalShortlistStatus", pd.Series("", index=result.index)
+    ).astype(str).str.upper().eq("PASS")
+    pass_symbols = sorted(set(symbols.loc[passed]))
+
+    news_columns = [
+        "TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
+        "SecondaryStatus", "CatalystStatus", "CatalystSignalStatus",
+        "StrongCatalystCount", "NegativeRiskCount", "OfficialCount", "SecondaryCount",
+    ]
+    if pass_symbols:
+        news, news_audit = collect_catalysts(result.loc[passed].copy(), as_of_date)
+        events, event_audit = collect_upcoming_events(pass_symbols, as_of_date)
+        deals, deal_audit = collect_bulk_block_deals(pass_symbols, as_of_date)
+    else:
+        news = pd.DataFrame(columns=[
+            "TckrSymb", "PublishedDate", "Headline", "Source", "SourceType",
+            "URL", "Impact", "CatalystSignalStatus", "RiskFlags",
+        ])
+        news_audit = pd.DataFrame(columns=news_columns)
+        events = pd.DataFrame(columns=[
+            "TckrSymb", "EventDate", "EventType", "EventDetails",
+            "Source", "SourceType", "SourceURL", "IsResultEvent",
+        ])
+        event_audit = pd.DataFrame(columns=[
+            "TckrSymb", "UpcomingEventsStatus", "UpcomingEvents", "NextResultDate",
+            "NextResultDetails", "EventCalendarSourceURL",
+        ])
+        deals = pd.DataFrame(columns=[
+            "TckrSymb", "DealDate", "DealType", "ClientName", "Side", "Quantity",
+            "PriceINR", "Remarks", "Source", "SourceType", "SourceURL",
+        ])
+        deal_audit = pd.DataFrame(columns=[
+            "TckrSymb", "BulkBlockDealStatus", "BulkDealCount", "BlockDealCount",
+            "BulkBuyers", "BulkSellers", "BlockBuyers", "BlockSellers",
+            "BulkBlockLookbackStart", "BulkBlockLookbackEnd", "BulkBlockSourceURL",
+        ])
+
+    result["Last5DayNews"] = "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
+    if not news.empty:
+        summaries = {}
+        for symbol, rows in news.groupby(news["TckrSymb"].astype(str).str.upper()):
+            summaries[symbol] = " | ".join(
+                f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
+                for _, row in rows.sort_values("PublishedDate", ascending=False).head(5).iterrows()
+            )
+        result["Last5DayNews"] = [
+            summaries.get(symbol, "NO_MATCHED_NEWS_IN_LAST_5_DAYS") if is_pass
+            else "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
+            for symbol, is_pass in zip(symbols, passed)
+        ]
+
+    news_defaults = {
+        "NewsWindowStart": "", "NewsWindowEnd": "",
+        "OfficialStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "SecondaryStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "CatalystStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "CatalystSignalStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "StrongCatalystCount": 0, "NegativeRiskCount": 0,
+        "OfficialCount": 0, "SecondaryCount": 0,
+    }
+    for column, default in news_defaults.items():
+        result[column] = default
+    if not news_audit.empty:
+        result = result.drop(columns=[c for c in news_audit.columns if c != "TckrSymb" and c in result.columns])
+        result = result.merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in {
+        "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NextResultDate": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NextResultDetails": "",
+        "EventCalendarSourceURL": "",
+    }.items():
+        result[column] = default
+    if not event_audit.empty:
+        result = result.drop(columns=[c for c in event_audit.columns if c != "TckrSymb" and c in result.columns])
+        result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in {
+        "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "BulkDealCount": 0, "BlockDealCount": 0,
+        "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
+        "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
+    }.items():
+        result[column] = default
+    if not deal_audit.empty:
+        result = result.drop(columns=[c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns])
+        result = result.merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
+    result["RVOLInformationStatus"] = result.get("RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index))
+    return result, news, events, deals
+
+
 def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
@@ -562,8 +660,7 @@ def run_eod():
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
-    news,news_audit=collect_catalysts(assessed,eod_date)
-    assessed=assessed.merge(news_audit,on="TckrSymb",how="left")
+    assessed, news, events, deals = attach_information(assessed, eod_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
@@ -579,6 +676,8 @@ def run_eod():
     assessed.to_csv(OUTPUT_DIR/"volume_gainers_eod_research.csv",index=False)
     page.to_csv(OUTPUT_DIR/"volume_gainers_page_raw.csv",index=False)
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
+    events.to_csv(OUTPUT_DIR/"volume_gainers_upcoming_events.csv",index=False)
+    deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
     STATE_DIR.mkdir(parents=True,exist_ok=True)
     state_columns=["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
       "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]
@@ -666,6 +765,10 @@ def run_morning():
     morning_assessed=assess_page_fundamentals(live,today)
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
+    morning_assessed, morning_news, morning_events, morning_deals = attach_information(morning_assessed, today)
+    morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
+    morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
+    morning_deals.to_csv(OUTPUT_DIR/"volume_gainers_morning_bulk_block_deals.csv", index=False)
     morning_assessed["MorningStrongFundamentalStatus"] = (
         _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
