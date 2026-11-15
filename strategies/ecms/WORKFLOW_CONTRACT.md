@@ -1,35 +1,52 @@
-# ECMS workflow contract — current EOD and morning phases
+# ECMS workflow contract — fundamental-only gate
 
-## Workflow A — ECMS EOD
+## Workflow and schedule
+
 - Workflow file: `.github/workflows/ecms-volume-gainers-shadow.yml`.
-- Triggers: manual `workflow_dispatch` with mode `eod`, plus weekday schedule at 16:45 IST.
-- Scope: only eligible NSE Volume Gainers page rows from that run; never the full Main Board universe or V8 candidate list.
-- Restore shared NSE cache read-only using the ordered cache path list; write ECMS state only beneath `data/cache/ecms/` and reports only beneath `outputs/ecms/`.
-- Assess every eligible current-page candidate. A candidate must receive exactly one assessment row; missing or failed provider data remains `WAIT_FOR_DATA`.
-- Collect free-source fundamental evidence with per-metric provenance and reporting periods. No paid API, mandatory AI provider or secret API key.
-- Run strict fundamental shortlist and independent ECMS research scoring separately. Only strict `PASS` plus research `STRONG` and coverage >=80% enters the strong-fundamental hand-off.
-- Run official XBRL verification separately and fail closed. Third-party provider data is never described as official verification.
-- Attach candidate-specific catalysts and negative-risk evidence; provider/source unavailability is not evidence of no news.
-- Upload an EOD-specific artifact bundle and send a separate EOD Telegram message.
+- EOD job: weekday schedule `15 11 * * 1-5` UTC = **16:45 IST**; manual dispatch with mode `eod`.
+- Morning job: weekday schedule `50 3 * * 1-5` UTC = **09:20 IST**; manual dispatch with mode `morning`.
+- These triggers belong only to ECMS. Do not modify the production NSE V8 workflow or any unrelated workflow.
+- The morning job restores the previous EOD snapshot and ECMS fundamental workspace. EOD and morning artifacts/Telegram reports are separate.
 
-## Workflow B — ECMS morning reassessment
-- Workflow file: same ECMS workflow, independent `morning` job.
-- Triggers: manual `workflow_dispatch` with mode `morning`, plus weekday schedule at 09:20 IST.
-- Restore the previous EOD candidate snapshot and ECMS fundamental workspace.
-- Assess every eligible current morning-page candidate with the same fundamental framework, including repeated and new entries.
-- Preserve EOD results and label morning-only, EOD-only and double-confirmed outcomes separately. Double confirmation requires strict PASS plus research STRONG at both checkpoints.
-- Upload a morning-specific artifact bundle and send a separate morning Telegram message.
+## Universe and sole rejection rule
 
-## CI validation
-- Push and pull-request validation compiles ECMS modules and runs the focused ECMS tests, including the Debt/Equity XBRL audit tests.
-- CI success is not a live EOD or morning run and does not prove provider availability or complete market data.
+- Process eligible NSE Main Board equity rows returned by the NSE Volume Gainers page.
+- **Fundamental assessment is the only stock rejection filter.**
+- Required applicable fundamental metrics: Revenue Growth, Profit Growth, ROE, ROCE, Debt/Equity, Interest Coverage and Operating Cash Flow, using the configured threshold file and approved sector applicability.
+- Fundamental PASS is the only status that includes a stock in the fundamental-pass set. Fundamental FAIL is rejected. Missing/stale/conflicting/unverified required fundamental evidence is `WAIT_FOR_DATA`; never force it to PASS.
+- Do not add RVOL, catalyst/news sentiment, upcoming events/results, valuation, bulk/block deals, research score/grade, coverage percentage, sector momentum or technical conditions as rejection, ranking-gate or suppression rules.
 
-## Shared cache and isolation
-- Shared production inputs are read-only seed data only. ECMS-owned fundamental cache, state, diagnostics and reports stay isolated under `data/cache/ecms/` and `outputs/ecms/`.
-- Never modify `.github/workflows/nse-test-scheduled.yml`, production scanner logic or shared cache contents as part of ECMS work.
-- A restored cache is not proof that required files or fresh candidate metrics are present.
+## Seven report information groups
 
-## Operational safety
-- Research/shadow-only. No broker integration, order placement, automatic buy/sell or automatic buy instructions.
-- Feed failure, empty response, HTML challenge, stale data, symbol mismatch, missing filing, incomplete provenance or incomplete XBRL evidence must remain `WAIT_FOR_DATA` or an explicit failure.
-- No forced shortlist. Zero strong candidates is a valid result.
+1. Fundamentals and explicit PASS / FAIL / WAIT_FOR_DATA.
+2. Issuer-matched company news from the last five calendar days, with official vs secondary source labels.
+3. Confirmed upcoming company events, with date and source.
+4. Next result date only when announced by issuer/exchange; otherwise `NOT ANNOUNCED`.
+5. Indicative valuation label Cheap / Fair / Expensive from available P/E, PEG, P/B or EV/EBITDA multiples, with source/date/basis; otherwise `NOT AVAILABLE`. These are fixed, non-peer-adjusted information bands.
+6. Latest 30-calendar-day NSE bulk and block deal disclosures for fundamental-PASS stocks: date, disclosed client/side, quantity, price and official exchange source. Informational only.
+7. RVOL vs the previous 20 completed sessions' average volume, with value and data status. Informational only.
+
+All groups except fundamentals are informational. Their positive, negative or unavailable status cannot reject a fundamental-PASS stock. Never infer an event, result date, valuation or deal when source evidence is absent.
+
+## Morning repeat classification
+
+- Reassess every eligible stock visible on the 09:20 NSE Volume Gainers page with the same fundamental-only rule. Include the EOD RVOL for context; do not compare partial-session morning volume with full-day RVOL.
+- If a stock had Fundamental PASS in the saved EOD snapshot and appears again on the morning page, label it `EOD_FUNDAMENTAL_PASS_REPEAT`.
+- Distinguish that from `NEW_MORNING_ENTRY`, `EOD_ONLY_NOT_ON_MORNING_PAGE`, and `MORNING_FUNDAMENTAL_FAIL` / `MORNING_WAIT_FOR_DATA`.
+- Repeat/new/disappeared labels are informational and do not create a second rejection rule.
+
+## Sources and quality
+
+- Official NSE XBRL/issuer filings are primary; BSE official filings are official cross-checks.
+- Screener.in free public observations may be entered manually. No Premium export, paid API, login automation or scraping.
+- Yahoo Finance/yfinance is third-party comparison data, not official verification.
+- Keep metric-level source, URL, period, publication date, basis and unit. Never average conflicts or upgrade manual/provider data to official verification.
+- Apply approved financial-sector metric applicability for banks/NBFCs/insurers.
+- Non-fundamental missing values are `NOT AVAILABLE` / `NOT ANNOUNCED`; they do not alter the fundamental status.
+
+## Isolation and safety
+
+- Shared production inputs/cache are read-only.
+- ECMS state/cache stays under `data/cache/ecms/`; reports stay under `outputs/ecms/`.
+- No edits to `.github/workflows/nse-test-scheduled.yml`, NSE V8, shared providers, production scanner, shared thresholds or unrelated workflows.
+- Research/shadow-only. No broker integration, order placement, auto-buy or auto-sell.

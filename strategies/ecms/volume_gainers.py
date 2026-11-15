@@ -14,11 +14,13 @@ from strategies.ecms.eod import (
 )
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
-from strategies.ecms.fundamental_research import assess_fundamental_research
 from strategies.ecms.fundamental_source_compilation import build_fundamental_source_compilation
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
+from strategies.ecms.information import (
+    attach_valuation, collect_upcoming_events, collect_bulk_block_deals,
+)
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -479,9 +481,6 @@ def assess_page_fundamentals(candidates, eod_date):
         require_explicit_thresholds=True,
         thresholds_path=THRESHOLDS_PATH.resolve(),
     )
-    # Independent research scoring uses available provider metrics; official XBRL
-    # verification remains a separate status and the strict shortlist stays intact.
-    assessed = assess_fundamental_research(assessed, candidate_verification)
     expected_symbols = candidates["TckrSymb"].astype(str).str.strip().str.upper().tolist()
     actual_symbols = assessed["TckrSymb"].astype(str).str.strip().str.upper().tolist()
     if len(actual_symbols) != len(expected_symbols) or set(actual_symbols) != set(expected_symbols) or len(actual_symbols) != len(set(actual_symbols)):
@@ -493,19 +492,18 @@ def assess_page_fundamentals(candidates, eod_date):
     assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
     assessed.loc[duplicated, "FundamentalAssessmentStatus"] = assessed.loc[duplicated, "FundamentalShortlistStatus"]
     assessed.loc[duplicated, "FundamentalAssessmentReason"] = assessed.loc[duplicated, "FundamentalShortlistReason"]
-    strong_mask = (
-        assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("PASS")
-        & assessed["FundamentalResearchClassification"].astype(str).str.upper().eq("STRONG")
-        & pd.to_numeric(assessed["FundamentalResearchCoveragePct"], errors="coerce").ge(80)
-    )
-    assessed["StrongFundamentalHandOffStatus"] = strong_mask.map({
-        True: "PASS_STRONG_FUNDAMENTAL", False: "NOT_FORWARDED"
+    # FundamentalShortlistStatus is the sole stock-level decision gate.
+    # Research scores, catalysts, RVOL and all other context are informational.
+    fundamental_pass = assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("PASS")
+    assessed["FundamentalPassStatus"] = fundamental_pass.map({
+        True: "FUNDAMENTAL_PASS", False: "NOT_FUNDAMENTAL_PASS"
+    })
+    assessed["StrongFundamentalHandOffStatus"] = fundamental_pass.map({
+        True: "PASS_FUNDAMENTAL", False: "NOT_PASS_FUNDAMENTAL"
     })
     assessed["StrongFundamentalNotForwardedReason"] = assessed.apply(
-        lambda row: "" if bool(strong_mask.loc[row.name]) else
-        "STRICT_SHORTLIST_" + str(row.get("FundamentalShortlistStatus", "MISSING")).upper()
-        if str(row.get("FundamentalShortlistStatus", "")).upper() != "PASS" else
-        "RESEARCH_" + str(row.get("FundamentalResearchClassification", "MISSING")).upper(),
+        lambda row: "" if str(row.get("FundamentalShortlistStatus", "")).upper() == "PASS"
+        else "FUNDAMENTAL_" + str(row.get("FundamentalShortlistStatus", "MISSING")).upper(),
         axis=1,
     )
 
@@ -549,6 +547,108 @@ def attach_page_rvol(candidates, eod_date):
         result["RVOLDataStatus"] = f"WAIT_FOR_DATA:{type(exc).__name__}:{str(exc)[:180]}"
     return result
 
+def attach_information(assessed, as_of_date):
+    """Attach the six informational groups without changing fundamental decisions."""
+    result = attach_valuation(assessed)
+    symbols = result["TckrSymb"].astype(str).str.strip().str.upper()
+    passed = result.get(
+        "FundamentalShortlistStatus", pd.Series("", index=result.index)
+    ).astype(str).str.upper().eq("PASS")
+    pass_symbols = sorted(set(symbols.loc[passed]))
+
+    news_columns = [
+        "TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
+        "SecondaryStatus", "CatalystStatus", "CatalystSignalStatus",
+        "StrongCatalystCount", "NegativeRiskCount", "OfficialCount", "SecondaryCount",
+    ]
+    if pass_symbols:
+        news, news_audit = collect_catalysts(result.loc[passed].copy(), as_of_date)
+        events, event_audit = collect_upcoming_events(pass_symbols, as_of_date)
+        deals, deal_audit = collect_bulk_block_deals(pass_symbols, as_of_date)
+    else:
+        news = pd.DataFrame(columns=[
+            "TckrSymb", "PublishedDate", "Headline", "Source", "SourceType",
+            "URL", "Impact", "CatalystSignalStatus", "RiskFlags",
+        ])
+        news_audit = pd.DataFrame(columns=news_columns)
+        events = pd.DataFrame(columns=[
+            "TckrSymb", "EventDate", "EventType", "EventDetails",
+            "Source", "SourceType", "SourceURL", "IsResultEvent",
+        ])
+        event_audit = pd.DataFrame(columns=[
+            "TckrSymb", "UpcomingEventsStatus", "UpcomingEvents", "NextResultDate",
+            "NextResultDetails", "EventCalendarSourceURL",
+        ])
+        deals = pd.DataFrame(columns=[
+            "TckrSymb", "DealDate", "DealType", "ClientName", "Side", "Quantity",
+            "PriceINR", "Remarks", "Source", "SourceType", "SourceURL",
+        ])
+        deal_audit = pd.DataFrame(columns=[
+            "TckrSymb", "BulkBlockDealStatus", "BulkDealCount", "BlockDealCount",
+            "BulkBuyers", "BulkSellers", "BlockBuyers", "BlockSellers",
+            "BulkBlockLookbackStart", "BulkBlockLookbackEnd", "BulkBlockSourceURL",
+        ])
+
+    result["Last5DayNews"] = "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
+    if not news.empty:
+        summaries = {}
+        for symbol, rows in news.groupby(news["TckrSymb"].astype(str).str.upper()):
+            summaries[symbol] = " | ".join(
+                f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
+                for _, row in rows.sort_values("PublishedDate", ascending=False).head(5).iterrows()
+            )
+        result["Last5DayNews"] = [
+            summaries.get(symbol, "NO_MATCHED_NEWS_IN_LAST_5_DAYS") if is_pass
+            else "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
+            for symbol, is_pass in zip(symbols, passed)
+        ]
+
+    news_defaults = {
+        "NewsWindowStart": "", "NewsWindowEnd": "",
+        "OfficialStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "SecondaryStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "CatalystStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "CatalystSignalStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "StrongCatalystCount": 0, "NegativeRiskCount": 0,
+        "OfficialCount": 0, "SecondaryCount": 0,
+    }
+    for column, default in news_defaults.items():
+        result[column] = default
+    if not news_audit.empty:
+        result = result.drop(columns=[c for c in news_audit.columns if c != "TckrSymb" and c in result.columns])
+        result = result.merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in news_defaults.items():
+        result[column] = result[column].fillna(default)
+    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA"), "Last5DayNews"] = "WAIT_FOR_DATA"
+    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("NO_NEWS_FOUND"), "Last5DayNews"] = "NO_NEWS_FOUND"
+    event_defaults = {
+        "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NextResultDate": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "NextResultDetails": "",
+        "EventCalendarSourceURL": "",
+    }
+    if not event_audit.empty:
+        result = result.drop(columns=[c for c in event_audit.columns if c != "TckrSymb" and c in result.columns])
+        result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in event_defaults.items():
+        result[column] = result[column].fillna(default)
+    deal_defaults = {
+        "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "BulkDealCount": 0, "BlockDealCount": 0,
+        "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
+        "BulkBlockDealSummary": "",
+        "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
+    }
+    if not deal_audit.empty:
+        result = result.drop(columns=[c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns])
+        result = result.merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in deal_defaults.items():
+        result[column] = result[column].fillna(default)
+    result["RVOLInformationStatus"] = result.get("RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index))
+    return result, news, events, deals
+
+
 def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
@@ -564,76 +664,57 @@ def run_eod():
     eligible["MainBoardSource"]=board_source
     eligible=attach_page_rvol(eligible,eod_date)
     assessed=assess_page_fundamentals(eligible,eod_date)
-    assessed["EODConfirmationLabel"] = assessed["StrongFundamentalHandOffStatus"].map({
-      "PASS_STRONG_FUNDAMENTAL":"STRONG_EOD", "NOT_FORWARDED":"NOT_STRONG_EOD"
-    }).fillna("NOT_STRONG_EOD")
-    news,news_audit=collect_catalysts(assessed,eod_date)
-    assessed=assessed.merge(news_audit,on="TckrSymb",how="left")
+    assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
+      "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
+    }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
+    assessed, news, events, deals = attach_information(assessed, eod_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
         raise RuntimeError("ECMS_EOD_REPORT_INTEGRITY_ERROR: joined report differs from eligible page candidates")
     if "NegativeRiskCount" not in assessed: assessed["NegativeRiskCount"]=0
     assessed["NegativeRiskCount"]=pd.to_numeric(assessed["NegativeRiskCount"],errors="coerce").fillna(0)
-    assessed["EODResearchStatus"]=assessed.apply(
-      lambda r: "NEGATIVE_RISK_REVIEW" if r["NegativeRiskCount"]>0 else
-      ("STRONG_FUNDAMENTAL_CATALYST_REVIEW" if
-       str(r.get("FundamentalShortlistStatus","")).upper()=="PASS" and
-       str(r.get("CatalystSignalStatus","")).upper()=="STRONG_POSITIVE_CATALYST_REVIEW" and
-       str(r.get("CatalystStatus","")).upper()=="CATALYST_FOUND" else
-       ("WAIT_FOR_DATA" if str(r.get("FundamentalShortlistStatus","")).upper()=="WAIT_FOR_DATA" or
-        str(r.get("CatalystStatus","")).upper()=="WAIT_FOR_DATA" else "NOT_QUALIFIED")),axis=1)
-    sort_col="RVOL" if "RVOL" in assessed.columns else "PageVolume"
-    assessed=assessed.sort_values(["EODResearchStatus",sort_col],ascending=[True,False])
+    assessed["EODResearchStatus"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
+        "PASS": "FUNDAMENTAL_PASS",
+        "FAIL": "FUNDAMENTAL_FAIL",
+    }).fillna("FUNDAMENTAL_WAIT_FOR_DATA")
+    # Keep NSE page order; RVOL/news/events/valuation/deals never rank or reject.
     OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
     assessed.to_csv(OUTPUT_DIR/"volume_gainers_eod_research.csv",index=False)
     page.to_csv(OUTPUT_DIR/"volume_gainers_page_raw.csv",index=False)
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
+    events.to_csv(OUTPUT_DIR/"volume_gainers_upcoming_events.csv",index=False)
+    deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
     STATE_DIR.mkdir(parents=True,exist_ok=True)
     state_columns=["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
-      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","EODDate"]
-    for column in ("FundamentalShortlistStatus","FundamentalResearchClassification",
-                   "FundamentalResearchScore","FundamentalResearchCoveragePct",
-                   "FundamentalResearchProvenanceStatus","StrongFundamentalNotForwardedReason"):
+      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","AvgVolume20D","RVOL",
+      "RVOLDataStatus","EODDate"]
+    for column in ("FundamentalShortlistStatus", "StrongFundamentalNotForwardedReason",
+                   "FundamentalPassStatus"):
         if column in assessed.columns:
             state_columns.append(column)
     state=assessed[state_columns].copy()
     state=state.rename(columns={
       "FundamentalShortlistStatus":"EODFundamentalShortlistStatus",
-      "FundamentalResearchClassification":"EODFundamentalResearchClassification",
-      "FundamentalResearchScore":"EODFundamentalResearchScore",
-      "FundamentalResearchCoveragePct":"EODFundamentalResearchCoveragePct",
-      "FundamentalResearchProvenanceStatus":"EODFundamentalResearchProvenanceStatus",
       "StrongFundamentalNotForwardedReason":"EODFundamentalNotForwardedReason"})
-    state["EODStrongFundamentalStatus"]=state.apply(
-      lambda r: "STRONG_EOD" if
-        str(r.get("EODFundamentalShortlistStatus","")).upper()=="PASS" and
-        str(r.get("EODFundamentalResearchClassification","")).upper()=="STRONG" and
-        _number(r.get("EODFundamentalResearchCoveragePct")) is not None and
-        float(r.get("EODFundamentalResearchCoveragePct"))>=80 else "NOT_STRONG_EOD",axis=1)
+    state["EODStrongFundamentalStatus"] = state["EODFundamentalShortlistStatus"].astype(str).str.upper().map({
+        "PASS": "EOD_FUNDAMENTAL_PASS",
+        "FAIL": "EOD_FUNDAMENTAL_FAIL",
+    }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
     state.to_csv(STATE_FILE,index=False)
     provider_diag_path = OUTPUT_DIR / "fundamental_provider_diagnostics.csv"
     provider_diag = pd.read_csv(provider_diag_path) if provider_diag_path.exists() and provider_diag_path.stat().st_size else pd.DataFrame()
     provider_status = provider_diag.get("ProviderStatus", pd.Series(dtype=str)).astype(str).str.upper()
     free_attempted = provider_diag.get("FreeSourcesAttempted", pd.Series(False, index=provider_diag.index)).astype(str).str.lower().isin({"true", "1", "yes"})
-    research_class = assessed["FundamentalResearchClassification"].astype(str).str.upper()
     shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
-    provenance_status = assessed["FundamentalResearchProvenanceStatus"].astype(str).str.upper()
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "assessment_rows":int(len(assessed)),
       "assessment_unique_symbols":int(assessed["TckrSymb"].astype(str).str.upper().nunique()),
       "assessment_missing_or_duplicate_count":int(max(0, len(eligible) - assessed["TckrSymb"].astype(str).str.upper().nunique())),
-      "strong_fundamental_handoff":int(assessed["StrongFundamentalHandOffStatus"].eq("PASS_STRONG_FUNDAMENTAL").sum()),
-      "strong_eod":int(assessed["EODConfirmationLabel"].eq("STRONG_EOD").sum()),
-      "research_strong":int(research_class.eq("STRONG").sum()),
-      "research_good":int(research_class.eq("GOOD").sum()),
-      "research_average":int(research_class.eq("AVERAGE").sum()),
-      "research_weak":int(research_class.eq("WEAK").sum()),
-      "shortlist_fail":int(shortlist_status.eq("FAIL").sum()),
+      "fundamental_pass":int(shortlist_status.eq("PASS").sum()),
+      "fundamental_fail":int(shortlist_status.eq("FAIL").sum()),
       "wait_for_data":int(shortlist_status.eq("WAIT_FOR_DATA").sum()),
-      "research_insufficient_data":int(research_class.eq("INSUFFICIENT_DATA").sum()),
-      "research_provenance_blocked":int(provenance_status.eq("PARTIAL_OR_BLOCKED").sum()),
       "official_xbrl_fully_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("FULLY_VERIFIED").sum()),
       "official_xbrl_partially_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("PARTIALLY_VERIFIED").sum()),
       "official_xbrl_not_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("NOT_VERIFIED").sum()),
@@ -642,30 +723,28 @@ def run_eod():
       "provider_cooldown_deferred":int(provider_status.eq("RETRY_COOLDOWN").sum()),
       "provider_failed":int(provider_status.str.contains("ERROR|FAILED", regex=True).sum()),
       "free_source_attempted":int(free_attempted.sum()),
-      "strong_fundamental_catalyst_review":int(assessed["EODResearchStatus"].eq("STRONG_FUNDAMENTAL_CATALYST_REVIEW").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def _strong_fundamental_mask(frame):
+    """Fundamental PASS alone defines the morning pass; no score/coverage gate."""
     if frame.empty:
         return pd.Series(False, index=frame.index)
     shortlist = frame.get("FundamentalShortlistStatus", pd.Series("", index=frame.index)).astype(str).str.upper()
-    classification = frame.get("FundamentalResearchClassification", pd.Series("", index=frame.index)).astype(str).str.upper()
-    coverage = pd.to_numeric(frame.get("FundamentalResearchCoveragePct", pd.Series(pd.NA, index=frame.index)), errors="coerce")
-    return shortlist.eq("PASS") & classification.eq("STRONG") & coverage.ge(80)
+    return shortlist.eq("PASS")
 
 
-def _confirmation_status(eod_strong, present, morning_strong):
-    if eod_strong and present and morning_strong:
+def _confirmation_status(eod_pass, present, morning_pass):
+    if eod_pass and present and morning_pass:
         return "DOUBLE_CONFIRMED_EOD_MORNING"
-    if morning_strong:
-        return "UNDER_OBSERVATION_MORNING"
-    if eod_strong and present:
-        return "EOD_STRONG_MORNING_NOT_CONFIRMED"
-    if eod_strong and not present:
-        return "STRONG_EOD_DISAPPEARED_MORNING"
-    return "NOT_STRONG"
+    if morning_pass:
+        return "MORNING_FUNDAMENTAL_PASS"
+    if eod_pass and present:
+        return "EOD_PASS_MORNING_NOT_PASS"
+    if eod_pass and not present:
+        return "EOD_PASS_NOT_ON_MORNING_PAGE"
+    return "NO_FUNDAMENTAL_PASS"
 
 
 def run_morning():
@@ -694,10 +773,13 @@ def run_morning():
     morning_assessed=assess_page_fundamentals(live,today)
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
-    if "FundamentalResearchClassification" not in morning_assessed:
-        morning_assessed["FundamentalResearchClassification"]="INSUFFICIENT_DATA"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    morning_assessed, morning_news, morning_events, morning_deals = attach_information(morning_assessed, today)
+    morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
+    morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
+    morning_deals.to_csv(OUTPUT_DIR/"volume_gainers_morning_bulk_block_deals.csv", index=False)
     morning_assessed["MorningStrongFundamentalStatus"] = (
-        _strong_fundamental_mask(morning_assessed).map({True:"STRONG_MORNING",False:"NOT_STRONG_MORNING"})
+        _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
 
     previous_symbols=set(previous["TckrSymb"].astype(str).str.upper())
@@ -712,29 +794,50 @@ def run_morning():
         current=live_by_symbol.loc[symbol].to_dict() if symbol in live_by_symbol.index else {}
         assessed=morning_by_symbol.loc[symbol].to_dict() if symbol in morning_by_symbol.index else {}
         present=symbol in live_symbols
-        eod_strong=str(old.get("EODStrongFundamentalStatus","")).upper()=="STRONG_EOD"
-        morning_strong=str(assessed.get("MorningStrongFundamentalStatus","")).upper()=="STRONG_MORNING"
+        # Backward-compatible: prior EOD snapshots already carry the strict
+        # FundamentalShortlistStatus even if their legacy research label differs.
+        eod_strong=(
+            str(old.get("EODFundamentalShortlistStatus","")).upper()=="PASS"
+            or str(old.get("EODStrongFundamentalStatus","")).upper()=="EOD_FUNDAMENTAL_PASS"
+        )
+        morning_strong=str(assessed.get("MorningStrongFundamentalStatus","")).upper()=="MORNING_FUNDAMENTAL_PASS"
         confirmation=_confirmation_status(eod_strong,present,morning_strong)
         rows.append({
           "TckrSymb":symbol,
           "CompanyName":current.get("CompanyName",old.get("CompanyName","")),
           "EODDate":old.get("EODDate",""),
           "MorningDate":today.isoformat(),
-          "MorningStatus":"REPEATED" if symbol in previous_symbols and present else
-             "DISAPPEARED" if symbol in previous_symbols else "NEW_ENTRY",
+          "MorningStatus":(
+             "EOD_FUNDAMENTAL_PASS_REPEAT" if symbol in previous_symbols and present and eod_strong else
+             "EOD_REPEAT_NOT_FUNDAMENTAL_PASS" if symbol in previous_symbols and present else
+             "EOD_ONLY_NOT_ON_MORNING_PAGE" if symbol in previous_symbols else "NEW_MORNING_ENTRY"
+          ),
           "EODPageVolume":old.get("PageVolume"),
           "MorningPageVolume":current.get("PageVolume"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
+          "EODRVOL":old.get("RVOL"),
+          "MorningRVOL":"NOT AVAILABLE",
+          "MorningRVOLDataStatus":"PARTIAL_SESSION_NOT_COMPARABLE_TO_FULL_DAY_20D_AVERAGE",
+          "ValuationLabel":assessed.get("ValuationLabel","NOT AVAILABLE"),
+          "ValuationBasis":assessed.get("ValuationBasis","NOT AVAILABLE"),
+          "Last5DayNews":assessed.get("Last5DayNews","NOT AVAILABLE"),
+          "CatalystStatus":assessed.get("CatalystStatus","NOT AVAILABLE"),
+          "UpcomingEventsStatus":assessed.get("UpcomingEventsStatus","NOT AVAILABLE"),
+          "UpcomingEvents":assessed.get("UpcomingEvents","NOT AVAILABLE"),
+          "NextResultDate":assessed.get("NextResultDate","NOT ANNOUNCED"),
+          "NextResultDetails":assessed.get("NextResultDetails",""),
+          "BulkBlockDealStatus":assessed.get("BulkBlockDealStatus","NOT AVAILABLE"),
+          "BulkDealCount":assessed.get("BulkDealCount",0),
+          "BlockDealCount":assessed.get("BlockDealCount",0),
+          "BulkBuyers":assessed.get("BulkBuyers",""),
+          "BulkSellers":assessed.get("BulkSellers",""),
+          "BlockBuyers":assessed.get("BlockBuyers",""),
+          "BlockSellers":assessed.get("BlockSellers",""),
+          "BulkBlockDealSummary":assessed.get("BulkBlockDealSummary",""),
           "EODFundamentalShortlistStatus":old.get("EODFundamentalShortlistStatus",""),
-          "EODFundamentalResearchClassification":old.get("EODFundamentalResearchClassification",""),
-          "EODFundamentalResearchScore":old.get("EODFundamentalResearchScore"),
-          "EODFundamentalResearchCoveragePct":old.get("EODFundamentalResearchCoveragePct"),
           "EODStrongFundamentalStatus":old.get("EODStrongFundamentalStatus",""),
           "EODFundamentalNotForwardedReason":old.get("EODFundamentalNotForwardedReason",""),
-          "MorningFundamentalShortlistStatus":assessed.get("FundamentalShortlistStatus",""),
-          "MorningFundamentalResearchClassification":assessed.get("FundamentalResearchClassification",""),
-          "MorningFundamentalResearchScore":assessed.get("FundamentalResearchScore"),
-          "MorningFundamentalResearchCoveragePct":assessed.get("FundamentalResearchCoveragePct"),
+          "MorningFundamentalShortlistStatus":assessed.get("FundamentalShortlistStatus","NOT_ASSESSED"),
           "MorningFundamentalNotForwardedReason":assessed.get("StrongFundamentalNotForwardedReason",""),
           "MorningStrongFundamentalStatus":assessed.get("MorningStrongFundamentalStatus","NOT_ASSESSED"),
           "ConfirmationStatus":confirmation,
@@ -750,19 +853,18 @@ def run_morning():
     # is enriched by the morning assessment.
     summary={"status":"PASS","morning_time_ist":datetime.now(IST).isoformat(),
       "previous_eod_symbols":len(previous_symbols),"current_page_eligible_symbols":len(live_symbols),
-      "repeated":int(report["MorningStatus"].eq("REPEATED").sum()),
-      "disappeared":int(report["MorningStatus"].eq("DISAPPEARED").sum()),
-      "new_entries":int(report["MorningStatus"].eq("NEW_ENTRY").sum()),
+      "new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "morning_assessed_candidates":int(len(morning_assessed)),
       "morning_assessment_rows":int(report["MorningStrongFundamentalStatus"].ne("NOT_ASSESSED").sum()),
-      "morning_strong":int(report["MorningStrongFundamentalStatus"].eq("STRONG_MORNING").sum()),
+      "morning_fundamental_pass":int(report["MorningStrongFundamentalStatus"].eq("MORNING_FUNDAMENTAL_PASS").sum()),
       "morning_wait_for_data":int(morning_assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA").sum()),
-      "under_observation":int(report["ConfirmationStatus"].eq("UNDER_OBSERVATION_MORNING").sum()),
+      "morning_new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
+      "eod_fundamental_pass_repeats":int(report["MorningStatus"].eq("EOD_FUNDAMENTAL_PASS_REPEAT").sum()),
+      "eod_only_not_on_morning_page":int(report["MorningStatus"].eq("EOD_ONLY_NOT_ON_MORNING_PAGE").sum()),
       "double_confirmed":int(report["ConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
-      "eod_strong_not_confirmed":int(report["ConfirmationStatus"].isin(
-        ["EOD_STRONG_MORNING_NOT_CONFIRMED","STRONG_EOD_DISAPPEARED_MORNING"]).sum()),
+      "eod_pass_not_morning_pass":int(report["ConfirmationStatus"].eq("EOD_PASS_MORNING_NOT_PASS").sum()),
       "nse_page":NSE_PAGE,
-      "note":"Every eligible 09:20 page candidate receives the ECMS fundamental assessment. DOUBLE_CONFIRMED requires strict PASS and independent STRONG at both EOD and morning checkpoints."}
+      "note":"Every eligible 09:20 page candidate receives the same fundamental-only gate. Repeat/new/disappeared labels are informational; no other data field rejects a stock."}
     (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def main():

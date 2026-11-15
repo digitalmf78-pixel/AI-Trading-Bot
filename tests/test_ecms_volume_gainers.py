@@ -182,24 +182,26 @@ def test_ecms_free_source_budget_expands_to_cover_every_current_candidate(tmp_pa
     assert (tmp_path / "outputs/ecms/fundamental_collection_error.csv").exists()
 
 
-def test_strong_fundamental_mask_requires_strict_pass_strong_and_80pct_coverage():
+def test_fundamental_pass_is_the_only_morning_gate_even_if_other_scores_are_weak():
     from strategies.ecms.volume_gainers import _strong_fundamental_mask
 
     frame = pd.DataFrame({
-        "FundamentalShortlistStatus": ["PASS", "PASS", "FAIL", "PASS"],
-        "FundamentalResearchClassification": ["STRONG", "GOOD", "STRONG", "STRONG"],
-        "FundamentalResearchCoveragePct": [80, 95, 90, 79.9],
+        "FundamentalShortlistStatus": ["PASS", "PASS", "FAIL", "WAIT_FOR_DATA"],
+        "FundamentalResearchClassification": ["WEAK", "INSUFFICIENT_DATA", "STRONG", "STRONG"],
+        "FundamentalResearchCoveragePct": [0, 1, 100, 100],
+        "RVOL": [0.1, None, 10, 20],
+        "CatalystStatus": ["NEGATIVE", "WAIT_FOR_DATA", "FOUND", "FOUND"],
     })
-    assert _strong_fundamental_mask(frame).tolist() == [True, False, False, False]
+    assert _strong_fundamental_mask(frame).tolist() == [True, True, False, False]
 
 
-def test_confirmation_status_distinguishes_double_confirmed_and_morning_only():
+def test_confirmation_status_uses_only_fundamental_pass_and_presence():
     from strategies.ecms.volume_gainers import _confirmation_status
 
     assert _confirmation_status(True, True, True) == "DOUBLE_CONFIRMED_EOD_MORNING"
-    assert _confirmation_status(False, True, True) == "UNDER_OBSERVATION_MORNING"
-    assert _confirmation_status(True, True, False) == "EOD_STRONG_MORNING_NOT_CONFIRMED"
-    assert _confirmation_status(True, False, False) == "STRONG_EOD_DISAPPEARED_MORNING"
+    assert _confirmation_status(False, True, True) == "MORNING_FUNDAMENTAL_PASS"
+    assert _confirmation_status(True, True, False) == "EOD_PASS_MORNING_NOT_PASS"
+    assert _confirmation_status(True, False, False) == "EOD_PASS_NOT_ON_MORNING_PAGE"
 
 
 
@@ -216,10 +218,7 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         "TckrSymb": "AAA", "CompanyName": "AAA Ltd", "PageVolume": 100,
         "LTP": 10, "EODDate": "2026-11-13",
         "EODFundamentalShortlistStatus": "PASS",
-        "EODFundamentalResearchClassification": "STRONG",
-        "EODFundamentalResearchScore": 82,
-        "EODFundamentalResearchCoveragePct": 90,
-        "EODStrongFundamentalStatus": "STRONG_EOD",
+        "EODStrongFundamentalStatus": "EOD_FUNDAMENTAL_PASS",
     }]).to_csv(state_path, index=False)
 
     monkeypatch.setattr(scanner, "STATE_FILE", state_path)
@@ -243,16 +242,30 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         return result
 
     monkeypatch.setattr(scanner, "assess_page_fundamentals", fake_assess)
+    def fake_information(frame, as_of_date):
+        result = frame.copy()
+        result["ValuationLabel"] = "NOT AVAILABLE"
+        result["Last5DayNews"] = "NO_NEWS_FOUND"
+        result["UpcomingEventsStatus"] = "NO_CONFIRMED_UPCOMING_EVENTS"
+        result["UpcomingEvents"] = ""
+        result["NextResultDate"] = "NOT ANNOUNCED"
+        result["BulkBlockDealStatus"] = "NO_DISCLOSED_DEALS_IN_LOOKBACK"
+        result["BulkDealCount"] = 0
+        result["BlockDealCount"] = 0
+        return result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    monkeypatch.setattr(scanner, "attach_information", fake_information)
     summary = scanner.run_morning()
 
     assert set(assessed_symbols) == {"AAA", "BBB"}
     report = pd.read_csv(output_dir / "volume_gainers_morning_recheck.csv").set_index("TckrSymb")
     assert report.loc["AAA", "ConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
-    assert report.loc["BBB", "ConfirmationStatus"] == "UNDER_OBSERVATION_MORNING"
+    assert report.loc["BBB", "ConfirmationStatus"] == "MORNING_FUNDAMENTAL_PASS"
+    assert report.loc["AAA", "MorningStatus"] == "EOD_FUNDAMENTAL_PASS_REPEAT"
+    assert report.loc["BBB", "MorningStatus"] == "NEW_MORNING_ENTRY"
     assert summary["double_confirmed"] == 1
-    assert summary["under_observation"] == 1
+    assert summary["eod_fundamental_pass_repeats"] == 1
     saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
-    assert saved_summary["morning_strong"] == 2
+    assert saved_summary["morning_fundamental_pass"] == 2
 
 
 def test_ecms_free_source_evidence_preserves_historical_alternates_when_latest_attempt_empty():
@@ -283,3 +296,67 @@ def test_ecms_free_source_evidence_reports_no_alternates_without_inventing_data(
     assert result["ECMSFreeSourcesEvidenceStatus"] == "EMPTY_OR_UNMAPPED"
     assert result["ECMSFreeSourcesObservedMetricCount"] == 0
     assert result["ECMSFreeSourcesObservedMetrics"] == ""
+
+
+def test_attach_information_enriches_only_fundamental_pass_symbols(monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+
+    calls = {"news": [], "events": [], "deals": []}
+
+    def fake_news(candidates, as_of_date):
+        calls["news"] = candidates["TckrSymb"].tolist()
+        news = pd.DataFrame([{
+            "TckrSymb": "AAA", "PublishedDate": "2026-11-14",
+            "Headline": "AAA announces contract", "Source": "NSE",
+        }])
+        audit = pd.DataFrame([{
+            "TckrSymb": "AAA", "NewsWindowStart": "2026-11-10",
+            "NewsWindowEnd": "2026-11-14", "OfficialStatus": "AVAILABLE",
+            "SecondaryStatus": "AVAILABLE", "CatalystStatus": "CATALYST_FOUND",
+            "CatalystSignalStatus": "NEWS_FOUND_NO_STRONG_CATALYST",
+            "StrongCatalystCount": 0, "NegativeRiskCount": 0,
+            "OfficialCount": 1, "SecondaryCount": 0,
+        }])
+        return news, audit
+
+    def fake_events(symbols, as_of_date):
+        calls["events"] = list(symbols)
+        return pd.DataFrame(), pd.DataFrame([{
+            "TckrSymb": "AAA", "UpcomingEventsStatus": "AVAILABLE",
+            "UpcomingEvents": "2026-11-20: Investor Meet",
+            "NextResultDate": "NOT ANNOUNCED", "NextResultDetails": "",
+            "EventCalendarSourceURL": "https://www.nseindia.com/",
+        }])
+
+    def fake_deals(symbols, as_of_date):
+        calls["deals"] = list(symbols)
+        return pd.DataFrame(), pd.DataFrame([{
+            "TckrSymb": "AAA", "BulkBlockDealStatus": "AVAILABLE",
+            "BulkDealCount": 1, "BlockDealCount": 0,
+            "BulkBuyers": "Fund Alpha", "BulkSellers": "",
+            "BlockBuyers": "", "BlockSellers": "",
+            "BulkBlockDealSummary": "BULK 2026-11-14 BUY Fund Alpha qty=100 price=10",
+            "BulkBlockLookbackStart": "2026-10-16",
+            "BulkBlockLookbackEnd": "2026-11-14",
+            "BulkBlockSourceURL": "https://www.nseindia.com/",
+        }])
+
+    monkeypatch.setattr(scanner, "collect_catalysts", fake_news)
+    monkeypatch.setattr(scanner, "collect_upcoming_events", fake_events)
+    monkeypatch.setattr(scanner, "collect_bulk_block_deals", fake_deals)
+    monkeypatch.setattr(scanner, "attach_valuation", lambda frame: frame.assign(
+        ValuationLabel="FAIR", ValuationBasis="TEST"
+    ))
+
+    result, news, events, deals = scanner.attach_information(pd.DataFrame([
+        {"TckrSymb": "AAA", "FundamentalShortlistStatus": "PASS"},
+        {"TckrSymb": "BBB", "FundamentalShortlistStatus": "FAIL"},
+    ]), __import__("datetime").date(2026, 11, 14))
+
+    assert calls == {"news": ["AAA"], "events": ["AAA"], "deals": ["AAA"]}
+    rows = result.set_index("TckrSymb")
+    assert rows.loc["AAA", "UpcomingEventsStatus"] == "AVAILABLE"
+    assert rows.loc["AAA", "BulkBlockDealStatus"] == "AVAILABLE"
+    assert rows.loc["AAA", "Last5DayNews"].startswith("2026-11-14:")
+    assert rows.loc["BBB", "CatalystStatus"] == "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS"
+    assert rows.loc["BBB", "BulkBlockDealStatus"] == "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS"
