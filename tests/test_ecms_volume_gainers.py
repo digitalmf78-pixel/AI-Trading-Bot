@@ -101,6 +101,17 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
 
     monkeypatch.setattr(scanner, "run_fundamental_xbrl_audit", fake_audit)
 
+    def fake_debt_equity_audit(**kwargs):
+        assert set(kwargs["metrics"]["TckrSymb"]) == {"AAA"}
+        assert set(kwargs["filings"]["TckrSymb"]) == {"AAA"}
+        return pd.DataFrame([{
+            "TckrSymb": "AAA",
+            "DebtToEquityAuditStatus": "PROVIDER_DEBT_TO_EQUITY_MISSING",
+            "DebtToEquityAuditReason": "Provider ratio missing",
+        }])
+
+    monkeypatch.setattr(scanner, "audit_ecms_debt_to_equity", fake_debt_equity_audit)
+
     def fake_shortlist(joined, *args, **kwargs):
         out = joined.copy()
         out["FundamentalShortlistStatus"] = "PASS"
@@ -129,6 +140,9 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_evidence_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_provider_diagnostics.csv")["TckrSymb"]) == {"AAA"}
+    debt_equity_report = pd.read_csv(out / "fundamental_debt_equity_xbrl_audit.csv")
+    assert debt_equity_report.iloc[0]["TckrSymb"] == "AAA"
+    assert debt_equity_report.iloc[0]["DebtToEquityAuditStatus"] == "PROVIDER_DEBT_TO_EQUITY_MISSING"
 
 
 
