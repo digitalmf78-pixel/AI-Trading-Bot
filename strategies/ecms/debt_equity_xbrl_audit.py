@@ -184,12 +184,14 @@ def audit_ecms_debt_to_equity(
         symbol = _clean(metric.get("TckrSymb")).upper()
         if not symbol or (requested is not None and symbol not in requested):
             continue
-        provider_value = _number(metric.get("DebtToEquity"))
-        if provider_value is None:
-            continue
         if _is_financial_sector(metric):
             rows.append(_row(symbol, metric, "NOT_APPLICABLE_FINANCIAL_SECTOR",
                              "Industrial Debt/Equity formula is not applied to banks, NBFCs, insurance or financial services"))
+            continue
+        provider_value = _number(metric.get("DebtToEquity"))
+        if provider_value is None:
+            rows.append(_row(symbol, metric, "PROVIDER_DEBT_TO_EQUITY_MISSING",
+                             "Provider Debt/Equity value is missing; official reconciliation cannot be completed"))
             continue
         source = _metric_source(metric, "DebtToEquity")
         if source != ALLOWED_SOURCE:
