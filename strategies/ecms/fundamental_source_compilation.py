@@ -98,21 +98,34 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
         if not symbol or metric not in METRICS:
             continue
         status = str(item.get("MetricValueVerificationStatus", "") or "").strip().upper()
+        # The verification audit schema stores CachedMetricValue, not a separate
+        # OfficialMetricValue. Expose that value only when the audit has actually
+        # verified it; never present a mismatching provider value as an NSE fact.
+        verified_value = (
+            _number(item.get("CachedMetricValue"))
+            if status == "OFFICIAL_XBRL_VERIFIED" else None
+        )
+        unit = str(item.get("Unit", "") or "").strip()
+        if not unit:
+            unit = "PERCENT" if metric.endswith("Pct") else "RATIO" if metric in {"DebtToEquity", "InterestCoverage"} else "INR"
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
-            "MetricValue": _number(item.get("OfficialMetricValue", item.get("ProviderMetricValue"))),
+            "MetricValue": verified_value,
             "Source": "NSE_OFFICIAL_XBRL_AUDIT",
-            "SourceURL": str(item.get("OfficialFilingURL", item.get("EvidenceFilePath", "")) or "").strip(),
+            "SourceURL": str(item.get("OfficialFilingURL", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
             "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
-            "CalculationBasis": str(item.get("MetricCalculationBasis", item.get("VerificationMethod", "")) or "").strip(),
-            "Unit": str(item.get("Unit", "") or "").strip(),
+            "CalculationBasis": str(item.get("MetricCalculationBasis", "") or "").strip(),
+            "Unit": unit,
             "SourceStatus": "OFFICIAL_AUDIT_RESULT",
             "VerificationStatus": status or "UNVERIFIED",
             "MismatchStatus": "MISMATCH" if "MISMATCH" in status else "NOT_ASSESSED",
-            "MismatchReason": str(item.get("VerificationReason", "") or "").strip(),
-            "ObservationNotes": "Official status is carried through unchanged from the XBRL audit",
+            "MismatchReason": str(item.get("MetricValueVerificationReason", "") or "").strip(),
+            "ObservationNotes": (
+                "Verified cached value is exposed only for OFFICIAL_XBRL_VERIFIED; "
+                "the audit does not export a separate raw XBRL fact value"
+            ),
         })
     return rows
 
