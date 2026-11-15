@@ -766,6 +766,16 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
         for col in yahoo_metrics
     }
     metric_currencies = {col: str(record.get("ValuationCurrency")) if _present(record.get("ValuationCurrency")) else "" for col in yahoo_metrics}
+    # Freeze Yahoo-only values before secondary sources can fill missing cache fields.
+    yahoo_comparison_snapshot = {
+        col: {
+            "value": record.get(col) if _present(record.get(col)) else None,
+            "source": metric_sources.get(col, "NOT_AVAILABLE"),
+            "period": metric_periods.get(col, ""),
+            "calculation_basis": metric_bases.get(col, ""),
+        }
+        for col in SECONDARY_SUPPORTED_METRICS
+    }
     provider_diagnostics = {
         "Yahoo Finance via yfinance": {
             "status": diagnostic.get("ProviderStatus", "UNKNOWN"),
@@ -824,12 +834,9 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 source_value_rows.extend(free_source_result.get("metric_alternates", {}).get(observed_metric, []))
                 free_source_values[observed_metric] = source_value_rows
                 free_source_comparison[observed_metric] = {
-                    "YahooFinance": {
-                        "value": record.get(observed_metric) if _present(record.get(observed_metric)) else None,
-                        "source": metric_sources.get(observed_metric, "Yahoo Finance via yfinance") if _present(record.get(observed_metric)) else "NOT_AVAILABLE",
-                        "period": metric_periods.get(observed_metric, ""),
-                        "calculation_basis": metric_bases.get(observed_metric, ""),
-                    },
+                    "YahooFinance": yahoo_comparison_snapshot.get(observed_metric, {
+                        "value": None, "source": "NOT_AVAILABLE", "period": "", "calculation_basis": "",
+                    }),
                     "secondary_sources": source_value_rows,
                     "comparison_status": "OBSERVATIONS_AVAILABLE_RECONCILIATION_REQUIRED",
                 }
