@@ -81,7 +81,7 @@ def test_provider_mismatch_is_not_upgraded_to_verified(tmp_path):
     assert row["OfficialDebtToEquity"] == 0.5
 
 
-def test_consolidated_basis_uses_parent_equity_tag(tmp_path):
+def test_consolidated_basis_uses_total_equity_not_parent_only_equity(tmp_path):
     row = _run(
         tmp_path, _xml(report_basis="Consolidated"),
         filing_basis="Consolidated",
