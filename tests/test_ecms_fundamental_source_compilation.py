@@ -133,3 +133,26 @@ def test_verification_audit_does_not_label_mismatching_cached_value_as_official_
     assert audit.loc["ROEPercent", "MismatchReason"] == "Provider growth differs from official calculation"
     assert audit.loc["RevenueGrowthPct", "MetricValue"] == 12.0
     assert audit.loc["RevenueGrowthPct", "VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
+
+
+def test_provider_metric_unit_is_not_inferred_from_source_currency():
+    metrics = pd.DataFrame([{
+        "TckrSymb": "AAA",
+        "RevenueGrowthPct": 12.0,
+        "ROEPercent": 18.0,
+        "DebtToEquity": 0.5,
+        "InterestCoverage": 4.0,
+        "OperatingCashFlowINR": 1000000.0,
+        "MetricSourceCurrenciesJSON": (
+            '{"RevenueGrowthPct":"INR","ROEPercent":"INR",'
+            '"DebtToEquity":"INR","InterestCoverage":"INR",'
+            '"OperatingCashFlowINR":"INR"}'
+        ),
+    }])
+    result = build_fundamental_source_compilation(metrics).set_index("MetricName")
+
+    assert result.loc["RevenueGrowthPct", "Unit"] == "PERCENT"
+    assert result.loc["ROEPercent", "Unit"] == "PERCENT"
+    assert result.loc["DebtToEquity", "Unit"] == "RATIO"
+    assert result.loc["InterestCoverage", "Unit"] == "RATIO"
+    assert result.loc["OperatingCashFlowINR", "Unit"] == "INR"
