@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -183,16 +185,44 @@ def _manual_rows(observations: pd.DataFrame) -> list[dict]:
             continue
         if source not in {"SCREENER_FREE_MANUAL", "BSE_OFFICIAL_FILING_MANUAL"}:
             raise ValueError("Manual Source must be SCREENER_FREE_MANUAL or BSE_OFFICIAL_FILING_MANUAL")
+        value = _number(item.get("MetricValue"))
+        source_url = str(item.get("SourceURL", "") or "").strip()
+        period = str(item.get("FinancialPeriodEnd", "") or "").strip()
+        publication_date = str(item.get("PublicationDate", "") or "").strip()
+        basis = str(item.get("CalculationBasis", "") or "").strip().upper()
+        unit = str(item.get("Unit", "") or "").strip().upper()
+        required = {
+            "MetricValue": value,
+            "SourceURL": source_url,
+            "FinancialPeriodEnd": period,
+            "PublicationDate": publication_date,
+            "CalculationBasis": basis,
+            "Unit": unit,
+        }
+        missing_fields = [name for name, field in required.items() if field is None or field == ""]
+        if missing_fields:
+            raise ValueError("Manual observation missing required fields: " + ", ".join(missing_fields))
+        parsed_url = urlsplit(source_url)
+        if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
+            raise ValueError("Manual observation SourceURL must be an absolute HTTPS URL")
+        try:
+            date.fromisoformat(period[:10])
+            date.fromisoformat(publication_date[:10])
+        except ValueError as exc:
+            raise ValueError("Manual observation dates must use YYYY-MM-DD") from exc
+        expected_unit = _metric_unit(metric)
+        if unit != expected_unit:
+            raise ValueError(f"Manual observation Unit for {metric} must be {expected_unit}")
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
-            "MetricValue": _number(item.get("MetricValue")),
+            "MetricValue": value,
             "Source": source,
-            "SourceURL": str(item.get("SourceURL", "") or "").strip(),
-            "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
-            "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
-            "CalculationBasis": str(item.get("CalculationBasis", "") or "").strip(),
-            "Unit": str(item.get("Unit", "") or "").strip(),
+            "SourceURL": source_url,
+            "FinancialPeriodEnd": period[:10],
+            "PublicationDate": publication_date[:10],
+            "CalculationBasis": basis,
+            "Unit": unit,
             "SourceStatus": "MANUAL_OBSERVATION_ONLY",
             "VerificationStatus": "NOT_OFFICIALLY_VERIFIED",
             "MismatchStatus": "NOT_ASSESSED",
