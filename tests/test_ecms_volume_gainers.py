@@ -57,16 +57,41 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
         assert set(candidates["TckrSymb"]) == {"AAA"}
         path = Path(metrics_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame([{"TckrSymb": "AAA", "RevenueGrowthPct": 20}]).to_csv(path, index=False)
+        # Simulate a persistent ECMS workspace containing an older symbol
+        # that is not on the current Volume Gainers page.
+        pd.DataFrame([
+            {"TckrSymb": "AAA", "RevenueGrowthPct": 20},
+            {"TckrSymb": "OLD", "RevenueGrowthPct": 99},
+        ]).to_csv(path, index=False)
+        filings = Path("outputs/v8_official_financial_results_filings.csv")
+        filings.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([
+            {"TckrSymb": "AAA", "FinancialPeriodEnd": "2026-03-31"},
+            {"TckrSymb": "OLD", "FinancialPeriodEnd": "2026-03-31"},
+        ]).to_csv(filings, index=False)
+        evidence = Path("data/inputs/fundamental_metric_verification_evidence.csv")
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([
+            {"TckrSymb": "AAA", "EvidenceFilePath": ""},
+            {"TckrSymb": "OLD", "EvidenceFilePath": ""},
+        ]).to_csv(evidence, index=False)
         diagnostics = Path("outputs/v8_fundamental_provider_diagnostics.csv")
         diagnostics.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame([{"TckrSymb": "AAA", "ProviderStatus": "PASS"}]).to_csv(diagnostics, index=False)
+        pd.DataFrame([
+            {"TckrSymb": "AAA", "ProviderStatus": "PASS"},
+            {"TckrSymb": "OLD", "ProviderStatus": "STALE"},
+        ]).to_csv(diagnostics, index=False)
 
     fake_provider = types.ModuleType("fundamental_data_provider")
     fake_provider.collect_missing_fundamentals = fake_collect
     monkeypatch.setitem(sys.modules, "fundamental_data_provider", fake_provider)
 
     def fake_audit(**kwargs):
+        # Audit inputs must be scoped to the current page candidate, even
+        # though the persistent cache still contains the older OLD symbol.
+        assert set(pd.read_csv(kwargs["metrics_path"])["TckrSymb"]) == {"AAA"}
+        assert set(pd.read_csv(kwargs["filings_path"])["TckrSymb"]) == {"AAA"}
+        assert set(pd.read_csv(kwargs["evidence_path"])["TckrSymb"]) == {"AAA"}
         verification = pd.DataFrame([{
             "TckrSymb": "AAA",
             "MetricName": "RevenueGrowthPct",
@@ -94,9 +119,16 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
         tmp_path / "data/cache/ecms/fundamental_workspace/data/inputs/fundamental_metrics.csv"
     )
     assert workspace_metrics.exists()
+    # Keep stale cache rows for future safe reuse, but exclude them from this
+    # run's audit inputs and all candidate-facing artifact snapshots.
+    assert set(pd.read_csv(workspace_metrics)["TckrSymb"]) == {"AAA", "OLD"}
     assert not (tmp_path / "data/inputs/production_metrics.csv").exists()
     assert result.iloc[0]["FundamentalShortlistStatus"] == "PASS"
-    assert (tmp_path / "outputs/ecms/fundamental_metrics_ecms.csv").exists()
+    out = tmp_path / "outputs/ecms"
+    assert set(pd.read_csv(out / "fundamental_metrics_ecms.csv")["TckrSymb"]) == {"AAA"}
+    assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
+    assert set(pd.read_csv(out / "fundamental_evidence_ecms.csv")["TckrSymb"]) == {"AAA"}
+    assert set(pd.read_csv(out / "fundamental_provider_diagnostics.csv")["TckrSymb"]) == {"AAA"}
 
 
 
