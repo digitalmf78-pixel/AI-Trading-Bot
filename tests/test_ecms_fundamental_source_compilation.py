@@ -1,0 +1,72 @@
+import pandas as pd
+import pytest
+
+from strategies.ecms.fundamental_source_compilation import (
+    MANUAL_COLUMNS,
+    build_fundamental_source_compilation,
+    empty_manual_observation_template,
+)
+
+
+def test_compilation_keeps_provider_and_free_screener_observations_separate():
+    metrics = pd.DataFrame([{
+        "TckrSymb": "AAA", "ROEPercent": 18.0,
+        "MetricSourcesJSON": '{"ROEPercent":"Yahoo Finance via yfinance"}',
+        "MetricSourceURLsJSON": '{"ROEPercent":"https://finance.yahoo.com/quote/AAA.NS/"}',
+        "MetricSourcePeriodsJSON": '{"ROEPercent":"Mar 2026"}',
+        "MetricCalculationBasesJSON": '{"ROEPercent":"ANNUAL_ALIGNED_STATEMENTS"}',
+        "MetricSourceCurrenciesJSON": '{"ROEPercent":"PERCENT"}',
+    }])
+    manual = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 17.5,
+        "Source": "SCREENER_FREE_MANUAL", "SourceURL": "https://www.screener.in/company/AAA/",
+        "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-10",
+        "CalculationBasis": "CONSOLIDATED", "Unit": "PERCENT",
+        "ObservationNotes": "Manually read from free company page",
+    }], columns=MANUAL_COLUMNS)
+
+    result = build_fundamental_source_compilation(metrics, manual_observations=manual)
+    rows = result[result["MetricName"] == "ROEPercent"]
+
+    assert len(rows) == 2
+    assert set(rows["Source"]) == {"Yahoo Finance via yfinance", "SCREENER_FREE_MANUAL"}
+    assert rows["VerificationStatus"].eq("NOT_OFFICIALLY_VERIFIED").all()
+    assert rows["SourceStatus"].eq("OBSERVATION_ONLY").sum() == 1
+    assert rows["SourceStatus"].eq("MANUAL_OBSERVATION_ONLY").sum() == 1
+
+
+def test_compilation_carries_official_nse_verification_without_upgrading_manual_source():
+    metrics = pd.DataFrame([{"TckrSymb": "AAA", "DebtToEquity": 0.5}])
+    verification = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "DebtToEquity",
+        "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED",
+        "OfficialMetricValue": 0.5, "VerificationMethod": "NSE_XBRL",
+    }])
+    manual = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "DebtToEquity", "MetricValue": 0.6,
+        "Source": "BSE_OFFICIAL_FILING_MANUAL", "SourceURL": "https://www.bseindia.com/",
+        "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-10",
+        "CalculationBasis": "STANDALONE", "Unit": "RATIO", "ObservationNotes": "",
+    }], columns=MANUAL_COLUMNS)
+
+    result = build_fundamental_source_compilation(metrics, verification, manual)
+    official = result[result["Source"] == "NSE_OFFICIAL_XBRL_AUDIT"].iloc[0]
+    bse = result[result["Source"] == "BSE_OFFICIAL_FILING_MANUAL"].iloc[0]
+
+    assert official["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
+    assert bse["VerificationStatus"] == "NOT_OFFICIALLY_VERIFIED"
+    assert bse["MetricValue"] == 0.6
+
+
+def test_manual_source_rejects_unknown_or_premium_scrape_source():
+    manual = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 10,
+        "Source": "SCREENER_PREMIUM_SCRAPE", "SourceURL": "", "FinancialPeriodEnd": "",
+        "PublicationDate": "", "CalculationBasis": "", "Unit": "", "ObservationNotes": "",
+    }], columns=MANUAL_COLUMNS)
+    with pytest.raises(ValueError, match="Manual Source"):
+        build_fundamental_source_compilation(pd.DataFrame([{"TckrSymb": "AAA"}]), manual_observations=manual)
+
+
+def test_empty_manual_template_has_only_expected_columns():
+    assert list(empty_manual_observation_template().columns) == MANUAL_COLUMNS
