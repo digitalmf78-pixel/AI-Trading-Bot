@@ -16,6 +16,8 @@ from fundamental_metric_verification import run_audit as run_fundamental_xbrl_au
 from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_research import assess_fundamental_research
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
+from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
+from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -369,6 +371,90 @@ def assess_page_fundamentals(candidates, eod_date):
     debt_equity_audit.to_csv(
         ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
     )
+
+    # Filing metadata is audited independently: XML attachment, Details URL,
+    # audit label and reporting basis must remain separate explicit fields.
+    # The current shared cache may not contain these fields; that is reported
+    # as incomplete and never promotes any metric to verified.
+    try:
+        # Discover filings by symbol even when the fundamental cache has no
+        # FinancialPeriodEnd. The NSE API's period_ended=all response is filtered
+        # locally to the latest eligible period at/before the ECMS as-of date.
+        # Standalone/consolidated and original/revised variants remain separate.
+        filing_lookup_candidates = candidates[["TckrSymb"]].copy()
+        filing_lookup_candidates["TckrSymb"] = (
+            filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
+        )
+        filing_metadata_source = fetch_ecms_candidate_filing_metadata(
+            filing_lookup_candidates, eod_date.isoformat()
+        )
+        filing_metadata_audit = audit_ecms_filing_metadata(filing_metadata_source)
+        filing_metadata_audit = fetch_ecms_details_remarks(filing_metadata_audit)
+    except Exception as exc:
+        filing_metadata_audit = pd.DataFrame([{
+            **{column: "" for column in FILING_METADATA_AUDIT_COLUMNS},
+            "TckrSymb": symbol,
+            "FilingMetadataStatus": "AUDIT_EXECUTION_ERROR",
+            "VerificationStatus": "NOT_VERIFIED",
+            "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:250]}",
+        } for symbol in sorted(candidate_symbols)], columns=FILING_METADATA_AUDIT_COLUMNS)
+    filing_metadata_audit.to_csv(
+        ecms_output_dir / "fundamental_filing_metadata_audit.csv", index=False
+    )
+
+    # Feed this run's fresh NSE filing lookup into ratio discovery. Never fall
+    # back to the older V8 cache here: that was the previous integration gap.
+    # Only explicit, non-ambiguous metadata with an official XML URL and a
+    # publication date on/before the run date can enter candidate discovery.
+    try:
+        filing_rows = filing_metadata_audit.copy()
+        if not filing_rows.empty:
+            publication_dates = pd.to_datetime(
+                filing_rows.get("PublicationDate", pd.Series(index=filing_rows.index, dtype=str)),
+                errors="coerce",
+            ).dt.date
+            filing_rows["PublicationDateStatus"] = [
+                "VERIFIED" if (
+                    pd.notna(value)
+                    and value <= eod_date
+                    and str(filing_rows.iloc[index].get("FilingMetadataStatus", "")) == "EXPLICIT_METADATA_CAPTURED"
+                    and str(filing_rows.iloc[index].get("XBRLURLStatus", "")) == "PASS"
+                ) else "BLOCKED"
+                for index, value in enumerate(publication_dates)
+            ]
+            filing_rows["OfficialFilingURL"] = filing_rows.get("XBRLURL", "")
+            ratio_filings = filing_rows
+            ratio_candidates = filing_rows[["TckrSymb", "FinancialPeriodEnd"]].drop_duplicates().copy()
+        else:
+            ratio_filings = pd.DataFrame()
+            ratio_candidates = pd.DataFrame(columns=["TckrSymb", "FinancialPeriodEnd"])
+        represented = set(ratio_candidates.get("TckrSymb", pd.Series(dtype=str)).astype(str).str.upper())
+        missing = sorted(candidate_symbols - represented)
+        if missing:
+            ratio_candidates = pd.concat([
+                ratio_candidates,
+                pd.DataFrame([{"TckrSymb": symbol, "FinancialPeriodEnd": ""} for symbol in missing]),
+            ], ignore_index=True)
+        ratio_discovery = discover_ecms_ratio_xbrl_facts(
+            candidates=ratio_candidates,
+            filings=ratio_filings,
+            repo_root=ephemeral_root,
+            symbols=candidate_symbols,
+        )
+    except Exception as exc:
+        ratio_discovery = pd.DataFrame([
+            {
+                **{column: "" for column in RATIO_XBRL_DISCOVERY_COLUMNS},
+                "TckrSymb": symbol,
+                "DiscoveryStatus": "DISCOVERY_EXECUTION_ERROR",
+                "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:300]}",
+            }
+            for symbol in sorted(candidate_symbols)
+        ], columns=RATIO_XBRL_DISCOVERY_COLUMNS)
+    ratio_discovery.to_csv(
+        ecms_output_dir / "fundamental_ratio_xbrl_discovery.csv", index=False
+    )
+
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
