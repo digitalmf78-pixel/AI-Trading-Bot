@@ -29,6 +29,48 @@ VERIFICATION_METRICS = (
 SPECIAL_SECTOR_TERMS = ("bank", "nbfc", "insurance", "insurer", "financial")
 
 ALIGNED_PROVIDER_BASES = {"ANNUAL_ALIGNED_STATEMENTS", "QUARTERLY_TTM_ALIGNED_STATEMENTS"}
+MAX_FUNDAMENTAL_PERIOD_AGE_MONTHS = 24
+MAX_FUTURE_PERIOD_DAYS = 31
+
+
+def _period_end_utc(value, metric=None):
+    """Normalize supported financial-period labels to a UTC period-end date."""
+    text = str(value or "").strip()
+    if not text:
+        return pd.NaT
+    growth = re.fullmatch(r"FY\s*(20\d{2})\s*->\s*FY\s*(20\d{2})", text, re.IGNORECASE)
+    if growth:
+        return pd.Timestamp(year=int(growth.group(2)), month=3, day=31, tz="UTC")
+    fiscal_year = re.fullmatch(r"FY\s*(20\d{2})", text, re.IGNORECASE)
+    if fiscal_year:
+        return pd.Timestamp(year=int(fiscal_year.group(1)), month=3, day=31, tz="UTC")
+    quarter = re.fullmatch(r"Q([1-4])\s*FY\s*(20\d{2})", text, re.IGNORECASE)
+    if quarter:
+        q, fy = int(quarter.group(1)), int(quarter.group(2))
+        month, year = ((6, fy - 1), (9, fy - 1), (12, fy - 1), (3, fy))[q - 1]
+        return (pd.Timestamp(year=year, month=month, day=1, tz="UTC")
+                + pd.offsets.MonthEnd(1))
+    try:
+        # Provider labels such as "Mar 2026" represent a month-end statement.
+        return pd.Period(text, freq="M").end_time.tz_localize("UTC")
+    except (TypeError, ValueError):
+        parsed = pd.to_datetime(text, errors="coerce", utc=True)
+        return parsed.normalize() if not pd.isna(parsed) else pd.NaT
+
+
+def _period_freshness_reason(value, metric, as_of_date):
+    """Reject stale or future-dated financial periods when a candidate date exists."""
+    if as_of_date is None or str(as_of_date).strip().lower() in {"", "nan", "none", "<na>"}:
+        return ""
+    as_of = pd.to_datetime(as_of_date, errors="coerce", utc=True)
+    period_end = _period_end_utc(value, metric)
+    if pd.isna(as_of) or pd.isna(period_end):
+        return ""
+    if period_end < as_of - pd.DateOffset(months=MAX_FUNDAMENTAL_PERIOD_AGE_MONTHS):
+        return "PERIOD_STALE"
+    if period_end > as_of + pd.Timedelta(days=MAX_FUTURE_PERIOD_DAYS):
+        return "FUTURE_PERIOD"
+    return ""
 
 
 def _valid_period(value, metric=None):
@@ -81,6 +123,9 @@ def _metric_provenance(row):
         metric_bases = {}
     if not isinstance(metric_bases, dict):
         metric_bases = {}
+    as_of_date = row.get("EODDate")
+    if as_of_date is None or str(as_of_date).strip().lower() in {"", "nan", "none", "<na>"}:
+        as_of_date = row.get("AsOfDate")
     eligible, blocked = set(), []
     for metric in METRIC_WEIGHTS:
         if _number(row.get(metric)) is None:
@@ -102,6 +147,10 @@ def _metric_provenance(row):
             period_valid = _valid_period(period, metric)
         if not period_valid:
             blocked.append(metric + ":PERIOD_MISSING_OR_INVALID")
+            continue
+        freshness_reason = _period_freshness_reason(period, metric, as_of_date)
+        if freshness_reason:
+            blocked.append(metric + ":" + freshness_reason)
             continue
         if is_yahoo:
             if metric_basis not in ALIGNED_PROVIDER_BASES or alignment != "VERIFIED":
