@@ -181,7 +181,7 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
                 side = str(_pick(item, "buySell", "buy/sell", "side", "buySellIndicator")).strip().upper()
                 client_name = str(_pick(item, "clientName", "client name", "client")).strip()
                 quantity = _pick(item, "quantityTraded", "quantity traded", "quantity", "qty")
-                price = _pick(item, "tradePrice", "trade price", "weighted average price", "price")
+                price = _pick(item, "tradePrice", "trade price", "trade price / wght. avg. price", "trade price / weighted average price", "weighted average price", "price")
                 remarks = str(_pick(item, "remarks", "remark")).strip()
                 deals.append({
                     "TckrSymb": symbol,
