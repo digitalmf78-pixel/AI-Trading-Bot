@@ -189,7 +189,7 @@ jobs:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/fundamental_workspace/
-          key: ecms-vg-state-morning-${{ github.ref_name }}-${{ github.run_id }}
+          key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report
         if: always()
         uses: actions/upload-artifact@v4
