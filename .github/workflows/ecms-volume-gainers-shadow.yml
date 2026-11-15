@@ -148,9 +148,10 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SUMMARY_PATH: outputs/ecms/volume_gainers_eod_summary.json
+          RESEARCH_PATH: outputs/ecms/volume_gainers_eod_research.csv
         run: |
           python - <<'PY'
-          import json, os
+          import csv, json, os
           from pathlib import Path
           import requests
           token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
@@ -166,12 +167,57 @@ jobs:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
+          research_path = Path(os.getenv("RESEARCH_PATH", ""))
+          stock_lines = []
+          if research_path.is_file():
+              try:
+                  with research_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                      for row in csv.DictReader(handle):
+                          symbol = (row.get("TckrSymb") or row.get("Symbol") or "").strip()
+                          if not symbol:
+                              continue
+                          grade = (row.get("FundamentalResearchClassification") or "NOT_AVAILABLE").strip()
+                          verified = (row.get("FundamentalVerificationStatus") or "NOT_AVAILABLE").strip()
+                          shortlist = (row.get("FundamentalShortlistStatus") or "NOT_AVAILABLE").strip()
+                          coverage = (row.get("FundamentalResearchCoveragePct") or "").strip()
+                          notes = (row.get("FundamentalResearchNotes") or "").strip().replace("\\n", " ")
+                          if len(notes) > 105:
+                              notes = notes[:102] + "..."
+                          stock_lines.append(
+                              f"{symbol}: research={grade}; XBRL={verified}; coverage={coverage or 'NA'}%; gate={shortlist}"
+                              + (f"; blocker={notes}" if notes else "")
+                          )
+              except Exception as exc:
+                  stock_lines.append(f"Stock-level research report unavailable: {type(exc).__name__}")
+          if stock_lines:
+              lines.append("")
+              lines.append("STOCK-WISE FUNDAMENTAL STATUS (research grade is not XBRL approval):")
+              lines.extend(stock_lines)
+          else:
+              lines.append("Stock-wise fundamental CSV unavailable; inspect the run artifact.")
           lines.append(f"Run / logs / artifact: {os.getenv('RUN_URL','')}")
-          response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat_id,"text":"\n".join(lines)}, timeout=25)
-          response.raise_for_status()
-          result = response.json()
-          if result.get("ok") is not True: raise RuntimeError(f"Telegram API rejected ECMS EOD message: {result}")
-          print(f"ECMS EOD Telegram delivered. message_id={result.get('result',{}).get('message_id')}")
+          # Telegram sendMessage has a 4096-character limit. Split without cutting a stock row.
+          chunks, current = [], ""
+          for line in lines:
+              candidate = line if not current else current + "\\n" + line
+              if len(candidate) > 3500 and current:
+                  chunks.append(current)
+                  current = line
+              else:
+                  current = candidate
+          if current:
+              chunks.append(current)
+          for index, chunk in enumerate(chunks, start=1):
+              response = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  data={"chat_id": chat_id, "text": chunk},
+                  timeout=25,
+              )
+              response.raise_for_status()
+              result = response.json()
+              if result.get("ok") is not True:
+                  raise RuntimeError(f"Telegram API rejected ECMS EOD message part {index}: {result}")
+              print(f"ECMS EOD Telegram part {index}/{len(chunks)} delivered. message_id={result.get('result',{}).get('message_id')}")
           PY
   morning:
     if: >-
