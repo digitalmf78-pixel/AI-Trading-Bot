@@ -162,8 +162,32 @@ NSE_FILINGS_PAGE = "https://www.nseindia.com/companies-listing/corporate-integra
 
 
 def _parse_nse_date(value):
-    parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
-    return None if pd.isna(parsed) else parsed.date()
+    """Parse known NSE/API date formats deterministically without dayfirst guessing."""
+    from datetime import date, datetime
+
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "nat", "none", "<na>"}:
+        return None
+    formats = (
+        "%Y-%m-%d", "%Y-%m-%d %H:%M:%S",
+        "%d-%b-%Y", "%d-%b-%Y %H:%M:%S",
+        "%d-%B-%Y", "%d-%B-%Y %H:%M:%S",
+        "%d-%m-%Y", "%d-%m-%Y %H:%M:%S",
+        "%d/%m/%Y", "%d/%m/%Y %H:%M:%S",
+        "%Y/%m/%d", "%Y/%m/%d %H:%M:%S",
+    )
+    for date_format in formats:
+        try:
+            return datetime.strptime(raw, date_format).date()
+        except ValueError:
+            continue
+    return None
 
 
 def fetch_ecms_candidate_filing_metadata(
