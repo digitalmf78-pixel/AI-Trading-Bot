@@ -167,3 +167,15 @@ def test_api_details_field_must_be_official_url_before_remarks_fetch():
     assert out["DetailsURL"] == ""
     assert out["DetailsURLStatus"] == "BLOCKED"
     assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_duplicate_exact_filing_rows_are_flagged_ambiguous():
+    raw = pd.DataFrame([
+        {"TckrSymb":"ABC","FinancialPeriodEnd":"2026-03-31","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-a.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-a.html","audited":"Audited","consolidated":"Standalone","FilingMetadataStatus":"RAW_EXACT_NSE_API_ROW"},
+        {"TckrSymb":"ABC","FinancialPeriodEnd":"2026-03-31","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-b.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-b.html","audited":"Audited","consolidated":"Standalone","FilingMetadataStatus":"RAW_EXACT_NSE_API_ROW"},
+    ])
+    out = audit_ecms_filing_metadata(raw)
+    assert len(out) == 2
+    assert set(out["FilingMetadataStatus"]) == {"AMBIGUOUS_EXACT_FILING_MATCH"}
+    assert set(out["NSELookupStatus"]) == {"RAW_EXACT_NSE_API_ROW"}
+    assert set(out["VerificationStatus"]) == {"NOT_VERIFIED"}
