@@ -123,6 +123,58 @@ def _ecms_free_source_evidence(row):
     })
 
 
+def _merge_ecms_debt_equity_verification(verification, debt_equity_audit):
+    """Bridge only exact ECMS XBRL Debt/Equity matches into the strict gate.
+
+    The separate audit remains diagnostic unless it independently proves exact
+    provider equality with same-context official NSE XBRL facts. Mismatches,
+    accuracy-interval-only matches and all other statuses stay unverified.
+    """
+    required = {"TckrSymb", "MetricName", "MetricValueVerificationStatus"}
+    result = verification.copy()
+    for column in required:
+        if column not in result.columns:
+            result[column] = pd.Series(dtype=str)
+    if debt_equity_audit is None or debt_equity_audit.empty:
+        return result
+    if not {"TckrSymb", "DebtToEquityAuditStatus"}.issubset(debt_equity_audit.columns):
+        return result
+
+    proven = debt_equity_audit[
+        debt_equity_audit["DebtToEquityAuditStatus"].astype(str).str.upper().eq("OFFICIAL_XBRL_VERIFIED")
+    ].copy()
+    if proven.empty:
+        return result
+    proven["TckrSymb"] = proven["TckrSymb"].astype(str).str.strip().str.upper()
+    proven = proven.drop_duplicates("TckrSymb", keep=False)
+    if proven.empty:
+        return result
+
+    symbols = set(proven["TckrSymb"])
+    if not result.empty:
+        result = result[
+            ~(
+                result["TckrSymb"].astype(str).str.strip().str.upper().isin(symbols)
+                & result["MetricName"].astype(str).eq("DebtToEquity")
+            )
+        ].copy()
+
+    rows = []
+    for _, audit in proven.iterrows():
+        rows.append({
+            "TckrSymb": str(audit["TckrSymb"]).strip().upper(),
+            "MetricName": "DebtToEquity",
+            "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED",
+            "ProviderMetricValue": audit.get("ProviderDebtToEquity", pd.NA),
+            "OfficialMetricValue": audit.get("OfficialDebtToEquity", pd.NA),
+            "VerificationMethod": "ECMS_SAME_CONTEXT_NSE_XBRL_RECOMPUTATION",
+            "EvidenceFilePath": audit.get("EvidenceFilePath", ""),
+            "EvidenceSHA256": audit.get("EvidenceSHA256", ""),
+            "VerificationReason": audit.get("DebtToEquityAuditReason", ""),
+        })
+    return pd.concat([result, pd.DataFrame(rows)], ignore_index=True, sort=False)
+
+
 def assess_page_fundamentals(candidates, eod_date):
     """Collect and verify fundamentals for Volume Gainers candidates only.
 
@@ -369,6 +421,7 @@ def assess_page_fundamentals(candidates, eod_date):
     debt_equity_audit.to_csv(
         ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
     )
+    verification = _merge_ecms_debt_equity_verification(verification, debt_equity_audit)
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
