@@ -40,7 +40,7 @@ jobs:
       - name: Compile and test
         run: |
           python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py test_fundamental_data_provider.py
 
   eod:
     if: >-
@@ -144,7 +144,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
       (github.event_name == 'schedule' && github.event.schedule == '50 3 * * 1-5')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout main branch
         uses: actions/checkout@v5
@@ -172,15 +172,34 @@ jobs:
         run: |
           python -m py_compile strategies/ecms/volume_gainers.py
           python -m pytest -q tests/test_ecms_volume_gainers.py
-      - name: Run 09:20 morning recheck
+      - name: Run 09:20 morning fundamental reassessment
         env:
           PYTHONUNBUFFERED: "1"
+          V8_AUTO_FETCH_FUNDAMENTALS: "true"
+          V8_FREE_FUNDAMENTAL_SOURCES: "true"
+          FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN: "25"
+          FREE_FUNDAMENTAL_RETRY_DAYS: "7"
+          V8_FUNDAMENTAL_RETRY_DAYS: "7"
+          V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode morning
+      - name: Save ECMS fundamental cache after morning assessment
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/fundamental_workspace/
+          key: ecms-vg-state-morning-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload morning report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ecms-volume-gainers-morning-${{ github.run_id }}
-          path: outputs/ecms/volume_gainers_morning_*
+          path: |
+            outputs/ecms/volume_gainers_morning_*
+            outputs/ecms/fundamental_*.csv
+            outputs/ecms/fundamental_metric_verification*.csv
+            outputs/ecms/fundamental_filing_metadata_summary.csv
+            outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
