@@ -15,6 +15,7 @@ from strategies.ecms.eod import (
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_research import assess_fundamental_research
+from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -285,6 +286,29 @@ def assess_page_fundamentals(candidates, eod_date):
     candidate_verification = verification[
         verification["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
     ] if "TckrSymb" in verification.columns else verification.iloc[0:0]
+
+    # Separate ECMS-only Debt/Equity reconciliation. This diagnostic does not
+    # alter the strict shortlist or the shared V8 verifier.
+    try:
+        debt_equity_audit = audit_ecms_debt_to_equity(
+            metrics=candidate_metrics,
+            filings=candidate_filings,
+            repo_root=ephemeral_root,
+            symbols=candidate_symbols,
+        )
+    except Exception as exc:
+        debt_equity_audit = pd.DataFrame([
+            {
+                **{column: "" for column in DEBT_EQUITY_AUDIT_COLUMNS},
+                "TckrSymb": symbol,
+                "DebtToEquityAuditStatus": "AUDIT_EXECUTION_ERROR",
+                "DebtToEquityAuditReason": f"{type(exc).__name__}: {str(exc)[:400]}",
+            }
+            for symbol in sorted(candidate_symbols)
+        ], columns=DEBT_EQUITY_AUDIT_COLUMNS)
+    debt_equity_audit.to_csv(
+        ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
+    )
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
