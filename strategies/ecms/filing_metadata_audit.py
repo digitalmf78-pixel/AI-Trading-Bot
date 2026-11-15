@@ -60,7 +60,14 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
             "NSELookupStatus": _value(row, ("FilingMetadataStatus",)) or "LOOKUP_STATUS_NOT_PROVIDED", "VerificationStatus": "NOT_VERIFIED", "VerificationWarning": ";".join(warnings) if warnings else "Metadata only; Remarks/formula and XBRL reconciliation are still required"})
     result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     if not result.empty and {"TckrSymb", "FinancialPeriodEnd"}.issubset(result.columns):
-        counts = result.groupby(["TckrSymb", "FinancialPeriodEnd", "AuditedLabel", "ConsolidationLabel"], dropna=False)["TckrSymb"].transform("size")
+        # Original/revised submissions are distinct filing variants when
+        # NSE supplies a sequence or revision date. Only duplicate rows for
+        # the same exact variant are ambiguous.
+        variant_key = ["TckrSymb", "FinancialPeriodEnd", "AuditedLabel", "ConsolidationLabel"]
+        for column in ("SequenceId", "RevisedDate"):
+            if column in result.columns:
+                variant_key.append(column)
+        counts = result.groupby(variant_key, dropna=False)["TckrSymb"].transform("size")
         ambiguous = counts.gt(1)
         result.loc[ambiguous, "FilingMetadataStatus"] = "AMBIGUOUS_EXACT_FILING_MATCH"
         result.loc[ambiguous, "VerificationStatus"] = "NOT_VERIFIED"
