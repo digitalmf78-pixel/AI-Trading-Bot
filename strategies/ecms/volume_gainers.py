@@ -264,7 +264,14 @@ def assess_page_fundamentals(candidates, eod_date):
     audit_input_dir = ephemeral_root / "audit_input"
     audit_input_dir.mkdir(parents=True, exist_ok=True)
     candidate_metrics = metrics[metrics["TckrSymb"].isin(candidate_symbols)].copy()
-    if not candidate_metrics.empty:\n        free_source_evidence = candidate_metrics.apply(_ecms_free_source_evidence, axis=1)\n        candidate_metrics = pd.concat([candidate_metrics, free_source_evidence], axis=1)\n    else:\n        candidate_metrics["ECMSFreeSourcesEvidenceStatus"] = pd.Series(dtype=str)\n        candidate_metrics["ECMSFreeSourcesObservedMetricCount"] = pd.Series(dtype=int)\n        candidate_metrics["ECMSFreeSourcesObservedMetrics"] = pd.Series(dtype=str)\n    audit_metrics_path = audit_input_dir / "fundamental_metrics.csv"
+    if not candidate_metrics.empty:
+        free_source_evidence = candidate_metrics.apply(_ecms_free_source_evidence, axis=1)
+        candidate_metrics = pd.concat([candidate_metrics, free_source_evidence], axis=1)
+    else:
+        candidate_metrics["ECMSFreeSourcesEvidenceStatus"] = pd.Series(dtype=str)
+        candidate_metrics["ECMSFreeSourcesObservedMetricCount"] = pd.Series(dtype=int)
+        candidate_metrics["ECMSFreeSourcesObservedMetrics"] = pd.Series(dtype=str)
+    audit_metrics_path = audit_input_dir / "fundamental_metrics.csv"
     candidate_metrics.to_csv(audit_metrics_path, index=False)
 
     candidate_filings = (
