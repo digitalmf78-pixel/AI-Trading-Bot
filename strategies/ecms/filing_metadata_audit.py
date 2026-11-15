@@ -41,13 +41,13 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
             possible = _value(row, ("OfficialFilingURL",))
             if _official_https_url(possible) and urlsplit(possible).path.lower().endswith(".xml"):
                 xbrl = possible
-        details = _value(row, ("details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL", "details", "ixbrl", "iXBRL", "ixbrl_url", "ixbrlUrl"))
+        details = _value(row, ("ixbrl", "iXBRL", "ixbrl_url", "ixbrlUrl", "details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL", "details"))
         if not _official_https_url(details) or urlsplit(details).path.lower().endswith(".xml"):
             details = ""
         audited = _value(row, ("audited", "auditStatus", "audit_status", "AuditedLabel"))
         consolidation = _value(row, ("consolidated", "consolidation", "reportingBasis", "reporting_basis", "ConsolidationLabel"))
         xbrl_ok = _official_https_url(xbrl) and urlsplit(xbrl).path.lower().endswith(".xml")
-        details_ok = _official_https_url(details) and not urlsplit(details).path.lower().endswith(".xml")
+        details_ok = _official_https_url(details) and urlsplit(details).path.lower().endswith((".html", ".htm"))
         audit_status = _label_status(audited, {"audited", "un audited", "unaudited"})
         basis_status = _label_status(consolidation, {"standalone", "consolidated"})
         metadata_ok = xbrl_ok and details_ok and audit_status == "EXPLICIT_LABEL_CAPTURED" and basis_status == "EXPLICIT_LABEL_CAPTURED"
@@ -333,7 +333,7 @@ def fetch_ecms_candidate_filing_metadata(
                     "xbrl": item.get("xbrl", item.get("xbrl_Link", item.get("xbrlLink", ""))),
                     # NSE's Integrated Filing API exposes the official HTML
                     # Details attachment as ixbrl, distinct from the XML xbrl.
-                    "details": item.get("details", item.get("details_url", item.get("ixbrl", item.get("iXBRL", "")))),
+                    "details": item.get("ixbrl", item.get("iXBRL", item.get("details_url", item.get("details", "")))),
                     "audited": item.get("audited", ""),
                     "consolidated": item.get("consolidated", ""),
                     "OfficialSource": "NSE Integrated Filing - Financials",
