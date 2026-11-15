@@ -185,7 +185,7 @@ def assess_page_fundamentals(candidates, eod_date):
 
     # Copy only prior evidence XMLs referenced by the candidate ledger into an
     # ephemeral root. New XBRL downloads are also written there by run_audit.
-    if workspace_evidence.exists():
+    if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0:
         evidence = pd.read_csv(workspace_evidence, keep_default_na=False)
         if "TckrSymb" in evidence.columns:
             evidence["TckrSymb"] = evidence["TckrSymb"].astype(str).str.strip().str.upper()
@@ -225,7 +225,7 @@ def assess_page_fundamentals(candidates, eod_date):
 
     candidate_filings = (
         pd.read_csv(workspace_filings)
-        if workspace_filings.exists() else pd.DataFrame()
+        if workspace_filings.exists() and workspace_filings.stat().st_size > 0 else pd.DataFrame()
     )
     if "TckrSymb" in candidate_filings.columns:
         candidate_filings["TckrSymb"] = candidate_filings["TckrSymb"].astype(str).str.strip().str.upper()
@@ -233,11 +233,12 @@ def assess_page_fundamentals(candidates, eod_date):
             candidate_filings["TckrSymb"].isin(candidate_symbols)
         ].copy()
     audit_filings_path = audit_input_dir / "official_filings.csv"
-    candidate_filings.to_csv(audit_filings_path, index=False)
+    if len(candidate_filings.columns):
+        candidate_filings.to_csv(audit_filings_path, index=False)
 
     candidate_evidence = (
         pd.read_csv(workspace_evidence, keep_default_na=False)
-        if workspace_evidence.exists() else pd.DataFrame()
+        if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0 else pd.DataFrame()
     )
     if "TckrSymb" in candidate_evidence.columns:
         candidate_evidence["TckrSymb"] = candidate_evidence["TckrSymb"].astype(str).str.strip().str.upper()
@@ -245,7 +246,8 @@ def assess_page_fundamentals(candidates, eod_date):
             candidate_evidence["TckrSymb"].isin(candidate_symbols)
         ].copy()
     audit_evidence_path = audit_input_dir / "metric_verification_evidence.csv"
-    candidate_evidence.to_csv(audit_evidence_path, index=False)
+    if len(candidate_evidence.columns):
+        candidate_evidence.to_csv(audit_evidence_path, index=False)
 
     verification = pd.DataFrame()
     try:
