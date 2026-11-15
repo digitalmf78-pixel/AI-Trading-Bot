@@ -422,6 +422,14 @@ def assess_page_fundamentals(candidates, eod_date):
         ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
     )
     verification = _merge_ecms_debt_equity_verification(verification, debt_equity_audit)
+    # Rebuild the candidate-scoped frame AFTER the ECMS Debt/Equity bridge so
+    # the strict shortlist and research audit consume the bridged verification.
+    candidate_verification = (
+        verification[
+            verification["TckrSymb"].astype(str).str.strip().str.upper().isin(candidate_symbols)
+        ].copy()
+        if "TckrSymb" in verification.columns else verification.iloc[0:0].copy()
+    )
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
