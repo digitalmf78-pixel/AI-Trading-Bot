@@ -657,3 +657,39 @@ def test_provider_error_uses_shorter_retry_cooldown():
     assert not _provider_retry_cooldown_active(
         "2026-11-13T10:00:00Z", "PROVIDER_ERROR", 7, 24, now="2026-11-14T11:00:00Z"
     )
+
+
+def test_ecms_secondary_audit_metrics_are_supported_in_collection_scope(tmp_path, monkeypatch):
+    import fundamental_data_provider as provider
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("V8_FREE_FUNDAMENTAL_SOURCES", "false")
+    path = Path("data/inputs/fundamental_metrics.csv")
+    received = {}
+
+    def fake_fetch(symbol, ticker_factory=None, **kwargs):
+        received.update(kwargs)
+        row = {column: pd.NA for column in provider.BASE_COLUMNS}
+        row.update({"TckrSymb": symbol, "Source": "Yahoo Finance via yfinance"})
+        diagnostic = {
+            "TckrSymb": symbol, "ProviderStatus": "MISSING_DATA",
+            "ProviderReason": "test stub", "AttemptedAtUTC": "2026-11-15T10:00:00Z",
+        }
+        return row, diagnostic
+
+    monkeypatch.setattr(provider, "_fetch_one", fake_fetch)
+    audit_metrics = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ]
+    provider.collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}),
+        metrics_path=path,
+        enabled=True,
+        pause_seconds=0,
+        asof_date="2026-11-13",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+        force_retry_incomplete=True,
+        free_source_audit_metrics=audit_metrics,
+    )
+    assert received["free_source_audit_metrics"] == audit_metrics
