@@ -314,8 +314,15 @@ def run_eod():
     eligible["MainBoardSource"]=board_source
     eligible=attach_page_rvol(eligible,eod_date)
     assessed=assess_page_fundamentals(eligible,eod_date)
+    assessed["EODConfirmationLabel"] = assessed["StrongFundamentalHandOffStatus"].map({
+      "PASS_STRONG_FUNDAMENTAL":"STRONG_EOD", "NOT_FORWARDED":"NOT_STRONG_EOD"
+    }).fillna("NOT_STRONG_EOD")
     news,news_audit=collect_catalysts(assessed,eod_date)
     assessed=assessed.merge(news_audit,on="TckrSymb",how="left")
+    if (len(assessed) != len(eligible)
+            or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
+            or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
+        raise RuntimeError("ECMS_EOD_REPORT_INTEGRITY_ERROR: joined report differs from eligible page candidates")
     if "NegativeRiskCount" not in assessed: assessed["NegativeRiskCount"]=0
     assessed["NegativeRiskCount"]=pd.to_numeric(assessed["NegativeRiskCount"],errors="coerce").fillna(0)
     assessed["EODResearchStatus"]=assessed.apply(
@@ -357,6 +364,7 @@ def run_eod():
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "strong_fundamental_handoff":int(assessed["StrongFundamentalHandOffStatus"].eq("PASS_STRONG_FUNDAMENTAL").sum()),
+      "strong_eod":int(assessed["EODConfirmationLabel"].eq("STRONG_EOD").sum()),
       "strong_fundamental_catalyst_review":int(assessed["EODResearchStatus"].eq("STRONG_FUNDAMENTAL_CATALYST_REVIEW").sum()),
       "wait_for_data":int(assessed["EODResearchStatus"].eq("WAIT_FOR_DATA").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
