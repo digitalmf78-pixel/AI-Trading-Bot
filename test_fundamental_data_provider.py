@@ -236,12 +236,12 @@ def test_free_source_metric_basis_is_merged_per_metric(tmp_path, monkeypatch):
         "fetch_free_fundamental_sources",
         lambda symbol, **kwargs: {
             "metrics": {"GrossMarginPct": 32.0},
-            "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol"},
-            "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/"},
-            "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026"},
-            "metric_currencies": {"GrossMarginPct": "", "ROEPercent": ""},
-            "metric_alternates": {"ROEPercent": [{"source": "Tickertape", "value": 19.0, "period": "FY2026", "source_url": "https://www.tickertape.in/"}]},
-            "providers": {"Moneycontrol": {"status": "DATA_FOUND"}, "Tickertape": {"status": "DATA_FOUND"}},
+            "metric_sources": {"GrossMarginPct": "Moneycontrol"},
+            "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/"},
+            "metric_periods": {"GrossMarginPct": "Mar 2026"},
+            "metric_currencies": {"GrossMarginPct": ""},
+            "metric_alternates": {},
+            "providers": {"Moneycontrol": {"status": "DATA_FOUND"}},
             "attempted_at_utc": "2026-10-30T00:00:00+00:00",
         },
     )
@@ -433,12 +433,12 @@ def test_free_source_observed_metrics_set_status_without_provider_error(monkeypa
 
     result = {
         "metrics": {"GrossMarginPct": 35.0, "ROEPercent": 18.5},
-        "metric_sources": {"GrossMarginPct": "Moneycontrol"},
-        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/"},
-        "metric_periods": {"GrossMarginPct": "Mar 2026"},
-        "metric_currencies": {"GrossMarginPct": ""},
-        "metric_alternates": {},
-        "providers": {"Moneycontrol": {"status": "DATA_FOUND"}},
+        "metric_sources": {"GrossMarginPct": "Moneycontrol", "ROEPercent": "Moneycontrol"},
+        "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/", "ROEPercent": "https://www.moneycontrol.com/"},
+        "metric_periods": {"GrossMarginPct": "Mar 2026", "ROEPercent": "Mar 2026"},
+        "metric_currencies": {"GrossMarginPct": "", "ROEPercent": ""},
+        "metric_alternates": {"ROEPercent": [{"source": "Tickertape", "value": 19.0, "period": "FY2026", "source_url": "https://www.tickertape.in/"}]},
+        "providers": {"Moneycontrol": {"status": "DATA_FOUND"}, "Tickertape": {"status": "DATA_FOUND"}},
         "attempted_at_utc": "2026-11-11T10:00:00+00:00",
     }
     adapter = types.ModuleType("free_fundamental_sources")
