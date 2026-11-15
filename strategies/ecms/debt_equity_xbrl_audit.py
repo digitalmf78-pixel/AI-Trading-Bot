@@ -183,11 +183,13 @@ def audit_ecms_debt_to_equity(
         if not symbol or (requested is not None and symbol not in requested):
             continue
         provider_value = _number(metric.get("DebtToEquity"))
-        if provider_value is None:
-            continue
         if _is_financial_sector(metric):
             rows.append(_row(symbol, metric, "NOT_APPLICABLE_FINANCIAL_SECTOR",
                              "Industrial Debt/Equity formula is not applied to banks, NBFCs, insurance or financial services"))
+            continue
+        if provider_value is None:
+            rows.append(_row(symbol, metric, "PROVIDER_METRIC_MISSING",
+                             "No provider Debt/Equity value is available for comparison"))
             continue
         source = _metric_source(metric, "DebtToEquity")
         if source != ALLOWED_SOURCE:
@@ -351,3 +353,71 @@ def audit_ecms_debt_to_equity(
         ))
 
     return pd.DataFrame(rows, columns=AUDIT_COLUMNS)
+
+
+def build_debt_equity_summary(audit: pd.DataFrame, candidate_count: int | None = None) -> dict:
+    """Build a compact diagnostic summary; never feeds the ECMS shortlist."""
+    counts = (
+        audit["DebtToEquityAuditStatus"].fillna("UNKNOWN").astype(str).value_counts().to_dict()
+        if "DebtToEquityAuditStatus" in audit.columns else {}
+    )
+    return {
+        "status": "PASS" if len(audit) > 0 else "WAIT_FOR_DATA",
+        "candidate_count": int(candidate_count if candidate_count is not None else len(audit)),
+        "audited_rows": int(len(audit)),
+        "verified": int(counts.get("OFFICIAL_XBRL_VERIFIED", 0)),
+        "within_xbrl_accuracy_not_exact": int(counts.get("PROVIDER_VALUE_WITHIN_XBRL_ACCURACY", 0)),
+        "mismatch": int(counts.get("PROVIDER_VALUE_MISMATCH", 0)),
+        "wait_or_unresolved": int(sum(
+            count for status, count in counts.items()
+            if status not in {
+                "OFFICIAL_XBRL_VERIFIED", "PROVIDER_VALUE_WITHIN_XBRL_ACCURACY",
+                "PROVIDER_VALUE_MISMATCH", "NOT_APPLICABLE_FINANCIAL_SECTOR",
+            }
+        )),
+        "not_applicable_financial_sector": int(counts.get("NOT_APPLICABLE_FINANCIAL_SECTOR", 0)),
+        "status_counts": {str(key): int(value) for key, value in counts.items()},
+        "diagnostic_only": True,
+        "affects_ecms_shortlist": False,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="ECMS-only Debt/Equity XBRL diagnostic audit")
+    parser.add_argument("--metrics", default="outputs/ecms/volume_gainers_eod_research.csv")
+    parser.add_argument("--filings", default="outputs/ecms/fundamental_filings_ecms.csv")
+    parser.add_argument("--output", default="outputs/ecms/ecms_debt_equity_xbrl_audit.csv")
+    parser.add_argument("--summary", default="outputs/ecms/ecms_debt_equity_xbrl_audit_summary.json")
+    parser.add_argument("--repo-root", default="data/cache/ecms/fundamental_workspace")
+    args = parser.parse_args(argv)
+
+    metrics_path = Path(args.metrics)
+    filings_path = Path(args.filings)
+    output_path = Path(args.output)
+    summary_path = Path(args.summary)
+    if not metrics_path.is_file():
+        raise FileNotFoundError(f"ECMS Debt/Equity diagnostic metrics file missing: {metrics_path}")
+    metrics = pd.read_csv(metrics_path, keep_default_na=False)
+    filings = (
+        pd.read_csv(filings_path, keep_default_na=False)
+        if filings_path.is_file() and filings_path.stat().st_size > 0 else pd.DataFrame()
+    )
+    candidate_count = int(metrics["TckrSymb"].astype(str).str.strip().str.upper().nunique()) if "TckrSymb" in metrics.columns else 0
+    audit = audit_ecms_debt_to_equity(
+        metrics=metrics, filings=filings, repo_root=args.repo_root,
+        symbols=set(metrics["TckrSymb"].astype(str).str.strip().str.upper()) if "TckrSymb" in metrics.columns else set(),
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    audit.to_csv(output_path, index=False)
+    summary = build_debt_equity_summary(audit, candidate_count=candidate_count)
+    summary["output_csv"] = str(output_path)
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

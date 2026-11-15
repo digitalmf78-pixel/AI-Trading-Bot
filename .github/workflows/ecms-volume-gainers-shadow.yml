@@ -39,8 +39,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py test_fundamental_data_provider.py
+          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py strategies/ecms/debt_equity_xbrl_audit.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_debt_equity_xbrl_audit.py test_fundamental_data_provider.py
 
   eod:
     if: >-
@@ -104,9 +104,10 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_free_fundamental_sources.py
+          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/free_fundamental_sources.py strategies/ecms/debt_equity_xbrl_audit.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_debt_equity_xbrl_audit.py
       - name: Run EOD page research
+        id: run-eod
         env:
           PYTHONUNBUFFERED: "1"
           V8_AUTO_FETCH_FUNDAMENTALS: "true"
@@ -116,6 +117,15 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode eod
+      - name: Run ECMS-only Debt Equity XBRL diagnostic (does not affect shortlist)
+        if: always() && steps.run-eod.outcome == 'success'
+        run: >-
+          python -m strategies.ecms.debt_equity_xbrl_audit
+          --metrics outputs/ecms/volume_gainers_eod_research.csv
+          --filings outputs/ecms/fundamental_filings_ecms.csv
+          --output outputs/ecms/ecms_debt_equity_xbrl_audit.csv
+          --summary outputs/ecms/ecms_debt_equity_xbrl_audit_summary.json
+          --repo-root data/cache/ecms/fundamental_workspace
       - name: Save previous EOD page universe and ECMS fundamental cache for morning recheck
         uses: actions/cache/save@v4
         with:
@@ -136,6 +146,8 @@ jobs:
             outputs/ecms/v8_fundamental_generated_evidence.csv
             outputs/ecms/v8_fundamental_evidence_generation_diagnostics.csv
             outputs/ecms/fundamental_filing_metadata_summary.csv
+            outputs/ecms/ecms_debt_equity_xbrl_audit.csv
+            outputs/ecms/ecms_debt_equity_xbrl_audit_summary.json
             outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
@@ -166,6 +178,15 @@ jobs:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
+          audit_path = Path("outputs/ecms/ecms_debt_equity_xbrl_audit_summary.json")
+          if audit_path.is_file():
+              try:
+                  audit = json.loads(audit_path.read_text(encoding="utf-8"))
+                  lines.append("Debt/Equity XBRL diagnostic (separate; no shortlist impact):")
+                  for key, label in [("candidate_count","Candidates"),("verified","XBRL verified"),("mismatch","Mismatch"),("wait_or_unresolved","Wait/unresolved"),("not_applicable_financial_sector","Financial sector N/A")]:
+                      if key in audit: lines.append(f"{label}: {audit[key]}")
+              except Exception as exc:
+                  lines.append(f"Debt/Equity diagnostic unavailable: {type(exc).__name__}")
           lines.append(f"Run / logs / artifact: {os.getenv('RUN_URL','')}")
           response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat_id,"text":"\n".join(lines)}, timeout=25)
           response.raise_for_status()
