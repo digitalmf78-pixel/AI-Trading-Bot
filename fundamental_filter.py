@@ -29,7 +29,7 @@ SOURCE_COLUMNS = [
     "OfficialFilingURL", "OfficialFilingSource", "MetricPeriodAlignmentStatus",
     "ProviderSector", "MetricCalculationBasis", "QuarterlyAlignmentReason",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
-    "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON", "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
+    "MetricCalculationBasesJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON", "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON",
     "ValuationAsOfDate", "ValuationRequestedEODDate", "ValuationQuoteTimestampUTC",
     "ValuationDateBasis", "ValuationRetrievedAtUTC", "ValuationSource",
     "ValuationSourceURL", "ValuationDataStatus", "ValuationPointInTimeStatus",
