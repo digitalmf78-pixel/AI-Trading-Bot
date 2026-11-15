@@ -141,6 +141,8 @@ def _ratio_accuracy_interval(
 
 def _row(symbol: str, metric: pd.Series, status: str, reason: str, **extra) -> dict:
     row = {column: "" for column in AUDIT_COLUMNS}
+    # An unavailable official ratio is missing data, never an empty-string value.
+    row["OfficialDebtToEquity"] = pd.NA
     row.update({
         "TckrSymb": symbol,
         "ProviderDebtToEquity": _number(metric.get("DebtToEquity")),
