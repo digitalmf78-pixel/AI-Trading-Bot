@@ -180,3 +180,43 @@ def test_third_party_growth_requires_two_consecutive_fiscal_years():
     row["MetricSourcePeriodsJSON"] = json.dumps({"RevenueGrowthPct": "FY2024->FY2025"})
     result = assess_fundamental_research(pd.DataFrame([row])).iloc[0]
     assert result["FundamentalResearchEligibleMetricCount"] == 1
+
+
+
+def test_stale_third_party_period_is_excluded_but_recent_fiscal_growth_remains_eligible():
+    row = {
+        "TckrSymb": "STALE", "ProviderSector": "Industrials",
+        "ROEPercent": 18, "ProfitGrowthPct": 24,
+        "EODDate": "2026-11-15",
+        "MetricSourcesJSON": json.dumps({
+            "ROEPercent": "Moneycontrol", "ProfitGrowthPct": "Moneycontrol",
+        }),
+        "MetricSourcePeriodsJSON": json.dumps({
+            "ROEPercent": "Mar 2016", "ProfitGrowthPct": "FY2024->FY2025",
+        }),
+        "MetricCalculationBasis": "MULTI_SOURCE_METRIC_LEVEL",
+        "MetricCalculationBasesJSON": json.dumps({
+            "ROEPercent": "MULTI_SOURCE_METRIC_LEVEL",
+            "ProfitGrowthPct": "MULTI_SOURCE_METRIC_LEVEL",
+        }),
+    }
+    result = assess_fundamental_research(pd.DataFrame([row])).iloc[0]
+    assert result["FundamentalResearchEligibleMetricCount"] == 1
+    assert "ROEPercent:PERIOD_STALE" in result["FundamentalResearchNotes"]
+    assert "ProfitGrowthPct:PERIOD_STALE" not in result["FundamentalResearchNotes"]
+
+
+def test_future_dated_fundamental_period_is_not_scored():
+    row = {
+        "TckrSymb": "FUTURE", "ProviderSector": "Industrials",
+        "ROEPercent": 18, "EODDate": "2026-11-15",
+        "MetricSourcesJSON": json.dumps({"ROEPercent": "Moneycontrol"}),
+        "MetricSourcePeriodsJSON": json.dumps({"ROEPercent": "Mar 2028"}),
+        "MetricCalculationBasis": "MULTI_SOURCE_METRIC_LEVEL",
+        "MetricCalculationBasesJSON": json.dumps({
+            "ROEPercent": "MULTI_SOURCE_METRIC_LEVEL",
+        }),
+    }
+    result = assess_fundamental_research(pd.DataFrame([row])).iloc[0]
+    assert result["FundamentalResearchEligibleMetricCount"] == 0
+    assert "ROEPercent:FUTURE_PERIOD" in result["FundamentalResearchNotes"]
