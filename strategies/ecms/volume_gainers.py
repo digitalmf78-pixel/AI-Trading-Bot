@@ -17,7 +17,7 @@ from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_research import assess_fundamental_research
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
-from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata
+from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_details_remarks
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -401,6 +401,7 @@ def assess_page_fundamentals(candidates, eod_date):
     # as incomplete and never promotes any metric to verified.
     try:
         filing_metadata_audit = audit_ecms_filing_metadata(candidate_filings)
+        filing_metadata_audit = fetch_ecms_details_remarks(filing_metadata_audit)
     except Exception as exc:
         filing_metadata_audit = pd.DataFrame([{
             **{column: "" for column in FILING_METADATA_AUDIT_COLUMNS},
