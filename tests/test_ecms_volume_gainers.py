@@ -101,6 +101,17 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
 
     monkeypatch.setattr(scanner, "run_fundamental_xbrl_audit", fake_audit)
 
+    def fake_debt_equity_audit(**kwargs):
+        assert set(kwargs["metrics"]["TckrSymb"]) == {"AAA"}
+        assert set(kwargs["filings"]["TckrSymb"]) == {"AAA"}
+        return pd.DataFrame([{
+            "TckrSymb": "AAA",
+            "DebtToEquityAuditStatus": "PROVIDER_DEBT_TO_EQUITY_MISSING",
+            "DebtToEquityAuditReason": "Provider ratio missing",
+        }])
+
+    monkeypatch.setattr(scanner, "audit_ecms_debt_to_equity", fake_debt_equity_audit)
+
     def fake_shortlist(joined, *args, **kwargs):
         out = joined.copy()
         out["FundamentalShortlistStatus"] = "PASS"
@@ -129,7 +140,46 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_evidence_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_provider_diagnostics.csv")["TckrSymb"]) == {"AAA"}
+    debt_equity_report = pd.read_csv(out / "fundamental_debt_equity_xbrl_audit.csv")
+    assert debt_equity_report.iloc[0]["TckrSymb"] == "AAA"
+    assert debt_equity_report.iloc[0]["DebtToEquityAuditStatus"] == "PROVIDER_DEBT_TO_EQUITY_MISSING"
 
+
+
+def test_ecms_free_source_budget_expands_to_cover_every_current_candidate(tmp_path, monkeypatch):
+    import os
+    import sys
+    import types
+    from pathlib import Path
+    import strategies.ecms.volume_gainers as scanner
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scanner, "OUTPUT_DIR", Path("outputs/ecms"))
+    monkeypatch.setattr(scanner, "STATE_DIR", Path("data/cache/ecms"))
+    monkeypatch.setattr(scanner, "METRICS_PATH", Path("data/inputs/production_metrics.csv"))
+    monkeypatch.setenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "1")
+
+    def fake_collect(candidates, **kwargs):
+        assert len(candidates) == 2
+        assert os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] == "2"
+        raise RuntimeError("stop after verifying ECMS-scoped budget")
+
+    fake_provider = types.ModuleType("fundamental_data_provider")
+    fake_provider.collect_missing_fundamentals = fake_collect
+    monkeypatch.setitem(sys.modules, "fundamental_data_provider", fake_provider)
+
+    result = scanner.assess_page_fundamentals(
+        pd.DataFrame([
+            {"TckrSymb": "AAA", "CompanyName": "AAA Limited"},
+            {"TckrSymb": "BBB", "CompanyName": "BBB Limited"},
+        ]),
+        __import__("datetime").date(2026, 11, 13),
+    )
+
+    assert set(result["TckrSymb"]) == {"AAA", "BBB"}
+    assert result["FundamentalShortlistStatus"].eq("WAIT_FOR_DATA").all()
+    assert os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] == "1"
+    assert (tmp_path / "outputs/ecms/fundamental_collection_error.csv").exists()
 
 
 def test_strong_fundamental_mask_requires_strict_pass_strong_and_80pct_coverage():
@@ -203,3 +253,33 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     assert summary["under_observation"] == 1
     saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
     assert saved_summary["morning_strong"] == 2
+
+
+def test_ecms_free_source_evidence_preserves_historical_alternates_when_latest_attempt_empty():
+    from strategies.ecms.volume_gainers import _ecms_free_source_evidence
+
+    row = pd.Series({
+        "FreeSourcesStatus": "EMPTY_OR_UNMAPPED",
+        "FreeSourcesAlternatesJSON": (
+            '{"GrossMarginPct":[{"source":"Moneycontrol","value":42.5}],'
+            '"OperatingMarginPct":[{"source":"Moneycontrol","value":18.2}]}'
+        ),
+    })
+    result = _ecms_free_source_evidence(row)
+    assert result["ECMSFreeSourcesEvidenceStatus"] == "HISTORICAL_ALTERNATES_PRESENT_NO_CURRENT_METRICS"
+    assert result["ECMSFreeSourcesObservedMetricCount"] == 2
+    assert result["ECMSFreeSourcesObservedMetrics"] == "GrossMarginPct;OperatingMarginPct"
+    # Do not change the source cache's original status: this is an ECMS audit overlay.
+    assert row["FreeSourcesStatus"] == "EMPTY_OR_UNMAPPED"
+
+
+def test_ecms_free_source_evidence_reports_no_alternates_without_inventing_data():
+    from strategies.ecms.volume_gainers import _ecms_free_source_evidence
+
+    result = _ecms_free_source_evidence(pd.Series({
+        "FreeSourcesStatus": "EMPTY_OR_UNMAPPED",
+        "FreeSourcesAlternatesJSON": "{}",
+    }))
+    assert result["ECMSFreeSourcesEvidenceStatus"] == "EMPTY_OR_UNMAPPED"
+    assert result["ECMSFreeSourcesObservedMetricCount"] == 0
+    assert result["ECMSFreeSourcesObservedMetrics"] == ""

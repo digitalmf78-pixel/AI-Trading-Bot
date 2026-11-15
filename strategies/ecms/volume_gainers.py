@@ -15,6 +15,7 @@ from strategies.ecms.eod import (
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_research import assess_fundamental_research
+from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -94,6 +95,34 @@ def _eligible_page_equities(page):
     eligible=page[page["TckrSymb"].isin(mainboard)].copy()
     eligible["PageUniverseStatus"]="PASS_MAIN_BOARD_EQUITY"
     return eligible,source
+def _ecms_free_source_evidence(row):
+    """Describe free-source evidence without rewriting the shared provider status."""
+    raw = row.get("FreeSourcesAlternatesJSON", "")
+    try:
+        parsed = json.loads(str(raw)) if str(raw).strip() not in {"", "nan", "None"} else {}
+    except (TypeError, ValueError):
+        parsed = {}
+    observed = {
+        str(metric): values for metric, values in parsed.items()
+        if isinstance(values, list) and values
+    } if isinstance(parsed, dict) else {}
+    count = len(observed)
+    existing = str(row.get("FreeSourcesStatus", "") or "").strip().upper()
+    if existing == "DATA_FOUND":
+        status = "DATA_FOUND_CURRENT_ATTEMPT"
+    elif count:
+        status = "HISTORICAL_ALTERNATES_PRESENT_NO_CURRENT_METRICS"
+    elif existing:
+        status = existing
+    else:
+        status = "NO_RECORDED_FREE_SOURCE_EVIDENCE"
+    return pd.Series({
+        "ECMSFreeSourcesEvidenceStatus": status,
+        "ECMSFreeSourcesObservedMetricCount": count,
+        "ECMSFreeSourcesObservedMetrics": ";".join(sorted(observed)),
+    })
+
+
 def assess_page_fundamentals(candidates, eod_date):
     """Collect and verify fundamentals for Volume Gainers candidates only.
 
@@ -144,6 +173,17 @@ def assess_page_fundamentals(candidates, eod_date):
         shutil.rmtree(ephemeral_root)
     ephemeral_root.mkdir(parents=True, exist_ok=True)
 
+    previous_free_budget = os.environ.get("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN")
+    try:
+        configured_budget = int(previous_free_budget or "10")
+    except (TypeError, ValueError):
+        configured_budget = 10
+    # The shared provider has a per-run secondary-source budget. Raise it only
+    # inside this ECMS process to at least the current page size, so no current
+    # Volume Gainers candidate is deferred solely because the page grew.
+    os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] = str(
+        max(0, configured_budget, len(candidate_symbols))
+    )
     try:
         # Relative paths used by the production collector now resolve beneath
         # data/cache/ecms/fundamental_workspace, not production data/inputs/outputs.
@@ -179,6 +219,10 @@ def assess_page_fundamentals(candidates, eod_date):
         return failed
     finally:
         os.chdir(repo_root)
+        if previous_free_budget is None:
+            os.environ.pop("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", None)
+        else:
+            os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] = previous_free_budget
 
     if not workspace_metrics.exists():
         raise RuntimeError("Fundamental provider completed without creating its ECMS metrics cache")
@@ -220,6 +264,13 @@ def assess_page_fundamentals(candidates, eod_date):
     audit_input_dir = ephemeral_root / "audit_input"
     audit_input_dir.mkdir(parents=True, exist_ok=True)
     candidate_metrics = metrics[metrics["TckrSymb"].isin(candidate_symbols)].copy()
+    if not candidate_metrics.empty:
+        free_source_evidence = candidate_metrics.apply(_ecms_free_source_evidence, axis=1)
+        candidate_metrics = pd.concat([candidate_metrics, free_source_evidence], axis=1)
+    else:
+        candidate_metrics["ECMSFreeSourcesEvidenceStatus"] = pd.Series(dtype=str)
+        candidate_metrics["ECMSFreeSourcesObservedMetricCount"] = pd.Series(dtype=int)
+        candidate_metrics["ECMSFreeSourcesObservedMetrics"] = pd.Series(dtype=str)
     audit_metrics_path = audit_input_dir / "fundamental_metrics.csv"
     candidate_metrics.to_csv(audit_metrics_path, index=False)
 
@@ -270,6 +321,54 @@ def assess_page_fundamentals(candidates, eod_date):
     candidate_verification = verification[
         verification["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
     ] if "TckrSymb" in verification.columns else verification.iloc[0:0]
+
+    # Separate ECMS-only Debt/Equity reconciliation. This diagnostic does not
+    # alter the strict shortlist or the shared V8 verifier.
+    try:
+        debt_equity_metrics = metrics_unique[
+            metrics_unique["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
+        ].copy()
+        debt_equity_audit = audit_ecms_debt_to_equity(
+            metrics=debt_equity_metrics,
+            filings=candidate_filings,
+            repo_root=ephemeral_root,
+            symbols=candidate_symbols,
+        )
+    except Exception as exc:
+        debt_equity_audit = pd.DataFrame([
+            {
+                **{column: "" for column in DEBT_EQUITY_AUDIT_COLUMNS},
+                "TckrSymb": symbol,
+                "DebtToEquityAuditStatus": "AUDIT_EXECUTION_ERROR",
+                "DebtToEquityAuditReason": f"{type(exc).__name__}: {str(exc)[:400]}",
+            }
+            for symbol in sorted(candidate_symbols)
+        ], columns=DEBT_EQUITY_AUDIT_COLUMNS)
+    if "TckrSymb" not in debt_equity_audit.columns:
+        debt_equity_audit = pd.DataFrame(columns=DEBT_EQUITY_AUDIT_COLUMNS)
+    else:
+        debt_equity_audit["TckrSymb"] = debt_equity_audit["TckrSymb"].astype(str).str.strip().str.upper()
+    # Keep exactly one diagnostic row per current page symbol, including
+    # candidates with no fundamental metrics yet.
+    debt_equity_audit = debt_equity_audit.drop_duplicates("TckrSymb", keep="first")
+    missing_debt_symbols = candidate_symbols - set(debt_equity_audit["TckrSymb"])
+    if missing_debt_symbols:
+        missing_rows = pd.DataFrame([
+            {
+                **{column: "" for column in DEBT_EQUITY_AUDIT_COLUMNS},
+                "TckrSymb": symbol,
+                "DebtToEquityAuditStatus": "CANDIDATE_METRICS_MISSING",
+                "DebtToEquityAuditReason": "No candidate-scoped fundamental metrics row is available",
+            }
+            for symbol in sorted(missing_debt_symbols)
+        ], columns=DEBT_EQUITY_AUDIT_COLUMNS)
+        debt_equity_audit = pd.concat([debt_equity_audit, missing_rows], ignore_index=True)
+    debt_equity_audit = debt_equity_audit[
+        debt_equity_audit["TckrSymb"].isin(candidate_symbols)
+    ].sort_values("TckrSymb").reset_index(drop=True)
+    debt_equity_audit.to_csv(
+        ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
+    )
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
@@ -410,12 +509,37 @@ def run_eod():
         _number(r.get("EODFundamentalResearchCoveragePct")) is not None and
         float(r.get("EODFundamentalResearchCoveragePct"))>=80 else "NOT_STRONG_EOD",axis=1)
     state.to_csv(STATE_FILE,index=False)
+    provider_diag_path = OUTPUT_DIR / "fundamental_provider_diagnostics.csv"
+    provider_diag = pd.read_csv(provider_diag_path) if provider_diag_path.exists() and provider_diag_path.stat().st_size else pd.DataFrame()
+    provider_status = provider_diag.get("ProviderStatus", pd.Series(dtype=str)).astype(str).str.upper()
+    free_attempted = provider_diag.get("FreeSourcesAttempted", pd.Series(False, index=provider_diag.index)).astype(str).str.lower().isin({"true", "1", "yes"})
+    research_class = assessed["FundamentalResearchClassification"].astype(str).str.upper()
+    shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
+    provenance_status = assessed["FundamentalResearchProvenanceStatus"].astype(str).str.upper()
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
+      "assessment_rows":int(len(assessed)),
+      "assessment_unique_symbols":int(assessed["TckrSymb"].astype(str).str.upper().nunique()),
+      "assessment_missing_or_duplicate_count":int(max(0, len(eligible) - assessed["TckrSymb"].astype(str).str.upper().nunique())),
       "strong_fundamental_handoff":int(assessed["StrongFundamentalHandOffStatus"].eq("PASS_STRONG_FUNDAMENTAL").sum()),
       "strong_eod":int(assessed["EODConfirmationLabel"].eq("STRONG_EOD").sum()),
+      "research_strong":int(research_class.eq("STRONG").sum()),
+      "research_good":int(research_class.eq("GOOD").sum()),
+      "research_average":int(research_class.eq("AVERAGE").sum()),
+      "research_weak":int(research_class.eq("WEAK").sum()),
+      "shortlist_fail":int(shortlist_status.eq("FAIL").sum()),
+      "wait_for_data":int(shortlist_status.eq("WAIT_FOR_DATA").sum()),
+      "research_insufficient_data":int(research_class.eq("INSUFFICIENT_DATA").sum()),
+      "research_provenance_blocked":int(provenance_status.eq("PARTIAL_OR_BLOCKED").sum()),
+      "official_xbrl_fully_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("FULLY_VERIFIED").sum()),
+      "official_xbrl_partially_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("PARTIALLY_VERIFIED").sum()),
+      "official_xbrl_not_verified":int(assessed.get("FundamentalVerificationStatus", pd.Series("", index=assessed.index)).astype(str).str.upper().eq("NOT_VERIFIED").sum()),
+      "provider_attempted":int((~provider_status.isin({"EXISTING_RECORD_COMPLETE", "RETRY_COOLDOWN", "DISABLED"})).sum()),
+      "provider_cache_reused":int(provider_status.eq("EXISTING_RECORD_COMPLETE").sum()),
+      "provider_cooldown_deferred":int(provider_status.eq("RETRY_COOLDOWN").sum()),
+      "provider_failed":int(provider_status.str.contains("ERROR|FAILED", regex=True).sum()),
+      "free_source_attempted":int(free_attempted.sum()),
       "strong_fundamental_catalyst_review":int(assessed["EODResearchStatus"].eq("STRONG_FUNDAMENTAL_CATALYST_REVIEW").sum()),
-      "wait_for_data":int(assessed["EODResearchStatus"].eq("WAIT_FOR_DATA").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
