@@ -135,7 +135,7 @@ def collect_upcoming_events(symbols, as_of_date: date, lookahead_days=EVENT_LOOK
             "TckrSymb": symbol,
             "UpcomingEventsStatus": f"WAIT_FOR_DATA:{type(exc).__name__}",
             "UpcomingEvents": "NOT AVAILABLE",
-            "NextResultDate": "NOT ANNOUNCED",
+            "NextResultDate": "NOT AVAILABLE",
             "NextResultDetails": "",
             "EventCalendarSourceURL": NSE_EVENT_PAGE,
         } for symbol in symbols]
