@@ -88,3 +88,9 @@ def test_valuation_label_requires_provenance_and_is_informational():
     result = attach_valuation(frame)
     assert result["ValuationLabel"].tolist() == ["CHEAP", "NOT AVAILABLE", "EXPENSIVE"]
     assert result["ValuationBasis"].iloc[0] == "TRAILING_PE_AND_PEG_INDICATIVE_BANDS"
+
+
+def test_as_date_recognizes_iso_exchange_date_without_dayfirst_ambiguity():
+    from strategies.ecms.information import _as_date
+    assert _as_date("2026-11-15") == date(2026, 11, 15)
+    assert _as_date("15-Nov-2026") == date(2026, 11, 15)
