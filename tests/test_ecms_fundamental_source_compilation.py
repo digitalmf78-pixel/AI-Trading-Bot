@@ -83,3 +83,22 @@ def test_compilation_includes_exact_debt_equity_audit_as_its_own_source_row():
     audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT"].iloc[0]
     assert audit["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
     assert audit["MetricValue"] == 0.5
+
+
+def test_compilation_flags_mismatch_only_when_period_basis_and_unit_align():
+    metrics = pd.DataFrame([{
+        "TckrSymb": "AAA", "ROEPercent": 18.0,
+        "MetricSourcesJSON": '{"ROEPercent":"Yahoo Finance"}',
+        "MetricSourcePeriodsJSON": '{"ROEPercent":"2026-03-31"}',
+        "MetricCalculationBasesJSON": '{"ROEPercent":"CONSOLIDATED"}',
+        "MetricSourceCurrenciesJSON": '{"ROEPercent":"PERCENT"}',
+    }])
+    manual = pd.DataFrame([{
+        "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 15.0,
+        "Source": "SCREENER_FREE_MANUAL", "SourceURL": "https://www.screener.in/company/AAA/",
+        "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-10",
+        "CalculationBasis": "CONSOLIDATED", "Unit": "PERCENT", "ObservationNotes": "",
+    }], columns=MANUAL_COLUMNS)
+    result = build_fundamental_source_compilation(metrics, manual_observations=manual)
+    assert result["MismatchStatus"].eq("MISMATCH").all()
+    assert result["MismatchReason"].str.contains("comparison tolerance").all()
