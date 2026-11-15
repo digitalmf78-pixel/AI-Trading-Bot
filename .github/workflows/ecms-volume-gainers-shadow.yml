@@ -1,7 +1,7 @@
 name: ECMS VOLUME GAINERS - MANUAL EOD RUN
 on:
   push:
-    branches: [main]
+    branches: [main, "ecms/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
