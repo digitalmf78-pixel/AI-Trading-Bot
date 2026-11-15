@@ -66,7 +66,7 @@ BASE_COLUMNS = [
     "ProviderFetchIncomePeriodsUsed", "ProviderFetchCashFlowPeriodsUsed",
     "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
     "ProviderLastAttemptAtUTC", "ProviderLastAttemptStatus",
-    "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
+    "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON", "MetricCalculationBasesJSON",
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
     "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON", "FreeSourcesAlternatesJSON",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
@@ -754,6 +754,12 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
     metric_sources = {col: "Yahoo Finance via yfinance" for col in yahoo_metrics}
     metric_urls = {col: url for col in yahoo_metrics}
     metric_periods = {col: str(record.get("FinancialPeriodEnd")) if _present(record.get("FinancialPeriodEnd")) else "" for col in yahoo_metrics}
+    # Calculation basis is tracked per metric because a single row can contain
+    # aligned Yahoo statements and independent third-party reported values.
+    metric_bases = {
+        col: str(record.get("MetricCalculationBasis", "") or "").strip().upper()
+        for col in yahoo_metrics
+    }
     metric_currencies = {col: str(record.get("ValuationCurrency")) if _present(record.get("ValuationCurrency")) else "" for col in yahoo_metrics}
     provider_diagnostics = {
         "Yahoo Finance via yfinance": {
@@ -790,6 +796,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                     metric_urls[metric] = free_source_result.get("metric_urls", {}).get(metric, "")
                     metric_periods[metric] = free_source_result.get("metric_periods", {}).get(metric, "")
                     metric_currencies[metric] = free_source_result.get("metric_currencies", {}).get(metric, "")
+                    metric_bases[metric] = "MULTI_SOURCE_METRIC_LEVEL"
                     free_source_metrics.append(metric)
             provider_diagnostics["Free-source providers"] = free_source_result.get("providers", {})
             record["FreeSourcesAttemptedAtUTC"] = free_source_result.get("attempted_at_utc", datetime.now(timezone.utc).isoformat())
@@ -846,6 +853,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
     record["MetricSourcesJSON"] = json.dumps(metric_sources, sort_keys=True)
     record["MetricSourceURLsJSON"] = json.dumps(metric_urls, sort_keys=True)
     record["MetricSourcePeriodsJSON"] = json.dumps(metric_periods, sort_keys=True)
+    record["MetricCalculationBasesJSON"] = json.dumps(metric_bases, sort_keys=True)
     record["MetricSourceCurrenciesJSON"] = json.dumps(metric_currencies, sort_keys=True)
     record["ProviderSourceDiagnosticsJSON"] = json.dumps(provider_diagnostics, sort_keys=True)
     return record, diagnostic
@@ -1047,7 +1055,7 @@ def collect_missing_fundamentals(
                                          "ProviderFetchBalanceSheetPeriod", "ProviderFetchedMetrics", "ProviderFetchedAtUTC",
                                          "ProviderLastAttemptAtUTC", "ProviderLastAttemptStatus",
                                          "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON",
-                                         "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
+                                         "MetricCalculationBasesJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
                                          "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"]:
                 current[col] = pd.NA
             current["PublicationDateStatus"] = "UNVERIFIED"
@@ -1231,7 +1239,7 @@ def collect_missing_fundamentals(
         if newly_stored_metric_names:
             # Persist per-metric provenance independently; a mixed-provider row
             # must never imply that one source supplied every metric.
-            for field in ("MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON"):
+            for field in ("MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "MetricCalculationBasesJSON"):
                 try:
                     prior_map = json.loads(str(merged.get(field) or "{}"))
                     if not isinstance(prior_map, dict):

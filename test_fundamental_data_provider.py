@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -220,6 +221,42 @@ def test_fully_provider_owned_row_gets_row_level_basis_and_provenance(tmp_path, 
     assert row["ProviderFetchCalculationBasis"] == "UNALIGNED_PROVIDER_SNAPSHOT"
     assert "RevenueGrowthPct" in str(row["ProviderFetchedMetrics"])
     assert str(row["ProviderFetchedAtUTC"]).strip()
+    metric_bases = json.loads(row["MetricCalculationBasesJSON"])
+    assert metric_bases["RevenueGrowthPct"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+
+
+def test_free_source_metric_basis_is_merged_per_metric(tmp_path, monkeypatch):
+    import free_fundamental_sources
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("V8_FREE_FUNDAMENTAL_SOURCES", "true")
+    monkeypatch.setenv("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", "10")
+    monkeypatch.setattr(
+        free_fundamental_sources,
+        "fetch_free_fundamental_sources",
+        lambda symbol, **kwargs: {
+            "metrics": {"GrossMarginPct": 32.0},
+            "metric_sources": {"GrossMarginPct": "Moneycontrol"},
+            "metric_urls": {"GrossMarginPct": "https://www.moneycontrol.com/"},
+            "metric_periods": {"GrossMarginPct": "Mar 2026"},
+            "metric_currencies": {"GrossMarginPct": ""},
+            "metric_alternates": {},
+            "providers": {"Moneycontrol": {"status": "DATA_FOUND"}},
+            "attempted_at_utc": "2026-10-30T00:00:00+00:00",
+        },
+    )
+    result = collect_missing_fundamentals(
+        pd.DataFrame({"TckrSymb": ["AAA"]}),
+        metrics_path=Path("data/inputs/fundamental_metrics.csv"),
+        enabled=True, ticker_factory=FakeTicker, pause_seconds=0,
+        asof_date="2026-10-30",
+        filings_fetcher=lambda _cutoff: pd.DataFrame(),
+    )
+    row = result.set_index("TckrSymb").loc["AAA"]
+    metric_bases = json.loads(row["MetricCalculationBasesJSON"])
+    assert metric_bases["RevenueGrowthPct"] == "UNALIGNED_PROVIDER_SNAPSHOT"
+    assert metric_bases["GrossMarginPct"] == "MULTI_SOURCE_METRIC_LEVEL"
+    assert row["GrossMarginPct"] == 32.0
 
 
 def test_legacy_basis_migration_does_not_infer_from_period_status(tmp_path, monkeypatch):

@@ -8,6 +8,7 @@ be silently treated as zero. Banks/NBFCs/insurers wait for dedicated sector rule
 from __future__ import annotations
 
 import math
+import re
 import pandas as pd
 
 METRIC_WEIGHTS = {
@@ -30,10 +31,20 @@ SPECIAL_SECTOR_TERMS = ("bank", "nbfc", "insurance", "insurer", "financial")
 ALIGNED_PROVIDER_BASES = {"ANNUAL_ALIGNED_STATEMENTS", "QUARTERLY_TTM_ALIGNED_STATEMENTS"}
 
 
-def _valid_period(value):
+def _valid_period(value, metric=None):
     text = str(value or "").strip()
-    if not text or text.lower() in {"nan", "none", "<na>"}:
+    if not text or text.lower() in {"nan", "none", "<na>", "latest", "current"}:
         return False
+    # Free-source growth rows may carry an explicit consecutive FY range
+    # rather than a single date. Accept only adjacent fiscal years.
+    if metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
+        match = re.fullmatch(r"FY\s*(20\d{2})\s*->\s*FY\s*(20\d{2})", text, re.IGNORECASE)
+        if match:
+            return int(match.group(2)) == int(match.group(1)) + 1
+    if re.fullmatch(r"FY\s*20\d{2}", text, re.IGNORECASE):
+        return True
+    if re.fullmatch(r"Q[1-4]\s*FY\s*20\d{2}", text, re.IGNORECASE):
+        return True
     parsed = pd.to_datetime(text, errors="coerce", utc=True)
     return not pd.isna(parsed)
 
@@ -64,24 +75,31 @@ def _metric_provenance(row):
 
     basis = str(row.get("MetricCalculationBasis", "") or "").strip().upper()
     alignment = str(row.get("MetricPeriodAlignmentStatus", "") or "").strip().upper()
+    try:
+        metric_bases = json.loads(str(row.get("MetricCalculationBasesJSON") or "{}"))
+    except (TypeError, ValueError):
+        metric_bases = {}
+    if not isinstance(metric_bases, dict):
+        metric_bases = {}
     eligible, blocked = set(), []
     for metric in METRIC_WEIGHTS:
         if _number(row.get(metric)) is None:
             continue
         source = str(sources.get(metric, "") or "").strip()
         period = periods.get(metric, "")
+        metric_basis = str(metric_bases.get(metric, basis) or "").strip().upper()
         if not source:
             blocked.append(metric + ":SOURCE_MISSING")
             continue
-        if not _valid_period(period):
+        if not _valid_period(period, metric):
             blocked.append(metric + ":PERIOD_MISSING_OR_INVALID")
             continue
         source_key = source.lower()
         if "yahoo finance" in source_key or "yfinance" in source_key:
-            if basis not in ALIGNED_PROVIDER_BASES or alignment != "VERIFIED":
+            if metric_basis not in ALIGNED_PROVIDER_BASES or alignment != "VERIFIED":
                 blocked.append(metric + ":YAHOO_STATEMENT_ALIGNMENT_NOT_VERIFIED")
                 continue
-        elif basis != "MULTI_SOURCE_METRIC_LEVEL":
+        elif metric_basis != "MULTI_SOURCE_METRIC_LEVEL":
             blocked.append(metric + ":NON_YAHOO_BASIS_NOT_METRIC_LEVEL")
             continue
         eligible.add(metric)
