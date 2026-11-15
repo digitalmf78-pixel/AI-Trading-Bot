@@ -2,6 +2,8 @@ name: ECMS VOLUME GAINERS - MANUAL EOD RUN
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
@@ -20,14 +22,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   validate:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Checkout main branch
+      - name: Checkout proposed changes
         uses: actions/checkout@v5
-        with:
-          ref: main
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
