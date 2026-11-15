@@ -117,6 +117,32 @@ def test_financial_sector_is_not_scored_with_industrial_ratio(tmp_path):
     assert pd.isna(row["OfficialDebtToEquity"])
 
 
+def test_missing_provider_ratio_is_reported_not_silently_skipped(tmp_path):
+    metrics, filings = _inputs()
+    metrics.loc[0, "DebtToEquity"] = pd.NA
+    result = audit_ecms_debt_to_equity(
+        metrics, filings, tmp_path,
+        fetch_xml=lambda _url, _path: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+
+    assert len(result) == 1
+    assert result.iloc[0]["DebtToEquityAuditStatus"] == "PROVIDER_DEBT_TO_EQUITY_MISSING"
+    assert pd.isna(result.iloc[0]["OfficialDebtToEquity"])
+
+
+def test_financial_sector_is_not_applicable_even_when_provider_ratio_missing(tmp_path):
+    metrics, filings = _inputs(sector="Financial Services")
+    metrics.loc[0, "DebtToEquity"] = pd.NA
+    result = audit_ecms_debt_to_equity(
+        metrics, filings, tmp_path,
+        fetch_xml=lambda _url, _path: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+
+    assert len(result) == 1
+    assert result.iloc[0]["DebtToEquityAuditStatus"] == "NOT_APPLICABLE_FINANCIAL_SECTOR"
+    assert pd.isna(result.iloc[0]["OfficialDebtToEquity"])
+
+
 def test_missing_source_provenance_fails_closed(tmp_path):
     metrics, filings = _inputs()
     metrics.loc[0, "MetricSourcesJSON"] = "{}"
