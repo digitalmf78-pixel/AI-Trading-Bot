@@ -71,6 +71,8 @@ def test_standalone_ratio_is_recomputed_from_same_instant_context(tmp_path):
     assert row["EquityINR"] == 100
     assert row["EquityFactTag"] == "Equity"
     assert row["ReportingBasis"] == "STANDALONE"
+    assert row["OfficialFilingURL"] == URL
+    assert row["PublicationDate"] == "2026-05-20"
     assert len(row["EvidenceSHA256"]) == 64
 
 
