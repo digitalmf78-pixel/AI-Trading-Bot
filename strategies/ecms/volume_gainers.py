@@ -14,7 +14,7 @@ from strategies.ecms.eod import (
 )
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
-from strategies.ecms.fundamental_research import assess_fundamental_research
+from strategies.ecms.fundamental_research import assess_fundamental_research\nfrom strategies.ecms.fundamental_source_compilation import build_fundamental_source_compilation
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
@@ -370,6 +370,22 @@ def assess_page_fundamentals(candidates, eod_date):
     ].sort_values("TckrSymb").reset_index(drop=True)
     debt_equity_audit.to_csv(
         ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
+    )
+    # Compile each source as a separate metric observation. Free Screener and
+    # BSE values are optional manual observations; neither can satisfy XBRL verification.
+    manual_observations_path = Path("strategies/ecms/inputs/fundamental_manual_observations.csv")
+    manual_observations = (
+        pd.read_csv(manual_observations_path, keep_default_na=False)
+        if manual_observations_path.is_file() else pd.DataFrame()
+    )
+    source_compilation = build_fundamental_source_compilation(
+        candidate_metrics,
+        candidate_verification,
+        manual_observations,
+        debt_equity_audit,
+    )
+    source_compilation.to_csv(
+        ecms_output_dir / "fundamental_source_compilation.csv", index=False
     )
 
     # Filing metadata is audited independently: XML attachment, Details URL,
