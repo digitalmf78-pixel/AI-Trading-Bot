@@ -233,3 +233,14 @@ def test_latest_period_audit_does_not_confuse_standalone_and_consolidated_rows()
     out = audit_ecms_filing_metadata(raw)
     assert set(out["FilingMetadataStatus"]) == {"EXPLICIT_METADATA_CAPTURED"}
     assert set(out["VerificationStatus"]) == {"NOT_VERIFIED"}
+
+
+def test_original_and_revised_same_basis_are_kept_as_distinct_filing_variants():
+    raw = pd.DataFrame([
+        {"TckrSymb":"ABC","FinancialPeriodEnd":"2026-03-31","PublicationDate":"2026-05-20","RevisedDate":"","SequenceId":"10","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-original.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-original.html","audited":"Audited","consolidated":"Standalone"},
+        {"TckrSymb":"ABC","FinancialPeriodEnd":"2026-03-31","PublicationDate":"2026-06-01","RevisedDate":"2026-06-01","SequenceId":"11","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC-revised.xml","details":"https://nsearchives.nseindia.com/corporate/ABC-revised.html","audited":"Audited","consolidated":"Standalone"},
+    ])
+    out = audit_ecms_filing_metadata(raw)
+    assert len(out) == 2
+    assert set(out["FilingMetadataStatus"]) == {"EXPLICIT_METADATA_CAPTURED"}
+    assert set(out["VerificationStatus"]) == {"NOT_VERIFIED"}
