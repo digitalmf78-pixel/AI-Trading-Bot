@@ -50,8 +50,9 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     monkeypatch.setattr(scanner, "EVIDENCE_PATH", Path("data/inputs/production_evidence.csv"))
     monkeypatch.setattr(scanner, "THRESHOLDS_PATH", Path("data/inputs/thresholds.json"))
 
-    def fake_collect(candidates, metrics_path, enabled, asof_date):
+    def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None):
         assert enabled is True
+        assert callable(free_source_fetcher)
         assert set(candidates["TckrSymb"]) == {"AAA"}
         path = Path(metrics_path)
         path.parent.mkdir(parents=True, exist_ok=True)
