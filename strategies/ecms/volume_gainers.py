@@ -682,7 +682,12 @@ def run_morning():
         current=live_by_symbol.loc[symbol].to_dict() if symbol in live_by_symbol.index else {}
         assessed=morning_by_symbol.loc[symbol].to_dict() if symbol in morning_by_symbol.index else {}
         present=symbol in live_symbols
-        eod_strong=str(old.get("EODStrongFundamentalStatus","")).upper()=="EOD_FUNDAMENTAL_PASS"
+        # Backward-compatible: prior EOD snapshots already carry the strict
+        # FundamentalShortlistStatus even if their legacy research label differs.
+        eod_strong=(
+            str(old.get("EODFundamentalShortlistStatus","")).upper()=="PASS"
+            or str(old.get("EODStrongFundamentalStatus","")).upper()=="EOD_FUNDAMENTAL_PASS"
+        )
         morning_strong=str(assessed.get("MorningStrongFundamentalStatus","")).upper()=="MORNING_FUNDAMENTAL_PASS"
         confirmation=_confirmation_status(eod_strong,present,morning_strong)
         rows.append({
