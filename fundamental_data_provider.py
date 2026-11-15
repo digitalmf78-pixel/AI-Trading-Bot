@@ -68,7 +68,7 @@ BASE_COLUMNS = [
     "ProviderLastAttemptAtUTC", "ProviderLastAttemptStatus",
     "ProviderSourceChain", "MetricSourcesJSON", "MetricSourceURLsJSON", "MetricCalculationBasesJSON",
     "MetricSourcePeriodsJSON", "MetricSourceCurrenciesJSON", "ProviderSourceDiagnosticsJSON",
-    "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON", "FreeSourcesAlternatesJSON",
+    "FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON", "FreeSourcesAlternatesJSON", "FreeSourcesComparisonJSON",
 ] + TTM_AUDIT_COLUMNS + METRIC_COLUMNS
 AUXILIARY_FUNDAMENTAL_COLUMNS = [
     "GrossMarginPct", "OperatingMarginPct", "NetProfitMarginPct", "CurrentRatio",
@@ -585,7 +585,7 @@ def _fetch_valuation_only(symbol: str, ticker_factory=None, asof_date=None) -> t
 
 def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=None, missing_metrics=None,
                allow_free_sources=False, free_source_defer_reason="DISABLED",
-               free_source_fetcher=None) -> tuple[dict, dict]:
+               free_source_fetcher=None, free_source_audit_metrics=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -783,6 +783,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
     if missing_metrics is None:
         free_source_requested = set(AUXILIARY_FUNDAMENTAL_COLUMNS)
     free_source_requested &= set(AUXILIARY_FUNDAMENTAL_COLUMNS) | set(requested_secondary)
+    free_source_requested |= {str(metric) for metric in (free_source_audit_metrics or []) if str(metric) in secondary_supported}
     if allow_free_sources and free_source_requested:
         try:
             if free_source_fetcher is None:
@@ -812,6 +813,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
             )
             record["FreeSourcesDiagnosticsJSON"] = json.dumps(free_source_result.get("providers", {}), sort_keys=True)
             free_source_values = {}
+            free_source_comparison = {}
             for observed_metric, observed_value in free_source_result.get("metrics", {}).items():
                 source_value_rows = [{
                     "source": free_source_result.get("metric_sources", {}).get(observed_metric, ""),
@@ -820,7 +822,18 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
                 }]
                 source_value_rows.extend(free_source_result.get("metric_alternates", {}).get(observed_metric, []))
                 free_source_values[observed_metric] = source_value_rows
+                free_source_comparison[observed_metric] = {
+                    "YahooFinance": {
+                        "value": record.get(observed_metric),
+                        "source": metric_sources.get(observed_metric, "Yahoo Finance via yfinance") if _present(record.get(observed_metric)) else "NOT_AVAILABLE",
+                        "period": metric_periods.get(observed_metric, ""),
+                        "calculation_basis": metric_bases.get(observed_metric, ""),
+                    },
+                    "secondary_sources": source_value_rows,
+                    "comparison_status": "OBSERVATIONS_AVAILABLE_RECONCILIATION_REQUIRED",
+                }
             record["FreeSourcesAlternatesJSON"] = json.dumps(free_source_values, sort_keys=True)
+            record["FreeSourcesComparisonJSON"] = json.dumps(free_source_comparison, sort_keys=True)
             diagnostic["FreeSourcesAttempted"] = True
             diagnostic["FreeSourcesStatus"] = record["FreeSourcesStatus"]
             diagnostic["FreeSourcesMetricsFilled"] = ";".join(free_source_metrics)
@@ -960,6 +973,7 @@ def collect_missing_fundamentals(
     filings_fetcher: Callable | None = None,
     free_source_fetcher: Callable | None = None,
     force_retry_incomplete: bool = False,
+    free_source_audit_metrics: list[str] | tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     """Fetch missing fundamentals for every unique Delivery A/B symbol.
 
@@ -1090,6 +1104,8 @@ def collect_missing_fundamentals(
         last_free_status = current.get("FreeSourcesStatus", "")
         last_free_status_text = str(last_free_status).strip().upper() if _present(last_free_status) else ""
         free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
+        audit_metrics = [str(col) for col in (free_source_audit_metrics or []) if str(col) in secondary_supported]
+        free_source_missing = list(dict.fromkeys(free_source_missing + audit_metrics))
         force_retry_symbol = bool(force_retry_incomplete and bool(free_source_missing))
         in_free_cooldown = (
             _free_source_cooldown_active(last_free_attempt, last_free_status, free_source_retry_days)
@@ -1185,6 +1201,8 @@ def collect_missing_fundamentals(
                 fetch_kwargs["asof_date"] = cutoff_text
             if "missing_metrics" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["missing_metrics"] = free_source_missing
+            if "free_source_audit_metrics" in fetch_parameters or accepts_kwargs:
+                fetch_kwargs["free_source_audit_metrics"] = audit_metrics
             if "allow_free_sources" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["allow_free_sources"] = allow_free_sources
                 fetch_kwargs["free_source_defer_reason"] = free_defer_reason
@@ -1221,7 +1239,7 @@ def collect_missing_fundamentals(
             if col in {"FreeSourcesAttemptedAtUTC", "FreeSourcesStatus", "FreeSourcesDiagnosticsJSON"} and _present(fetched.get(col)):
                 merged[col] = fetched.get(col)
                 continue
-            if col == "FreeSourcesAlternatesJSON" and _present(fetched.get(col)) and str(fetched.get(col)).strip() not in {"", "{}"}:
+            if col in {"FreeSourcesAlternatesJSON", "FreeSourcesComparisonJSON"} and _present(fetched.get(col)) and str(fetched.get(col)).strip() not in {"", "{}"}:
                 merged[col] = fetched.get(col)
                 continue
             if col in VALUATION_COLUMNS and _present(fetched.get("ValuationAsOfDate")):
