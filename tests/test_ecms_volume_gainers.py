@@ -253,3 +253,33 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     assert summary["under_observation"] == 1
     saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
     assert saved_summary["morning_strong"] == 2
+
+
+def test_ecms_free_source_evidence_preserves_historical_alternates_when_latest_attempt_empty():
+    from strategies.ecms.volume_gainers import _ecms_free_source_evidence
+
+    row = pd.Series({
+        "FreeSourcesStatus": "EMPTY_OR_UNMAPPED",
+        "FreeSourcesAlternatesJSON": (
+            '{"GrossMarginPct":[{"source":"Moneycontrol","value":42.5}],'
+            '"OperatingMarginPct":[{"source":"Moneycontrol","value":18.2}]}'
+        ),
+    })
+    result = _ecms_free_source_evidence(row)
+    assert result["ECMSFreeSourcesEvidenceStatus"] == "HISTORICAL_ALTERNATES_PRESENT_NO_CURRENT_METRICS"
+    assert result["ECMSFreeSourcesObservedMetricCount"] == 2
+    assert result["ECMSFreeSourcesObservedMetrics"] == "GrossMarginPct;OperatingMarginPct"
+    # Do not change the source cache's original status: this is an ECMS audit overlay.
+    assert row["FreeSourcesStatus"] == "EMPTY_OR_UNMAPPED"
+
+
+def test_ecms_free_source_evidence_reports_no_alternates_without_inventing_data():
+    from strategies.ecms.volume_gainers import _ecms_free_source_evidence
+
+    result = _ecms_free_source_evidence(pd.Series({
+        "FreeSourcesStatus": "EMPTY_OR_UNMAPPED",
+        "FreeSourcesAlternatesJSON": "{}",
+    }))
+    assert result["ECMSFreeSourcesEvidenceStatus"] == "EMPTY_OR_UNMAPPED"
+    assert result["ECMSFreeSourcesObservedMetricCount"] == 0
+    assert result["ECMSFreeSourcesObservedMetrics"] == ""
