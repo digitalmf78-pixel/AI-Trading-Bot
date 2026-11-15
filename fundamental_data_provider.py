@@ -584,7 +584,8 @@ def _fetch_valuation_only(symbol: str, ticker_factory=None, asof_date=None) -> t
 
 
 def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=None, missing_metrics=None,
-               allow_free_sources=False, free_source_defer_reason="DISABLED") -> tuple[dict, dict]:
+               allow_free_sources=False, free_source_defer_reason="DISABLED",
+               free_source_fetcher=None) -> tuple[dict, dict]:
     symbol = str(symbol).strip().upper()
     url = f"https://finance.yahoo.com/quote/{symbol}.NS/financials/"
     diagnostic = {"TckrSymb": symbol, "ProviderStatus": "WAIT_FOR_DATA", "ProviderReason": "", "ProviderSource": "Yahoo Finance via yfinance", "ProviderSourceURL": url, "AttemptedAtUTC": datetime.now(timezone.utc).isoformat()}
@@ -784,8 +785,10 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
     free_source_requested &= set(AUXILIARY_FUNDAMENTAL_COLUMNS) | set(requested_secondary)
     if allow_free_sources and free_source_requested:
         try:
-            from free_fundamental_sources import fetch_free_fundamental_sources
-            free_source_result = fetch_free_fundamental_sources(
+            if free_source_fetcher is None:
+                from free_fundamental_sources import fetch_free_fundamental_sources
+                free_source_fetcher = fetch_free_fundamental_sources
+            free_source_result = free_source_fetcher(
                 symbol, company_name=company_name, missing_metrics=free_source_requested, pause_seconds=0.5,
             )
             for metric, value in free_source_result.get("metrics", {}).items():
@@ -955,6 +958,7 @@ def collect_missing_fundamentals(
     pause_seconds: float = 0.15,
     asof_date=None,
     filings_fetcher: Callable | None = None,
+    free_source_fetcher: Callable | None = None,
 ) -> pd.DataFrame:
     """Fetch missing fundamentals for every unique Delivery A/B symbol.
 
@@ -1180,6 +1184,8 @@ def collect_missing_fundamentals(
             if "allow_free_sources" in fetch_parameters or accepts_kwargs:
                 fetch_kwargs["allow_free_sources"] = allow_free_sources
                 fetch_kwargs["free_source_defer_reason"] = free_defer_reason
+            if free_source_fetcher is not None and ("free_source_fetcher" in fetch_parameters or accepts_kwargs):
+                fetch_kwargs["free_source_fetcher"] = free_source_fetcher
         except (TypeError, ValueError):
             # Legacy injected test fetchers may expose no inspectable signature.
             pass
