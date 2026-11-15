@@ -225,6 +225,10 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             "BulkSellers": " | ".join(sorted(set(bulk.loc[bulk["Side"].str.contains("SELL|S", regex=True), "ClientName"].astype(str)))) if not bulk.empty else "",
             "BlockBuyers": " | ".join(sorted(set(block.loc[block["Side"].str.contains("BUY|B", regex=True), "ClientName"].astype(str)))) if not block.empty else "",
             "BlockSellers": " | ".join(sorted(set(block.loc[block["Side"].str.contains("SELL|S", regex=True), "ClientName"].astype(str)))) if not block.empty else "",
+            "BulkBlockDealSummary": " | ".join(
+                f"{r.DealType} {r.DealDate} {r.Side} {r.ClientName} qty={r.Quantity} price={r.PriceINR}"
+                for r in symbol_rows.itertuples()
+            ),
             "BulkBlockLookbackStart": start_date.isoformat(),
             "BulkBlockLookbackEnd": as_of_date.isoformat(),
             "BulkBlockSourceURL": NSE_DEALS_PAGE,
