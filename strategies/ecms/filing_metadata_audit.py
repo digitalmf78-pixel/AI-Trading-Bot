@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "VerificationStatus", "VerificationWarning"]
+OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
 NSE_HOSTS = {"nsearchives.nseindia.com", "nsearchives.nseindia.in", "www.nseindia.com", "nseindia.com"}
 
 def _value(row, names):
@@ -29,7 +29,8 @@ def _label_status(value, accepted):
 def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
     """Keep XBRL, Details, audit and basis as separate explicit source fields.
 
-    Generic url/details fields are never treated as XBRL URLs. No URL is
+    Generic url fields are never promoted. The explicit API field details is
+    accepted only when already an HTTPS URL on an NSE host. No URL is
     synthesized from another URL and no missing metadata is inferred.
     """
     rows = []
@@ -57,7 +58,14 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
         if basis_status != "EXPLICIT_LABEL_CAPTURED": warnings.append("REPORTING_BASIS_MISSING_OR_UNRECOGNIZED")
         rows.append({"TckrSymb": _value(row, ("TckrSymb", "symbol")).upper(), "FinancialPeriodEnd": _value(row, ("FinancialPeriodEnd", "qe_Date")), "PublicationDate": _value(row, ("PublicationDate", "creation_Date")), "XBRLURL": xbrl, "XBRLURLStatus": "PASS" if xbrl_ok else "BLOCKED", "DetailsURL": details, "DetailsURLStatus": "PASS" if details_ok else "BLOCKED", "AuditedLabel": audited, "AuditStatus": audit_status, "ConsolidationLabel": consolidation, "ConsolidationStatus": basis_status, "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED" if metadata_ok else "METADATA_INCOMPLETE",
             "NSELookupStatus": _value(row, ("FilingMetadataStatus",)) or "LOOKUP_STATUS_NOT_PROVIDED", "VerificationStatus": "NOT_VERIFIED", "VerificationWarning": ";".join(warnings) if warnings else "Metadata only; Remarks/formula and XBRL reconciliation are still required"})
-    return pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
+    result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
+    if not result.empty and {"TckrSymb", "FinancialPeriodEnd"}.issubset(result.columns):
+        counts = result.groupby(["TckrSymb", "FinancialPeriodEnd"], dropna=False)["TckrSymb"].transform("size")
+        ambiguous = counts.gt(1)
+        result.loc[ambiguous, "FilingMetadataStatus"] = "AMBIGUOUS_EXACT_FILING_MATCH"
+        result.loc[ambiguous, "VerificationStatus"] = "NOT_VERIFIED"
+        result.loc[ambiguous, "VerificationWarning"] = result.loc[ambiguous, "VerificationWarning"].astype(str) + ";MULTIPLE_EXACT_FILING_ROWS_REQUIRE_MANUAL_RECONCILIATION"
+    return result
 
 def fetch_ecms_details_remarks(
     audit: pd.DataFrame,
