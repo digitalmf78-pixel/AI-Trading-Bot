@@ -17,6 +17,7 @@ from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_research import assess_fundamental_research
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
+from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
@@ -392,6 +393,24 @@ def assess_page_fundamentals(candidates, eod_date):
         ], columns=RATIO_XBRL_DISCOVERY_COLUMNS)
     ratio_discovery.to_csv(
         ecms_output_dir / "fundamental_ratio_xbrl_discovery.csv", index=False
+    )
+
+    # Filing metadata is audited independently: XML attachment, Details URL,
+    # audit label and reporting basis must remain separate explicit fields.
+    # The current shared cache may not contain these fields; that is reported
+    # as incomplete and never promotes any metric to verified.
+    try:
+        filing_metadata_audit = audit_ecms_filing_metadata(candidate_filings)
+    except Exception as exc:
+        filing_metadata_audit = pd.DataFrame([{
+            **{column: "" for column in FILING_METADATA_AUDIT_COLUMNS},
+            "TckrSymb": symbol,
+            "FilingMetadataStatus": "AUDIT_EXECUTION_ERROR",
+            "VerificationStatus": "NOT_VERIFIED",
+            "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:250]}",
+        } for symbol in sorted(candidate_symbols)], columns=FILING_METADATA_AUDIT_COLUMNS)
+    filing_metadata_audit.to_csv(
+        ecms_output_dir / "fundamental_filing_metadata_audit.csv", index=False
     )
 
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
