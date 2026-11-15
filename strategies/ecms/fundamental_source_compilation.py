@@ -117,6 +117,34 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
+    rows = []
+    if audit is None or audit.empty:
+        return rows
+    for _, item in audit.iterrows():
+        symbol = str(item.get("TckrSymb", "") or "").strip().upper()
+        if not symbol:
+            continue
+        status = str(item.get("DebtToEquityAuditStatus", "") or "").strip().upper() or "UNVERIFIED"
+        rows.append({
+            "TckrSymb": symbol,
+            "MetricName": "DebtToEquity",
+            "MetricValue": _number(item.get("OfficialDebtToEquity")),
+            "Source": "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT",
+            "SourceURL": str(item.get("EvidenceFilePath", "") or "").strip(),
+            "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
+            "PublicationDate": "",
+            "CalculationBasis": str(item.get("ReportingBasis", "") or "").strip(),
+            "Unit": "RATIO",
+            "SourceStatus": "OFFICIAL_AUDIT_RESULT",
+            "VerificationStatus": status,
+            "MismatchStatus": "MISMATCH" if "MISMATCH" in status else "NOT_ASSESSED",
+            "MismatchReason": str(item.get("DebtToEquityAuditReason", "") or "").strip(),
+            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity audit; diagnostic status preserved",
+        })
+    return rows
+
+
 def _manual_rows(observations: pd.DataFrame) -> list[dict]:
     rows = []
     if observations is None or observations.empty:
@@ -155,43 +183,20 @@ def build_fundamental_source_compilation(
     metrics: pd.DataFrame,
     verification: pd.DataFrame | None = None,
     manual_observations: pd.DataFrame | None = None,
+    debt_equity_audit: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Compile provider, official NSE audit, and manual BSE/Screener observations.
-
-    Sources remain separate rows; values are never averaged or silently reconciled.
-    Manual BSE/Screener rows are always observation-only and cannot satisfy the
-    strict official-XBRL gate.
-    """
+    """Compile independent observations without averaging or upgrading their status."""
     if metrics is None or "TckrSymb" not in metrics.columns:
         raise ValueError("Metrics input must contain TckrSymb")
     rows = _provider_rows(metrics)
     rows.extend(_verification_rows(verification if verification is not None else pd.DataFrame()))
-    rows.extend(_manual_rows(manual_observations if manual_observations is not None else pd.DataFrame()))\n    rows.extend(_debt_equity_rows(debt_equity_audit))
+    rows.extend(_manual_rows(manual_observations if manual_observations is not None else pd.DataFrame()))
+    rows.extend(_debt_equity_rows(debt_equity_audit))
     if not rows:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
     result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     result["TckrSymb"] = result["TckrSymb"].astype(str).str.strip().str.upper()
     result["MetricName"] = result["MetricName"].astype(str).str.strip()
-    return result.sort_values(["TckrSymb", "MetricName", "Source", "FinancialPeriodEnd"], kind="stable").reset_index(drop=True)
-
-
-def write_fundamental_source_compilation(
-    metrics_path: str | Path,
-    output_path: str | Path,
-    verification_path: str | Path | None = None,
-    manual_observations_path: str | Path | None = None,
-) -> pd.DataFrame:
-    metrics = pd.read_csv(metrics_path, keep_default_na=False)
-    verification = (
-        pd.read_csv(verification_path, keep_default_na=False)
-        if verification_path and Path(verification_path).is_file() else pd.DataFrame()
-    )
-    manual = (
-        pd.read_csv(manual_observations_path, keep_default_na=False)
-        if manual_observations_path and Path(manual_observations_path).is_file() else pd.DataFrame()
-    )
-    result = build_fundamental_source_compilation(metrics, verification, manual, debt_equity_audit)
-    destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    result.to_csv(destination, index=False)
-    return result
+    return result.sort_values(
+        ["TckrSymb", "MetricName", "Source", "FinancialPeriodEnd"], kind="stable"
+    ).reset_index(drop=True)
