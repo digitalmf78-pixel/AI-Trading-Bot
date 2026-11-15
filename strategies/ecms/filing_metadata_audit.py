@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
+OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
 NSE_HOSTS = {"nsearchives.nseindia.com", "nsearchives.nseindia.in", "www.nseindia.com", "nseindia.com"}
 
 def _value(row, names):
@@ -56,11 +56,11 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
         if not details_ok: warnings.append("SEPARATE_OFFICIAL_DETAILS_HTML_URL_MISSING_OR_INVALID")
         if audit_status != "EXPLICIT_LABEL_CAPTURED": warnings.append("AUDIT_LABEL_MISSING_OR_UNRECOGNIZED")
         if basis_status != "EXPLICIT_LABEL_CAPTURED": warnings.append("REPORTING_BASIS_MISSING_OR_UNRECOGNIZED")
-        rows.append({"TckrSymb": _value(row, ("TckrSymb", "symbol")).upper(), "FinancialPeriodEnd": _value(row, ("FinancialPeriodEnd", "qe_Date")), "PublicationDate": _value(row, ("PublicationDate", "creation_Date")), "XBRLURL": xbrl, "XBRLURLStatus": "PASS" if xbrl_ok else "BLOCKED", "DetailsURL": details, "DetailsURLStatus": "PASS" if details_ok else "BLOCKED", "AuditedLabel": audited, "AuditStatus": audit_status, "ConsolidationLabel": consolidation, "ConsolidationStatus": basis_status, "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED" if metadata_ok else "METADATA_INCOMPLETE",
+        rows.append({"TckrSymb": _value(row, ("TckrSymb", "symbol")).upper(), "FinancialPeriodEnd": _value(row, ("FinancialPeriodEnd", "qe_Date")), "PublicationDate": _value(row, ("PublicationDate", "creation_Date", "broadcast_Date")), "RevisedDate": _value(row, ("RevisedDate", "revised_Date")), "SequenceId": _value(row, ("SequenceId", "seq_Id")), "TypeOfSubmission": _value(row, ("TypeOfSubmission", "type_Sub")), "XBRLURL": xbrl, "XBRLURLStatus": "PASS" if xbrl_ok else "BLOCKED", "DetailsURL": details, "DetailsURLStatus": "PASS" if details_ok else "BLOCKED", "AuditedLabel": audited, "AuditStatus": audit_status, "ConsolidationLabel": consolidation, "ConsolidationStatus": basis_status, "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED" if metadata_ok else "METADATA_INCOMPLETE",
             "NSELookupStatus": _value(row, ("FilingMetadataStatus",)) or "LOOKUP_STATUS_NOT_PROVIDED", "VerificationStatus": "NOT_VERIFIED", "VerificationWarning": ";".join(warnings) if warnings else "Metadata only; Remarks/formula and XBRL reconciliation are still required"})
     result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     if not result.empty and {"TckrSymb", "FinancialPeriodEnd"}.issubset(result.columns):
-        counts = result.groupby(["TckrSymb", "FinancialPeriodEnd"], dropna=False)["TckrSymb"].transform("size")
+        counts = result.groupby(["TckrSymb", "FinancialPeriodEnd", "AuditedLabel", "ConsolidationLabel"], dropna=False)["TckrSymb"].transform("size")
         ambiguous = counts.gt(1)
         result.loc[ambiguous, "FilingMetadataStatus"] = "AMBIGUOUS_EXACT_FILING_MATCH"
         result.loc[ambiguous, "VerificationStatus"] = "NOT_VERIFIED"
@@ -196,11 +196,13 @@ def fetch_ecms_candidate_filing_metadata(
     session=None,
     timeout=35,
 ) -> pd.DataFrame:
-    """Fetch raw NSE filing rows for exact ECMS symbol + period pairs.
+    """Discover the latest eligible NSE Integrated Financial filing per symbol.
 
-    Only explicit API fields are retained. The function never derives a Details
-    URL from an XBRL URL, never uses a generic URL field, and preserves multiple
-    exact matches so downstream logic can flag ambiguity.
+    FinancialPeriodEnd is optional. If supplied, it is treated as an exact
+    period constraint; otherwise all available periods are requested and the
+    latest period not after the cutoff is selected. All filing variants for
+    that period (standalone/consolidated, audited/unaudited, original/revised)
+    are retained separately. Metadata is never metric verification.
     """
     client = session or requests.Session()
     client.headers.update({
@@ -215,27 +217,34 @@ def fetch_ecms_candidate_filing_metadata(
     try:
         client.get(NSE_HOME, timeout=timeout)
     except Exception:
-        # The API request below remains the authoritative test; homepage warm-up
-        # failure is not converted into source data.
+        # Keep attempting the API; any cookie/session failure is reported below.
         pass
+
     output = []
     for _, candidate in candidates.iterrows():
         symbol = str(candidate.get("TckrSymb", "") or "").strip().upper()
-        period = _parse_nse_date(candidate.get("FinancialPeriodEnd"))
-        if not symbol or period is None or period > cutoff:
+        requested_period = _parse_nse_date(candidate.get("FinancialPeriodEnd"))
+        if not symbol:
             output.append({
                 "TckrSymb": symbol,
-                "FinancialPeriodEnd": str(candidate.get("FinancialPeriodEnd", "")),
-                "FilingMetadataStatus": "CANDIDATE_SYMBOL_OR_PERIOD_INVALID",
+                "FilingMetadataStatus": "CANDIDATE_SYMBOL_INVALID",
                 "VerificationStatus": "NOT_VERIFIED",
-                "VerificationWarning": "Exact symbol and period are required before NSE lookup",
+                "VerificationWarning": "A non-empty NSE symbol is required",
             })
             continue
+        if requested_period is not None and requested_period > cutoff:
+            output.append({
+                "TckrSymb": symbol,
+                "FinancialPeriodEnd": requested_period.isoformat(),
+                "FilingMetadataStatus": "CANDIDATE_PERIOD_AFTER_CUTOFF",
+                "VerificationStatus": "NOT_VERIFIED",
+                "VerificationWarning": "Requested financial period is later than the as-of date",
+            })
+            continue
+
         params = {
             "index": "equities",
             "symbol": symbol,
-            "from_date": period.strftime("%d-%m-%Y"),
-            "to_date": cutoff.strftime("%d-%m-%Y"),
             "period_ended": "all",
             "type": "Integrated Filing- Financials",
             "page": 0,
@@ -254,41 +263,54 @@ def fetch_ecms_candidate_filing_metadata(
                 items = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
             else:
                 items = []
-            exact = []
+
+            eligible = []
             for item in items:
                 item_symbol = str(item.get("symbol", item.get("TckrSymb", "")) or "").strip().upper()
                 item_period = _parse_nse_date(item.get("qe_Date", item.get("FinancialPeriodEnd", "")))
-                pub_date = _parse_nse_date(item.get("creation_Date", item.get("PublicationDate", "")))
-                if item_symbol == symbol and item_period == period and pub_date is not None and pub_date <= cutoff:
-                    exact.append({
-                        "TckrSymb": symbol,
-                        "FinancialPeriodEnd": period.isoformat(),
-                        "PublicationDate": pub_date.isoformat(),
-                        "xbrl": item.get("xbrl", item.get("xbrl_Link", item.get("xbrlLink", ""))),
-                        "details": item.get("details", ""),
-                        "audited": item.get("audited", ""),
-                        "consolidated": item.get("consolidated", ""),
-                        "seq_Id": item.get("seq_Id", ""),
-                        "type_Sub": item.get("type_Sub", ""),
-                        "OfficialSource": "NSE Integrated Filing - Financials",
-                        "FilingMetadataStatus": "RAW_EXACT_NSE_API_ROW",
-                        "VerificationStatus": "NOT_VERIFIED",
-                        "VerificationWarning": "Raw API metadata only; Remarks/formula and XBRL facts still require reconciliation",
-                    })
-            if exact:
-                output.extend(exact)
-            else:
+                pub_date = _parse_nse_date(item.get("creation_Date", item.get("broadcast_Date", item.get("PublicationDate", ""))))
+                if item_symbol != symbol or item_period is None or item_period > cutoff:
+                    continue
+                if requested_period is not None and item_period != requested_period:
+                    continue
+                # A missing broadcast/publication date is not silently treated as eligible.
+                if pub_date is None or pub_date > cutoff:
+                    continue
+                eligible.append((item_period, pub_date, item))
+
+            if not eligible:
                 output.append({
                     "TckrSymb": symbol,
-                    "FinancialPeriodEnd": period.isoformat(),
-                    "FilingMetadataStatus": "NO_EXACT_NSE_API_ROW",
+                    "FinancialPeriodEnd": requested_period.isoformat() if requested_period else "",
+                    "FilingMetadataStatus": "NO_ELIGIBLE_NSE_FILING",
                     "VerificationStatus": "NOT_VERIFIED",
-                    "VerificationWarning": "No exact symbol + period + publication-before-cutoff filing returned",
+                    "VerificationWarning": "No exact symbol filing with a valid period and publication date on/before cutoff was returned",
+                })
+                continue
+
+            selected_period = requested_period or max(entry[0] for entry in eligible)
+            selected = [entry for entry in eligible if entry[0] == selected_period]
+            for item_period, pub_date, item in sorted(selected, key=lambda entry: (entry[1], str(entry[2].get("seq_Id", "")))):
+                output.append({
+                    "TckrSymb": symbol,
+                    "FinancialPeriodEnd": item_period.isoformat(),
+                    "PublicationDate": pub_date.isoformat(),
+                    "RevisedDate": str(item.get("revised_Date", "") or ""),
+                    "SequenceId": str(item.get("seq_Id", "") or ""),
+                    "TypeOfSubmission": str(item.get("type_Sub", "") or ""),
+                    "xbrl": item.get("xbrl", item.get("xbrl_Link", item.get("xbrlLink", item.get("ixbrl", "")))),
+                    "details": item.get("details", item.get("details_url", "")),
+                    "audited": item.get("audited", ""),
+                    "consolidated": item.get("consolidated", ""),
+                    "OfficialSource": "NSE Integrated Filing - Financials",
+                    "FilingMetadataStatus": "RAW_LATEST_PERIOD_NSE_API_ROW" if requested_period is None else "RAW_EXACT_NSE_API_ROW",
+                    "VerificationStatus": "NOT_VERIFIED",
+                    "VerificationWarning": "NSE filing metadata only; audit basis, revision choice, Remarks/formula and XBRL facts still require reconciliation",
                 })
         except Exception as exc:
             output.append({
                 "TckrSymb": symbol,
-                "FinancialPeriodEnd": period.isoformat(),
+                "FinancialPeriodEnd": requested_period.isoformat() if requested_period else "",
                 "FilingMetadataStatus": "NSE_API_LOOKUP_ERROR",
                 "VerificationStatus": "NOT_VERIFIED",
                 "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:240]}",
