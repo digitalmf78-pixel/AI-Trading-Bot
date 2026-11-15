@@ -41,7 +41,7 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
             possible = _value(row, ("OfficialFilingURL",))
             if _official_https_url(possible) and urlsplit(possible).path.lower().endswith(".xml"):
                 xbrl = possible
-        details = _value(row, ("details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL", "details"))
+        details = _value(row, ("details_url", "detailsUrl", "detailsURL", "detailUrl", "DetailsURL", "OfficialDetailsURL", "details", "ixbrl", "iXBRL", "ixbrl_url", "ixbrlUrl"))
         if not _official_https_url(details) or urlsplit(details).path.lower().endswith(".xml"):
             details = ""
         audited = _value(row, ("audited", "auditStatus", "audit_status", "AuditedLabel"))
@@ -124,39 +124,64 @@ def fetch_ecms_details_remarks(
                 continue
             soup = BeautifulSoup(body, "html.parser")
             extracted = []
-            for cell in soup.find_all(["td", "th", "dt"]):
-                label = " ".join(cell.get_text(" ", strip=True).lower().split()).rstrip(":")
-                if label != "remarks":
+            remarks_heading_found = False
+
+            # NSE's iXBRL Details page renders Remarks as a section heading
+            # followed by one or more table rows, not necessarily as a table
+            # cell literally labelled "Remarks".
+            for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+                heading_text = " ".join(heading.get_text(" ", strip=True).lower().split()).rstrip(":")
+                if heading_text != "remarks":
                     continue
-                value = ""
-                if cell.name == "dt":
-                    sibling = cell.find_next_sibling("dd")
-                    value = sibling.get_text(" ", strip=True) if sibling else ""
-                else:
-                    sibling = cell.find_next_sibling(["td", "th"])
-                    if sibling:
-                        value = sibling.get_text(" ", strip=True)
-                    if not value:
-                        parent = cell.find_parent("tr")
-                        if parent:
-                            cells = parent.find_all(["td", "th"], recursive=False)
-                            try:
-                                index = cells.index(cell)
-                                if index + 1 < len(cells):
-                                    value = cells[index + 1].get_text(" ", strip=True)
-                            except ValueError:
-                                pass
-                if value:
-                    extracted.append(value)
-            unique = list(dict.fromkeys(extracted))
+                remarks_heading_found = True
+                for element in heading.find_all_next(["h1", "h2", "h3", "h4", "h5", "h6", "tr", "p", "li"]):
+                    if element.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+                        break
+                    if element.name == "tr":
+                        cells = element.find_all(["td", "th"], recursive=False)
+                        values = [" ".join(cell.get_text(" ", strip=True).split()) for cell in cells]
+                        if len(values) >= 2 and any(values[1:]):
+                            extracted.append(f"{values[0]}: {' | '.join(value for value in values[1:] if value)}".strip())
+                    elif element.name in {"p", "li"}:
+                        value = " ".join(element.get_text(" ", strip=True).split())
+                        if value:
+                            extracted.append(value)
+
+            # Backward-compatible parser for explicitly labelled Remarks rows
+            # in older NSE Details HTML layouts.
+            if not remarks_heading_found:
+                for cell in soup.find_all(["td", "th", "dt"]):
+                    label = " ".join(cell.get_text(" ", strip=True).lower().split()).rstrip(":")
+                    if label != "remarks":
+                        continue
+                    value = ""
+                    if cell.name == "dt":
+                        sibling = cell.find_next_sibling("dd")
+                        value = sibling.get_text(" ", strip=True) if sibling else ""
+                    else:
+                        sibling = cell.find_next_sibling(["td", "th"])
+                        if sibling:
+                            value = sibling.get_text(" ", strip=True)
+                        if not value:
+                            parent = cell.find_parent("tr")
+                            if parent:
+                                cells = parent.find_all(["td", "th"], recursive=False)
+                                try:
+                                    index = cells.index(cell)
+                                    if index + 1 < len(cells):
+                                        value = cells[index + 1].get_text(" ", strip=True)
+                                except ValueError:
+                                    pass
+                    if value:
+                        extracted.append(value)
+
+            unique = list(dict.fromkeys(value for value in extracted if value))
             result["RemarksEvidenceSHA256"] = hashlib.sha256(body).hexdigest()
-            if len(unique) == 1:
-                result["RemarksText"] = unique[0][:12000]
+            if unique:
+                result["RemarksText"] = "\n".join(unique)[:12000]
                 result["RemarksStatus"] = "REMARKS_EXTRACTED"
-            elif len(unique) > 1:
-                result["RemarksStatus"] = "AMBIGUOUS_MULTIPLE_REMARKS"
             else:
-                result["RemarksStatus"] = "REMARKS_NOT_FOUND"
+                result["RemarksStatus"] = "REMARKS_SECTION_EMPTY" if remarks_heading_found else "REMARKS_NOT_FOUND"
         except Exception as exc:
             result["RemarksStatus"] = f"FETCH_OR_PARSE_ERROR:{type(exc).__name__}"
         rows.append(result)
@@ -305,8 +330,10 @@ def fetch_ecms_candidate_filing_metadata(
                     "RevisedDate": str(item.get("revised_Date", "") or ""),
                     "SequenceId": str(item.get("seq_Id", "") or ""),
                     "TypeOfSubmission": str(item.get("type_Sub", "") or ""),
-                    "xbrl": item.get("xbrl", item.get("xbrl_Link", item.get("xbrlLink", item.get("ixbrl", "")))),
-                    "details": item.get("details", item.get("details_url", "")),
+                    "xbrl": item.get("xbrl", item.get("xbrl_Link", item.get("xbrlLink", ""))),
+                    # NSE's Integrated Filing API exposes the official HTML
+                    # Details attachment as ixbrl, distinct from the XML xbrl.
+                    "details": item.get("details", item.get("details_url", item.get("ixbrl", item.get("iXBRL", "")))),
                     "audited": item.get("audited", ""),
                     "consolidated": item.get("consolidated", ""),
                     "OfficialSource": "NSE Integrated Filing - Financials",
