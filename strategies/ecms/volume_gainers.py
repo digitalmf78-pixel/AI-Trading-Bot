@@ -290,8 +290,11 @@ def assess_page_fundamentals(candidates, eod_date):
     # Separate ECMS-only Debt/Equity reconciliation. This diagnostic does not
     # alter the strict shortlist or the shared V8 verifier.
     try:
+        debt_equity_metrics = metrics_unique[
+            metrics_unique["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
+        ].copy()
         debt_equity_audit = audit_ecms_debt_to_equity(
-            metrics=candidate_metrics,
+            metrics=debt_equity_metrics,
             filings=candidate_filings,
             repo_root=ephemeral_root,
             symbols=candidate_symbols,
@@ -306,6 +309,28 @@ def assess_page_fundamentals(candidates, eod_date):
             }
             for symbol in sorted(candidate_symbols)
         ], columns=DEBT_EQUITY_AUDIT_COLUMNS)
+    if "TckrSymb" not in debt_equity_audit.columns:
+        debt_equity_audit = pd.DataFrame(columns=DEBT_EQUITY_AUDIT_COLUMNS)
+    else:
+        debt_equity_audit["TckrSymb"] = debt_equity_audit["TckrSymb"].astype(str).str.strip().str.upper()
+    # Keep exactly one diagnostic row per current page symbol, including
+    # candidates with no fundamental metrics yet.
+    debt_equity_audit = debt_equity_audit.drop_duplicates("TckrSymb", keep="first")
+    missing_debt_symbols = candidate_symbols - set(debt_equity_audit["TckrSymb"])
+    if missing_debt_symbols:
+        missing_rows = pd.DataFrame([
+            {
+                **{column: "" for column in DEBT_EQUITY_AUDIT_COLUMNS},
+                "TckrSymb": symbol,
+                "DebtToEquityAuditStatus": "CANDIDATE_METRICS_MISSING",
+                "DebtToEquityAuditReason": "No candidate-scoped fundamental metrics row is available",
+            }
+            for symbol in sorted(missing_debt_symbols)
+        ], columns=DEBT_EQUITY_AUDIT_COLUMNS)
+        debt_equity_audit = pd.concat([debt_equity_audit, missing_rows], ignore_index=True)
+    debt_equity_audit = debt_equity_audit[
+        debt_equity_audit["TckrSymb"].isin(candidate_symbols)
+    ].sort_values("TckrSymb").reset_index(drop=True)
     debt_equity_audit.to_csv(
         ecms_output_dir / "fundamental_debt_equity_xbrl_audit.csv", index=False
     )
