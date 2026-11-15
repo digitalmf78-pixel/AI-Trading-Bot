@@ -30,6 +30,10 @@ METRIC_COLUMNS = [
     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     "FreeCashFlowINR", "EarningsQualityStatus", "ValuationStatus",
 ]
+SECONDARY_SUPPORTED_METRICS = {
+    "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+    "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
+}
 VALUATION_NUMERIC_COLUMNS = [
     "ValuationPriceINR", "TrailingPE", "ForwardPE", "PriceToBook",
     "EnterpriseToEBITDA", "PriceToSales", "PriceToFreeCashFlow", "PEG",
@@ -768,10 +772,7 @@ def _fetch_one(symbol: str, ticker_factory=None, company_name=None, asof_date=No
             "reason": diagnostic.get("ProviderReason", ""),
         }
     }
-    secondary_supported = {
-        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
-    }
+    secondary_supported = SECONDARY_SUPPORTED_METRICS
     requested_secondary = set(missing_metrics) if missing_metrics is not None else set(secondary_supported)
     requested_secondary &= secondary_supported
     requested_secondary = {col for col in requested_secondary if not _present(record.get(col))}
@@ -1104,7 +1105,7 @@ def collect_missing_fundamentals(
         last_free_status = current.get("FreeSourcesStatus", "")
         last_free_status_text = str(last_free_status).strip().upper() if _present(last_free_status) else ""
         free_source_missing = missing + [col for col in AUXILIARY_FUNDAMENTAL_COLUMNS if not _present(current.get(col))]
-        audit_metrics = [str(col) for col in (free_source_audit_metrics or []) if str(col) in secondary_supported]
+        audit_metrics = [str(col) for col in (free_source_audit_metrics or []) if str(col) in SECONDARY_SUPPORTED_METRICS]
         free_source_missing = list(dict.fromkeys(free_source_missing + audit_metrics))
         force_retry_symbol = bool(force_retry_incomplete and bool(free_source_missing))
         in_free_cooldown = (
