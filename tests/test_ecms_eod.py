@@ -131,3 +131,32 @@ def test_ecms_mainboard_loader_uses_ecms_owned_cache_directory(tmp_path, monkeyp
     assert captured["cache_dir"] == ecms_cache
     assert "OFFICIAL_CACHED" in source
 
+
+
+def test_expected_latest_completed_session_rolls_weekend_and_holiday_forward(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import strategies.ecms.eod as ecms_eod
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # Normal Friday EOD -> Friday completed session; Monday morning -> Friday.
+    monkeypatch.setattr(ecms_eod, "is_trading_session", lambda day: day.weekday() < 5)
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 13, 17, 0, tzinfo=ist)
+    ) == date(2026, 11, 13)
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 16, 9, 20, tzinfo=ist)
+    ) == date(2026, 11, 13)
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 17, 9, 20, tzinfo=ist)
+    ) == date(2026, 11, 16)
+
+    # If Monday is an NSE holiday, Tuesday morning must still resolve to Friday.
+    monkeypatch.setattr(
+        ecms_eod, "is_trading_session",
+        lambda day: day.weekday() < 5 and day != date(2026, 11, 16),
+    )
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 17, 9, 20, tzinfo=ist)
+    ) == date(2026, 11, 13)
+
