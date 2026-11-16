@@ -746,7 +746,7 @@ def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_fo
     monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
     monkeypatch.setattr(scanner, "fetch_volume_gainers", lambda: pd.DataFrame({
         "TckrSymb": ["AAA"], "CompanyName": ["Alpha"], "PageVolume": [100],
-        "PageVolumeDataStatus": ["DATA_FOUND"],
+        "PageVolumeDataStatus": ["DATA_FOUND"], "NSEServerDateIST": ["2026-11-16"],
     }))
     monkeypatch.setattr(scanner, "_eligible_page_equities", lambda page: (page.copy(), "TEST_MAINBOARD"))
     monkeypatch.setattr(scanner, "_save_eod_snapshot", lambda frame, day: frame)
@@ -793,17 +793,34 @@ def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_fo
         "fundamental_date": date(2026, 11, 16),
         "information_date": date(2026, 11, 16),
         "comparison_date": date(2026, 11, 16),
-        "comparison_data_date": date(2026, 11, 13),
+        "comparison_data_date": date(2026, 11, 16),
     }
     assert summary["scan_date_ist"] == "2026-11-16"
+    assert summary["page_session_date_ist"] == "2026-11-16"
+    assert summary["bhavcopy_date_ist"] == "2026-11-13"
     assert summary["data_as_of_date_ist"] == "2026-11-13"
-    assert summary["eod_data_current_for_scan_date"] is False
-    assert summary["data_freshness_status"] == "WAIT_FOR_CURRENT_SESSION_EOD_DATA"
-    assert summary["morning_comparison_status"] == "STALE_EOD_DATA_NOT_COMPARED"
-    assert summary["morning_comparison_performed"] is False
-    assert summary["morning_repeat_count"] == 0
-    assert summary["eod_new_entry_count"] == 0
+    assert summary["eod_data_current_for_scan_date"] is True
+    assert summary["page_freshness_evidence"] == "NSE_API_HTTP_DATE_HEADER_MATCH"
+    assert summary["data_freshness_status"] == "CURRENT_SESSION_PAGE_VERIFIED"
+    assert summary["morning_comparison_status"] == "COMPLETED"
+    assert summary["morning_comparison_performed"] is True
 
+
+
+def test_verified_nse_page_session_date_requires_matching_server_date():
+    import pytest
+    from datetime import date
+    from strategies.ecms.volume_gainers import _verified_nse_page_session_date
+
+    page = pd.DataFrame({"NSEServerDateIST": ["2026-11-16", "2026-11-16"]})
+    assert _verified_nse_page_session_date(page, date(2026, 11, 16)) == date(2026, 11, 16)
+    with pytest.raises(RuntimeError, match="does not match scan date"):
+        _verified_nse_page_session_date(
+            pd.DataFrame({"NSEServerDateIST": ["2026-11-13"]}), date(2026, 11, 16)
+        )
+    with pytest.raises(RuntimeError, match="no verifiable server Date header"):
+        _verified_nse_page_session_date(pd.DataFrame({"TckrSymb": ["AAA"]}), date(2026, 11, 16)
+        )
 
 def test_fetch_volume_gainers_maps_additional_quantity_alias_and_exposes_payload_schema():
     import strategies.ecms.volume_gainers as scanner
