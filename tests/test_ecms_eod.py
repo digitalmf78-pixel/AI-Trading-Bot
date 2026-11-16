@@ -50,6 +50,26 @@ def test_equity_rows_keeps_supported_listed_equity_series_and_excludes_etfs():
     result = _equity_rows(frame)
     assert set(result["TckrSymb"]) == {"AAA", "BBB"}
 
+
+def test_official_mainboard_universe_excludes_etf_isin_prefix():
+    from main_board_filter import _symbols_from_mainboard_equity_csv
+
+    payload = pd.DataFrame({
+        "SYMBOL": ["AAA", "ETF1", "BBB"],
+        "NAME OF COMPANY": ["AAA LTD", "INDEX ETF", "BBB LTD"],
+        "ISIN NUMBER": ["INE000A01001", "INF000000001", "INE000B01001"],
+    }).to_csv(index=False).encode("utf-8")
+
+    assert _symbols_from_mainboard_equity_csv(payload) == {"AAA", "BBB"}
+
+
+def test_official_mainboard_universe_fails_closed_without_isin_column():
+    from main_board_filter import _symbols_from_mainboard_equity_csv
+
+    payload = pd.DataFrame({"SYMBOL": ["AAA"]}).to_csv(index=False).encode("utf-8")
+    with pytest.raises(ValueError, match="no ISIN column"):
+        _symbols_from_mainboard_equity_csv(payload)
+
 def test_expected_latest_completed_session_uses_ist_market_close():
     from datetime import datetime
     from zoneinfo import ZoneInfo
