@@ -177,3 +177,12 @@ The ECMS workflow has exactly two scheduled jobs: Morning at 09:20 IST and EOD a
 - Morning never writes a new EOD page universe. It may save the unchanged EOD snapshot alongside its ECMS working cache. The next successful EOD run replaces it for the next trading session.
 - `PagePresenceConfirmationStatus=DOUBLE_CONFIRMED_EOD_MORNING` means the symbol appeared in both page snapshots. The separate `ConfirmationStatus` retains the existing fundamental-based confirmation meaning; do not conflate the two.
 - This is isolated to ECMS files and `.github/workflows/ecms-volume-gainers-shadow.yml`. NSE V8 workflow/configuration and shared production scanner behavior are not changed.
+
+## Manual NSE Volume Gainers page files
+
+Until the scanner is fully validated, every successful Morning and EOD scan also creates a downloadable CSV of the complete row set returned by the official NSE Volume Gainers page and sends it to the configured Telegram chat as a document:
+
+- EOD: `outputs/ecms/volume_gainers_eod_nse_page.csv`
+- Morning: `outputs/ecms/volume_gainers_morning_nse_page.csv`
+
+The CSV preserves every returned page row, including rows outside the official Main Board universe, and explicitly labels `MainBoardEligible` and `PageUniverseStatus`. It also records scan mode/date, page capture time and NSE page source. The scanner's research universe remains the eligible Main Board subset; the downloadable page CSV is a manual comparison aid and does not change stock selection. The page currently labels its table Top 25, so “complete” means all rows returned by that NSE page response, not the entire NSE-listed universe.
