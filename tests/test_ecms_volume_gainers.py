@@ -290,7 +290,9 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     report = pd.read_csv(output_dir / "volume_gainers_morning_recheck.csv").set_index("TckrSymb")
     assert report.loc["AAA", "ConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
     assert report.loc["BBB", "ConfirmationStatus"] == "MORNING_FUNDAMENTAL_PASS"
-    assert report.loc["AAA", "MorningStatus"] == "EOD_FUNDAMENTAL_PASS_REPEAT"
+    assert report.loc["AAA", "MorningStatus"] == "EOD_AND_MORNING_PAGE_REPEAT"
+    assert report.loc["AAA", "PagePresenceConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
+    assert report.loc["AAA", "FundamentalConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
     assert report.loc["BBB", "MorningStatus"] == "NEW_MORNING_ENTRY"
     assert report.loc["AAA", "PagePresenceConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
     assert report.loc["BBB", "PagePresenceConfirmationStatus"] == "NEW_MORNING_ENTRY"
