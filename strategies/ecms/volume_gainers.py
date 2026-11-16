@@ -723,10 +723,11 @@ def _save_morning_snapshot(frame, morning_date):
     snapshot["TckrSymb"] = snapshot["TckrSymb"].astype(str).str.strip().str.upper()
     if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
         raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: blank or duplicate symbols")
+    captured_at = datetime.now(IST).isoformat()
     snapshot["MorningDate"] = morning_date.isoformat()
     snapshot["SnapshotType"] = "MORNING"
     snapshot["SnapshotStatus"] = "VALID"
-    snapshot["SnapshotCapturedAtIST"] = datetime.now(IST).isoformat()
+    snapshot["SnapshotCapturedAtIST"] = captured_at
     columns = [c for c in ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
         "VolumeChangeTimes1W", "VolumeChangeTimes2W", "MorningDate", "SnapshotType",
         "SnapshotStatus", "SnapshotCapturedAtIST"] if c in snapshot.columns]
@@ -740,7 +741,7 @@ def _save_morning_snapshot(frame, morning_date):
         "morning_date": morning_date.isoformat(), "symbol_count": int(state["TckrSymb"].nunique()),
         "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
         "github_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
-        "captured_at_ist": datetime.now(IST).isoformat(),
+        "captured_at_ist": captured_at,
     }
     marker_path = STATE_DIR / "morning_snapshot_run_marker.json"
     marker_tmp = marker_path.with_name(marker_path.name + ".tmp")
