@@ -1,4 +1,4 @@
-name: ECMS NSE VOLUME GAINERS - EOD + 09:20 MORNING
+name: ECMS NSE VOLUME GAINERS - TWO DAILY SCANS
 on:
   push:
     branches: [main]
@@ -13,7 +13,7 @@ on:
         default: eod
         options: [eod, morning]
   schedule:
-    - cron: "15 11 * * 1-5" # 16:45 IST EOD page snapshot
+    - cron: "30 11 * * 1-5" # 17:00 IST EOD page snapshot
     - cron: "50 3 * * 1-5"  # 09:20 IST morning recheck
 permissions:
   contents: read
@@ -47,7 +47,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'eod') ||
       (github.event_name == 'schedule' && github.event.schedule == '15 11 * * 1-5')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - name: Checkout main branch
         uses: actions/checkout@v5
@@ -272,7 +272,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
       (github.event_name == 'schedule' && github.event.schedule == '50 3 * * 1-5')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - name: Checkout main branch
         uses: actions/checkout@v5
