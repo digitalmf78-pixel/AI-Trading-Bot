@@ -112,7 +112,7 @@ ECMS runs **only two scheduled scans per official NSE cash-market trading day**.
 - The previous EOD → current Morning comparison is also shown separately; do not confuse it with the same-day Morning → EOD comparison.
 - These are **page-presence labels only**. They apply regardless of whether the stock's fundamental result is PASS, FAIL or WAIT_FOR_DATA.
 - Show each stock's actual existing fundamental result alongside its repeat/new label. Do not create a new rejection, ranking, scoring, confirmation or selection rule from repeat status.
-- All seven existing fundamental metrics, thresholds, sector applicability, PASS/FAIL/WAIT_FOR_DATA treatment, and information-only fields remain unchanged.
+- Fundamental PASS/FAIL/WAIT_FOR_DATA remains a separate evidence layer: verified PASS continues to balanced research; verified FAIL may trigger the approved fundamental rejection gate; WAIT/PARTIAL continues through all other research and is never marked fundamentally strong. The code now records `FundamentalDecisionRole` and `ResearchContinuationStatus` explicitly.
 
 ### Schedule, holidays and runtime
 
