@@ -665,6 +665,7 @@ def attach_information(assessed, as_of_date):
         re.IGNORECASE,
     )
     corporate_summaries = {}
+    corporate_counts = {}
     if not news.empty:
         official_news = news[
             news.get("SourceType", pd.Series("", index=news.index)).astype(str).str.upper().eq("OFFICIAL")
@@ -674,13 +675,13 @@ def attach_information(assessed, as_of_date):
                 rows["Headline"].astype(str).apply(lambda headline: bool(corporate_pattern.search(headline)))
             ]
             if not matched.empty:
+                corporate_counts[symbol] = int(len(matched))
                 corporate_summaries[symbol] = " | ".join(
                     f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
                     for _, row in matched.sort_values("PublishedDate", ascending=False).iterrows()
                 )
     result["CorporateActionAnnouncementCount"] = [
-        sum(1 for _ in [corporate_summaries[symbol]]) if symbol in corporate_summaries else 0
-        for symbol in symbols
+        corporate_counts.get(symbol, 0) for symbol in symbols
     ]
     result["CorporateActionAnnouncementSummary"] = [
         corporate_summaries.get(symbol, "") for symbol in symbols
