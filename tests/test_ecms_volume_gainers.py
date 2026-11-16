@@ -187,7 +187,7 @@ def test_ecms_free_source_budget_expands_to_cover_every_current_candidate(tmp_pa
     assert (tmp_path / "outputs/ecms/fundamental_collection_error.csv").exists()
 
 
-def test_fundamental_pass_is_the_only_morning_gate_even_if_other_scores_are_weak():
+def test_fundamental_pass_indicator_is_not_the_overall_morning_gate():
     from strategies.ecms.volume_gainers import _strong_fundamental_mask
 
     frame = pd.DataFrame({
@@ -197,7 +197,27 @@ def test_fundamental_pass_is_the_only_morning_gate_even_if_other_scores_are_weak
         "RVOL": [0.1, None, 10, 20],
         "CatalystStatus": ["NEGATIVE", "WAIT_FOR_DATA", "FOUND", "FOUND"],
     })
+    # This mask reports only the fundamental layer's PASS state.
     assert _strong_fundamental_mask(frame).tolist() == [True, True, False, False]
+
+
+def test_incomplete_fundamentals_continue_to_balanced_research():
+    from strategies.ecms.volume_gainers import _fundamental_decision_fields
+
+    passed = _fundamental_decision_fields("PASS")
+    failed = _fundamental_decision_fields("FAIL")
+    waiting = _fundamental_decision_fields("WAIT_FOR_DATA")
+    collection_error = _fundamental_decision_fields("")
+
+    assert passed["ResearchContinuationStatus"] == "CONTINUE_BALANCED_RESEARCH"
+    assert passed["StrongFundamentalHandOffStatus"] == "FORWARDED_TO_BALANCED_RESEARCH"
+    assert failed["ResearchContinuationStatus"] == "FUNDAMENTAL_REJECTION_GATE"
+    assert failed["StrongFundamentalHandOffStatus"] == "REJECTED_BY_VERIFIED_FUNDAMENTALS"
+    assert waiting["FundamentalDecisionRole"] == "FUNDAMENTAL_PENDING_OTHER_RESEARCH_CONTINUES"
+    assert waiting["ResearchContinuationStatus"] == "CONTINUE_BALANCED_RESEARCH"
+    assert waiting["StrongFundamentalHandOffStatus"] == "FORWARDED_PENDING_FUNDAMENTAL_DATA"
+    assert waiting["StrongFundamentalNotForwardedReason"] == ""
+    assert collection_error["ResearchContinuationStatus"] == "CONTINUE_BALANCED_RESEARCH"
 
 
 def test_confirmation_status_uses_only_fundamental_pass_and_presence():
