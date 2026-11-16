@@ -32,7 +32,7 @@ ALIASES = {
  "symbol": ("symbol","tradingSymbol","ticker"),
  "company": ("securityName","companyName","company","name"),
  "series": ("series","securitySeries"),
- "volume": ("volume","totalTradedVolume","totalTradedQty","tradedVolume","quantity"),
+ "volume": ("volume","totalTradedVolume","totalTradedQty","totalTradedQuantity","tradedVolume","tradedQty","tradedQuantity","quantityTraded","qtyTraded","volumeTraded","totalVolume","quantity"),
  "ltp": ("ltp","lastPrice","lastTradedPrice","closePrice"),
  "change_pct": ("pChange","perChange","changePercent","percentChange"),
  "turnover": ("turnover","totalTradedValue","value"),
@@ -84,10 +84,28 @@ def fetch_volume_gainers(session=None):
     for row in rows:
         symbol=str(_get(row,ALIASES["symbol"]) or "").strip().upper()
         if not symbol or symbol in {"-","NAN","NONE"}: continue
+        exact_volume_field = next((
+            str(key) for key in row
+            if _key(key) in {_key(alias) for alias in ALIASES["volume"]}
+            and _number(row.get(key)) is not None
+        ), "")
+        fuzzy_volume_fields = [
+            str(key) for key in row
+            if any(token in _key(key) for token in ("volume", "tradedqty", "tradedquantity", "qtytraded"))
+            and not any(token in _key(key) for token in ("avg", "average", "week", "change", "percent"))
+            and _number(row.get(key)) is not None
+        ]
+        volume_field = exact_volume_field or (fuzzy_volume_fields[0] if len(fuzzy_volume_fields) == 1 else "")
+        volume_raw = row.get(volume_field) if volume_field else _get(row, ALIASES["volume"])
+        payload_keys = "|".join(sorted(str(key) for key in row))
+        volume_like_fields = "|".join(sorted(
+            str(key) for key in row
+            if any(token in _key(key) for token in ("volume", "tradedqty", "tradedquantity", "qtytraded"))
+        ))
         normalized.append({
           "TckrSymb":symbol, "CompanyName":str(_get(row,ALIASES["company"]) or ""),
           "Series":str(_get(row,ALIASES["series"]) or "").strip().upper(),
-          "PageVolume":_number(_get(row,ALIASES["volume"])), "LTP":_number(_get(row,ALIASES["ltp"])),
+          "PageVolume":_number(volume_raw), "LTP":_number(_get(row,ALIASES["ltp"])),
           "ChangePct":_number(_get(row,ALIASES["change_pct"])), "Turnover":_number(_get(row,ALIASES["turnover"])),
           "AvgVolume1W":_number(_get(row,ALIASES["avg_volume_1w"])),
           "VolumeChangePct1W":_number(_get(row,ALIASES["change_pct_1w"])),
@@ -95,8 +113,11 @@ def fetch_volume_gainers(session=None):
           "VolumeChangePct2W":_number(_get(row,ALIASES["change_pct_2w"])),
           "VolumeChangeTimes1W":_number(_get(row,ALIASES["change_times_1w"])),
           "VolumeChangeTimes2W":_number(_get(row,ALIASES["change_times_2w"])),
-          "PageVolumeDataStatus":"DATA_FOUND" if _number(_get(row,ALIASES["volume"])) is not None else "MISSING_FROM_NSE_RESPONSE",
-          "PageVolumeSourceField":next((str(k) for k in row if _key(k) in {_key(a) for a in ALIASES["volume"]} and _number(row.get(k)) is not None), ""),
+          "PageVolumeDataStatus":"DATA_FOUND" if _number(volume_raw) is not None else "MISSING_FROM_NSE_RESPONSE",
+          "PageVolumeSourceField":volume_field,
+          "PageVolumeRawValue":"" if volume_raw is None else str(volume_raw),
+          "NSEPayloadKeys":payload_keys,
+          "NSEPayloadVolumeLikeFields":volume_like_fields,
           "NSEUpdatedAt":str(_get(row,ALIASES["updated_at"]) or ""),
         })
     frame=pd.DataFrame(normalized)
@@ -859,7 +880,7 @@ def _save_eod_snapshot(frame, eod_date):
     keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct", "EODScanDate", "EODScanCapturedAtIST",
             "AvgVolume1W", "VolumeChangePct1W", "AvgVolume2W", "VolumeChangePct2W",
             "VolumeChangeTimes1W", "VolumeChangeTimes2W", "PageVolumeDataStatus",
-            "PageVolumeSourceField", "FundamentalMetricsPopulatedCount",
+            "PageVolumeSourceField", "PageVolumeRawValue", "NSEPayloadKeys", "NSEPayloadVolumeLikeFields", "FundamentalMetricsPopulatedCount",
             "FundamentalMetricsMissingCount", "FundamentalMetricsOfficiallyVerifiedCount",
             "FundamentalMetricsMismatchCount", "FundamentalMetricsReconciliationRequiredCount",
             "FundamentalMetricsFilingMetadataNotConfirmedCount", "FundamentalMetricsMissingNames",
@@ -1268,6 +1289,8 @@ def run_morning():
           "MorningVolumeChangeTimes2W":current.get("VolumeChangeTimes2W"),
           "MorningPageVolumeDataStatus":current.get("PageVolumeDataStatus","MISSING_FROM_NSE_RESPONSE"),
           "MorningPageVolumeSourceField":current.get("PageVolumeSourceField",""),
+           "MorningPagePayloadKeys":current.get("NSEPayloadKeys",""),
+           "MorningPageVolumeLikeFields":current.get("NSEPayloadVolumeLikeFields",""),
           "DataQuality":"LIVE_PAGE_AND_FUNDAMENTALS" if present and assessed else
             "NOT_ON_CURRENT_PAGE" if not present else "PARTIAL_LIVE_DATA"})
     report=pd.DataFrame(rows)
