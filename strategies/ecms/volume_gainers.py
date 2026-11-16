@@ -21,7 +21,7 @@ from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METAD
 from strategies.ecms.information import (
     attach_valuation, collect_upcoming_events, collect_bulk_block_deals, collect_corporate_actions,
 )
-from nse_trading_calendar import is_trading_session, expected_scan_time, CalendarCoverageError
+from nse_trading_calendar import is_trading_session, expected_scan_time, calendar_coverage_warnings, CalendarCoverageError
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
@@ -1440,6 +1440,8 @@ def main():
     # GitHub Actions cron also fires on weekday NSE holidays. Never treat the
     # last available page/session as a fresh scan for a non-trading date.
     today = datetime.now(IST).date()
+    for warning in calendar_coverage_warnings(today):
+        print(warning)
     try:
         trading_session = is_trading_session(today)
     except CalendarCoverageError as exc:
