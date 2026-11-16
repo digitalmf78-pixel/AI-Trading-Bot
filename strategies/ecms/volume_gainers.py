@@ -1360,6 +1360,7 @@ def _page_presence_confirmation_status(eod_present, morning_present):
 
 
 def _confirmation_status(eod_pass, present, morning_pass):
+    """Fundamental-layer confirmation only; never an overall stock decision."""
     if eod_pass and present and morning_pass:
         return "DOUBLE_CONFIRMED_EOD_MORNING"
     if morning_pass:
@@ -1432,6 +1433,12 @@ def run_morning():
     morning_assessed["MorningStrongFundamentalStatus"] = (
         _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
+    morning_assessed["MorningFundamentalGateStatus"] = (
+        morning_assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
+            "PASS": "VERIFIED_FUNDAMENTAL_PASS",
+            "FAIL": "VERIFIED_FUNDAMENTAL_FAIL",
+        }).fillna("FUNDAMENTAL_WAIT_OTHER_RESEARCH_CONTINUES")
+    )
 
     previous_symbols=set(previous["TckrSymb"].astype(str).str.upper())
     live_symbols=set(live["TckrSymb"].astype(str).str.upper())
@@ -1459,8 +1466,7 @@ def run_morning():
           "EODDate":old.get("EODDate",""),
           "MorningDate":today.isoformat(),
           "MorningStatus":(
-             "EOD_FUNDAMENTAL_PASS_REPEAT" if symbol in previous_symbols and present and eod_strong else
-             "EOD_REPEAT_NOT_FUNDAMENTAL_PASS" if symbol in previous_symbols and present else
+             "EOD_AND_MORNING_PAGE_REPEAT" if symbol in previous_symbols and present else
              "EOD_ONLY_NOT_ON_MORNING_PAGE" if symbol in previous_symbols else "NEW_MORNING_ENTRY"
           ),
           "PagePresenceConfirmationStatus": _page_presence_confirmation_status(
@@ -1520,7 +1526,11 @@ def run_morning():
           "MorningFundamentalMetricsOfficiallyVerifiedCount":assessed.get("FundamentalMetricsOfficiallyVerifiedCount",""),
           "MorningFundamentalMetricsMismatchCount":assessed.get("FundamentalMetricsMismatchCount",""),
           "MorningFundamentalNotForwardedReason":assessed.get("StrongFundamentalNotForwardedReason",""),
+          "MorningFundamentalDecisionRole":assessed.get("FundamentalDecisionRole","NOT_ASSESSED"),
+          "MorningResearchContinuationStatus":assessed.get("ResearchContinuationStatus","NOT_ASSESSED"),
+          "MorningFundamentalGateStatus":assessed.get("MorningFundamentalGateStatus","NOT_ASSESSED"),
           "MorningStrongFundamentalStatus":assessed.get("MorningStrongFundamentalStatus","NOT_ASSESSED"),
+          "FundamentalConfirmationStatus":confirmation,
           "ConfirmationStatus":confirmation,
           "MorningChangePct":current.get("ChangePct"),
           "MorningVolumeChangeTimes1W":current.get("VolumeChangeTimes1W"),
@@ -1552,6 +1562,9 @@ def run_morning():
       "morning_assessed_candidates":int(len(morning_assessed)),
       "morning_assessment_rows":int(report["MorningStrongFundamentalStatus"].ne("NOT_ASSESSED").sum()),
       "morning_fundamental_pass":int(report["MorningStrongFundamentalStatus"].eq("MORNING_FUNDAMENTAL_PASS").sum()),
+      "morning_fundamental_fail":int(report["MorningFundamentalGateStatus"].eq("VERIFIED_FUNDAMENTAL_FAIL").sum()),
+      "morning_wait_continues_research":int(report["MorningResearchContinuationStatus"].eq("CONTINUE_BALANCED_RESEARCH").sum()),
+      "morning_verified_fundamental_rejections":int(report["MorningResearchContinuationStatus"].eq("FUNDAMENTAL_REJECTION_GATE").sum()),
       "morning_fundamental_metrics_all_7_populated":int(morning_assessed.get("FundamentalMetricsCoverageStatus", pd.Series("", index=morning_assessed.index)).eq("ALL_7_POPULATED").sum()),
       "morning_fundamental_metrics_partially_populated":int(morning_assessed.get("FundamentalMetricsCoverageStatus", pd.Series("", index=morning_assessed.index)).eq("PARTIAL_DATA").sum()),
       "morning_fundamental_metric_officially_verified_observations":int(pd.to_numeric(morning_assessed.get("FundamentalMetricsOfficiallyVerifiedCount", pd.Series(0, index=morning_assessed.index)), errors="coerce").fillna(0).sum()),
@@ -1576,7 +1589,7 @@ def run_morning():
       "page_presence_morning_only":int(report["PagePresenceConfirmationStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "eod_pass_not_morning_pass":int(report["ConfirmationStatus"].eq("EOD_PASS_MORNING_NOT_PASS").sum()),
       "nse_page":NSE_PAGE,
-      "note":"Every eligible 09:20 page candidate receives the same fundamental-only gate. Repeat/new/disappeared labels are informational; no other data field rejects a stock."}
+      "note":"Every eligible 09:20 page candidate receives fundamental assessment. Verified complete FAIL may invoke the fundamental rejection rule; WAIT/PARTIAL continues through other research. Page repeat/new/disappeared labels are independent of fundamental status. ConfirmationStatus is a legacy alias for FundamentalConfirmationStatus, not an overall stock decision."}
     # The comparison report and same-day Morning snapshot are now persisted.
     # Only now consume the previous EOD reference; failures above leave it intact.
     summary["previous_eod_reference_consumed"] = _consume_previous_eod_snapshot(expected_eod)
