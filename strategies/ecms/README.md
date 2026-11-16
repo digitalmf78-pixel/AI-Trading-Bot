@@ -121,3 +121,15 @@ A stock appearing on both Morning and EOD pages confirms only that it appeared i
 - Before enabling this lifecycle, test Morning→EOD overlap, EOD-only and Morning-only cases; cache reuse vs refresh; new symbols; non-trading days; failed/partial runs; and proof that Morning never overwrites EOD state.
 - A successful workflow/CI run alone is not proof of a successful live data cycle. Verify the generated Morning/EOD artifacts and cache markers separately.
 
+
+
+## Independence audit — current implementation gap (do not bypass)
+
+The continuous-loop rule above is the target contract, not a claim that every legacy dependency has already been removed. The current scanner still has legacy shared-cache touchpoints that must be replaced before this branch is eligible for merge or live adoption:
+
+- `strategies/ecms/volume_gainers.py` currently bootstraps its ECMS fundamental workspace from shared `METRICS_PATH`, `FILINGS_PATH` and `EVIDENCE_PATH` when its own files are absent.
+- `strategies/ecms/eod.py` still points fundamental inputs/thresholds and the Main Board universe cache at repository-wide paths.
+- The current workflow restores a legacy NSE cache archive containing production fundamental and other V8 cache paths. These must not become ECMS inputs; retain only explicitly approved read-only market reference data (such as completed-session Bhavcopy), and move any ECMS-maintained reference cache under `data/cache/ecms/`.
+- Removing these paths without replacing their required data acquisition and verification steps would make the fundamental gate fail closed or break RVOL/Main Board acquisition. Therefore, do not simply delete paths or weaken the XBRL gate. Build and test the ECMS-owned acquisition/cache path first.
+
+**Merge gate:** the PR must prove that ECMS runs without reading, seeding, writing or restoring NSE V8 production fundamental caches; all seven required metrics must retain the existing fail-closed official-XBRL verification; Main Board and Bhavcopy inputs must have an explicit read-only/ECMS-owned cache contract; and Morning/EOD lifecycle tests plus CI must pass. Until then, keep the PR draft and do not enable production use.
