@@ -444,3 +444,53 @@ def test_attach_information_handles_zero_fundamental_pass_without_missing_column
     assert result["Last5DayNews"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
     assert result["FundamentalShortlistStatus"].tolist() == ["FAIL", "WAIT_FOR_DATA"]
     assert news.empty and events.empty and deals.empty
+
+
+
+def test_morning_snapshot_is_separate_atomic_state_and_loads_only_matching_session(tmp_path, monkeypatch):
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "data" / "cache" / "ecms"
+    morning_file = state_dir / "volume_gainers_morning_snapshot.csv"
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "MORNING_SNAPSHOT_FILE", morning_file)
+    frame = pd.DataFrame([
+        {"TckrSymb": " aaa ", "CompanyName": "AAA Ltd", "PageVolume": 120, "LTP": 10.0},
+        {"TckrSymb": "BBB", "CompanyName": "BBB Ltd", "PageVolume": 80, "LTP": 20.0},
+    ])
+
+    saved = scanner._save_morning_snapshot(frame, date(2026, 11, 16))
+    loaded, status = scanner._load_same_day_morning_snapshot(date(2026, 11, 16))
+
+    assert saved["TckrSymb"].tolist() == ["AAA", "BBB"]
+    assert status == "VALID"
+    assert loaded["TckrSymb"].tolist() == ["AAA", "BBB"]
+    assert loaded["SnapshotType"].eq("MORNING").all()
+    assert loaded["SnapshotStatus"].eq("VALID").all()
+    assert (state_dir / "morning_snapshot_run_marker.json").exists()
+    assert not (state_dir / "volume_gainers_previous_eod.csv").exists()
+
+    mismatched, mismatch_status = scanner._load_same_day_morning_snapshot(date(2026, 11, 17))
+    assert mismatched.empty
+    assert mismatch_status == "NOT_CHECKED_MORNING_DATE_MISMATCH"
+
+
+def test_morning_snapshot_rejects_duplicate_symbols_without_replacing_existing_file(tmp_path, monkeypatch):
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "state"
+    morning_file = state_dir / "volume_gainers_morning_snapshot.csv"
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "MORNING_SNAPSHOT_FILE", morning_file)
+    scanner._save_morning_snapshot(pd.DataFrame([{"TckrSymb": "AAA", "PageVolume": 10}]), date(2026, 11, 16))
+    original = morning_file.read_bytes()
+
+    with pytest.raises(RuntimeError, match="blank or duplicate symbols"):
+        scanner._save_morning_snapshot(pd.DataFrame([
+            {"TckrSymb": "AAA", "PageVolume": 10},
+            {"TckrSymb": " aaa ", "PageVolume": 20},
+        ]), date(2026, 11, 16))
+
+    assert morning_file.read_bytes() == original
