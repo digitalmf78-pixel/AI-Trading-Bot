@@ -491,3 +491,28 @@ def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, 
 
     pd.DataFrame({"TckrSymb": ["AAA", "AAA"], "MorningDate": ["2026-11-16"] * 2}).to_csv(path, index=False)
     assert scanner._load_same_day_morning_snapshot(date(2026, 11, 16)).empty
+
+def test_main_skips_holiday_without_running_scan(monkeypatch, capsys):
+    import sys
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 14, 9, 20, tzinfo=tz)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: False)
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "morning"])
+
+    def unexpected_scan():
+        raise AssertionError("scanner must not run on an NSE holiday")
+
+    monkeypatch.setattr(scanner, "run_morning", unexpected_scan)
+    scanner.main()
+    output = capsys.readouterr().out
+    assert '"status": "SKIPPED"' in output
+    assert '"reason": "OFFICIAL_NSE_NON_TRADING_DAY"' in output
+    assert '"mode": "MORNING"' in output
+
