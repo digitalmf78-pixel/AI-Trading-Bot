@@ -441,15 +441,17 @@ def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
 
         strong_count = 0
         negative_count = 0
-        for row in rows:
-            row = dict(row)
+        processed_rows = []
+        for raw_row in rows:
+            row = dict(raw_row)
             signal, flags = classify_catalyst(row.get("Headline", ""))
             row["CatalystSignalStatus"] = signal
             row["RiskFlags"] = flags
             row["TckrSymb"] = symbol
             strong_count += signal == "STRONG_POSITIVE_CATALYST_REVIEW"
             negative_count += signal == "NEGATIVE_RISK_REVIEW"
-        all_rows.extend(rows)
+            processed_rows.append(row)
+        all_rows.extend(processed_rows)
         if official_status != "AVAILABLE":
             status = "WAIT_FOR_DATA"
         elif rows:
