@@ -357,7 +357,7 @@ def test_attach_information_researches_every_symbol_regardless_of_fundamental_st
         calls["news"] = candidates["TckrSymb"].tolist()
         news = pd.DataFrame([{
             "TckrSymb": "AAA", "PublishedDate": "2026-11-14",
-            "Headline": "AAA announces dividend record date", "Source": "NSE",
+            "Headline": "AAA announces dividend record date", "Source": "NSE", "SourceType": "OFFICIAL",
         }])
         audit = pd.DataFrame([
             {"TckrSymb": symbol, "NewsWindowStart": "2026-11-10",
