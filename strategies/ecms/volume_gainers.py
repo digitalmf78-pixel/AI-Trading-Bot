@@ -753,7 +753,7 @@ def _save_eod_snapshot(frame, eod_date):
         "captured_at_ist": datetime.now(IST).isoformat(),
     }
     (STATE_DIR / "eod_snapshot_run_marker.json").write_text(
-        json.dumps(marker, indent=2) + "\\n", encoding="utf-8"
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8"
     )
     return state
 
