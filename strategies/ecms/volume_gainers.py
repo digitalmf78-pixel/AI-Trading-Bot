@@ -21,7 +21,7 @@ from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METAD
 from strategies.ecms.information import (
     attach_valuation, collect_upcoming_events, collect_bulk_block_deals, collect_corporate_actions,
 )
-from nse_trading_calendar import is_trading_session, CalendarCoverageError
+from nse_trading_calendar import is_trading_session, expected_scan_time, CalendarCoverageError
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
@@ -1459,5 +1459,37 @@ def main():
             "mode": args.mode.upper(),
         }, indent=2))
         return
+    # Scheduled runs must match the calendar's session-specific scan slot.
+    # Manual dispatch is intentionally allowed at any time on a trading date.
+    if os.getenv("GITHUB_EVENT_NAME", "").lower() == "schedule":
+        try:
+            expected_time = expected_scan_time(today, args.mode)
+        except CalendarCoverageError as exc:
+            expected_time = None
+            schedule_detail = str(exc)
+        else:
+            schedule_detail = ""
+        if not expected_time:
+            print(json.dumps({
+                "status": "SKIPPED",
+                "reason": "OFFICIAL_NSE_SPECIAL_SESSION_SCAN_TIME_NOT_CONFIGURED",
+                "date_ist": today.isoformat(),
+                "mode": args.mode.upper(),
+                "detail": schedule_detail,
+            }, indent=2))
+            return
+        expected_hour, expected_minute = (int(part) for part in expected_time.split(":"))
+        now = datetime.now(IST)
+        difference = abs((now.hour * 60 + now.minute) - (expected_hour * 60 + expected_minute))
+        if difference > 15:
+            print(json.dumps({
+                "status": "SKIPPED",
+                "reason": "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
+                "date_ist": today.isoformat(),
+                "mode": args.mode.upper(),
+                "expected_time_ist": expected_time,
+                "actual_time_ist": now.strftime("%H:%M"),
+            }, indent=2))
+            return
     run_eod() if args.mode=="eod" else run_morning()
 if __name__=="__main__": main()
