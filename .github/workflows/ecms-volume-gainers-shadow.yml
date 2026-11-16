@@ -92,6 +92,7 @@ jobs:
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -153,6 +154,7 @@ jobs:
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
         if: always()
@@ -195,7 +197,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("fundamental_pass","Fundamental PASS"),("fundamental_fail","Fundamental FAIL"),("wait_for_data","Wait for data"),("news_data_found","News found"),("news_no_data_found","News checked/no match"),("news_source_unavailable","News source unavailable"),("upcoming_events_data_found","Upcoming events found"),("upcoming_events_no_data_found","Upcoming events checked/no match"),("bulk_block_deals_data_found","Bulk/block deals found"),("bulk_block_deals_no_data_found","Bulk/block deals checked/no match"),("corporate_action_announcements_found","Corporate-action announcements found")]:
+                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("fundamental_pass","Fundamental PASS"),("fundamental_fail","Fundamental FAIL"),("wait_for_data","Wait for data"),("news_data_found","News found"),("news_no_data_found","News checked/no match"),("news_source_unavailable","News source unavailable"),("upcoming_events_data_found","Upcoming events found"),("upcoming_events_no_data_found","Upcoming events checked/no match"),("bulk_block_deals_data_found","Bulk/block deals found"),("bulk_block_deals_no_data_found","Bulk/block deals checked/no match"),("corporate_actions_data_found","Official corporate actions found"),("corporate_action_disclosures_found","Corporate-action announcements found")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
@@ -284,6 +286,7 @@ jobs:
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -346,6 +349,7 @@ jobs:
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report
         if: always()
@@ -383,7 +387,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("page_presence_double_confirmed","Stocks present in both EOD and Morning lists"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data"),("news_data_found","News found"),("news_no_data_found","News checked/no match"),("news_source_unavailable","News source unavailable"),("upcoming_events_data_found","Upcoming events found"),("upcoming_events_no_data_found","Upcoming events checked/no match"),("bulk_block_deals_data_found","Bulk/block deals found"),("bulk_block_deals_no_data_found","Bulk/block deals checked/no match"),("corporate_action_announcements_found","Corporate-action announcements found")]:
+                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("page_presence_double_confirmed","Stocks present in both EOD and Morning lists"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data"),("news_data_found","News found"),("news_no_data_found","News checked/no match"),("news_source_unavailable","News source unavailable"),("upcoming_events_data_found","Upcoming events found"),("upcoming_events_no_data_found","Upcoming events checked/no match"),("bulk_block_deals_data_found","Bulk/block deals found"),("bulk_block_deals_no_data_found","Bulk/block deals checked/no match"),("corporate_actions_data_found","Official corporate actions found"),("corporate_action_disclosures_found","Corporate-action announcements found")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
