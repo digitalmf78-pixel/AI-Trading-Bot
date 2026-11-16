@@ -1080,7 +1080,8 @@ def run_eod():
       "morning_comparison_date_ist":scan_date.isoformat(),
       "morning_repeat_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("MORNING_AND_EOD_REPEAT").sum()),
       "eod_new_entry_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("EOD_NEW_ENTRY").sum()),
-      "morning_snapshot_found":bool(assessed.get("MorningSeenSameDay", pd.Series(False, index=assessed.index)).any()),
+      "morning_snapshot_found":not _load_same_day_morning_snapshot(scan_date).empty,
+      "morning_page_symbols":int(len(_load_same_day_morning_snapshot(scan_date))),
       "nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "page_volume_data_found":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("DATA_FOUND").sum()),
@@ -1306,7 +1307,11 @@ def run_morning():
     report.to_csv(OUTPUT_DIR/"volume_gainers_morning_recheck.csv",index=False)
     # Preserve the original EOD snapshot; only the fundamental workspace cache
     # is enriched by the morning assessment.
-    summary={"status":"PASS","morning_time_ist":datetime.now(IST).isoformat(),
+    summary={"status":"PASS","scan_date_ist":today.isoformat(),
+      "data_as_of_date_ist":expected_eod,
+      "morning_time_ist":datetime.now(IST).isoformat(),
+      "morning_rvol_data_found":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
+      "morning_rvol_data_missing":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").isna().sum()),
       "previous_eod_symbols":len(previous_symbols),"current_page_eligible_symbols":len(live_symbols),
       "morning_page_volume_data_found":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "morning_page_volume_data_missing":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
