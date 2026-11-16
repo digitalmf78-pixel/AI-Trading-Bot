@@ -683,3 +683,40 @@ def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_fo
     assert summary["scan_date_ist"] == "2026-11-16"
     assert summary["data_as_of_date_ist"] == "2026-11-13"
     assert summary["morning_repeat_count"] == 1
+
+
+def test_fetch_volume_gainers_maps_additional_quantity_alias_and_exposes_payload_schema():
+    import strategies.ecms.volume_gainers as scanner
+
+    class Response:
+        def __init__(self, payload=None):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.calls = 0
+
+        def get(self, url, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                return Response({})
+            return Response({"data": [{
+                "symbol": "AAA",
+                "companyName": "Alpha Limited",
+                "totalTradedQuantity": "1,23,456",
+                "week1AvgVolume": 12000,
+                "week1volChange": 35.5,
+            }]})
+
+    result = scanner.fetch_volume_gainers(session=Session()).iloc[0]
+    assert result["PageVolume"] == 123456
+    assert result["PageVolumeSourceField"] == "totalTradedQuantity"
+    assert "week1AvgVolume" in result["NSEPayloadKeys"]
+    assert result["NSEPayloadVolumeLikeFields"] == "totalTradedQuantity|week1AvgVolume"
