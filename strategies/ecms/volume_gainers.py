@@ -19,7 +19,7 @@ from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
 from strategies.ecms.information import (
-    attach_valuation, collect_upcoming_events, collect_bulk_block_deals,
+    attach_valuation, collect_upcoming_events, collect_bulk_block_deals, collect_corporate_actions,
 )
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
@@ -606,112 +606,176 @@ def attach_page_rvol(candidates, eod_date):
     return result
 
 def attach_information(assessed, as_of_date):
-    """Attach the six informational groups without changing fundamental decisions."""
+    """Attach research to every eligible page symbol, independent of fundamentals."""
     result = attach_valuation(assessed)
     symbols = result["TckrSymb"].astype(str).str.strip().str.upper()
-    passed = result.get(
-        "FundamentalShortlistStatus", pd.Series("", index=result.index)
-    ).astype(str).str.upper().eq("PASS")
-    pass_symbols = sorted(set(symbols.loc[passed]))
+    all_symbols = sorted(set(symbols))
 
-    news_columns = [
-        "TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
-        "SecondaryStatus", "CatalystStatus", "CatalystSignalStatus",
-        "StrongCatalystCount", "NegativeRiskCount", "OfficialCount", "SecondaryCount",
-    ]
-    if pass_symbols:
-        news, news_audit = collect_catalysts(result.loc[passed].copy(), as_of_date)
-        events, event_audit = collect_upcoming_events(pass_symbols, as_of_date)
-        deals, deal_audit = collect_bulk_block_deals(pass_symbols, as_of_date)
-    else:
-        news = pd.DataFrame(columns=[
-            "TckrSymb", "PublishedDate", "Headline", "Source", "SourceType",
-            "URL", "Impact", "CatalystSignalStatus", "RiskFlags",
-        ])
-        news_audit = pd.DataFrame(columns=news_columns)
-        events = pd.DataFrame(columns=[
-            "TckrSymb", "EventDate", "EventType", "EventDetails",
-            "Source", "SourceType", "SourceURL", "IsResultEvent",
-        ])
-        event_audit = pd.DataFrame(columns=[
-            "TckrSymb", "UpcomingEventsStatus", "UpcomingEvents", "NextResultDate",
-            "NextResultDetails", "EventCalendarSourceURL",
-        ])
-        deals = pd.DataFrame(columns=[
-            "TckrSymb", "DealDate", "DealType", "ClientName", "Side", "Quantity",
-            "PriceINR", "Remarks", "Source", "SourceType", "SourceURL",
-        ])
-        deal_audit = pd.DataFrame(columns=[
-            "TckrSymb", "BulkBlockDealStatus", "BulkDealCount", "BlockDealCount",
-            "BulkBuyers", "BulkSellers", "BlockBuyers", "BlockSellers",
-            "BulkBlockLookbackStart", "BulkBlockLookbackEnd", "BulkBlockSourceURL",
-        ])
+    news, news_audit = collect_catalysts(result.copy(), as_of_date)
+    events, event_audit = collect_upcoming_events(all_symbols, as_of_date)
+    deals, deal_audit = collect_bulk_block_deals(all_symbols, as_of_date)
+    corporate_actions, corporate_actions_audit = collect_corporate_actions(all_symbols, as_of_date)
 
-    result["Last5DayNews"] = "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
+    news_defaults = {
+        "NewsWindowStart": "", "NewsWindowEnd": "",
+        "OfficialStatus": "SOURCE_UNAVAILABLE",
+        "SecondaryStatus": "SOURCE_UNAVAILABLE",
+        "CatalystStatus": "SOURCE_UNAVAILABLE",
+        "CatalystSignalStatus": "NOT_VERIFIED",
+        "StrongCatalystCount": 0, "NegativeRiskCount": 0,
+        "OfficialCount": 0, "SecondaryCount": 0,
+    }
+    if not news_audit.empty:
+        result = result.drop(columns=[
+            c for c in news_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in news_defaults.items():
+        if column not in result.columns:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
+
+    summaries = {}
     if not news.empty:
-        summaries = {}
         for symbol, rows in news.groupby(news["TckrSymb"].astype(str).str.upper()):
             summaries[symbol] = " | ".join(
                 f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
                 for _, row in rows.sort_values("PublishedDate", ascending=False).head(5).iterrows()
             )
-        result["Last5DayNews"] = [
-            summaries.get(symbol, "NO_MATCHED_NEWS_IN_LAST_5_DAYS") if is_pass
-            else "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
-            for symbol, is_pass in zip(symbols, passed)
-        ]
+    result["Last5DayNews"] = [
+        summaries.get(symbol, "NO_NEWS_FOUND" if str(status).upper() == "NO_NEWS_FOUND"
+                      else "WAIT_FOR_DATA" if str(status).upper() == "WAIT_FOR_DATA"
+                      else "NO_MATCHED_NEWS_IN_LOOKBACK")
+        for symbol, status in zip(symbols, result["CatalystStatus"])
+    ]
+    result["NewsResearchStatus"] = result["CatalystStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status in {
+            "CATALYST_FOUND", "CATALYST_FOUND_SECONDARY_ONLY"
+        } else "NO_DATA_FOUND" if status == "NO_NEWS_FOUND"
+        else "SOURCE_UNAVAILABLE" if status == "WAIT_FOR_DATA"
+        else "NOT_VERIFIED"
+    )
 
-    news_defaults = {
-        "NewsWindowStart": "", "NewsWindowEnd": "",
-        "OfficialStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "SecondaryStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "CatalystStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "CatalystSignalStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "StrongCatalystCount": 0, "NegativeRiskCount": 0,
-        "OfficialCount": 0, "SecondaryCount": 0,
+    # Explicit corporate-action view over official disclosures in the same
+    # five-trading-session window; this is not a substitute for a dedicated
+    # corporate-actions feed until that endpoint is independently validated.
+    corporate_pattern = re.compile(
+        r"dividend|bonus|stock split|share split|buyback|buy-back|rights issue|"
+        r"preferential issue|merger|amalgamation|demerger|scheme of arrangement|"
+        r"record date|ex-date|capital reduction|delisting",
+        re.IGNORECASE,
+    )
+    corporate_summaries = {}
+    corporate_counts = {}
+    if not news.empty:
+        official_news = news[
+            news.get("SourceType", pd.Series("", index=news.index)).astype(str).str.upper().eq("OFFICIAL")
+        ]
+        for symbol, rows in official_news.groupby(official_news["TckrSymb"].astype(str).str.upper()):
+            matched = rows[
+                rows["Headline"].astype(str).apply(lambda headline: bool(corporate_pattern.search(headline)))
+            ]
+            if not matched.empty:
+                corporate_counts[symbol] = int(len(matched))
+                corporate_summaries[symbol] = " | ".join(
+                    f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
+                    for _, row in matched.sort_values("PublishedDate", ascending=False).iterrows()
+                )
+    result["CorporateActionAnnouncementCount"] = [
+        corporate_counts.get(symbol, 0) for symbol in symbols
+    ]
+    result["CorporateActionAnnouncementSummary"] = [
+        corporate_summaries.get(symbol, "") for symbol in symbols
+    ]
+    result["CorporateActionDisclosureStatus"] = [
+        "DATA_FOUND" if symbol in corporate_summaries
+        else "NO_DATA_FOUND" if str(official_status).upper() == "AVAILABLE"
+        else "SOURCE_UNAVAILABLE"
+        for symbol, official_status in zip(symbols, result["OfficialStatus"])
+    ]
+
+    corporate_action_defaults = {
+        "CorporateActionsStatus": "SOURCE_UNAVAILABLE",
+        "CorporateActionCount": 0,
+        "CorporateActionSummary": "NOT AVAILABLE",
+        "CorporateActionWindowStart": "",
+        "CorporateActionWindowEnd": "",
+        "CorporateActionSourceURL": "",
     }
-    for column, default in news_defaults.items():
-        result[column] = default
-    if not news_audit.empty:
-        result = result.drop(columns=[c for c in news_audit.columns if c != "TckrSymb" and c in result.columns])
-        result = result.merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
-    for column, default in news_defaults.items():
-        result[column] = result[column].fillna(default)
-    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA"), "Last5DayNews"] = "WAIT_FOR_DATA"
-    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("NO_NEWS_FOUND"), "Last5DayNews"] = "NO_NEWS_FOUND"
+    if not corporate_actions_audit.empty:
+        result = result.drop(columns=[
+            c for c in corporate_actions_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(corporate_actions_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in corporate_action_defaults.items():
+        if column not in result.columns:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
+    result["CorporateActionResearchStatus"] = result["CorporateActionsStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status == "DATA_FOUND"
+        else "NO_DATA_FOUND" if status == "NO_DATA_FOUND"
+        else "SOURCE_UNAVAILABLE" if status.startswith("SOURCE_UNAVAILABLE")
+        else "NOT_VERIFIED"
+    )
+
     event_defaults = {
-        "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "NextResultDate": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "UpcomingEventsStatus": "SOURCE_UNAVAILABLE",
+        "UpcomingEvents": "NOT AVAILABLE",
+        "NextResultDate": "NOT ANNOUNCED",
         "NextResultDetails": "",
         "EventCalendarSourceURL": "",
     }
     if not event_audit.empty:
-        result = result.drop(columns=[c for c in event_audit.columns if c != "TckrSymb" and c in result.columns])
-        result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
+        result = result.drop(columns=[
+            c for c in event_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in event_defaults.items():
         if column not in result.columns:
             result[column] = default
         else:
             result[column] = result[column].fillna(default)
+    result["UpcomingEventsResearchStatus"] = result["UpcomingEventsStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status == "AVAILABLE"
+        else "NO_DATA_FOUND" if status == "NO_CONFIRMED_UPCOMING_EVENTS"
+        else "SOURCE_UNAVAILABLE" if status.startswith("WAIT_FOR_DATA")
+        else "NOT_VERIFIED"
+    )
+
     deal_defaults = {
-        "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "BulkBlockDealStatus": "SOURCE_UNAVAILABLE",
         "BulkDealCount": 0, "BlockDealCount": 0,
+        "BulkDealCountLast5Days": 0, "BlockDealCountLast5Days": 0,
+        "BulkBlockSummaryLast5Days": "",
         "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
         "BulkBlockDealSummary": "",
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
     }
     if not deal_audit.empty:
-        result = result.drop(columns=[c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns])
-        result = result.merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
+        result = result.drop(columns=[
+            c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in deal_defaults.items():
         if column not in result.columns:
             result[column] = default
         else:
             result[column] = result[column].fillna(default)
-    result["RVOLInformationStatus"] = result.get("RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index))
-    return result, news, events, deals
-
+    def _deal_research_status(row):
+        status = str(row.get("BulkBlockDealStatus", "")).upper()
+        bulk_count = pd.to_numeric(row.get("BulkDealCount", 0), errors="coerce")
+        block_count = pd.to_numeric(row.get("BlockDealCount", 0), errors="coerce")
+        count = (0 if pd.isna(bulk_count) else int(bulk_count)) + (0 if pd.isna(block_count) else int(block_count))
+        if count > 0:
+            return "DATA_FOUND"
+        if status == "NO_DISCLOSED_DEALS_IN_LOOKBACK":
+            return "NO_DATA_FOUND"
+        if status == "WAIT_FOR_DATA":
+            return "SOURCE_UNAVAILABLE"
+        return "NOT_VERIFIED"
+    result["BulkBlockDealsResearchStatus"] = result.apply(_deal_research_status, axis=1)
+    result["RVOLInformationStatus"] = result.get(
+        "RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index)
+    )
+    return result, news, events, deals, corporate_actions
 
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
@@ -867,7 +931,7 @@ def run_eod():
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
-    assessed, news, events, deals = attach_information(assessed, eod_date)
+    assessed, news, events, deals, corporate_actions = attach_information(assessed, eod_date)
     assessed = _attach_same_day_morning_confirmation(assessed, eod_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
@@ -886,6 +950,7 @@ def run_eod():
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
     events.to_csv(OUTPUT_DIR/"volume_gainers_upcoming_events.csv",index=False)
     deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
+    corporate_actions.to_csv(OUTPUT_DIR/"volume_gainers_corporate_actions.csv",index=False)
     # Refresh the EOD snapshot with available assessment fields, but keep the
     # snapshot valid even if later informational enrichment or Telegram fails.
     _save_eod_snapshot(assessed, eod_date)
@@ -910,6 +975,15 @@ def run_eod():
       "provider_cooldown_deferred":int(provider_status.eq("RETRY_COOLDOWN").sum()),
       "provider_failed":int(provider_status.str.contains("ERROR|FAILED", regex=True).sum()),
       "free_source_attempted":int(free_attempted.sum()),
+      "news_data_found":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "news_no_data_found":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
+      "news_source_unavailable":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("SOURCE_UNAVAILABLE").sum()),
+      "upcoming_events_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "upcoming_events_no_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
+      "bulk_block_deals_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "bulk_block_deals_no_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
+      "corporate_actions_data_found":int(assessed.get("CorporateActionResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "corporate_action_disclosures_found":int(assessed.get("CorporateActionDisclosureStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
@@ -981,11 +1055,12 @@ def run_morning():
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    morning_assessed, morning_news, morning_events, morning_deals = attach_information(morning_assessed, today)
+    morning_assessed, morning_news, morning_events, morning_deals, morning_corporate_actions = attach_information(morning_assessed, today)
     _save_same_day_morning_snapshot(morning_assessed, today)
     morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
     morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
     morning_deals.to_csv(OUTPUT_DIR/"volume_gainers_morning_bulk_block_deals.csv", index=False)
+    morning_corporate_actions.to_csv(OUTPUT_DIR/"volume_gainers_morning_corporate_actions.csv", index=False)
     morning_assessed["MorningStrongFundamentalStatus"] = (
         _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
@@ -1046,6 +1121,15 @@ def run_morning():
           "BlockBuyers":assessed.get("BlockBuyers",""),
           "BlockSellers":assessed.get("BlockSellers",""),
           "BulkBlockDealSummary":assessed.get("BulkBlockDealSummary",""),
+          "BulkDealCountLast5Days":assessed.get("BulkDealCountLast5Days",0),
+          "BlockDealCountLast5Days":assessed.get("BlockDealCountLast5Days",0),
+          "BulkBlockSummaryLast5Days":assessed.get("BulkBlockSummaryLast5Days",""),
+          "CorporateActionResearchStatus":assessed.get("CorporateActionResearchStatus","NOT_VERIFIED"),
+          "CorporateActionCount":assessed.get("CorporateActionCount",0),
+          "CorporateActionSummary":assessed.get("CorporateActionSummary",""),
+          "CorporateActionWindowStart":assessed.get("CorporateActionWindowStart",""),
+          "CorporateActionWindowEnd":assessed.get("CorporateActionWindowEnd",""),
+          "CorporateActionDisclosureStatus":assessed.get("CorporateActionDisclosureStatus","NOT_VERIFIED"),
           "EODFundamentalShortlistStatus":old.get("EODFundamentalShortlistStatus",""),
           "EODStrongFundamentalStatus":old.get("EODStrongFundamentalStatus",""),
           "EODFundamentalNotForwardedReason":old.get("EODFundamentalNotForwardedReason",""),
@@ -1070,6 +1154,15 @@ def run_morning():
       "morning_assessment_rows":int(report["MorningStrongFundamentalStatus"].ne("NOT_ASSESSED").sum()),
       "morning_fundamental_pass":int(report["MorningStrongFundamentalStatus"].eq("MORNING_FUNDAMENTAL_PASS").sum()),
       "morning_wait_for_data":int(morning_assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA").sum()),
+      "news_data_found":int(morning_assessed.get("NewsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "news_no_data_found":int(morning_assessed.get("NewsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("NO_DATA_FOUND").sum()),
+      "news_source_unavailable":int(morning_assessed.get("NewsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("SOURCE_UNAVAILABLE").sum()),
+      "upcoming_events_data_found":int(morning_assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "upcoming_events_no_data_found":int(morning_assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("NO_DATA_FOUND").sum()),
+      "bulk_block_deals_data_found":int(morning_assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "bulk_block_deals_no_data_found":int(morning_assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("NO_DATA_FOUND").sum()),
+      "corporate_actions_data_found":int(morning_assessed.get("CorporateActionResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "corporate_action_disclosures_found":int(morning_assessed.get("CorporateActionDisclosureStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "morning_new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "eod_fundamental_pass_repeats":int(report["MorningStatus"].eq("EOD_FUNDAMENTAL_PASS_REPEAT").sum()),
        "same_day_morning_snapshot_saved":MORNING_STATE_FILE.exists(),

@@ -372,10 +372,22 @@ def classify_catalyst(headline: str) -> tuple[str, str]:
         return "STRONG_POSITIVE_CATALYST_REVIEW", "|".join(positives)
     return "NEWS_FOUND_NO_STRONG_CATALYST", ""
 
+def _news_window_start(end_date: date, trading_sessions: int = NEWS_DAYS) -> date:
+    """Return the first date in the last N official NSE sessions, inclusive."""
+    cursor = end_date
+    found = []
+    while len(found) < int(trading_sessions):
+        if is_trading_session(cursor):
+            found.append(cursor)
+        cursor -= timedelta(days=1)
+    return min(found)
+
+
 def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
                       official_fetcher=fetch_official_announcements,
                       secondary_fetcher=fetch_secondary_news) -> tuple[pd.DataFrame, pd.DataFrame]:
-    start = eod_date - timedelta(days=NEWS_DAYS - 1)
+    """Collect five NSE trading sessions of news; reuse only complete dated cache entries."""
+    start = _news_window_start(eod_date, NEWS_DAYS)
     all_rows, audit = [], []
     names = {}
     if (UNIVERSE_DIR / "nse_main_board_equity.csv").exists():
@@ -386,28 +398,66 @@ def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
             names = dict(zip(master[sym].astype(str).str.upper(), master[name].astype(str)))
         except Exception:
             names = {}
+
+    cache_dir = Path("data/cache/ecms/news")
+    cache_dir.mkdir(parents=True, exist_ok=True)
     for symbol in candidates["TckrSymb"].astype(str).str.upper().drop_duplicates():
-        company = names.get(symbol, "")
-        official, official_status = official_fetcher(symbol, start, eod_date)
-        secondary, secondary_status = secondary_fetcher(symbol, company, start, eod_date)
-        rows = official + secondary
+        cache_path = cache_dir / f"{symbol}_{start.isoformat()}_{eod_date.isoformat()}.json"
+        cached = None
+        if cache_path.exists():
+            try:
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+                if (payload.get("symbol") == symbol
+                        and payload.get("window_start") == start.isoformat()
+                        and payload.get("window_end") == eod_date.isoformat()
+                        and payload.get("official_status") == "AVAILABLE"
+                        and payload.get("secondary_status") == "AVAILABLE"
+                        and isinstance(payload.get("rows"), list)):
+                    cached = payload
+            except (OSError, ValueError, TypeError):
+                cached = None
+
+        if cached is not None:
+            rows = cached["rows"]
+            official_status = cached["official_status"]
+            secondary_status = cached["secondary_status"]
+        else:
+            company = names.get(symbol, "")
+            official, official_status = official_fetcher(symbol, start, eod_date)
+            secondary, secondary_status = secondary_fetcher(symbol, company, start, eod_date)
+            rows = official + secondary
+            # Cache only complete source attempts. Failed/partial attempts are
+            # retried on the next scan; a successful Morning fetch is reusable at EOD.
+            if official_status == "AVAILABLE" and secondary_status == "AVAILABLE":
+                temporary = cache_path.with_suffix(".json.tmp")
+                temporary.write_text(json.dumps({
+                    "symbol": symbol, "window_start": start.isoformat(),
+                    "window_end": eod_date.isoformat(),
+                    "official_status": official_status,
+                    "secondary_status": secondary_status,
+                    "rows": rows,
+                }, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(cache_path)
+
         strong_count = 0
         negative_count = 0
-        for row in rows:
+        processed_rows = []
+        for raw_row in rows:
+            row = dict(raw_row)
             signal, flags = classify_catalyst(row.get("Headline", ""))
             row["CatalystSignalStatus"] = signal
             row["RiskFlags"] = flags
+            row["TckrSymb"] = symbol
             strong_count += signal == "STRONG_POSITIVE_CATALYST_REVIEW"
             negative_count += signal == "NEGATIVE_RISK_REVIEW"
-        all_rows.extend(rows)
+            processed_rows.append(row)
+        all_rows.extend(processed_rows)
         if official_status != "AVAILABLE":
             status = "WAIT_FOR_DATA"
-        elif official:
+        elif rows:
             status = "CATALYST_FOUND"
         elif secondary_status != "AVAILABLE":
             status = "WAIT_FOR_DATA"
-        elif secondary:
-            status = "CATALYST_FOUND_SECONDARY_ONLY"
         else:
             status = "NO_NEWS_FOUND"
         signal_status = ("NEGATIVE_RISK_REVIEW" if negative_count else
@@ -419,7 +469,8 @@ def collect_catalysts(candidates: pd.DataFrame, eod_date: date,
             "SecondaryStatus": secondary_status, "CatalystStatus": status,
             "CatalystSignalStatus": signal_status,
             "StrongCatalystCount": strong_count, "NegativeRiskCount": negative_count,
-            "OfficialCount": len(official), "SecondaryCount": len(secondary),
+            "OfficialCount": sum(str(row.get("SourceType", "")).upper() == "OFFICIAL" for row in rows),
+            "SecondaryCount": sum(str(row.get("SourceType", "")).upper() != "OFFICIAL" for row in rows),
         })
     news_columns = ["TckrSymb", "PublishedDate", "Headline", "Source", "SourceType",
                     "URL", "Impact", "CatalystSignalStatus", "RiskFlags"]

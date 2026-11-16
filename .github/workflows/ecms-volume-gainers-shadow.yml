@@ -91,6 +91,8 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -151,6 +153,8 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
         if: always()
@@ -193,7 +197,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("fundamental_pass","Fundamental PASS"),("fundamental_fail","Fundamental FAIL"),("wait_for_data","Wait for data")]:
+                  for key, label in [("eod_date_ist","EOD date"),("eligible_mainboard_equities","Eligible page stocks"),("fundamental_pass","Fundamental PASS"),("fundamental_fail","Fundamental FAIL"),("wait_for_data","Wait for data"),("news_data_found","News found"),("news_no_data_found","News checked/no match"),("news_source_unavailable","News source unavailable"),("upcoming_events_data_found","Upcoming events found"),("upcoming_events_no_data_found","Upcoming events checked/no match"),("bulk_block_deals_data_found","Bulk/block deals found"),("bulk_block_deals_no_data_found","Bulk/block deals checked/no match"),("corporate_actions_data_found","Official corporate actions found"),("corporate_action_disclosures_found","Corporate-action announcements found")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
@@ -211,19 +215,24 @@ jobs:
                           reason = (row.get("FundamentalShortlistReason") or "").strip().replace("\n", " ")
                           if len(reason) > 100:
                               reason = reason[:97] + "..."
-                          context = ""
-                          if shortlist.upper() == "PASS":
-                              valuation = (row.get("ValuationLabel") or "NOT AVAILABLE").strip()
-                              news = (row.get("Last5DayNews") or "NOT AVAILABLE").strip().replace("\n", " ")
-                              events = (row.get("UpcomingEvents") or "NOT AVAILABLE").strip().replace("\n", " ")
-                              result_date = (row.get("NextResultDate") or "NOT ANNOUNCED").strip()
-                              deal_status = (row.get("BulkBlockDealStatus") or "NOT AVAILABLE").strip()
-                              deal_summary = (row.get("BulkBlockDealSummary") or "").strip().replace("\n", " ")
-                              rvol = (row.get("RVOL") or "NOT AVAILABLE").strip()
-                              context = (
-                                  f"; valuation={valuation}; news={news[:110]}; events={events[:100]}"
-                                  f"; next_result={result_date}; deals={deal_status}:{deal_summary[:100]}; RVOL={rvol}"
-                              )
+                          valuation = (row.get("ValuationLabel") or "NOT AVAILABLE").strip()
+                          news_status = (row.get("NewsResearchStatus") or "NOT_VERIFIED").strip()
+                          news = (row.get("Last5DayNews") or "NOT AVAILABLE").strip().replace("\n", " ")
+                          event_status = (row.get("UpcomingEventsResearchStatus") or "NOT_VERIFIED").strip()
+                          events = (row.get("UpcomingEvents") or "NOT AVAILABLE").strip().replace("\n", " ")
+                          result_date = (row.get("NextResultDate") or "NOT ANNOUNCED").strip()
+                          deal_status = (row.get("BulkBlockDealsResearchStatus") or "NOT_VERIFIED").strip()
+                          deal_summary = (row.get("BulkBlockDealSummary") or "").strip().replace("\n", " ")
+                          recent_deals = (row.get("BulkBlockSummaryLast5Days") or "").strip().replace("\n", " ")
+                          corporate_status = (row.get("CorporateActionResearchStatus") or "NOT_VERIFIED").strip()
+                          corporate_summary = (row.get("CorporateActionSummary") or "").strip().replace("\n", " ")
+                          rvol = (row.get("RVOL") or "NOT AVAILABLE").strip()
+                          context = (
+                              f"; valuation={valuation}; news[{news_status}]={news[:100]}"
+                              f"; events[{event_status}]={events[:90]}; next_result={result_date}"
+                              f"; deals[{deal_status}]={deal_summary[:90]}; recent_5d={recent_deals[:70]}"
+                              f"; corporate_actions[{corporate_status}]={corporate_summary[:90]}; RVOL={rvol}"
+                          )
                           stock_lines.append(
                               f"{symbol}: fundamental={shortlist}; official_XBRL={verified}"
                               + context
@@ -233,7 +242,7 @@ jobs:
                   stock_lines.append(f"Stock-level research report unavailable: {type(exc).__name__}")
           if stock_lines:
               lines.append("")
-              lines.append("STOCK-WISE FUNDAMENTAL DECISION (only rejection gate):")
+              lines.append("STOCK-WISE RESEARCH (all eligible stocks; PASS/FAIL/WAIT do not filter research):")
               lines.extend(stock_lines)
           else:
               lines.append("Stock-wise fundamental CSV unavailable; inspect the run artifact.")
@@ -279,6 +288,8 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -340,6 +351,8 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
+            data/cache/ecms/corporate_actions/
           key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report
         if: always()
@@ -377,7 +390,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("page_presence_double_confirmed","Stocks present in both EOD and Morning lists"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data")]:
+                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("page_presence_double_confirmed","Stocks present in both EOD and Morning lists"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data"),("news_data_found","News found"),("news_no_data_found","News checked/no match"),("news_source_unavailable","News source unavailable"),("upcoming_events_data_found","Upcoming events found"),("upcoming_events_no_data_found","Upcoming events checked/no match"),("bulk_block_deals_data_found","Bulk/block deals found"),("bulk_block_deals_no_data_found","Bulk/block deals checked/no match"),("corporate_actions_data_found","Official corporate actions found"),("corporate_action_disclosures_found","Corporate-action announcements found")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
@@ -398,6 +411,8 @@ jobs:
                               f"result={row.get('NextResultDate','NOT ANNOUNCED')}; "
                               f"deals={row.get('BulkBlockDealStatus','NOT AVAILABLE')}:"
                               f"{str(row.get('BulkBlockDealSummary',''))[:100]} "
+                              f"corporate_actions={row.get('CorporateActionResearchStatus','NOT_VERIFIED')}:"
+                              f"{str(row.get('CorporateActionSummary',''))[:100]} "
                               f"RVOL(EOD)={row.get('EODRVOL','NOT AVAILABLE')}"
                           )
               except Exception as exc:

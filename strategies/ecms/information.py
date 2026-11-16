@@ -13,11 +13,14 @@ import pandas as pd
 import requests
 
 from strategies.ecms.eod import HEADERS
+from nse_trading_calendar import is_trading_session
 
 NSE_EVENT_CALENDAR_URL = "https://www.nseindia.com/api/event-calendar"
 NSE_DEALS_URL = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
 NSE_EVENT_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar"
 NSE_DEALS_PAGE = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
+NSE_CORPORATE_ACTIONS_URL = "https://www.nseindia.com/api/corporates-corporateActions"
+NSE_CORPORATE_ACTIONS_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-actions"
 EVENT_LOOKAHEAD_DAYS = 90
 DEAL_LOOKBACK_DAYS = 30
 
@@ -155,6 +158,7 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
     """Return NSE-disclosed bulk/block deal sides without inventing counterparties."""
     symbols = sorted({str(item).strip().upper() for item in symbols if str(item).strip()})
     start_date = as_of_date - timedelta(days=int(lookback_days) - 1)
+    recent_start = as_of_date - timedelta(days=4)
     deals, type_status = [], {}
     client = None
     for deal_type in ("bulk_deals", "block_deals"):
@@ -213,6 +217,9 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
         symbol_rows = deal_frame[deal_frame["TckrSymb"].eq(symbol)] if not deal_frame.empty else pd.DataFrame()
         bulk = symbol_rows[symbol_rows["DealType"].eq("BULK")] if not symbol_rows.empty else pd.DataFrame()
         block = symbol_rows[symbol_rows["DealType"].eq("BLOCK")] if not symbol_rows.empty else pd.DataFrame()
+        recent_rows = symbol_rows[symbol_rows["DealDate"].astype(str).ge(recent_start.isoformat())] if not symbol_rows.empty else pd.DataFrame()
+        recent_bulk = recent_rows[recent_rows["DealType"].eq("BULK")] if not recent_rows.empty else pd.DataFrame()
+        recent_block = recent_rows[recent_rows["DealType"].eq("BLOCK")] if not recent_rows.empty else pd.DataFrame()
         if len(symbol_rows) and all(value == "AVAILABLE" for value in type_status.values()) and len(type_status) == 2:
             status = "AVAILABLE"
         elif len(symbol_rows):
@@ -228,6 +235,12 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             "BulkBlockDealStatus": status,
             "BulkDealCount": int(len(bulk)),
             "BlockDealCount": int(len(block)),
+            "BulkDealCountLast5Days": int(len(recent_bulk)),
+            "BlockDealCountLast5Days": int(len(recent_block)),
+            "BulkBlockSummaryLast5Days": " | ".join(
+                f"{r.DealType} {r.DealDate} {r.Side} {r.ClientName} qty={r.Quantity} price={r.PriceINR}"
+                for r in recent_rows.itertuples()
+            ),
             "BulkBuyers": " | ".join(sorted(set(bulk.loc[bulk["Side"].str.contains("BUY|B", regex=True), "ClientName"].astype(str)))) if not bulk.empty else "",
             "BulkSellers": " | ".join(sorted(set(bulk.loc[bulk["Side"].str.contains("SELL|S", regex=True), "ClientName"].astype(str)))) if not bulk.empty else "",
             "BlockBuyers": " | ".join(sorted(set(block.loc[block["Side"].str.contains("BUY|B", regex=True), "ClientName"].astype(str)))) if not block.empty else "",
@@ -241,6 +254,123 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             "BulkBlockSourceURL": NSE_DEALS_PAGE,
         })
     return deal_frame, pd.DataFrame(audit)
+
+
+def _last_trading_session_start(as_of_date: date, count: int = 5) -> date:
+    cursor = as_of_date
+    found = []
+    while len(found) < int(count):
+        if is_trading_session(cursor):
+            found.append(cursor)
+        cursor -= timedelta(days=1)
+    return min(found)
+
+
+def collect_corporate_actions(symbols, as_of_date: date, lookback_sessions=5,
+                              lookahead_days=EVENT_LOOKAHEAD_DAYS, session=None):
+    """Fetch official NSE corporate actions once for the whole page cohort."""
+    from pathlib import Path
+
+    symbols = sorted({str(item).strip().upper() for item in symbols if str(item).strip()})
+    start_date = _last_trading_session_start(as_of_date, lookback_sessions)
+    end_date = as_of_date + timedelta(days=int(lookahead_days))
+    cache_dir = Path("data/cache/ecms/corporate_actions")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"actions_{start_date.isoformat()}_{end_date.isoformat()}.json"
+    raw_rows = None
+    if cache_path.exists():
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            if (payload.get("window_start") == start_date.isoformat()
+                    and payload.get("window_end") == end_date.isoformat()
+                    and isinstance(payload.get("rows"), list)):
+                raw_rows = payload["rows"]
+        except (OSError, ValueError, TypeError):
+            raw_rows = None
+
+    source_url = NSE_CORPORATE_ACTIONS_PAGE
+    if raw_rows is None:
+        try:
+            client = _nse_session(session, NSE_CORPORATE_ACTIONS_PAGE)
+            response = client.get(
+                NSE_CORPORATE_ACTIONS_URL,
+                params={
+                    "index": "equities",
+                    "from_date": start_date.strftime("%d-%m-%Y"),
+                    "to_date": end_date.strftime("%d-%m-%Y"),
+                },
+                timeout=(5, 25),
+            )
+            response.raise_for_status()
+            raw_rows = _payload_rows(response)
+            if any(not isinstance(item, dict) for item in raw_rows):
+                raise ValueError("NSE corporate-actions response contains non-object rows")
+            temporary = cache_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps({
+                "window_start": start_date.isoformat(),
+                "window_end": end_date.isoformat(),
+                "rows": raw_rows,
+            }, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(cache_path)
+        except Exception as exc:
+            audit = pd.DataFrame([{
+                "TckrSymb": symbol,
+                "CorporateActionsStatus": f"SOURCE_UNAVAILABLE:{type(exc).__name__}",
+                "CorporateActionCount": 0,
+                "CorporateActionSummary": "NOT AVAILABLE",
+                "CorporateActionWindowStart": start_date.isoformat(),
+                "CorporateActionWindowEnd": end_date.isoformat(),
+                "CorporateActionSourceURL": source_url,
+            } for symbol in symbols])
+            columns = [
+                "TckrSymb", "ActionDate", "CorporateActionType", "RecordDate",
+                "BookClosureStart", "BookClosureEnd", "PaymentDate", "Remarks",
+                "Source", "SourceType", "SourceURL",
+            ]
+            return pd.DataFrame(columns=columns), audit
+
+    rows = []
+    for item in raw_rows:
+        symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol")).strip().upper()
+        if symbol not in symbols:
+            continue
+        action_date = _as_date(_pick(item, "exDate", "ex_date", "date"))
+        if action_date is None or not start_date <= action_date <= end_date:
+            continue
+        rows.append({
+            "TckrSymb": symbol,
+            "ActionDate": action_date.isoformat(),
+            "CorporateActionType": str(_pick(item, "subject", "purpose", "description")).strip(),
+            "RecordDate": str(_pick(item, "recDate", "recordDate", "record_date")).strip(),
+            "BookClosureStart": str(_pick(item, "bcStartDate", "bookClosureStartDate")).strip(),
+            "BookClosureEnd": str(_pick(item, "bcEndDate", "bookClosureEndDate")).strip(),
+            "PaymentDate": str(_pick(item, "payDate", "paymentDate")).strip(),
+            "Remarks": str(_pick(item, "remarks", "ind")).strip(),
+            "Source": "NSE Corporate Actions",
+            "SourceType": "OFFICIAL",
+            "SourceURL": source_url,
+        })
+    action_frame = pd.DataFrame(rows, columns=[
+        "TckrSymb", "ActionDate", "CorporateActionType", "RecordDate",
+        "BookClosureStart", "BookClosureEnd", "PaymentDate", "Remarks",
+        "Source", "SourceType", "SourceURL",
+    ])
+    audit = []
+    for symbol in symbols:
+        symbol_rows = action_frame[action_frame["TckrSymb"].eq(symbol)] if not action_frame.empty else pd.DataFrame()
+        audit.append({
+            "TckrSymb": symbol,
+            "CorporateActionsStatus": "DATA_FOUND" if not symbol_rows.empty else "NO_DATA_FOUND",
+            "CorporateActionCount": int(len(symbol_rows)),
+            "CorporateActionSummary": " | ".join(
+                f"{row.ActionDate}: {row.CorporateActionType} (record={row.RecordDate})"
+                for row in symbol_rows.itertuples()
+            ),
+            "CorporateActionWindowStart": start_date.isoformat(),
+            "CorporateActionWindowEnd": end_date.isoformat(),
+            "CorporateActionSourceURL": source_url,
+        })
+    return action_frame, pd.DataFrame(audit)
 
 
 def _number(value):

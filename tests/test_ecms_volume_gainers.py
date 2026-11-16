@@ -258,7 +258,7 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         result["BulkBlockDealStatus"] = "NO_DISCLOSED_DEALS_IN_LOOKBACK"
         result["BulkDealCount"] = 0
         result["BlockDealCount"] = 0
-        return result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     monkeypatch.setattr(scanner, "attach_information", fake_information)
     summary = scanner.run_morning()
 
@@ -348,101 +348,157 @@ def test_ecms_free_source_evidence_reports_no_alternates_without_inventing_data(
     assert result["ECMSFreeSourcesObservedMetrics"] == ""
 
 
-def test_attach_information_enriches_only_fundamental_pass_symbols(monkeypatch):
+def test_attach_information_researches_every_symbol_regardless_of_fundamental_status(monkeypatch):
     import strategies.ecms.volume_gainers as scanner
 
-    calls = {"news": [], "events": [], "deals": []}
+    calls = {"news": [], "events": [], "deals": [], "corporate_actions": []}
 
     def fake_news(candidates, as_of_date):
         calls["news"] = candidates["TckrSymb"].tolist()
         news = pd.DataFrame([{
             "TckrSymb": "AAA", "PublishedDate": "2026-11-14",
-            "Headline": "AAA announces contract", "Source": "NSE",
+            "Headline": "AAA announces dividend record date", "Source": "NSE", "SourceType": "OFFICIAL",
         }])
-        audit = pd.DataFrame([{
-            "TckrSymb": "AAA", "NewsWindowStart": "2026-11-10",
-            "NewsWindowEnd": "2026-11-14", "OfficialStatus": "AVAILABLE",
-            "SecondaryStatus": "AVAILABLE", "CatalystStatus": "CATALYST_FOUND",
-            "CatalystSignalStatus": "NEWS_FOUND_NO_STRONG_CATALYST",
-            "StrongCatalystCount": 0, "NegativeRiskCount": 0,
-            "OfficialCount": 1, "SecondaryCount": 0,
-        }])
+        audit = pd.DataFrame([
+            {"TckrSymb": symbol, "NewsWindowStart": "2026-11-10",
+             "NewsWindowEnd": "2026-11-14", "OfficialStatus": "AVAILABLE",
+             "SecondaryStatus": "AVAILABLE",
+             "CatalystStatus": "CATALYST_FOUND" if symbol == "AAA" else "NO_NEWS_FOUND",
+             "CatalystSignalStatus": "NEWS_FOUND_NO_STRONG_CATALYST",
+             "StrongCatalystCount": 0, "NegativeRiskCount": 0,
+             "OfficialCount": 1 if symbol == "AAA" else 0, "SecondaryCount": 0}
+            for symbol in calls["news"]
+        ])
         return news, audit
 
     def fake_events(symbols, as_of_date):
         calls["events"] = list(symbols)
-        return pd.DataFrame(), pd.DataFrame([{
-            "TckrSymb": "AAA", "UpcomingEventsStatus": "AVAILABLE",
-            "UpcomingEvents": "2026-11-20: Investor Meet",
-            "NextResultDate": "NOT ANNOUNCED", "NextResultDetails": "",
-            "EventCalendarSourceURL": "https://www.nseindia.com/",
-        }])
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "UpcomingEventsStatus": "AVAILABLE" if symbol == "AAA" else "NO_CONFIRMED_UPCOMING_EVENTS",
+             "UpcomingEvents": "2026-11-20: Investor Meet" if symbol == "AAA" else "",
+             "NextResultDate": "NOT ANNOUNCED", "NextResultDetails": "",
+             "EventCalendarSourceURL": "https://www.nseindia.com/"}
+            for symbol in symbols
+        ])
 
     def fake_deals(symbols, as_of_date):
         calls["deals"] = list(symbols)
-        return pd.DataFrame(), pd.DataFrame([{
-            "TckrSymb": "AAA", "BulkBlockDealStatus": "AVAILABLE",
-            "BulkDealCount": 1, "BlockDealCount": 0,
-            "BulkBuyers": "Fund Alpha", "BulkSellers": "",
-            "BlockBuyers": "", "BlockSellers": "",
-            "BulkBlockDealSummary": "BULK 2026-11-14 BUY Fund Alpha qty=100 price=10",
-            "BulkBlockLookbackStart": "2026-10-16",
-            "BulkBlockLookbackEnd": "2026-11-14",
-            "BulkBlockSourceURL": "https://www.nseindia.com/",
-        }])
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "BulkBlockDealStatus": "NO_DISCLOSED_DEALS_IN_LOOKBACK",
+             "BulkDealCount": 0, "BlockDealCount": 0,
+             "BulkDealCountLast5Days": 0, "BlockDealCountLast5Days": 0,
+             "BulkBlockSummaryLast5Days": "",
+             "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
+             "BulkBlockDealSummary": "", "BulkBlockLookbackStart": "2026-10-16",
+             "BulkBlockLookbackEnd": "2026-11-14", "BulkBlockSourceURL": "https://www.nseindia.com/"}
+            for symbol in symbols
+        ])
 
     monkeypatch.setattr(scanner, "collect_catalysts", fake_news)
     monkeypatch.setattr(scanner, "collect_upcoming_events", fake_events)
     monkeypatch.setattr(scanner, "collect_bulk_block_deals", fake_deals)
+    def fake_corporate_actions(symbols, as_of_date):
+        calls["corporate_actions"] = list(symbols)
+        audit = pd.DataFrame([
+            {"TckrSymb": symbol, "CorporateActionsStatus": "DATA_FOUND" if symbol == "AAA" else "NO_DATA_FOUND",
+             "CorporateActionCount": 1 if symbol == "AAA" else 0,
+             "CorporateActionSummary": "2026-11-20: Dividend" if symbol == "AAA" else "",
+             "CorporateActionWindowStart": "2026-11-10", "CorporateActionWindowEnd": "2027-02-12",
+             "CorporateActionSourceURL": "https://www.nseindia.com/"}
+            for symbol in symbols
+        ])
+        return pd.DataFrame(), audit
+    monkeypatch.setattr(scanner, "collect_corporate_actions", fake_corporate_actions)
     monkeypatch.setattr(scanner, "attach_valuation", lambda frame: frame.assign(
         ValuationLabel="FAIR", ValuationBasis="TEST"
     ))
 
-    result, news, events, deals = scanner.attach_information(pd.DataFrame([
+    result, news, events, deals, corporate_actions = scanner.attach_information(pd.DataFrame([
         {"TckrSymb": "AAA", "FundamentalShortlistStatus": "PASS"},
         {"TckrSymb": "BBB", "FundamentalShortlistStatus": "FAIL"},
+        {"TckrSymb": "CCC", "FundamentalShortlistStatus": "WAIT_FOR_DATA"},
     ]), __import__("datetime").date(2026, 11, 14))
 
-    assert calls == {"news": ["AAA"], "events": ["AAA"], "deals": ["AAA"]}
+    assert calls == {"news": ["AAA", "BBB", "CCC"],
+                     "events": ["AAA", "BBB", "CCC"],
+                     "deals": ["AAA", "BBB", "CCC"],
+                     "corporate_actions": ["AAA", "BBB", "CCC"]}
     rows = result.set_index("TckrSymb")
     assert rows.loc["AAA", "UpcomingEventsStatus"] == "AVAILABLE"
-    assert rows.loc["AAA", "BulkBlockDealStatus"] == "AVAILABLE"
+    assert rows.loc["AAA", "NewsResearchStatus"] == "DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionResearchStatus"] == "DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionCount"] == 1
+    assert rows.loc["BBB", "CorporateActionResearchStatus"] == "NO_DATA_FOUND"
+    assert rows.loc["BBB", "NewsResearchStatus"] == "NO_DATA_FOUND"
+    assert rows.loc["BBB", "UpcomingEventsResearchStatus"] == "NO_DATA_FOUND"
+    assert rows.loc["CCC", "BulkBlockDealsResearchStatus"] == "NO_DATA_FOUND"
     assert rows.loc["AAA", "Last5DayNews"].startswith("2026-11-14:")
-    assert rows.loc["BBB", "CatalystStatus"] == "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS"
-    assert rows.loc["BBB", "BulkBlockDealStatus"] == "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS"
+    assert rows.loc["BBB", "Last5DayNews"] == "NO_NEWS_FOUND"
+    assert rows["FundamentalShortlistStatus"].tolist() == ["PASS", "FAIL", "WAIT_FOR_DATA"]
 
 
-def test_attach_information_handles_zero_fundamental_pass_without_missing_columns(monkeypatch):
+def test_attach_information_still_collects_all_sources_when_no_fundamental_pass(monkeypatch):
     import strategies.ecms.volume_gainers as scanner
+    calls = {"news": 0, "events": 0, "deals": 0, "corporate_actions": 0}
 
-    def unexpected_call(*args, **kwargs):
-        raise AssertionError("Informational feeds must not run when there are no Fundamental PASS stocks")
+    def fake_news(candidates, as_of_date):
+        calls["news"] += len(candidates)
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "CatalystStatus": "NO_NEWS_FOUND",
+             "NewsWindowStart": "2026-11-09", "NewsWindowEnd": "2026-11-13",
+             "OfficialStatus": "AVAILABLE", "SecondaryStatus": "AVAILABLE",
+             "CatalystSignalStatus": "NO_CATALYST", "StrongCatalystCount": 0,
+             "NegativeRiskCount": 0, "OfficialCount": 0, "SecondaryCount": 0}
+            for symbol in candidates["TckrSymb"]
+        ])
 
-    monkeypatch.setattr(scanner, "collect_catalysts", unexpected_call)
-    monkeypatch.setattr(scanner, "collect_upcoming_events", unexpected_call)
-    monkeypatch.setattr(scanner, "collect_bulk_block_deals", unexpected_call)
+    def fake_events(symbols, as_of_date):
+        calls["events"] += len(symbols)
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "UpcomingEventsStatus": "NO_CONFIRMED_UPCOMING_EVENTS",
+             "UpcomingEvents": "", "NextResultDate": "NOT ANNOUNCED",
+             "NextResultDetails": "", "EventCalendarSourceURL": ""}
+            for symbol in symbols
+        ])
+
+    def fake_deals(symbols, as_of_date):
+        calls["deals"] += len(symbols)
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "BulkBlockDealStatus": "NO_DISCLOSED_DEALS_IN_LOOKBACK",
+             "BulkDealCount": 0, "BlockDealCount": 0,
+             "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
+             "BulkBlockDealSummary": "", "BulkBlockLookbackStart": "",
+             "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": ""}
+            for symbol in symbols
+        ])
+
+    monkeypatch.setattr(scanner, "collect_catalysts", fake_news)
+    monkeypatch.setattr(scanner, "collect_upcoming_events", fake_events)
+    monkeypatch.setattr(scanner, "collect_bulk_block_deals", fake_deals)
+    def fake_corporate_actions(symbols, as_of_date):
+        calls["corporate_actions"] += len(symbols)
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "CorporateActionsStatus": "NO_DATA_FOUND",
+             "CorporateActionCount": 0, "CorporateActionSummary": "",
+             "CorporateActionWindowStart": "", "CorporateActionWindowEnd": "",
+             "CorporateActionSourceURL": ""}
+            for symbol in symbols
+        ])
+    monkeypatch.setattr(scanner, "collect_corporate_actions", fake_corporate_actions)
     monkeypatch.setattr(scanner, "attach_valuation", lambda frame: frame.assign(
         ValuationLabel="NOT AVAILABLE", ValuationBasis="INSUFFICIENT_DATA"
     ))
-
     assessed = pd.DataFrame([
         {"TckrSymb": "AAA", "FundamentalShortlistStatus": "FAIL"},
         {"TckrSymb": "BBB", "FundamentalShortlistStatus": "WAIT_FOR_DATA"},
     ])
-    result, news, events, deals = scanner.attach_information(
+    result, news, events, deals, corporate_actions = scanner.attach_information(
         assessed, __import__("datetime").date(2026, 11, 13)
     )
-
-    assert result["UpcomingEventsStatus"].tolist() == [
-        "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-    ]
-    assert result["UpcomingEvents"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
-    assert result["NextResultDate"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
-    assert result["BulkBlockDealStatus"].eq("NOT_COLLECTED_FUNDAMENTAL_NOT_PASS").all()
-    assert result["BulkDealCount"].eq(0).all()
-    assert result["BlockDealCount"].eq(0).all()
-    assert result["Last5DayNews"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
+    assert calls == {"news": 2, "events": 2, "deals": 2, "corporate_actions": 2}
+    assert result["NewsResearchStatus"].eq("NO_DATA_FOUND").all()
+    assert result["UpcomingEventsResearchStatus"].eq("NO_DATA_FOUND").all()
+    assert result["BulkBlockDealsResearchStatus"].eq("NO_DATA_FOUND").all()
     assert result["FundamentalShortlistStatus"].tolist() == ["FAIL", "WAIT_FOR_DATA"]
     assert news.empty and events.empty and deals.empty
 

@@ -5,6 +5,7 @@ import pandas as pd
 from strategies.ecms.information import (
     attach_valuation,
     collect_bulk_block_deals,
+    collect_corporate_actions,
     collect_upcoming_events,
 )
 
@@ -72,6 +73,9 @@ def test_bulk_and_block_deals_are_parsed_as_disclosed_sides():
     aaa = audit.set_index("TckrSymb").loc["AAA"]
     assert aaa["BulkDealCount"] == 2
     assert aaa["BlockDealCount"] == 1
+    assert aaa["BulkDealCountLast5Days"] == 2
+    assert aaa["BlockDealCountLast5Days"] == 1
+    assert "BULK 2026-11-14" in aaa["BulkBlockSummaryLast5Days"]
     assert aaa["BulkBuyers"] == "Fund Alpha"
     assert aaa["BulkSellers"] == "Fund Beta"
     assert audit.set_index("TckrSymb").loc["BBB", "BulkBlockDealStatus"] == "NO_DISCLOSED_DEALS_IN_LOOKBACK"
@@ -94,3 +98,80 @@ def test_as_date_recognizes_iso_exchange_date_without_dayfirst_ambiguity():
     from strategies.ecms.information import _as_date
     assert _as_date("2026-11-15") == date(2026, 11, 15)
     assert _as_date("15-Nov-2026") == date(2026, 11, 15)
+
+
+
+def test_news_uses_five_trading_sessions_and_reuses_only_complete_exact_window_cache(tmp_path, monkeypatch):
+    from strategies.ecms import eod
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(eod, "UNIVERSE_DIR", tmp_path / "missing-universe")
+    monkeypatch.setattr(eod, "is_trading_session", lambda day: day.weekday() < 5)
+    calls = {"official": 0, "secondary": 0}
+    requested = []
+
+    def official(symbol, start, end):
+        calls["official"] += 1
+        requested.append((start, end))
+        return ([{"TckrSymb": symbol, "PublishedDate": end.isoformat(),
+                  "Headline": "Official filing", "Source": "NSE",
+                  "SourceType": "OFFICIAL", "URL": "https://nseindia.com"}], "AVAILABLE")
+
+    def secondary(symbol, company, start, end):
+        calls["secondary"] += 1
+        return ([], "AVAILABLE")
+
+    candidates = pd.DataFrame([{"TckrSymb": "AAA"}])
+    first, audit = eod.collect_catalysts(
+        candidates, date(2026, 11, 13),
+        official_fetcher=official, secondary_fetcher=secondary,
+    )
+    second, second_audit = eod.collect_catalysts(
+        candidates, date(2026, 11, 13),
+        official_fetcher=official, secondary_fetcher=secondary,
+    )
+
+    assert requested == [(date(2026, 11, 9), date(2026, 11, 13))]
+    assert calls == {"official": 1, "secondary": 1}
+    assert len(first) == len(second) == 1
+    assert audit.iloc[0]["NewsWindowStart"] == "2026-11-09"
+    assert second_audit.iloc[0]["CatalystStatus"] == "CATALYST_FOUND"
+
+
+
+def test_corporate_actions_are_fetched_once_for_all_symbols_and_cached(tmp_path, monkeypatch):
+    from strategies.ecms import information
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(information, "is_trading_session", lambda day: day.weekday() < 5)
+    client = FakeSession([
+        FakeResponse(payload=[
+            {"symbol": "AAA", "exDate": "20-Nov-2026", "subject": "Dividend - Rs 5",
+             "recDate": "21-Nov-2026", "bcStartDate": "-", "bcEndDate": "-",
+             "payDate": "05-Dec-2026"},
+            {"symbol": "AAA", "exDate": "10-Nov-2026", "subject": "Bonus 1:1",
+             "recDate": "11-Nov-2026"},
+            {"symbol": "OUTSIDE", "exDate": "20-Nov-2026", "subject": "Dividend"},
+        ])
+    ])
+
+    actions, audit = collect_corporate_actions(
+        ["AAA", "BBB"], date(2026, 11, 13), session=client
+    )
+
+    assert len(actions) == 2
+    assert set(actions["TckrSymb"]) == {"AAA"}
+    assert set(audit["TckrSymb"]) == {"AAA", "BBB"}
+    rows = audit.set_index("TckrSymb")
+    assert rows.loc["AAA", "CorporateActionsStatus"] == "DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionCount"] == 2
+    assert rows.loc["BBB", "CorporateActionsStatus"] == "NO_DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionWindowStart"] == "2026-11-09"
+    assert rows.loc["AAA", "CorporateActionWindowEnd"] == "2027-02-11"
+
+    # The exact date-window response is stored once; a later call reuses it.
+    actions_again, audit_again = collect_corporate_actions(
+        ["AAA", "BBB"], date(2026, 11, 13)
+    )
+    assert len(actions_again) == 2
+    assert audit_again.set_index("TckrSymb").loc["AAA", "CorporateActionsStatus"] == "DATA_FOUND"
