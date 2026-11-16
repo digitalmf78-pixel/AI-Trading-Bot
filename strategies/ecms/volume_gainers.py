@@ -744,7 +744,7 @@ def _save_morning_snapshot(frame, morning_date):
     }
     marker_path = STATE_DIR / "morning_snapshot_run_marker.json"
     marker_tmp = marker_path.with_name(marker_path.name + ".tmp")
-    marker_tmp.write_text(json.dumps(marker, indent=2) + "\\n", encoding="utf-8")
+    marker_tmp.write_text(json.dumps(marker, indent=2) + "\n", encoding="utf-8")
     marker_tmp.replace(marker_path)
     return state
 
