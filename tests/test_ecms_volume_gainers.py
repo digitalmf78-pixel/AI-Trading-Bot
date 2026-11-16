@@ -217,6 +217,7 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     import strategies.ecms.volume_gainers as scanner
 
     state_path = tmp_path / "state" / "volume_gainers_previous_eod.csv"
+    morning_state_path = tmp_path / "state" / "volume_gainers_same_day_morning.csv"
     output_dir = tmp_path / "outputs" / "ecms"
     state_path.parent.mkdir(parents=True)
     pd.DataFrame([{
@@ -228,6 +229,8 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     original_eod_snapshot = state_path.read_bytes()
 
     monkeypatch.setattr(scanner, "STATE_FILE", state_path)
+    monkeypatch.setattr(scanner, "STATE_DIR", state_path.parent)
+    monkeypatch.setattr(scanner, "MORNING_STATE_FILE", morning_state_path)
     monkeypatch.setattr(scanner, "OUTPUT_DIR", output_dir)
     monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
     monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 13))
@@ -272,7 +275,10 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     assert report.loc["BBB", "PagePresenceConfirmationStatus"] == "NEW_MORNING_ENTRY"
     assert report.loc["AAA", "PagePresenceDoubleConfirmed"]
     assert summary["page_presence_double_confirmed"] == 1
-    assert state_path.read_bytes() == original_eod_snapshot
+    assert summary["previous_eod_reference_consumed"] is True
+    assert summary["same_day_morning_snapshot_saved"] is True
+    assert morning_state_path.exists()
+    assert not state_path.exists()
     assert summary["double_confirmed"] == 1
     assert summary["eod_fundamental_pass_repeats"] == 1
     saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
