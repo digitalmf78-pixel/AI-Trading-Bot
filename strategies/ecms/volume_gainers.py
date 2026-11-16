@@ -75,6 +75,35 @@ def _number(value):
     try: return float(str(value).replace(",","").replace("%","").strip())
     except (TypeError,ValueError): return None
 
+def _metric_value_provenance(metric_row, metric_name):
+    """Resolve the displayed value's own provenance, not the separate XBRL audit source."""
+    def _mapping(field):
+        try:
+            value = json.loads(str(metric_row.get(field, "{}") or "{}"))
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    sources = _mapping("MetricSourcesJSON")
+    urls = _mapping("MetricSourceURLsJSON")
+    periods = _mapping("MetricSourcePeriodsJSON")
+    bases = _mapping("MetricCalculationBasesJSON")
+    currencies = _mapping("MetricSourceCurrenciesJSON")
+    unit = (
+        "PERCENT" if metric_name.endswith("Pct") or metric_name in {"ROEPercent", "ROCEPercent"}
+        else "RATIO" if metric_name in {"DebtToEquity", "InterestCoverage"}
+        else "INR" if metric_name == "OperatingCashFlowINR"
+        else "NOT_SPECIFIED"
+    )
+    return {
+        "ValueSource": str(sources.get(metric_name, "") or "NOT_AVAILABLE"),
+        "ValueSourceURL": str(urls.get(metric_name, "") or ""),
+        "ValuePeriodEnd": str(periods.get(metric_name, "") or ""),
+        "ValueBasis": str(bases.get(metric_name, "") or ""),
+        "ValueCurrency": str(currencies.get(metric_name, "") or ""),
+        "ValueUnit": unit,
+    }
+
 def _volume_number(value):
     """Parse NSE quantity values, including compact Indian lakh/crore display units."""
     if value is None:
@@ -666,14 +695,22 @@ def assess_page_fundamentals(candidates, eod_date):
             mismatch += int(verification_status == "PROVIDER_VALUE_MISMATCH")
             reconciliation += int(verification_status == "DERIVED_RECONCILIATION_REQUIRED")
             filing_unconfirmed += int(verification_status == "FILING_METADATA_NOT_CONFIRMED")
+            value_provenance = _metric_value_provenance(metric_row, metric_name)
             metric_detail_rows.append({
                 "TckrSymb": symbol, "MetricName": metric_name,
                 "MetricValue": raw_value if has_value else "",
                 "ValueAvailable": bool(has_value),
-                "FinancialPeriodEnd": metric_row.get("FinancialPeriodEnd", ""),
+                "FinancialPeriodEnd": value_provenance["ValuePeriodEnd"] or metric_row.get("FinancialPeriodEnd", ""),
                 "PublicationDate": metric_row.get("PublicationDate", ""),
-                "CalculationBasis": metric_row.get("MetricCalculationBasis", ""),
-                "MetricSource": audit.get("Source", ""),
+                "CalculationBasis": value_provenance["ValueBasis"] or metric_row.get("MetricCalculationBasis", ""),
+                "MetricSource": value_provenance["ValueSource"],
+                "MetricSourceURL": value_provenance["ValueSourceURL"],
+                "MetricSourcePeriodEnd": value_provenance["ValuePeriodEnd"],
+                "MetricSourceBasis": value_provenance["ValueBasis"],
+                "MetricUnit": value_provenance["ValueUnit"],
+                "MetricCurrency": value_provenance["ValueCurrency"],
+                "OfficialFilingSource": audit.get("Source", "NOT_FOUND"),
+                "OfficialFilingURL": audit.get("SourceURL", ""),
                 "VerificationStatus": verification_status,
                 "MismatchReason": audit.get("MismatchReason", ""),
             })
