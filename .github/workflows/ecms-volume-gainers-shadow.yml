@@ -264,7 +264,7 @@ jobs:
       - name: Compile and test
         run: |
           python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_secondary_period_alignment.py tests/test_ecms_information.py
       - name: Run 09:20 morning fundamental reassessment
         env:
           PYTHONUNBUFFERED: "1"
