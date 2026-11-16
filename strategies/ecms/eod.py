@@ -169,6 +169,37 @@ def calculate_rvol(current: pd.DataFrame, history: list[pd.DataFrame]) -> pd.Dat
         else ("WAIT_FOR_DATA" if pd.isna(value) else "BELOW_RVOL_THRESHOLD"))
     return result
 
+def _mainboard_company_equity_symbols(csv_path: Path) -> set[str]:
+    """ECMS-only: keep official Main Board company equities and exclude ETF/fund ISINs."""
+    if not csv_path.exists():
+        raise RuntimeError(f"WAIT_FOR_DATA: official NSE Main Board CSV missing: {csv_path}")
+    frame = pd.read_csv(csv_path, dtype=str)
+    if frame.empty:
+        raise RuntimeError("WAIT_FOR_DATA: official NSE Main Board CSV is empty")
+    normalized = {
+        str(column).strip().upper().replace(" ", "").replace("_", ""): column
+        for column in frame.columns
+    }
+    symbol_col = next(
+        (normalized[key] for key in ("SYMBOL", "TCKRSYMB", "TRADINGSYMBOL", "SECURITYSYMBOL") if key in normalized),
+        None,
+    )
+    isin_col = normalized.get("ISIN") or normalized.get("ISINNUMBER")
+    if symbol_col is None or isin_col is None:
+        raise RuntimeError("WAIT_FOR_DATA: official Main Board CSV lacks symbol/ISIN columns; ETF exclusion cannot be verified")
+    isin = frame[isin_col].fillna("").astype(str).str.strip().str.upper()
+    # NSE ETF/fund-unit ISINs use INF; listed company equity ISINs use INE.
+    verified = frame[isin.str.startswith("INE")]
+    symbols = {
+        str(value).strip().upper()
+        for value in verified[symbol_col].dropna().tolist()
+        if str(value).strip() and str(value).strip().lower() not in {"nan", "symbol"}
+    }
+    if not symbols:
+        raise RuntimeError("WAIT_FOR_DATA: official Main Board CSV has no verified INE company-equity symbols")
+    return symbols
+
+
 def load_official_mainboard_symbols(universe_dir: Path = UNIVERSE_DIR) -> tuple[set[str], str]:
     """Load fresh official NSE Main Board and SME lists using the shared validated fetcher.
 
@@ -179,13 +210,19 @@ def load_official_mainboard_symbols(universe_dir: Path = UNIVERSE_DIR) -> tuple[
     from main_board_filter import load_official_board_lists
 
     main_symbols, sme_symbols, sources = load_official_board_lists()
-    symbols = main_symbols - sme_symbols
+    # The shared universe fetcher remains unchanged for production NSE V8.
+    # ECMS applies its own stricter company-equity gate using the official ISIN column.
+    csv_path = universe_dir / "nse_main_board_equity.csv"
+    company_equities = _mainboard_company_equity_symbols(csv_path)
+    if not company_equities.issubset(main_symbols):
+        raise RuntimeError("WAIT_FOR_DATA: ECMS company-equity list does not match official Main Board symbols")
+    symbols = company_equities - sme_symbols
     if not symbols:
-        raise RuntimeError("WAIT_FOR_DATA: official Main Board list is empty after SME exclusion")
+        raise RuntimeError("WAIT_FOR_DATA: official Main Board company-equity list is empty after ETF/SME exclusion")
     return symbols, (
         f"NSE_MAIN={sources['main_board_source']};"
         f"NSE_SME={sources['sme_source']};"
-        f"main_count={len(main_symbols)};sme_count={len(sme_symbols)}"
+        f"main_company_equity_count={len(company_equities)};sme_count={len(sme_symbols)}"
     )
 
 def assess_fundamentals(candidates: pd.DataFrame, eod_date: date) -> pd.DataFrame:
