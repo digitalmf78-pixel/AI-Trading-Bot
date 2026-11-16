@@ -720,3 +720,52 @@ def test_fetch_volume_gainers_maps_additional_quantity_alias_and_exposes_payload
     assert result["PageVolumeSourceField"] == "totalTradedQuantity"
     assert "week1AvgVolume" in result["NSEPayloadKeys"]
     assert result["NSEPayloadVolumeLikeFields"] == "totalTradedQuantity|week1AvgVolume"
+
+
+
+def test_nse_compact_page_volume_units_are_normalized_to_share_quantity():
+    from strategies.ecms.volume_gainers import _volume_number
+
+    assert _volume_number("23.91 L") == 2_391_000
+    assert _volume_number("1.25 lakh") == 125_000
+    assert _volume_number("0.42 Cr") == 4_200_000
+    assert _volume_number("1.5K") == 1_500
+    assert _volume_number("2,391,000") == 2_391_000
+    assert _volume_number("-") is None
+    assert _volume_number("not-a-number") is None
+
+
+def test_fetch_volume_gainers_normalizes_compact_volume_and_keeps_raw_value():
+    import strategies.ecms.volume_gainers as scanner
+
+    class Response:
+        def __init__(self, payload=None):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.calls = 0
+
+        def get(self, url, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                return Response({})
+            return Response({"data": [{
+                "symbol": "AAA",
+                "companyName": "Alpha Limited",
+                "volume": "23.91 L",
+                "week1AvgVolume": "6.43 L",
+            }]})
+
+    row = scanner.fetch_volume_gainers(session=Session()).iloc[0]
+    assert row["PageVolume"] == 2_391_000
+    assert row["PageVolumeDataStatus"] == "DATA_FOUND"
+    assert row["PageVolumeSourceField"] == "volume"
+    assert row["PageVolumeRawValue"] == "23.91 L"
