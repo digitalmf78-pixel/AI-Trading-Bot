@@ -1,6 +1,6 @@
 # ECMS — NSE Volume Gainers Fundamental Research
 
-**Purpose:** ECMS researches only the eligible stocks present in the NSE Volume Gainers page snapshot. Its primary job is to assess fundamentals for every current candidate and forward only genuinely strong fundamental candidates to the next ECMS research stage.
+**Purpose:** ECMS researches every eligible NSE Main Board stock present in each NSE Volume Gainers page snapshot. PASS, FAIL and WAIT_FOR_DATA are assessment outcomes only: none may prevent a stock from receiving news, events, deals or other research. No rejection/hand-off filter is to be added until the complete research output and source quality have been reviewed.
 
 This file is the source of truth for ECMS scope, rules, roadmap and hand-off. Read it before changing ECMS code or interpreting ECMS reports.
 
@@ -38,9 +38,12 @@ This file is the source of truth for ECMS scope, rules, roadmap and hand-off. Re
 6. Collect or safely reuse fundamental data for every current eligible page candidate.
 7. Run official-filing/XBRL verification for those same candidate symbols. Keep official verification separate from third-party research data.
 8. Produce strict fundamental shortlist status and independent fundamental research score/classification.
-9. Collect candidate-specific catalyst/news and negative-risk evidence for the same candidate set.
-10. Produce one final EOD assessment row per eligible candidate plus raw/provider/filing/verification/catalyst diagnostics. Provider failure must not silently drop a candidate.
-11. Save the EOD candidate snapshot for the morning comparison.
+9. Collect five official NSE trading sessions of announcements/news for every eligible candidate; reuse only complete, date-matched cached source results.
+10. Collect the next 90 calendar days of NSE event-calendar entries for every eligible candidate.
+11. Collect 30 calendar days of bulk and block deals for every eligible candidate, with a separate recent five-calendar-day count/summary.
+12. Preserve corporate-action announcements found in the official five-session disclosure/news window. Do not claim a dedicated historical/upcoming corporate-actions feed until its official source and parser are independently validated.
+13. Produce one final EOD research row per eligible candidate plus source-wise statuses and raw/provider/filing/verification/news/event/deal diagnostics. Provider failure must not silently drop a candidate.
+14. Save the EOD candidate snapshot for the morning comparison.
 
 ### 09:20 IST morning recheck and second fundamental assessment
 
@@ -137,15 +140,13 @@ Current generic score bands:
 
 **Sector exception:** Banks, NBFCs and insurers must not be judged with generic industrial debt/equity and ROCE thresholds. Keep them INSUFFICIENT_DATA until a separate validated sector model exists, with suitable measures such as NIM, GNPA/NNPA and capital adequacy (CAR), as applicable.
 
-### C. Strong-fundamental hand-off
-The purpose is to forward only strong fundamentals, not every page candidate.
+### C. Research-first policy — current approved behavior
 
-- Every candidate remains visible in the complete assessment report.
-- Only candidates with strict shortlist PASS **and** independent research classification STRONG, with required coverage/provenance, may enter the STRONG_FUNDAMENTAL hand-off.
-- GOOD, AVERAGE, WEAK, FAIL, WAIT_FOR_DATA, INSUFFICIENT_DATA, sector-model-pending and provenance-blocked candidates do not enter that hand-off.
-- Keep NOT_FORWARDED_REASON so every exclusion is explained.
+- Every eligible page stock receives the same research collection attempt regardless of strict shortlist PASS, FAIL or WAIT_FOR_DATA.
+- Fundamental classifications remain visible as one independent research dimension; they do not control whether news, announcements, events, bulk/block deals or corporate-action disclosures are collected.
+- Do not drop, suppress or hide FAIL/WAIT stocks from the complete research report. Missing sources remain explicitly unavailable/unverified, not negative evidence.
+- No STRONG_FUNDAMENTAL hand-off, rejection filter or final selection gate is authorized in this phase. Add such a stage only after the user reviews complete data coverage and explicitly approves the rules.
 - Positive catalyst/news cannot repair weak or missing fundamentals. Negative-risk evidence must remain visible.
-- Zero strong candidates is a valid outcome; never force a shortlist.
 
 **Implementation note:** Current scanner code runs strict shortlist and research scoring as separate columns. The final hand-off must explicitly enforce the combined rule above. Strict shortlist PASS alone does not prove independent research classification STRONG.
 
@@ -157,7 +158,9 @@ The purpose is to forward only strong fundamentals, not every page candidate.
 - Missing, incomplete, stale or provenance-blocked fields must remain visible. Cache presence alone is not proof of completeness.
 - Provider cooldowns are efficiency controls, not permission to mark missing data complete.
 - If required data is missing and retry is deferred, record RETRY_COOLDOWN plus missing fields and keep the candidate WAIT_FOR_DATA / not forwarded.
-- Free-source budget must cover the full current page cohort (workflow currently configures 25). If the page returns more than the budget, report unattempted candidates and do not claim full collection.
+- Free-source budget must cover the full current page cohort. If the page returns more than the budget, report unattempted candidates and do not claim full collection.
+- News cache entries are reusable only for the exact symbol and exact five-session date window, and only after both official and secondary source attempts completed. Failed/partial attempts are retried; Morning's complete same-day results can be reused by EOD to avoid duplicate requests.
+- Event-calendar and bulk/block-deal APIs are batch requests for the whole page cohort, not one request per stock. Keep the 30-day deal detail and five-day deal summary side by side.
 - Provider errors must not delete candidates or overwrite valid prior/manual values.
 - Duplicate symbol rows in the fundamental cache are an integrity error; never arbitrarily choose one.
 - Final report must have exactly one assessment row per eligible candidate symbol. A mismatch in count or symbol set is a run-integrity failure.
@@ -168,7 +171,9 @@ The purpose is to forward only strong fundamentals, not every page candidate.
 |---|---|
 | volume_gainers_page_raw.csv | Raw normalized NSE page rows before Main Board filtering |
 | volume_gainers_eod_research.csv | One joined fundamental/research/catalyst assessment per eligible candidate |
-| volume_gainers_catalysts.csv | Candidate-specific catalyst/news evidence |
+| volume_gainers_catalysts.csv | Five-NSE-session candidate-specific announcement/news evidence for every eligible stock |
+| volume_gainers_upcoming_events.csv | Next-90-calendar-day official event-calendar rows for every eligible stock |
+| volume_gainers_bulk_block_deals.csv | 30-calendar-day official deal detail for every eligible stock, including five-day summary fields |
 | volume_gainers_eod_summary.json | Run date, page count, eligible count, assessed count, strong count and wait count |
 | fundamental_metrics_ecms.csv | ECMS-owned fundamental cache snapshot |
 | fundamental_provider_diagnostics.csv | Provider attempts, cache/retry status and missing-data details |
@@ -181,7 +186,16 @@ The exact artifact bundle may include additional XBRL evidence/diagnostic files.
 
 Required summary counts: page rows; eligible Main Board candidates; assessment rows/unique symbols; strong hand-off count; good/average/weak counts; FAIL count; WAIT_FOR_DATA/insufficient/provenance-blocked count; provider attempted/cache reused/cooldown-deferred/failed counts; duplicate/missing assessment integrity count.
 
-## 8. Roadmap and current status
+## 8. Research collection windows and status meanings
+
+- Announcements/news: previous five official NSE trading sessions, inclusive of the as-of session.
+- Upcoming events: next 90 calendar days from the as-of date.
+- Bulk and block deals: previous 30 calendar days; also expose separate five-calendar-day counts and summaries.
+- Corporate actions: include official corporate-action announcements appearing in the five-session disclosure window. A dedicated corporate-actions endpoint remains NOT_VERIFIED until validated against official NSE data; do not infer an empty result from an unavailable source.
+- Each research family must distinguish `DATA_FOUND`, `NO_DATA_FOUND`, `SOURCE_UNAVAILABLE` and `NOT_VERIFIED`. `NO_DATA_FOUND` is valid only when the source was successfully queried for the requested window.
+- Performance: use page-wide batch APIs where available, exact-window persistent cache reuse for complete news results, and existing fundamental cache/cooldown controls. Never cache a failed or partial fetch as a successful empty result.
+
+## 9. Roadmap and current status
 
 Statuses reflect code inspected on 15-Nov-2026. They are not claims that a live market run has succeeded.
 
