@@ -786,6 +786,19 @@ def _load_same_day_morning_snapshot(eod_date):
         return pd.DataFrame(), "NOT_CHECKED_INVALID_MORNING_SNAPSHOT"
 
 
+def _same_day_page_presence_status(morning_present, eod_present, snapshot_status="VALID"):
+    """Classify page presence only; never use this as a fundamental decision gate."""
+    if snapshot_status != "VALID":
+        return snapshot_status
+    if morning_present and eod_present:
+        return "MORNING_AND_EOD_REPEAT"
+    if eod_present:
+        return "EOD_NEW_ENTRY"
+    if morning_present:
+        return "MORNING_ONLY_DROPPED"
+    return "NOT_PRESENT"
+
+
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
     if frame.empty or "TckrSymb" not in frame.columns:
@@ -852,8 +865,7 @@ def run_eod():
     eligible_symbols = set(eligible["TckrSymb"].astype(str).str.upper())
     morning_by_symbol = morning_snapshot.set_index("TckrSymb") if not morning_snapshot.empty else pd.DataFrame()
     eligible["SameDayPagePresenceStatus"] = eligible["TckrSymb"].map(
-        lambda symbol: "MORNING_AND_EOD_REPEAT" if symbol in morning_symbols else
-        "EOD_NEW_ENTRY" if morning_snapshot_status == "VALID" else morning_snapshot_status
+        lambda symbol: _same_day_page_presence_status(symbol in morning_symbols, True, morning_snapshot_status)
     )
     eligible["MorningPageVolume"] = eligible["TckrSymb"].map(
         lambda symbol: morning_by_symbol.loc[symbol, "PageVolume"]
@@ -873,12 +885,7 @@ def run_eod():
         eod_row = eod_by_symbol.loc[symbol].to_dict() if symbol in eod_by_symbol.index else {}
         morning_present = bool(morning_row)
         eod_present = bool(eod_row)
-        status = (
-            "MORNING_AND_EOD_REPEAT" if morning_present and eod_present else
-            "EOD_NEW_ENTRY" if eod_present and morning_snapshot_status == "VALID" else
-            "MORNING_ONLY_DROPPED" if morning_present and not eod_present else
-            morning_snapshot_status
-        )
+        status = _same_day_page_presence_status(morning_present, eod_present, morning_snapshot_status)
         comparison_rows.append({
             "TckrSymb": symbol,
             "MorningPresent": morning_present,
