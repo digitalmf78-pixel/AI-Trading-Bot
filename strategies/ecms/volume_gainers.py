@@ -1,6 +1,7 @@
 """NSE Volume Gainers page scanner for ECMS. No orders; shared inputs are read-only."""
 from __future__ import annotations
 import argparse, json, os, re, shutil
+from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -103,6 +104,12 @@ def fetch_volume_gainers(session=None):
     client.headers["Referer"] = NSE_PAGE
     landing = client.get(NSE_PAGE, timeout=REQUEST_TIMEOUT); landing.raise_for_status()
     response = client.get(NSE_API, timeout=REQUEST_TIMEOUT); response.raise_for_status()
+    server_date_raw = response.headers.get("Date", "")
+    try:
+        server_date = parsedate_to_datetime(server_date_raw).astimezone(IST).date().isoformat()
+    except (TypeError, ValueError, OverflowError):
+        server_date = ""
+    fetched_at = datetime.now(IST).isoformat()
     rows = _find_records(response.json())
     if not rows: raise RuntimeError("WAIT_FOR_DATA: NSE Volume Gainers API returned no recognizable symbol rows")
     normalized=[]
@@ -144,6 +151,8 @@ def fetch_volume_gainers(session=None):
           "NSEPayloadKeys":payload_keys,
           "NSEPayloadVolumeLikeFields":volume_like_fields,
           "NSEUpdatedAt":str(_get(row,ALIASES["updated_at"]) or ""),
+          "NSEServerDateIST":server_date,
+          "NSEFetchCapturedAtIST":fetched_at,
         })
     frame=pd.DataFrame(normalized)
     if frame.empty: raise RuntimeError("WAIT_FOR_DATA: NSE response contained no valid symbols")
@@ -898,6 +907,17 @@ def attach_information(assessed, as_of_date):
     )
     return result, news, events, deals, corporate_actions
 
+def _verified_nse_page_session_date(page, scan_date):
+    """Require the live NSE API response Date header to match today's IST scan date."""
+    if page.empty or "NSEServerDateIST" not in page.columns:
+        raise RuntimeError("WAIT_FOR_DATA: NSE live page has no verifiable server Date header")
+    server_dates = set(page["NSEServerDateIST"].fillna("").astype(str).str.strip())
+    expected = scan_date.isoformat()
+    if server_dates != {expected}:
+        raise RuntimeError(f"WAIT_FOR_DATA: NSE live page server date {sorted(server_dates)} does not match scan date {expected}")
+    return scan_date
+
+
 def _is_current_run_eod_snapshot_cacheable(marker, rows, github_run_id):
     """Accept only a complete, current-run EOD snapshot for its actual scan session."""
     if not isinstance(marker, dict) or not rows:
@@ -1131,14 +1151,15 @@ def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
     if eligible.empty: raise RuntimeError("WAIT_FOR_DATA: no official Main Board equity symbols found on NSE Volume Gainers page")
-    # Manual runs may be started on weekends/holidays. The NSE Volume Gainers
-    # page then represents the most recently completed cash-market session.
-    # Tag research with that official session date instead of rejecting today's
-    # calendar date when today is not a trading day.
-    eod_date=expected_latest_completed_session()
+    # Separate the live NSE page session from the completed Bhavcopy session.
+    # Only compare same-day Morning/EOD when NSE's HTTP Date header verifies it.
+    page_session_date = _verified_nse_page_session_date(page, scan_date)
+    bhavcopy_date = expected_latest_completed_session()
+    eod_date = page_session_date
     if not is_trading_session(eod_date):
         raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
     eligible["EODDate"]=eod_date.isoformat()
+    eligible["BhavcopyDate"]=bhavcopy_date.isoformat()
     eligible["EODScanDate"]=scan_date.isoformat()
     eligible["EODScanCapturedAtIST"]=scan_captured_at
     eligible["PageSource"]=NSE_PAGE
@@ -1146,7 +1167,7 @@ def run_eod():
     # Save the raw EOD universe first. Fundamental/news/RVOL enrichment must
     # never be able to prevent tomorrow's 09:20 scanner from seeing this list.
     _save_eod_snapshot(eligible, eod_date)
-    eligible=attach_page_rvol(eligible,eod_date)
+    eligible=attach_page_rvol(eligible,bhavcopy_date)
     # Fundamentals and event/news windows are evaluated as of this scan date;
     # completed-session RVOL remains tied to eod_date above.
     assessed=assess_page_fundamentals(eligible,scan_date)
@@ -1186,18 +1207,20 @@ def run_eod():
     free_attempted = provider_diag.get("FreeSourcesAttempted", pd.Series(False, index=provider_diag.index)).astype(str).str.lower().isin({"true", "1", "yes"})
     shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
     summary={"status":"PASS","scan_date_ist":scan_date.isoformat(),
-      "eod_date_ist":eod_date.isoformat(),"data_as_of_date_ist":eod_date.isoformat(),
+      "eod_date_ist":eod_date.isoformat(),"page_session_date_ist":page_session_date.isoformat(),
+      "bhavcopy_date_ist":bhavcopy_date.isoformat(),"data_as_of_date_ist":bhavcopy_date.isoformat(),
       "eod_scan_captured_at_ist":scan_captured_at,
       "morning_comparison_date_ist":scan_date.isoformat(),
-      "eod_data_current_for_scan_date":eod_date == scan_date,
-      "data_freshness_status":"CURRENT_SESSION_DATA" if eod_date == scan_date else "WAIT_FOR_CURRENT_SESSION_EOD_DATA",
+      "eod_data_current_for_scan_date":page_session_date == scan_date,
+      "page_freshness_evidence":"NSE_API_HTTP_DATE_HEADER_MATCH" if page_session_date == scan_date else "WAIT_FOR_DATA",
+      "data_freshness_status":"CURRENT_SESSION_PAGE_VERIFIED" if page_session_date == scan_date else "WAIT_FOR_CURRENT_SESSION_PAGE_DATA",
       "morning_comparison_status":(
-        "STALE_EOD_DATA_NOT_COMPARED" if eod_date != scan_date else
+        "STALE_EOD_DATA_NOT_COMPARED" if page_session_date != scan_date else
         "COMPLETED" if not _load_same_day_morning_snapshot(scan_date).empty else
         "NO_VALID_SAME_DAY_MORNING_SNAPSHOT"
       ),
       "morning_comparison_performed":(
-        eod_date == scan_date and not _load_same_day_morning_snapshot(scan_date).empty
+        page_session_date == scan_date and not _load_same_day_morning_snapshot(scan_date).empty
       ),
       "morning_repeat_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("MORNING_AND_EOD_REPEAT").sum()),
       "eod_new_entry_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("EOD_NEW_ENTRY").sum()),
