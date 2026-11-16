@@ -202,7 +202,7 @@ def assess_page_fundamentals(candidates, eod_date):
             enabled=True,
             asof_date=eod_date,
             free_source_fetcher=fetch_ecms_free_fundamental_sources,
-            force_retry_incomplete=True,
+            force_retry_incomplete=False,
             free_source_audit_metrics=[
                 "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
                 "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
@@ -770,6 +770,8 @@ def _save_same_day_morning_snapshot(frame, morning_date):
         raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: blank or duplicate symbols")
     snapshot["MorningDate"] = morning_date.isoformat()
     snapshot["MorningCapturedAtIST"] = datetime.now(IST).isoformat()
+    snapshot["MorningRunId"] = os.getenv("GITHUB_RUN_ID", "")
+    snapshot["MorningRunAttempt"] = os.getenv("GITHUB_RUN_ATTEMPT", "")
     snapshot["MorningSnapshotType"] = "MORNING"
     snapshot["MorningSnapshotStatus"] = "VALID"
     STATE_DIR.mkdir(parents=True, exist_ok=True)
