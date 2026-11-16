@@ -1,3 +1,70 @@
+## Approved ECMS strategy and execution roadmap — 16-Nov-2026
+
+**This section is the current decision record for ECMS. It supersedes older statements elsewhere in this file that describe a permanent fundamental-only rejection gate.** The implementation-status notes below remain historical evidence of what code currently does; they must not be mistaken for completed implementation of this target policy.
+
+### Objective
+
+Find better-quality opportunities from **every eligible NSE Volume Gainers page stock** by identifying whether unusual volume is supported by positive demand/accumulation evidence, negative selling/distribution evidence, a genuine company/event catalyst, or suspicious/high-risk activity. A Volume Gainer is a research candidate, never an automatic buy signal. The objective is to improve decision quality and profit potential; profit is not guaranteed.
+
+### Locked operating decisions
+
+- **No basket strategy and no basket construction.** Evaluate and report individual stocks.
+- **No historical backtesting.** P8 is live shadow-output and operational validation only. Do not add historical backtesting jobs, datasets or requirements.
+- Keep exactly the existing two ECMS scans: Morning and EOD. Preserve the previous-EOD → next-Morning and same-day-Morning → EOD comparison cycle, official NSE holiday/session handling and separate reports.
+- Research every eligible Main Board company stock returned by the NSE Volume Gainers page. Do not impose a Top-20/Top-25 cap on the returned eligible rows.
+- Keep ECMS isolated from NSE V8 production workflows, providers, thresholds, caches and selection logic.
+- No broker integration, order placement, auto-buy or auto-sell.
+- Keep research collection separate from final classification. Do not reject a stock merely because an optional source is missing or unavailable.
+
+### Fundamental decision policy
+
+The seven core metrics remain Revenue Growth, Profit Growth, ROE, ROCE, Debt/Equity, Interest Coverage and Operating Cash Flow.
+
+- When all applicable required metrics are present, current, period/basis aligned and sufficiently verified against official filings, the approved fundamental rules may act as a rejection gate. Sector-specific treatment is mandatory for banks, NBFCs and insurers.
+- When fundamentals are partial, missing, stale, conflicting or unverified, retain the explicit PARTIAL_DATA, WAIT_FOR_DATA, STALE, CONFLICT or equivalent status. **Do not reject solely for incomplete fundamental coverage.** Continue evaluating the stock using the other available evidence, while never describing it as fundamentally strong or as a verified fundamental PASS.
+- Third-party values remain provider evidence until reconciled with an official filing. Never invent values, silently average conflicts, or overwrite source/period/basis evidence.
+- Fundamental collection and the fundamental decision gate are separate stages. Collect for every eligible page stock, preserve missing/rejected rows and provenance, and do not narrow collection to a preliminary shortlist.
+
+### Positive/negative volume-origin research
+
+For every eligible page stock, combine the evidence below; no single field proves accumulation or distribution:
+
+1. **Price and volume:** current/previous-session OHLCV, volume versus 5/10/20-session context where reliable, traded value, price progress, close location, candle body/wicks, gaps and reversals.
+2. **Delivery:** delivery quantity, delivery percentage and delivered value across available completed sessions; compare up-days and down-days. High delivery alone does not prove accumulation.
+3. **Follow-through:** Morning/EOD persistence and subsequent completed trading-session behaviour. Never compare partial Morning volume directly with full-day averages.
+4. **Company evidence:** official announcements, financial results, orders, material events, corporate actions, news, bulk/block deals and filing changes, with event/publication dates and sources.
+5. **Institutional/ownership evidence:** stock-specific bulk/block disclosures and quarterly promoter/FII/DII/shareholding changes where official data is available. Do not infer an institutional buyer from delivery percentage or market-wide flows.
+6. **Risk evidence:** official ASM/GSM/ESM, Trade-to-Trade, Periodic Call Auction, price-band and exchange surveillance status; combine with multi-session price/volume behaviour.
+7. **Context:** Nifty and sector strength plus simple technical confirmation/readiness. Keep this proportionate; avoid heavy or duplicative data collection.
+
+Use transparent classifications such as POSITIVE_EVIDENCE, NEGATIVE_EVIDENCE, EVENT_DRIVEN, MIXED_SIGNALS, SUSPICIOUS_HIGH_RISK and INSUFFICIENT_DATA, with confidence and source-backed reasons. These labels describe evidence, not certainty about buyer identity or future returns. Missing data is not a negative signal and is not proof of a trap.
+
+**Trap handling = EXCLUDE only when severe risk is supported by a validated rule or corroborated evidence.** Preserve every exclusion in a separate ledger with symbol, date, evidence, source, severity and reason. A single weak signal, upper wick, volume spike or missing field is not enough.
+
+### Simple implementation roadmap (P0–P8)
+
+| Phase | Scope | Completion evidence |
+|---|---|---|
+| **P0 — Workflow protection** | Morning/EOD lifecycle, date/session and holiday handling, snapshot/cache restore-save, Telegram/report integrity, ECMS/V8 isolation and regression protection. | Actual Morning/EOD runtime evidence for both comparison legs; no stale snapshot overwrite; cache lifecycle verified. |
+| **P1 — Fundamentals** | Seven-metric coverage, official verification, metric-level source/URL/period/basis/unit, sector applicability, persistent ECMS cache and missing/stale retry behaviour. | Per-stock/per-metric evidence and source coverage; actual cache reuse/provider-skip logs. |
+| **P2 — Volume origin** | Price/volume/liquidity and 5/10/20/30-session delivery history where reliable; positive vs negative volume evidence. | Session-aligned, source-attributed stock reports; missing fields explicitly identified. |
+| **P3 — Institutional evidence** | Official quarterly ownership/shareholding changes, promoter/pledge and insider disclosures where source mapping is verified, plus stock-specific bulk/block deals. | Period- and filing-attributed ownership/deal evidence; no inferred institutional identities. |
+| **P4 — News and events** | Announcements, results, result dates, orders, corporate actions, events and Morning-to-EOD incremental updates. | Source-linked, date-correct, deduplicated disclosure/event reports. |
+| **P5 — Trap/surveillance** | Official surveillance lists and multi-signal suspicious/distribution risk assessment. | Evidence-backed risk reasons and separate exclusion ledger; missing data never treated as clean or guilty. |
+| **P6 — Market/technical context** | Nifty/sector relative strength, simple trend, breakout/retest/closing-strength and liquidity/exit-readiness observations. | Reproducible, data-complete context fields; no guessed thresholds. |
+| **P7 — Balanced decision** | Combine fundamental status, volume origin, company/institutional evidence, catalyst, sector/technical context and trap risk. | Transparent individual-stock classification and inclusion/exclusion reasons; no basket or opaque forced score. |
+| **P8 — Live shadow validation** | Run the existing Morning/EOD workflow, inspect real reports/logs/cache/Telegram, correct defects and confirm operational consistency. | Live run evidence, coverage/runtime/report checks and user review. **No historical backtesting.** |
+
+### Execution discipline
+
+- Work in the order P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8. Finish and evidence each phase before treating it as complete; do not jump ahead or silently change the roadmap.
+- Before editing, inspect the current main-branch code, workflow, tests and latest relevant run/artifacts. Make small ECMS-only changes and run relevant tests.
+- Never claim a workflow ran, a cache hit occurred, a provider was skipped or a phase completed without logs/artifact evidence.
+- If data volume, provider limits or runtime threaten the two-scan workflow, prefer bounded batch retrieval, persistent cache and source coverage reporting over more serial per-stock calls.
+- Do not add backtesting, basket construction, paid sources or new schedules unless the user explicitly changes these decisions.
+
+---
+
 # ECMS — NSE Volume Gainers Research
 
 ECMS is an isolated, research-only workflow for stocks appearing on the NSE Volume Gainers page. It does not place orders and must not change or depend on the production NSE V8 scanner.
@@ -13,9 +80,7 @@ ECMS is an isolated, research-only workflow for stocks appearing on the NSE Volu
 - Only eligible NSE Main Board company stocks receive the existing fundamental assessment and appear as ECMS stock suggestions. Do not add SME, ETF/fund-unit or index recommendations.
 
 
-For each eligible NSE Volume Gainer, publish only these seven information groups:
-
-1. **Fundamentals (the only rejection filter):** Revenue Growth, Profit Growth, ROE, ROCE, Debt/Equity, Interest Coverage and Operating Cash Flow. Apply the configured fundamental thresholds and sector-specific applicability. A stock is included in the fundamental-pass set only when the required applicable fundamental checks pass. Missing or unverified required fundamental data is `WAIT_FOR_DATA`, not a pass.
+For each eligible NSE Volume Gainer, publish the seven existing information groups plus the positive/negative volume-origin evidence defined in the approved strategy section above. Fundamental data is a conditional gate only when all applicable required metrics are sufficiently complete, current and verified. Incomplete, stale, conflicting or unverified fundamentals remain explicitly pending and do not by themselves reject a stock; continue the other research layers. The historical implementation notes below must be read as current-code status, not as a reason to override this approved target policy.
 2. **Last five days' company news:** issuer-matched news/announcements, with official and secondary sources clearly distinguished.
 3. **Upcoming company events:** only explicitly announced/confirmed NSE event-calendar entries within the next 90 calendar days, with date and source.
 4. **Upcoming result:** next result date only when announced by the company/exchange; otherwise `NOT ANNOUNCED`.
