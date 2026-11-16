@@ -495,3 +495,24 @@ def test_morning_snapshot_rejects_duplicate_symbols_without_replacing_existing_f
         ]), date(2026, 11, 16))
 
     assert morning_file.read_bytes() == original
+
+
+def test_eod_rejects_morning_snapshot_when_run_marker_does_not_match(tmp_path, monkeypatch):
+    import json
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "state"
+    morning_file = state_dir / "volume_gainers_morning_snapshot.csv"
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "MORNING_SNAPSHOT_FILE", morning_file)
+    scanner._save_morning_snapshot(pd.DataFrame([{"TckrSymb": "AAA", "PageVolume": 10}]), date(2026, 11, 16))
+    marker_path = state_dir / "morning_snapshot_run_marker.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["symbol_count"] = 99
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    loaded, status = scanner._load_same_day_morning_snapshot(date(2026, 11, 16))
+
+    assert loaded.empty
+    assert status == "NOT_CHECKED_INVALID_MORNING_SNAPSHOT"
