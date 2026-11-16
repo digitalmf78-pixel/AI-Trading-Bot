@@ -8,7 +8,7 @@ ECMS is an isolated, research-only workflow for stocks appearing on the NSE Volu
 - Read the NSE Volume Gainers page, then keep only symbols present in the official NSE Main Board equity list.
 - Explicitly subtract the official NSE SME list before assessment. SME stocks, ETFs/ETNs, indices, debt securities and other non-Main-Board instruments are excluded from ECMS candidates.
 - The Main Board membership list is the authority for eligibility; a page row or an equity-like symbol/series by itself is not enough.
-- The official Main Board CSV must contain an ISIN; only verified `INE` company-equity ISIN rows are eligible. `INF` ETF/fund-unit ISINs are excluded, and missing ISIN data fails closed rather than allowing an unverified instrument.
+- ECMS applies an isolated check to the official Main Board CSV: only verified `INE` company-equity ISIN rows are eligible. `INF` ETF/fund-unit ISINs are excluded, and missing ISIN data fails closed rather than allowing an unverified instrument. This stricter gate is in ECMS code; the shared production NSE V8 Main Board filter is unchanged.
 - Subtract the official NSE SME list. Index names and other instruments that are not in the official Main Board equity list are excluded.
 - Only eligible NSE Main Board company stocks receive the existing fundamental assessment and appear as ECMS stock suggestions. Do not add SME, ETF/fund-unit or index recommendations.
 
