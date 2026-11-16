@@ -36,10 +36,12 @@ ALIASES = {
  "ltp": ("ltp","lastPrice","lastTradedPrice","closePrice"),
  "change_pct": ("pChange","perChange","changePercent","percentChange"),
  "turnover": ("turnover","totalTradedValue","value"),
- "avg_volume_1w": ("avgVolume1W","averageVolume1W","weekAvgVolume","avgVolume"),
- "change_times_1w": ("change1W","volumeChange1W","changeInVolume1W"),
- "avg_volume_2w": ("avgVolume2W","averageVolume2W","twoWeekAvgVolume","averageVolume"),
- "change_times_2w": ("change2W","volumeChange2W","changeInVolume2W"),
+ "avg_volume_1w": ("week1AvgVolume","avgVolume1W","averageVolume1W","weekAvgVolume","avgVolume"),
+ "change_pct_1w": ("week1volChange","week1VolChange","volumeChangePct1W","volumeChange1W","change1W","changeInVolume1W"),
+ "avg_volume_2w": ("week2AvgVolume","avgVolume2W","averageVolume2W","twoWeekAvgVolume","averageVolume"),
+ "change_pct_2w": ("week2volChange","week2VolChange","volumeChangePct2W","volumeChange2W","change2W","changeInVolume2W"),
+ "change_times_1w": ("volumeChangeTimes1W","changeTimes1W"),
+ "change_times_2w": ("volumeChangeTimes2W","changeTimes2W"),
  "updated_at": ("updatedAt","updated_at","timestamp"),
 }
 def _key(value):
@@ -88,9 +90,13 @@ def fetch_volume_gainers(session=None):
           "PageVolume":_number(_get(row,ALIASES["volume"])), "LTP":_number(_get(row,ALIASES["ltp"])),
           "ChangePct":_number(_get(row,ALIASES["change_pct"])), "Turnover":_number(_get(row,ALIASES["turnover"])),
           "AvgVolume1W":_number(_get(row,ALIASES["avg_volume_1w"])),
-          "VolumeChangeTimes1W":_number(_get(row,ALIASES["change_times_1w"])),
+          "VolumeChangePct1W":_number(_get(row,ALIASES["change_pct_1w"])),
           "AvgVolume2W":_number(_get(row,ALIASES["avg_volume_2w"])),
+          "VolumeChangePct2W":_number(_get(row,ALIASES["change_pct_2w"])),
+          "VolumeChangeTimes1W":_number(_get(row,ALIASES["change_times_1w"])),
           "VolumeChangeTimes2W":_number(_get(row,ALIASES["change_times_2w"])),
+          "PageVolumeDataStatus":"DATA_FOUND" if _number(_get(row,ALIASES["volume"])) is not None else "MISSING_FROM_NSE_RESPONSE",
+          "PageVolumeSourceField":next((str(k) for k in row if _key(k) in {_key(a) for a in ALIASES["volume"]} and _number(row.get(k)) is not None), ""),
           "NSEUpdatedAt":str(_get(row,ALIASES["updated_at"]) or ""),
         })
     frame=pd.DataFrame(normalized)
@@ -571,6 +577,70 @@ def assess_page_fundamentals(candidates, eod_date):
     candidate_filings.to_csv(ecms_output_dir / "fundamental_filings_ecms.csv", index=False)
     candidate_evidence.to_csv(ecms_output_dir / "fundamental_evidence_ecms.csv", index=False)
 
+    # Per-stock/per-metric coverage report shared by both scan modes.
+    required_metrics = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ]
+    metric_audit_rows = source_compilation[
+        source_compilation.get("Source", pd.Series("", index=source_compilation.index))
+        .astype(str).str.upper().str.startswith("NSE_OFFICIAL_XBRL")
+    ].copy()
+    metric_detail_rows, metric_summary_rows = [], []
+    metrics_by_symbol = candidate_metrics.set_index("TckrSymb", drop=False)
+    for symbol in sorted(candidate_symbols):
+        metric_row = metrics_by_symbol.loc[symbol] if symbol in metrics_by_symbol.index else pd.Series(dtype=object)
+        if isinstance(metric_row, pd.DataFrame):
+            metric_row = metric_row.iloc[0]
+        populated = verified = mismatch = reconciliation = filing_unconfirmed = 0
+        missing_names = []
+        for metric_name in required_metrics:
+            raw_value = metric_row.get(metric_name, pd.NA)
+            value = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
+            has_value = pd.notna(value)
+            populated += int(has_value)
+            if not has_value:
+                missing_names.append(metric_name)
+            audit_match = metric_audit_rows[
+                metric_audit_rows["TckrSymb"].astype(str).str.upper().eq(symbol)
+                & metric_audit_rows["MetricName"].astype(str).eq(metric_name)
+            ]
+            audit = audit_match.iloc[0].to_dict() if not audit_match.empty else {}
+            verification_status = str(audit.get("VerificationStatus", "NOT_VERIFIED") or "NOT_VERIFIED").upper()
+            verified += int(verification_status == "OFFICIAL_XBRL_VERIFIED")
+            mismatch += int(verification_status == "PROVIDER_VALUE_MISMATCH")
+            reconciliation += int(verification_status == "DERIVED_RECONCILIATION_REQUIRED")
+            filing_unconfirmed += int(verification_status == "FILING_METADATA_NOT_CONFIRMED")
+            metric_detail_rows.append({
+                "TckrSymb": symbol, "MetricName": metric_name,
+                "MetricValue": raw_value if has_value else "",
+                "ValueAvailable": bool(has_value),
+                "FinancialPeriodEnd": metric_row.get("FinancialPeriodEnd", ""),
+                "PublicationDate": metric_row.get("PublicationDate", ""),
+                "CalculationBasis": metric_row.get("MetricCalculationBasis", ""),
+                "MetricSource": audit.get("Source", ""),
+                "VerificationStatus": verification_status,
+                "MismatchReason": audit.get("MismatchReason", ""),
+            })
+        metric_summary_rows.append({
+            "TckrSymb": symbol,
+            "FundamentalMetricsPopulatedCount": populated,
+            "FundamentalMetricsMissingCount": len(required_metrics) - populated,
+            "FundamentalMetricsOfficiallyVerifiedCount": verified,
+            "FundamentalMetricsMismatchCount": mismatch,
+            "FundamentalMetricsReconciliationRequiredCount": reconciliation,
+            "FundamentalMetricsFilingMetadataNotConfirmedCount": filing_unconfirmed,
+            "FundamentalMetricsMissingNames": ";".join(missing_names),
+            "FundamentalMetricsCoverageStatus": "ALL_7_POPULATED" if populated == len(required_metrics) else "PARTIAL_DATA",
+            "FundamentalMetricPeriod": metric_row.get("FinancialPeriodEnd", ""),
+            "FundamentalMetricBasis": metric_row.get("MetricCalculationBasis", ""),
+        })
+    pd.DataFrame(metric_detail_rows).to_csv(
+        ecms_output_dir / "fundamental_metric_coverage_by_stock.csv", index=False
+    )
+    metric_summary = pd.DataFrame(metric_summary_rows)
+    assessed = assessed.merge(metric_summary, on="TckrSymb", how="left", validate="one_to_one")
+
     provider_diagnostics = workspace / "outputs" / "v8_fundamental_provider_diagnostics.csv"
     if provider_diagnostics.exists():
         diagnostics = pd.read_csv(provider_diagnostics)
@@ -787,8 +857,14 @@ def _save_eod_snapshot(frame, eod_date):
         raise RuntimeError("ECMS_EOD_SNAPSHOT_ERROR: blank or duplicate symbols")
     snapshot["EODDate"] = eod_date.isoformat()
     keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
-            "AvgVolume1W", "VolumeChangeTimes1W", "AvgVolume2W",
-            "VolumeChangeTimes2W", "AvgVolume20D", "RVOL", "RVOLDataStatus", "EODDate"]
+            "AvgVolume1W", "VolumeChangePct1W", "AvgVolume2W", "VolumeChangePct2W",
+            "VolumeChangeTimes1W", "VolumeChangeTimes2W", "PageVolumeDataStatus",
+            "PageVolumeSourceField", "FundamentalMetricsPopulatedCount",
+            "FundamentalMetricsMissingCount", "FundamentalMetricsOfficiallyVerifiedCount",
+            "FundamentalMetricsMismatchCount", "FundamentalMetricsReconciliationRequiredCount",
+            "FundamentalMetricsFilingMetadataNotConfirmedCount", "FundamentalMetricsMissingNames",
+            "FundamentalMetricsCoverageStatus", "FundamentalMetricPeriod", "FundamentalMetricBasis",
+            "AvgVolume20D", "RVOL", "RVOLDataStatus", "EODDate"]
     keep = [column for column in keep if column in snapshot.columns]
     state = snapshot[keep].copy()
     if "FundamentalShortlistStatus" in snapshot.columns:
@@ -961,6 +1037,16 @@ def run_eod():
     shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
     summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
+      "page_volume_data_found":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("DATA_FOUND").sum()),
+      "page_volume_data_missing":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
+      "avg_volume_1w_data_found":int(pd.to_numeric(eligible.get("AvgVolume1W", pd.Series(index=eligible.index)), errors="coerce").notna().sum()),
+      "volume_change_pct_1w_data_found":int(pd.to_numeric(eligible.get("VolumeChangePct1W", pd.Series(index=eligible.index)), errors="coerce").notna().sum()),
+      "avg_volume_2w_data_found":int(pd.to_numeric(eligible.get("AvgVolume2W", pd.Series(index=eligible.index)), errors="coerce").notna().sum()),
+      "volume_change_pct_2w_data_found":int(pd.to_numeric(eligible.get("VolumeChangePct2W", pd.Series(index=eligible.index)), errors="coerce").notna().sum()),
+      "fundamental_metrics_all_7_populated":int(assessed.get("FundamentalMetricsCoverageStatus", pd.Series("", index=assessed.index)).eq("ALL_7_POPULATED").sum()),
+      "fundamental_metrics_partially_populated":int(assessed.get("FundamentalMetricsCoverageStatus", pd.Series("", index=assessed.index)).eq("PARTIAL_DATA").sum()),
+      "fundamental_metric_officially_verified_observations":int(pd.to_numeric(assessed.get("FundamentalMetricsOfficiallyVerifiedCount", pd.Series(0, index=assessed.index)), errors="coerce").fillna(0).sum()),
+      "fundamental_metric_mismatch_observations":int(pd.to_numeric(assessed.get("FundamentalMetricsMismatchCount", pd.Series(0, index=assessed.index)), errors="coerce").fillna(0).sum()),
       "assessment_rows":int(len(assessed)),
       "assessment_unique_symbols":int(assessed["TckrSymb"].astype(str).str.upper().nunique()),
       "assessment_missing_or_duplicate_count":int(max(0, len(eligible) - assessed["TckrSymb"].astype(str).str.upper().nunique())),
@@ -1100,7 +1186,16 @@ def run_morning():
           ),
           "PagePresenceDoubleConfirmed": bool(symbol in previous_symbols and present),
           "EODPageVolume":old.get("PageVolume"),
+          "EODPageVolumeDataStatus":old.get("PageVolumeDataStatus","NOT_AVAILABLE_IN_PREVIOUS_SNAPSHOT"),
+          "EODAvgVolume1W":old.get("AvgVolume1W"),
+          "EODVolumeChangePct1W":old.get("VolumeChangePct1W"),
+          "EODAvgVolume2W":old.get("AvgVolume2W"),
+          "EODVolumeChangePct2W":old.get("VolumeChangePct2W"),
           "MorningPageVolume":current.get("PageVolume"),
+          "MorningAvgVolume1W":current.get("AvgVolume1W"),
+          "MorningVolumeChangePct1W":current.get("VolumeChangePct1W"),
+          "MorningAvgVolume2W":current.get("AvgVolume2W"),
+          "MorningVolumeChangePct2W":current.get("VolumeChangePct2W"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
           "EODRVOL":old.get("RVOL"),
           "MorningRVOL":"NOT AVAILABLE",
@@ -1134,12 +1229,18 @@ def run_morning():
           "EODStrongFundamentalStatus":old.get("EODStrongFundamentalStatus",""),
           "EODFundamentalNotForwardedReason":old.get("EODFundamentalNotForwardedReason",""),
           "MorningFundamentalShortlistStatus":assessed.get("FundamentalShortlistStatus","NOT_ASSESSED"),
+          "MorningFundamentalMetricsPopulatedCount":assessed.get("FundamentalMetricsPopulatedCount",""),
+          "MorningFundamentalMetricsMissingNames":assessed.get("FundamentalMetricsMissingNames",""),
+          "MorningFundamentalMetricsOfficiallyVerifiedCount":assessed.get("FundamentalMetricsOfficiallyVerifiedCount",""),
+          "MorningFundamentalMetricsMismatchCount":assessed.get("FundamentalMetricsMismatchCount",""),
           "MorningFundamentalNotForwardedReason":assessed.get("StrongFundamentalNotForwardedReason",""),
           "MorningStrongFundamentalStatus":assessed.get("MorningStrongFundamentalStatus","NOT_ASSESSED"),
           "ConfirmationStatus":confirmation,
           "MorningChangePct":current.get("ChangePct"),
           "MorningVolumeChangeTimes1W":current.get("VolumeChangeTimes1W"),
           "MorningVolumeChangeTimes2W":current.get("VolumeChangeTimes2W"),
+          "MorningPageVolumeDataStatus":current.get("PageVolumeDataStatus","MISSING_FROM_NSE_RESPONSE"),
+          "MorningPageVolumeSourceField":current.get("PageVolumeSourceField",""),
           "DataQuality":"LIVE_PAGE_AND_FUNDAMENTALS" if present and assessed else
             "NOT_ON_CURRENT_PAGE" if not present else "PARTIAL_LIVE_DATA"})
     report=pd.DataFrame(rows)
@@ -1149,10 +1250,20 @@ def run_morning():
     # is enriched by the morning assessment.
     summary={"status":"PASS","morning_time_ist":datetime.now(IST).isoformat(),
       "previous_eod_symbols":len(previous_symbols),"current_page_eligible_symbols":len(live_symbols),
+      "morning_page_volume_data_found":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "morning_page_volume_data_missing":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
+      "morning_avg_volume_1w_data_found":int(pd.to_numeric(morning_assessed.get("AvgVolume1W", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
+      "morning_volume_change_pct_1w_data_found":int(pd.to_numeric(morning_assessed.get("VolumeChangePct1W", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
+      "morning_avg_volume_2w_data_found":int(pd.to_numeric(morning_assessed.get("AvgVolume2W", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
+      "morning_volume_change_pct_2w_data_found":int(pd.to_numeric(morning_assessed.get("VolumeChangePct2W", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
       "new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "morning_assessed_candidates":int(len(morning_assessed)),
       "morning_assessment_rows":int(report["MorningStrongFundamentalStatus"].ne("NOT_ASSESSED").sum()),
       "morning_fundamental_pass":int(report["MorningStrongFundamentalStatus"].eq("MORNING_FUNDAMENTAL_PASS").sum()),
+      "morning_fundamental_metrics_all_7_populated":int(morning_assessed.get("FundamentalMetricsCoverageStatus", pd.Series("", index=morning_assessed.index)).eq("ALL_7_POPULATED").sum()),
+      "morning_fundamental_metrics_partially_populated":int(morning_assessed.get("FundamentalMetricsCoverageStatus", pd.Series("", index=morning_assessed.index)).eq("PARTIAL_DATA").sum()),
+      "morning_fundamental_metric_officially_verified_observations":int(pd.to_numeric(morning_assessed.get("FundamentalMetricsOfficiallyVerifiedCount", pd.Series(0, index=morning_assessed.index)), errors="coerce").fillna(0).sum()),
+      "morning_fundamental_metric_mismatch_observations":int(pd.to_numeric(morning_assessed.get("FundamentalMetricsMismatchCount", pd.Series(0, index=morning_assessed.index)), errors="coerce").fillna(0).sum()),
       "morning_wait_for_data":int(morning_assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA").sum()),
       "news_data_found":int(morning_assessed.get("NewsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "news_no_data_found":int(morning_assessed.get("NewsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("NO_DATA_FOUND").sum()),
