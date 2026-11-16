@@ -539,15 +539,30 @@ def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monk
         "EODDate": ["2026-11-13", "2026-11-13"],
         "EODScanDate": ["2026-11-16", "2026-11-16"],
     })
-    result = scanner._attach_same_day_morning_confirmation(eod, date(2026, 11, 16)).set_index("TckrSymb")
+    # Friday's completed data captured on Monday must not be compared with
+    # Monday Morning, even though a valid Monday Morning snapshot exists.
+    result = scanner._attach_same_day_morning_confirmation(
+        eod, date(2026, 11, 16), eod_data_date=date(2026, 11, 13)
+    ).set_index("TckrSymb")
 
-    assert result.loc["AAA", "MorningSeenSameDay"]
-    assert result.loc["AAA", "MorningToEODStatus"] == "MORNING_AND_EOD_REPEAT"
-    assert result.loc["AAA", "MorningPageVolume"] == 120000
-    assert result.loc["AAA", "MorningScanTimeIST"] == "2026-11-16T09:20:04+05:30"
-    assert result.loc["AAA", "MorningFundamentalStatus"] == "PASS"
-    assert result.loc["AAA", "MorningNewsContext"] == "Morning news A"
-    assert result.loc["CCC", "MorningToEODStatus"] == "EOD_NEW_ENTRY"
+    assert not result.loc["AAA", "MorningSeenSameDay"]
+    assert result.loc["AAA", "MorningToEODStatus"] == "EOD_DATA_DATE_MISMATCH_NOT_COMPARED"
+    assert result.loc["AAA", "MorningComparisonStatus"] == "STALE_EOD_DATA_NOT_COMPARED"
+    assert result.loc["AAA", "MorningPageVolume"] == ""
+
+    # Once the page reflects the current session date, the same snapshot is
+    # eligible for a real same-day comparison.
+    current = scanner._attach_same_day_morning_confirmation(
+        eod, date(2026, 11, 16), eod_data_date=date(2026, 11, 16)
+    ).set_index("TckrSymb")
+    assert current.loc["AAA", "MorningSeenSameDay"]
+    assert current.loc["AAA", "MorningToEODStatus"] == "MORNING_AND_EOD_REPEAT"
+    assert current.loc["AAA", "MorningComparisonStatus"] == "COMPLETED"
+    assert current.loc["AAA", "MorningPageVolume"] == 120000
+    assert current.loc["AAA", "MorningScanTimeIST"] == "2026-11-16T09:20:04+05:30"
+    assert current.loc["AAA", "MorningFundamentalStatus"] == "PASS"
+    assert current.loc["AAA", "MorningNewsContext"] == "Morning news A"
+    assert current.loc["CCC", "MorningToEODStatus"] == "EOD_NEW_ENTRY"
 
 
 def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, monkeypatch):
@@ -755,11 +770,15 @@ def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_fo
         empty = pd.DataFrame()
         return frame.copy(), empty, empty, empty, empty
 
-    def fake_morning_match(frame, morning_date):
+    def fake_morning_match(frame, morning_date, eod_data_date=None):
         captured["comparison_date"] = morning_date
+        captured["comparison_data_date"] = eod_data_date
         result = frame.copy()
-        result["MorningSeenSameDay"] = [True]
-        result["MorningToEODStatus"] = ["MORNING_AND_EOD_REPEAT"]
+        current_data = eod_data_date == morning_date
+        result["MorningSeenSameDay"] = [current_data]
+        result["MorningToEODStatus"] = [
+            "MORNING_AND_EOD_REPEAT" if current_data else "EOD_DATA_DATE_MISMATCH_NOT_COMPARED"
+        ]
         return result
 
     monkeypatch.setattr(scanner, "attach_page_rvol", fake_rvol)
@@ -774,10 +793,16 @@ def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_fo
         "fundamental_date": date(2026, 11, 16),
         "information_date": date(2026, 11, 16),
         "comparison_date": date(2026, 11, 16),
+        "comparison_data_date": date(2026, 11, 13),
     }
     assert summary["scan_date_ist"] == "2026-11-16"
     assert summary["data_as_of_date_ist"] == "2026-11-13"
-    assert summary["morning_repeat_count"] == 1
+    assert summary["eod_data_current_for_scan_date"] is False
+    assert summary["data_freshness_status"] == "WAIT_FOR_CURRENT_SESSION_EOD_DATA"
+    assert summary["morning_comparison_status"] == "STALE_EOD_DATA_NOT_COMPARED"
+    assert summary["morning_comparison_performed"] is False
+    assert summary["morning_repeat_count"] == 0
+    assert summary["eod_new_entry_count"] == 0
 
 
 def test_fetch_volume_gainers_maps_additional_quantity_alias_and_exposes_payload_schema():
@@ -972,7 +997,7 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
         {"TckrSymb": "CCC", "PageVolume": 70},
     ])
     compared = scanner._attach_same_day_morning_confirmation(
-        monday_eod_page, date(2026, 11, 16)
+        monday_eod_page, date(2026, 11, 16), eod_data_date=date(2026, 11, 16)
     ).set_index("TckrSymb")
     assert compared.loc["AAA", "MorningToEODStatus"] == "MORNING_AND_EOD_REPEAT"
     assert compared.loc["CCC", "MorningToEODStatus"] == "EOD_NEW_ENTRY"

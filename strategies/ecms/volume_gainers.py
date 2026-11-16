@@ -1061,13 +1061,28 @@ def _load_same_day_morning_snapshot(morning_date):
     return snapshot
 
 
-def _attach_same_day_morning_confirmation(eod_frame, morning_date):
-    """Add informational same-day Morning-to-EOD page persistence fields."""
+def _attach_same_day_morning_confirmation(eod_frame, morning_date, eod_data_date=None):
+    """Compare Morning/EOD page presence only when EOD data belongs to this session."""
     result = eod_frame.copy()
+    data_date = eod_data_date or morning_date
+    if data_date != morning_date:
+        # A manual EOD run may still receive the prior session's cached NSE page.
+        # Never label those stale rows as same-day repeats or new EOD entries.
+        result["MorningSeenSameDay"] = False
+        result["MorningToEODStatus"] = "EOD_DATA_DATE_MISMATCH_NOT_COMPARED"
+        result["MorningComparisonStatus"] = "STALE_EOD_DATA_NOT_COMPARED"
+        result["MorningScanTimeIST"] = ""
+        result["MorningPageVolume"] = ""
+        result["MorningFundamentalStatus"] = "NOT_AVAILABLE"
+        result["MorningNewsContext"] = "NOT AVAILABLE"
+        result["MorningUpcomingEvents"] = "NOT AVAILABLE"
+        result["MorningNextResultDate"] = "NOT AVAILABLE"
+        return result
     morning = _load_same_day_morning_snapshot(morning_date)
     if morning.empty:
         result["MorningSeenSameDay"] = False
         result["MorningToEODStatus"] = "NO_VALID_SAME_DAY_MORNING_SNAPSHOT"
+        result["MorningComparisonStatus"] = "NO_VALID_SAME_DAY_MORNING_SNAPSHOT"
         result["MorningScanTimeIST"] = ""
         result["MorningPageVolume"] = ""
         result["MorningFundamentalStatus"] = "NOT_AVAILABLE"
@@ -1081,6 +1096,7 @@ def _attach_same_day_morning_confirmation(eod_frame, morning_date):
     result["MorningToEODStatus"] = result["MorningSeenSameDay"].map({
         True: "MORNING_AND_EOD_REPEAT", False: "EOD_NEW_ENTRY"
     })
+    result["MorningComparisonStatus"] = "COMPLETED"
     def morning_value(symbol, column, default=""):
         if symbol not in morning_by_symbol.index or column not in morning_by_symbol.columns:
             return default
@@ -1142,7 +1158,7 @@ def run_eod():
     assessed, news, events, deals, corporate_actions = attach_information(assessed, scan_date)
     # Compare against the Morning scan from this scan's IST calendar date,
     # not the older completed-session date used by Bhavcopy/RVOL.
-    assessed = _attach_same_day_morning_confirmation(assessed, scan_date)
+    assessed = _attach_same_day_morning_confirmation(assessed, scan_date, eod_data_date=eod_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
@@ -1173,6 +1189,16 @@ def run_eod():
       "eod_date_ist":eod_date.isoformat(),"data_as_of_date_ist":eod_date.isoformat(),
       "eod_scan_captured_at_ist":scan_captured_at,
       "morning_comparison_date_ist":scan_date.isoformat(),
+      "eod_data_current_for_scan_date":eod_date == scan_date,
+      "data_freshness_status":"CURRENT_SESSION_DATA" if eod_date == scan_date else "WAIT_FOR_CURRENT_SESSION_EOD_DATA",
+      "morning_comparison_status":(
+        "STALE_EOD_DATA_NOT_COMPARED" if eod_date != scan_date else
+        "COMPLETED" if not _load_same_day_morning_snapshot(scan_date).empty else
+        "NO_VALID_SAME_DAY_MORNING_SNAPSHOT"
+      ),
+      "morning_comparison_performed":(
+        eod_date == scan_date and not _load_same_day_morning_snapshot(scan_date).empty
+      ),
       "morning_repeat_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("MORNING_AND_EOD_REPEAT").sum()),
       "eod_new_entry_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("EOD_NEW_ENTRY").sum()),
       "morning_snapshot_found":not _load_same_day_morning_snapshot(scan_date).empty,
