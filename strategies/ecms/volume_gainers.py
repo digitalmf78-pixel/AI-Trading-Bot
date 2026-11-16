@@ -606,112 +606,106 @@ def attach_page_rvol(candidates, eod_date):
     return result
 
 def attach_information(assessed, as_of_date):
-    """Attach the six informational groups without changing fundamental decisions."""
+    """Attach research to every eligible page symbol, independent of fundamentals."""
     result = attach_valuation(assessed)
     symbols = result["TckrSymb"].astype(str).str.strip().str.upper()
-    passed = result.get(
-        "FundamentalShortlistStatus", pd.Series("", index=result.index)
-    ).astype(str).str.upper().eq("PASS")
-    pass_symbols = sorted(set(symbols.loc[passed]))
+    all_symbols = sorted(set(symbols))
 
-    news_columns = [
-        "TckrSymb", "NewsWindowStart", "NewsWindowEnd", "OfficialStatus",
-        "SecondaryStatus", "CatalystStatus", "CatalystSignalStatus",
-        "StrongCatalystCount", "NegativeRiskCount", "OfficialCount", "SecondaryCount",
-    ]
-    if pass_symbols:
-        news, news_audit = collect_catalysts(result.loc[passed].copy(), as_of_date)
-        events, event_audit = collect_upcoming_events(pass_symbols, as_of_date)
-        deals, deal_audit = collect_bulk_block_deals(pass_symbols, as_of_date)
-    else:
-        news = pd.DataFrame(columns=[
-            "TckrSymb", "PublishedDate", "Headline", "Source", "SourceType",
-            "URL", "Impact", "CatalystSignalStatus", "RiskFlags",
-        ])
-        news_audit = pd.DataFrame(columns=news_columns)
-        events = pd.DataFrame(columns=[
-            "TckrSymb", "EventDate", "EventType", "EventDetails",
-            "Source", "SourceType", "SourceURL", "IsResultEvent",
-        ])
-        event_audit = pd.DataFrame(columns=[
-            "TckrSymb", "UpcomingEventsStatus", "UpcomingEvents", "NextResultDate",
-            "NextResultDetails", "EventCalendarSourceURL",
-        ])
-        deals = pd.DataFrame(columns=[
-            "TckrSymb", "DealDate", "DealType", "ClientName", "Side", "Quantity",
-            "PriceINR", "Remarks", "Source", "SourceType", "SourceURL",
-        ])
-        deal_audit = pd.DataFrame(columns=[
-            "TckrSymb", "BulkBlockDealStatus", "BulkDealCount", "BlockDealCount",
-            "BulkBuyers", "BulkSellers", "BlockBuyers", "BlockSellers",
-            "BulkBlockLookbackStart", "BulkBlockLookbackEnd", "BulkBlockSourceURL",
-        ])
+    news, news_audit = collect_catalysts(result.copy(), as_of_date)
+    events, event_audit = collect_upcoming_events(all_symbols, as_of_date)
+    deals, deal_audit = collect_bulk_block_deals(all_symbols, as_of_date)
 
-    result["Last5DayNews"] = "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
+    news_defaults = {
+        "NewsWindowStart": "", "NewsWindowEnd": "",
+        "OfficialStatus": "SOURCE_UNAVAILABLE",
+        "SecondaryStatus": "SOURCE_UNAVAILABLE",
+        "CatalystStatus": "SOURCE_UNAVAILABLE",
+        "CatalystSignalStatus": "NOT_VERIFIED",
+        "StrongCatalystCount": 0, "NegativeRiskCount": 0,
+        "OfficialCount": 0, "SecondaryCount": 0,
+    }
+    if not news_audit.empty:
+        result = result.drop(columns=[
+            c for c in news_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in news_defaults.items():
+        if column not in result.columns:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
+
+    summaries = {}
     if not news.empty:
-        summaries = {}
         for symbol, rows in news.groupby(news["TckrSymb"].astype(str).str.upper()):
             summaries[symbol] = " | ".join(
                 f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
                 for _, row in rows.sort_values("PublishedDate", ascending=False).head(5).iterrows()
             )
-        result["Last5DayNews"] = [
-            summaries.get(symbol, "NO_MATCHED_NEWS_IN_LAST_5_DAYS") if is_pass
-            else "NOT COLLECTED_FUNDAMENTAL_NOT_PASS"
-            for symbol, is_pass in zip(symbols, passed)
-        ]
+    result["Last5DayNews"] = [
+        summaries.get(symbol, "NO_NEWS_FOUND" if str(status).upper() == "NO_NEWS_FOUND"
+                      else "WAIT_FOR_DATA" if str(status).upper() == "WAIT_FOR_DATA"
+                      else "NO_MATCHED_NEWS_IN_LOOKBACK")
+        for symbol, status in zip(symbols, result["CatalystStatus"])
+    ]
+    result["NewsResearchStatus"] = result["CatalystStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status in {
+            "CATALYST_FOUND", "CATALYST_FOUND_SECONDARY_ONLY"
+        } else "NO_DATA_FOUND" if status == "NO_NEWS_FOUND"
+        else "SOURCE_UNAVAILABLE" if status == "WAIT_FOR_DATA"
+        else "NOT_VERIFIED"
+    )
 
-    news_defaults = {
-        "NewsWindowStart": "", "NewsWindowEnd": "",
-        "OfficialStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "SecondaryStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "CatalystStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "CatalystSignalStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "StrongCatalystCount": 0, "NegativeRiskCount": 0,
-        "OfficialCount": 0, "SecondaryCount": 0,
-    }
-    for column, default in news_defaults.items():
-        result[column] = default
-    if not news_audit.empty:
-        result = result.drop(columns=[c for c in news_audit.columns if c != "TckrSymb" and c in result.columns])
-        result = result.merge(news_audit, on="TckrSymb", how="left", validate="one_to_one")
-    for column, default in news_defaults.items():
-        result[column] = result[column].fillna(default)
-    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA"), "Last5DayNews"] = "WAIT_FOR_DATA"
-    result.loc[passed & result["CatalystStatus"].astype(str).str.upper().eq("NO_NEWS_FOUND"), "Last5DayNews"] = "NO_NEWS_FOUND"
     event_defaults = {
-        "UpcomingEventsStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "UpcomingEvents": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
-        "NextResultDate": "NOT COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "UpcomingEventsStatus": "SOURCE_UNAVAILABLE",
+        "UpcomingEvents": "NOT AVAILABLE",
+        "NextResultDate": "NOT ANNOUNCED",
         "NextResultDetails": "",
         "EventCalendarSourceURL": "",
     }
     if not event_audit.empty:
-        result = result.drop(columns=[c for c in event_audit.columns if c != "TckrSymb" and c in result.columns])
-        result = result.merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
+        result = result.drop(columns=[
+            c for c in event_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(event_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in event_defaults.items():
         if column not in result.columns:
             result[column] = default
         else:
             result[column] = result[column].fillna(default)
+    result["UpcomingEventsResearchStatus"] = result["UpcomingEventsStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status == "AVAILABLE"
+        else "NO_DATA_FOUND" if status == "NO_CONFIRMED_UPCOMING_EVENTS"
+        else "SOURCE_UNAVAILABLE" if status.startswith("WAIT_FOR_DATA")
+        else "NOT_VERIFIED"
+    )
+
     deal_defaults = {
-        "BulkBlockDealStatus": "NOT_COLLECTED_FUNDAMENTAL_NOT_PASS",
+        "BulkBlockDealStatus": "SOURCE_UNAVAILABLE",
         "BulkDealCount": 0, "BlockDealCount": 0,
         "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
         "BulkBlockDealSummary": "",
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
     }
     if not deal_audit.empty:
-        result = result.drop(columns=[c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns])
-        result = result.merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
+        result = result.drop(columns=[
+            c for c in deal_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(deal_audit, on="TckrSymb", how="left", validate="one_to_one")
     for column, default in deal_defaults.items():
         if column not in result.columns:
             result[column] = default
         else:
             result[column] = result[column].fillna(default)
-    result["RVOLInformationStatus"] = result.get("RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index))
+    result["BulkBlockDealsResearchStatus"] = result["BulkBlockDealStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status in {"AVAILABLE", "PARTIAL_DATA"}
+        and (int(pd.to_numeric(result.loc[result.index[result["BulkBlockDealStatus"].astype(str).str.upper().eq(status)], "BulkDealCount"], errors="coerce").fillna(0).sum())
+             + int(pd.to_numeric(result.loc[result.index[result["BulkBlockDealStatus"].astype(str).str.upper().eq(status)], "BlockDealCount"], errors="coerce").fillna(0).sum())) > 0
+        else "NO_DATA_FOUND" if status == "NO_DISCLOSED_DEALS_IN_LOOKBACK"
+        else "SOURCE_UNAVAILABLE" if status == "WAIT_FOR_DATA"
+        else "NOT_VERIFIED"
+    )
+    result["RVOLInformationStatus"] = result.get(
+        "RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index)
+    )
     return result, news, events, deals
-
 
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
