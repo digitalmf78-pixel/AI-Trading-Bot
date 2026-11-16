@@ -72,6 +72,30 @@ def _number(value):
     if value is None or str(value).strip() in {"","-","NA","None"}: return None
     try: return float(str(value).replace(",","").replace("%","").strip())
     except (TypeError,ValueError): return None
+
+def _volume_number(value):
+    """Parse NSE quantity values, including compact Indian lakh/crore display units."""
+    if value is None:
+        return None
+    raw = str(value).strip().replace(",", "").replace(" ", "")
+    if raw.upper() in {"", "-", "NA", "NONE", "NAN"}:
+        return None
+    match = re.fullmatch(r"([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))([A-Za-z]*)", raw)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    multipliers = {
+        "": 1.0, "unit": 1.0, "units": 1.0,
+        "k": 1_000.0, "thousand": 1_000.0,
+        "l": 100_000.0, "lac": 100_000.0, "lacs": 100_000.0,
+        "lakh": 100_000.0, "lakhs": 100_000.0,
+        "m": 1_000_000.0, "mn": 1_000_000.0, "million": 1_000_000.0,
+        "cr": 10_000_000.0, "crore": 10_000_000.0, "crores": 10_000_000.0,
+        "b": 1_000_000_000.0, "bn": 1_000_000_000.0, "billion": 1_000_000_000.0,
+    }
+    multiplier = multipliers.get(unit)
+    return amount * multiplier if multiplier is not None else None
 def fetch_volume_gainers(session=None):
     client = session or requests.Session()
     client.headers.update(HEADERS)
@@ -105,7 +129,7 @@ def fetch_volume_gainers(session=None):
         normalized.append({
           "TckrSymb":symbol, "CompanyName":str(_get(row,ALIASES["company"]) or ""),
           "Series":str(_get(row,ALIASES["series"]) or "").strip().upper(),
-          "PageVolume":_number(volume_raw), "LTP":_number(_get(row,ALIASES["ltp"])),
+          "PageVolume":_volume_number(volume_raw), "LTP":_number(_get(row,ALIASES["ltp"])),
           "ChangePct":_number(_get(row,ALIASES["change_pct"])), "Turnover":_number(_get(row,ALIASES["turnover"])),
           "AvgVolume1W":_number(_get(row,ALIASES["avg_volume_1w"])),
           "VolumeChangePct1W":_number(_get(row,ALIASES["change_pct_1w"])),
@@ -113,7 +137,7 @@ def fetch_volume_gainers(session=None):
           "VolumeChangePct2W":_number(_get(row,ALIASES["change_pct_2w"])),
           "VolumeChangeTimes1W":_number(_get(row,ALIASES["change_times_1w"])),
           "VolumeChangeTimes2W":_number(_get(row,ALIASES["change_times_2w"])),
-          "PageVolumeDataStatus":"DATA_FOUND" if _number(volume_raw) is not None else "MISSING_FROM_NSE_RESPONSE",
+          "PageVolumeDataStatus":"DATA_FOUND" if _volume_number(volume_raw) is not None else "MISSING_FROM_NSE_RESPONSE",
           "PageVolumeSourceField":volume_field,
           "PageVolumeRawValue":"" if volume_raw is None else str(volume_raw),
           "NSEPayloadKeys":payload_keys,
@@ -917,6 +941,7 @@ def _save_eod_snapshot(frame, eod_date):
         "symbol_count": int(state["TckrSymb"].nunique()),
         "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
         "github_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        "scan_date": str(snapshot.get("EODScanDate", pd.Series([datetime.now(IST).date().isoformat()])).iloc[0]),
         "captured_at_ist": datetime.now(IST).isoformat(),
     }
     (STATE_DIR / "eod_snapshot_run_marker.json").write_text(
