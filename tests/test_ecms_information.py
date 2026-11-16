@@ -5,6 +5,7 @@ import pandas as pd
 from strategies.ecms.information import (
     attach_valuation,
     collect_bulk_block_deals,
+    collect_corporate_actions,
     collect_upcoming_events,
 )
 
@@ -135,3 +136,42 @@ def test_news_uses_five_trading_sessions_and_reuses_only_complete_exact_window_c
     assert len(first) == len(second) == 1
     assert audit.iloc[0]["NewsWindowStart"] == "2026-11-09"
     assert second_audit.iloc[0]["CatalystStatus"] == "CATALYST_FOUND"
+
+
+
+def test_corporate_actions_are_fetched_once_for_all_symbols_and_cached(tmp_path, monkeypatch):
+    from strategies.ecms import information
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(information, "is_trading_session", lambda day: day.weekday() < 5)
+    client = FakeSession([
+        FakeResponse(payload=[
+            {"symbol": "AAA", "exDate": "20-Nov-2026", "subject": "Dividend - Rs 5",
+             "recDate": "21-Nov-2026", "bcStartDate": "-", "bcEndDate": "-",
+             "payDate": "05-Dec-2026"},
+            {"symbol": "AAA", "exDate": "10-Nov-2026", "subject": "Bonus 1:1",
+             "recDate": "11-Nov-2026"},
+            {"symbol": "OUTSIDE", "exDate": "20-Nov-2026", "subject": "Dividend"},
+        ])
+    ])
+
+    actions, audit = collect_corporate_actions(
+        ["AAA", "BBB"], date(2026, 11, 13), session=client
+    )
+
+    assert len(actions) == 2
+    assert set(actions["TckrSymb"]) == {"AAA"}
+    assert set(audit["TckrSymb"]) == {"AAA", "BBB"}
+    rows = audit.set_index("TckrSymb")
+    assert rows.loc["AAA", "CorporateActionsStatus"] == "DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionCount"] == 2
+    assert rows.loc["BBB", "CorporateActionsStatus"] == "NO_DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionWindowStart"] == "2026-11-09"
+    assert rows.loc["AAA", "CorporateActionWindowEnd"] == "2027-02-11"
+
+    # The exact date-window response is stored once; a later call reuses it.
+    actions_again, audit_again = collect_corporate_actions(
+        ["AAA", "BBB"], date(2026, 11, 13)
+    )
+    assert len(actions_again) == 2
+    assert audit_again.set_index("TckrSymb").loc["AAA", "CorporateActionsStatus"] == "DATA_FOUND"
