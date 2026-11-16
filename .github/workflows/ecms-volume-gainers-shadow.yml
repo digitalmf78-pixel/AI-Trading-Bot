@@ -89,7 +89,9 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/volume_gainers_same_day_morning.csv
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -126,7 +128,8 @@ jobs:
           import csv, json, os
           from pathlib import Path
           marker_path = Path("data/cache/ecms/eod_snapshot_run_marker.json")
-          state_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv")
+          state_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv")
           valid = False
           try:
               marker = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -154,7 +157,9 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/volume_gainers_same_day_morning.csv
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
         if: always()
@@ -281,7 +286,9 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/volume_gainers_same_day_morning.csv
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -314,7 +321,9 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/volume_gainers_same_day_morning.csv
           key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report
         if: always()
