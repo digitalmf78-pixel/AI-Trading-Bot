@@ -41,6 +41,55 @@ ALIASES = {
  "change_times_2w": ("change2W","volumeChange2W","changeInVolume2W"),
  "updated_at": ("updatedAt","updated_at","timestamp"),
 }
+def _normalize_ecms_secondary_period(metric, period):
+    """Normalize only explicit secondary-source periods; never infer missing dates."""
+    raw = str(period or "").strip()
+    if not raw or raw in {"0", "NA", "N/A", "None", "nan"}:
+        return ""
+    if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw):
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return ""
+    month_match = re.fullmatch(r"([A-Za-z]{3})\s+(20\d{2})", raw)
+    if month_match:
+        try:
+            first = datetime.strptime(f"{month_match.group(1)} {month_match.group(2)}", "%b %Y")
+            import calendar
+            return first.replace(day=calendar.monthrange(first.year, first.month)[1]).date().isoformat()
+        except ValueError:
+            return ""
+    fy_match = re.fullmatch(r"FY\s*(20\d{2})", raw, flags=re.IGNORECASE)
+    if fy_match:
+        return f"{int(fy_match.group(1)):04d}-03-31"
+    quarter_match = re.fullmatch(r"Q([1-4])\s*FY\s*(20\d{2})", raw, flags=re.IGNORECASE)
+    if quarter_match:
+        quarter, fiscal_year = int(quarter_match.group(1)), int(quarter_match.group(2))
+        return {1: f"{fiscal_year - 1:04d}-06-30",
+                2: f"{fiscal_year - 1:04d}-09-30",
+                3: f"{fiscal_year - 1:04d}-12-31",
+                4: f"{fiscal_year:04d}-03-31"}[quarter]
+    growth_match = re.fullmatch(r"FY\s*(20\d{2})\s*->\s*FY\s*(20\d{2})", raw, flags=re.IGNORECASE)
+    if growth_match and metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
+        prior_year, current_year = map(int, growth_match.groups())
+        if current_year == prior_year + 1:
+            return f"{current_year:04d}-03-31"
+    return ""
+
+
+def _secondary_period_alignment_status(metric, secondary_period, yahoo_period):
+    """Compare a secondary observation period to Yahoo's period without verifying either source."""
+    secondary_end = _normalize_ecms_secondary_period(metric, secondary_period)
+    if not secondary_end:
+        return "", "SECONDARY_PERIOD_INVALID"
+    yahoo_end = _normalize_ecms_secondary_period(metric, yahoo_period)
+    if not yahoo_end:
+        return secondary_end, "YAHOO_PERIOD_MISSING"
+    if secondary_end == yahoo_end:
+        return secondary_end, "MATCHED_YAHOO_PERIOD"
+    return secondary_end, "MISMATCHED_YAHOO_PERIOD"
+
+
 def _key(value):
     return re.sub(r"[^a-z0-9]", "", str(value).lower())
 def _find_records(payload):
@@ -547,25 +596,41 @@ def assess_page_fundamentals(candidates, eod_date):
             }
             if isinstance(secondary, list) and secondary:
                 for item in secondary:
+                    secondary_period = item.get("period", "")
+                    normalized_period, period_alignment = _secondary_period_alignment_status(
+                        metric_name, secondary_period, base["YahooPeriod"]
+                    )
+                    if period_alignment == "MATCHED_YAHOO_PERIOD":
+                        reconciliation_status = "NOT_OFFICIALLY_VERIFIED_PERIOD_MATCH_ONLY"
+                    elif period_alignment == "MISMATCHED_YAHOO_PERIOD":
+                        reconciliation_status = "QUARANTINED_PERIOD_MISMATCH"
+                    elif period_alignment == "SECONDARY_PERIOD_INVALID":
+                        reconciliation_status = "QUARANTINED_INVALID_OR_MISSING_PERIOD"
+                    else:
+                        reconciliation_status = "REQUIRES_PERIOD_RECONCILIATION"
                     comparison_rows.append({
                         **base,
                         "SecondarySource": item.get("source", ""),
                         "SecondaryValue": item.get("value", ""),
-                        "SecondaryPeriod": item.get("period", ""),
+                        "SecondaryPeriod": secondary_period,
+                        "SecondaryPeriodEnd": normalized_period,
+                        "PeriodAlignmentStatus": period_alignment,
                         "SecondarySourceURL": item.get("source_url", ""),
-                        "ReconciliationStatus": "NOT_OFFICIALLY_VERIFIED",
+                        "ReconciliationStatus": reconciliation_status,
                     })
             else:
                 comparison_rows.append({
                     **base, "SecondarySource": "", "SecondaryValue": "",
-                    "SecondaryPeriod": "", "SecondarySourceURL": "",
+                    "SecondaryPeriod": "", "SecondaryPeriodEnd": "",
+                    "PeriodAlignmentStatus": "NO_SECONDARY_OBSERVATION",
+                    "SecondarySourceURL": "",
                     "ReconciliationStatus": "NO_SECONDARY_OBSERVATION",
                 })
     pd.DataFrame(comparison_rows, columns=[
         "TckrSymb", "MetricName", "YahooValue", "YahooSource", "YahooPeriod",
         "YahooCalculationBasis", "SecondarySource", "SecondaryValue",
-        "SecondaryPeriod", "SecondarySourceURL", "ComparisonStatus",
-        "ReconciliationStatus",
+        "SecondaryPeriod", "SecondaryPeriodEnd", "PeriodAlignmentStatus",
+        "SecondarySourceURL", "ComparisonStatus", "ReconciliationStatus",
     ]).to_csv(ecms_output_dir / "fundamental_source_comparison_ecms.csv", index=False)
     candidate_filings.to_csv(ecms_output_dir / "fundamental_filings_ecms.csv", index=False)
     candidate_evidence.to_csv(ecms_output_dir / "fundamental_evidence_ecms.csv", index=False)
