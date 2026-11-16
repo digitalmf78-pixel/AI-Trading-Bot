@@ -258,7 +258,7 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         result["BulkBlockDealStatus"] = "NO_DISCLOSED_DEALS_IN_LOOKBACK"
         result["BulkDealCount"] = 0
         result["BlockDealCount"] = 0
-        return result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return result, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     monkeypatch.setattr(scanner, "attach_information", fake_information)
     summary = scanner.run_morning()
 
@@ -351,7 +351,7 @@ def test_ecms_free_source_evidence_reports_no_alternates_without_inventing_data(
 def test_attach_information_researches_every_symbol_regardless_of_fundamental_status(monkeypatch):
     import strategies.ecms.volume_gainers as scanner
 
-    calls = {"news": [], "events": [], "deals": []}
+    calls = {"news": [], "events": [], "deals": [], "corporate_actions": []}
 
     def fake_news(candidates, as_of_date):
         calls["news"] = candidates["TckrSymb"].tolist()
@@ -397,11 +397,23 @@ def test_attach_information_researches_every_symbol_regardless_of_fundamental_st
     monkeypatch.setattr(scanner, "collect_catalysts", fake_news)
     monkeypatch.setattr(scanner, "collect_upcoming_events", fake_events)
     monkeypatch.setattr(scanner, "collect_bulk_block_deals", fake_deals)
+    def fake_corporate_actions(symbols, as_of_date):
+        calls["corporate_actions"] = list(symbols)
+        audit = pd.DataFrame([
+            {"TckrSymb": symbol, "CorporateActionsStatus": "DATA_FOUND" if symbol == "AAA" else "NO_DATA_FOUND",
+             "CorporateActionCount": 1 if symbol == "AAA" else 0,
+             "CorporateActionSummary": "2026-11-20: Dividend" if symbol == "AAA" else "",
+             "CorporateActionWindowStart": "2026-11-10", "CorporateActionWindowEnd": "2027-02-12",
+             "CorporateActionSourceURL": "https://www.nseindia.com/"}
+            for symbol in symbols
+        ])
+        return pd.DataFrame(), audit
+    monkeypatch.setattr(scanner, "collect_corporate_actions", fake_corporate_actions)
     monkeypatch.setattr(scanner, "attach_valuation", lambda frame: frame.assign(
         ValuationLabel="FAIR", ValuationBasis="TEST"
     ))
 
-    result, news, events, deals = scanner.attach_information(pd.DataFrame([
+    result, news, events, deals, corporate_actions = scanner.attach_information(pd.DataFrame([
         {"TckrSymb": "AAA", "FundamentalShortlistStatus": "PASS"},
         {"TckrSymb": "BBB", "FundamentalShortlistStatus": "FAIL"},
         {"TckrSymb": "CCC", "FundamentalShortlistStatus": "WAIT_FOR_DATA"},
@@ -409,12 +421,13 @@ def test_attach_information_researches_every_symbol_regardless_of_fundamental_st
 
     assert calls == {"news": ["AAA", "BBB", "CCC"],
                      "events": ["AAA", "BBB", "CCC"],
-                     "deals": ["AAA", "BBB", "CCC"]}
+                     "deals": ["AAA", "BBB", "CCC"],
+                     "corporate_actions": ["AAA", "BBB", "CCC"]}
     rows = result.set_index("TckrSymb")
     assert rows.loc["AAA", "UpcomingEventsStatus"] == "AVAILABLE"
     assert rows.loc["AAA", "NewsResearchStatus"] == "DATA_FOUND"
     assert rows.loc["AAA", "CorporateActionResearchStatus"] == "DATA_FOUND"
-    assert rows.loc["AAA", "CorporateActionAnnouncementCount"] == 1
+    assert rows.loc["AAA", "CorporateActionCount"] == 1
     assert rows.loc["BBB", "CorporateActionResearchStatus"] == "NO_DATA_FOUND"
     assert rows.loc["BBB", "NewsResearchStatus"] == "NO_DATA_FOUND"
     assert rows.loc["BBB", "UpcomingEventsResearchStatus"] == "NO_DATA_FOUND"
@@ -426,7 +439,7 @@ def test_attach_information_researches_every_symbol_regardless_of_fundamental_st
 
 def test_attach_information_still_collects_all_sources_when_no_fundamental_pass(monkeypatch):
     import strategies.ecms.volume_gainers as scanner
-    calls = {"news": 0, "events": 0, "deals": 0}
+    calls = {"news": 0, "events": 0, "deals": 0, "corporate_actions": 0}
 
     def fake_news(candidates, as_of_date):
         calls["news"] += len(candidates)
@@ -462,6 +475,16 @@ def test_attach_information_still_collects_all_sources_when_no_fundamental_pass(
     monkeypatch.setattr(scanner, "collect_catalysts", fake_news)
     monkeypatch.setattr(scanner, "collect_upcoming_events", fake_events)
     monkeypatch.setattr(scanner, "collect_bulk_block_deals", fake_deals)
+    def fake_corporate_actions(symbols, as_of_date):
+        calls["corporate_actions"] += len(symbols)
+        return pd.DataFrame(), pd.DataFrame([
+            {"TckrSymb": symbol, "CorporateActionsStatus": "NO_DATA_FOUND",
+             "CorporateActionCount": 0, "CorporateActionSummary": "",
+             "CorporateActionWindowStart": "", "CorporateActionWindowEnd": "",
+             "CorporateActionSourceURL": ""}
+            for symbol in symbols
+        ])
+    monkeypatch.setattr(scanner, "collect_corporate_actions", fake_corporate_actions)
     monkeypatch.setattr(scanner, "attach_valuation", lambda frame: frame.assign(
         ValuationLabel="NOT AVAILABLE", ValuationBasis="INSUFFICIENT_DATA"
     ))
@@ -469,10 +492,10 @@ def test_attach_information_still_collects_all_sources_when_no_fundamental_pass(
         {"TckrSymb": "AAA", "FundamentalShortlistStatus": "FAIL"},
         {"TckrSymb": "BBB", "FundamentalShortlistStatus": "WAIT_FOR_DATA"},
     ])
-    result, news, events, deals = scanner.attach_information(
+    result, news, events, deals, corporate_actions = scanner.attach_information(
         assessed, __import__("datetime").date(2026, 11, 13)
     )
-    assert calls == {"news": 2, "events": 2, "deals": 2}
+    assert calls == {"news": 2, "events": 2, "deals": 2, "corporate_actions": 2}
     assert result["NewsResearchStatus"].eq("NO_DATA_FOUND").all()
     assert result["UpcomingEventsResearchStatus"].eq("NO_DATA_FOUND").all()
     assert result["BulkBlockDealsResearchStatus"].eq("NO_DATA_FOUND").all()
