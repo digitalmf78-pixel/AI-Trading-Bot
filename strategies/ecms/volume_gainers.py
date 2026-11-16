@@ -1083,5 +1083,16 @@ def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
     parser.add_argument("--mode",choices=("eod","morning"),required=True)
     args=parser.parse_args()
+    # GitHub Actions cron also fires on weekday NSE holidays. Never treat the
+    # last available page/session as a fresh scan for a non-trading date.
+    today = datetime.now(IST).date()
+    if not is_trading_session(today):
+        print(json.dumps({
+            "status": "SKIPPED",
+            "reason": "OFFICIAL_NSE_NON_TRADING_DAY",
+            "date_ist": today.isoformat(),
+            "mode": args.mode.upper(),
+        }, indent=2))
+        return
     run_eod() if args.mode=="eod" else run_morning()
 if __name__=="__main__": main()
