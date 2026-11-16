@@ -561,7 +561,7 @@ def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, 
 def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
     import pytest
     from datetime import date
-    from nse_trading_calendar import CalendarCoverageError, expected_scan_time, is_trading_session
+    from nse_trading_calendar import CalendarCoverageError, calendar_coverage_warnings, expected_scan_time, is_trading_session
 
     # The configured 2026 Muhurat session overrides the normal Sunday closure,
     # but uses its own scan times rather than regular 09:20/17:00 times.
@@ -571,6 +571,7 @@ def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
     assert expected_scan_time(date(2026, 11, 16), "morning") == "09:20"
     assert expected_scan_time(date(2026, 11, 16), "eod") == "17:00"
     assert expected_scan_time(date(2026, 11, 10), "eod") is None
+    assert any("2027" in warning for warning in calendar_coverage_warnings(date(2026, 11, 16)))
     with pytest.raises(CalendarCoverageError, match="not configured"):
         is_trading_session(date(2027, 1, 1))
 
