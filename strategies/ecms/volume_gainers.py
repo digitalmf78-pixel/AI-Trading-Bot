@@ -769,7 +769,7 @@ def _save_same_day_morning_snapshot(frame, morning_date):
     if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
         raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: blank or duplicate symbols")
     snapshot["MorningDate"] = morning_date.isoformat()
-    snapshot["MorningCapturedAtIST"] = datetime.now(IST).isoformat()
+    snapshot["MorningSnapshotSavedAtIST"] = datetime.now(IST).isoformat()
     snapshot["MorningRunId"] = os.getenv("GITHUB_RUN_ID", "")
     snapshot["MorningRunAttempt"] = os.getenv("GITHUB_RUN_ATTEMPT", "")
     snapshot["MorningSnapshotType"] = "MORNING"
@@ -826,7 +826,7 @@ def _attach_same_day_morning_confirmation(eod_frame, morning_date):
         value = morning_by_symbol.at[symbol, column]
         return default if pd.isna(value) else value
     result["MorningScanTimeIST"] = symbols.map(
-        lambda symbol: morning_value(symbol, "MorningCapturedAtIST", "")
+        lambda symbol: morning_value(symbol, "MorningPageCapturedAtIST", "")
     )
     result["MorningPageVolume"] = symbols.map(
         lambda symbol: morning_value(symbol, "PageVolume", "")
@@ -968,6 +968,8 @@ def run_morning():
     live=live[live["TckrSymb"].isin(mainboard)].copy()
     if live.empty:
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
+    # Record the page-capture time before fundamental and information enrichment.
+    live["MorningPageCapturedAtIST"] = datetime.now(IST).isoformat()
 
     # Run the same fundamental framework on every eligible symbol visible now,
     # including repeated EOD symbols and new morning entries. The collector
