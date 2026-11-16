@@ -122,7 +122,7 @@ def collect_upcoming_events(symbols, as_of_date: date, lookahead_days=EVENT_LOOK
                 "Source": "NSE Event Calendar", "SourceType": "OFFICIAL",
                 "SourceURL": NSE_EVENT_PAGE,
                 "IsResultEvent": bool(re.search(
-                    r"financial\\s*results?|quarterly\\s*results?|unaudited|audited results",
+                    r"financial\s*results?|quarterly\s*results?|unaudited|audited results",
                     purpose + " " + details, re.I
                 )),
             })
@@ -161,7 +161,7 @@ def collect_upcoming_events(symbols, as_of_date: date, lookahead_days=EVENT_LOOK
                 "Source": "NSE Board Meetings", "SourceType": "OFFICIAL",
                 "SourceURL": NSE_EVENT_PAGE,
                 "IsResultEvent": bool(re.search(
-                    r"financial\\s*results?|quarterly\\s*results?|unaudited|audited results",
+                    r"financial\s*results?|quarterly\s*results?|unaudited|audited results",
                     purpose + " " + details, re.I
                 )),
             })
@@ -238,7 +238,7 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             for item in raw_rows:
                 if not isinstance(item, dict):
                     continue
-                symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol")).strip().upper()
+                symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol", "BD_SYMBOL")).strip().upper()
                 if symbol not in symbols:
                     continue
                 deal_date = _as_date(_pick(item, "date", "tradeDate", "dealDate", "BD_DT_DATE", "BD_DT_ORDER"))
