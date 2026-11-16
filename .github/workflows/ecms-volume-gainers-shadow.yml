@@ -329,7 +329,7 @@ jobs:
           except Exception as exc:
               print(f"Current-run Morning snapshot is not cacheable: {type(exc).__name__}: {exc}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"cacheable={'true' if valid else 'false'}\\n")
+              output.write(f"cacheable={'true' if valid else 'false'}\n")
           print(f"ECMS_MORNING_SNAPSHOT_CACHEABLE={valid}")
           PY
       - name: Save ECMS fundamental cache after validated morning assessment
