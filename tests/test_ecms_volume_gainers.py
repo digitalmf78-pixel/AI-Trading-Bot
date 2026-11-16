@@ -598,3 +598,20 @@ def test_eligible_page_equities_keeps_only_official_mainboard_symbols(monkeypatc
     assert eligible["PageUniverseStatus"].eq("PASS_MAIN_BOARD_EQUITY").all()
     assert source == "official-nse-mainboard-minus-sme"
 
+
+
+def test_volume_gainer_nse_sample_fields_are_mapped_to_correct_units():
+    from strategies.ecms.volume_gainers import ALIASES, _get, _number
+
+    row = {
+        "volume": 35273385,
+        "week1AvgVolume": 643349,
+        "week1volChange": 54.82776067111319,
+        "week2AvgVolume": 619266,
+        "week2volChange": 56.959989729776865,
+    }
+    assert _number(_get(row, ALIASES["volume"])) == 35273385
+    assert _number(_get(row, ALIASES["avg_volume_1w"])) == 643349
+    assert _number(_get(row, ALIASES["change_pct_1w"])) == 54.82776067111319
+    assert _number(_get(row, ALIASES["avg_volume_2w"])) == 619266
+    assert _number(_get(row, ALIASES["change_pct_2w"])) == 56.959989729776865
