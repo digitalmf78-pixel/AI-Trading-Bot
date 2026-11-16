@@ -318,8 +318,10 @@ jobs:
         run: |
           python - <<'PY'
           import csv, os
-          from datetime import date
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
           from pathlib import Path
+          today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
           path = Path("data/cache/ecms/volume_gainers_same_day_morning.csv")
           valid = False
           try:
@@ -331,7 +333,7 @@ jobs:
                   bool(rows)
                   and all(symbols)
                   and len(symbols) == len(set(symbols))
-                  and dates == {date.today().isoformat()}
+                  and dates == {today_ist}
                   and all(row.get("MorningSnapshotType") == "MORNING" for row in rows)
                   and all(row.get("MorningSnapshotStatus") == "VALID" for row in rows)
                   and all(row.get("MorningRunId") == os.getenv("GITHUB_RUN_ID", "") for row in rows)
