@@ -698,8 +698,9 @@ def attach_information(assessed, as_of_date):
             result[column] = result[column].fillna(default)
     def _deal_research_status(row):
         status = str(row.get("BulkBlockDealStatus", "")).upper()
-        count = int(pd.to_numeric(row.get("BulkDealCount", 0), errors="coerce") or 0)
-        count += int(pd.to_numeric(row.get("BlockDealCount", 0), errors="coerce") or 0)
+        bulk_count = pd.to_numeric(row.get("BulkDealCount", 0), errors="coerce")
+        block_count = pd.to_numeric(row.get("BlockDealCount", 0), errors="coerce")
+        count = (0 if pd.isna(bulk_count) else int(bulk_count)) + (0 if pd.isna(block_count) else int(block_count))
         if count > 0:
             return "DATA_FOUND"
         if status == "NO_DISCLOSED_DEALS_IN_LOOKBACK":
