@@ -160,7 +160,7 @@ Current generic score bands:
 - If required data is missing and retry is deferred, record RETRY_COOLDOWN plus missing fields and keep the candidate WAIT_FOR_DATA / not forwarded.
 - Free-source budget must cover the full current page cohort. If the page returns more than the budget, report unattempted candidates and do not claim full collection.
 - News cache entries are reusable only for the exact symbol and exact five-session date window, and only after both official and secondary source attempts completed. Failed/partial attempts are retried; Morning's complete same-day results can be reused by EOD to avoid duplicate requests.
-- Event-calendar and bulk/block-deal APIs are batch requests for the whole page cohort, not one request per stock. Keep the 30-day deal detail and five-day deal summary side by side.
+- Event-calendar, bulk/block-deal and corporate-actions APIs are batch requests for the whole page cohort, not one request per stock. Keep the 30-day deal detail and five-day deal summary side by side. Corporate-actions responses are cached by exact date window.
 - Provider errors must not delete candidates or overwrite valid prior/manual values.
 - Duplicate symbol rows in the fundamental cache are an integrity error; never arbitrarily choose one.
 - Final report must have exactly one assessment row per eligible candidate symbol. A mismatch in count or symbol set is a run-integrity failure.
@@ -174,6 +174,7 @@ Current generic score bands:
 | volume_gainers_catalysts.csv | Five-NSE-session candidate-specific announcement/news evidence for every eligible stock |
 | volume_gainers_upcoming_events.csv | Next-90-calendar-day official event-calendar rows for every eligible stock |
 | volume_gainers_bulk_block_deals.csv | 30-calendar-day official deal detail for every eligible stock, including five-day summary fields |
+| volume_gainers_corporate_actions.csv | Official NSE corporate actions by ex-date across the previous five-session start date through the next 90 calendar days |
 | volume_gainers_eod_summary.json | Run date, page count, eligible count, assessed count, strong count and wait count |
 | fundamental_metrics_ecms.csv | ECMS-owned fundamental cache snapshot |
 | fundamental_provider_diagnostics.csv | Provider attempts, cache/retry status and missing-data details |
