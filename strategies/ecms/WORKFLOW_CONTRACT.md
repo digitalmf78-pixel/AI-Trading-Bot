@@ -28,17 +28,17 @@
 3. Confirmed upcoming company events, with date and source.
 4. Next result date only when announced by issuer/exchange; otherwise `NOT ANNOUNCED`.
 5. Indicative valuation label Cheap / Fair / Expensive from available P/E, PEG, P/B or EV/EBITDA multiples, with source/date/basis; otherwise `NOT AVAILABLE`. These are fixed, non-peer-adjusted information bands.
-6. Latest 30-calendar-day NSE bulk and block deal disclosures for fundamental-PASS stocks: date, disclosed client/side, quantity, price and official exchange source. Informational only.
+6. Latest 30-calendar-day NSE bulk and block deal disclosures for every eligible page stock: date, disclosed client/side, quantity, price and official exchange source. Informational only.
 7. RVOL vs the previous 20 completed sessions' average volume, with value and data status. Informational only.
 
-All groups except fundamentals are informational. Their positive, negative or unavailable status cannot reject a fundamental-PASS stock. Never infer an event, result date, valuation or deal when source evidence is absent.
+This list describes the earlier reporting baseline. The approved target strategy adds price/volume/delivery-origin analysis, sector/technical context and P5 evidence-backed trap exclusion. These layers become active only after implementation and phase evidence. Missing or unavailable data is never itself a rejection reason. Never infer an event, result date, valuation or deal when source evidence is absent.
 
 ## Morning repeat classification
 
 - Reassess every eligible stock visible on the 09:20 NSE Volume Gainers page with the same fundamental-only rule. Include the EOD RVOL for context; do not compare partial-session morning volume with full-day RVOL.
 - If a stock had Fundamental PASS in the saved EOD snapshot and appears again on the morning page, label it `EOD_FUNDAMENTAL_PASS_REPEAT`.
 - Distinguish that from `NEW_MORNING_ENTRY`, `EOD_ONLY_NOT_ON_MORNING_PAGE`, and `MORNING_FUNDAMENTAL_FAIL` / `MORNING_WAIT_FOR_DATA`.
-- Repeat/new/disappeared labels are informational and do not create a second rejection rule.
+- Repeat/new/disappeared labels remain page-presence context only and do not independently change fundamental status or create a separate rejection rule.
 
 ## Sources and quality
 
