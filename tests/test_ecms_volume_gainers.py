@@ -558,6 +558,39 @@ def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, 
     pd.DataFrame({"TckrSymb": ["AAA", "AAA"], "MorningDate": ["2026-11-16"] * 2}).to_csv(path, index=False)
     assert scanner._load_same_day_morning_snapshot(date(2026, 11, 16)).empty
 
+def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
+    import pytest
+    from datetime import date
+    from nse_trading_calendar import CalendarCoverageError, is_trading_session
+
+    # The configured 2026 Muhurat session overrides the normal Sunday closure.
+    assert is_trading_session(date(2026, 11, 8))
+    with pytest.raises(CalendarCoverageError, match="not configured"):
+        is_trading_session(date(2027, 1, 1))
+
+
+def test_main_skips_when_official_nse_calendar_coverage_is_unavailable(monkeypatch, capsys):
+    import sys
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2027, 1, 1, 9, 20, tzinfo=tz)
+
+    def unavailable(_day):
+        raise scanner.CalendarCoverageError("WAIT_FOR_DATA: official NSE calendar not configured")
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setattr(scanner, "is_trading_session", unavailable)
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "morning"])
+    scanner.main()
+    output = capsys.readouterr().out
+    assert '"status": "SKIPPED"' in output
+    assert '"reason": "OFFICIAL_NSE_CALENDAR_UNAVAILABLE"' in output
+
+
 def test_main_skips_holiday_without_running_scan(monkeypatch, capsys):
     import sys
     from datetime import datetime as real_datetime
