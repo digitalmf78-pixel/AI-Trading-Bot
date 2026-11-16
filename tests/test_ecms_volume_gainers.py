@@ -224,6 +224,7 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         "EODFundamentalShortlistStatus": "PASS",
         "EODStrongFundamentalStatus": "EOD_FUNDAMENTAL_PASS",
     }]).to_csv(state_path, index=False)
+    original_eod_snapshot = state_path.read_bytes()
 
     monkeypatch.setattr(scanner, "STATE_FILE", state_path)
     monkeypatch.setattr(scanner, "OUTPUT_DIR", output_dir)
@@ -266,10 +267,54 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
     assert report.loc["BBB", "ConfirmationStatus"] == "MORNING_FUNDAMENTAL_PASS"
     assert report.loc["AAA", "MorningStatus"] == "EOD_FUNDAMENTAL_PASS_REPEAT"
     assert report.loc["BBB", "MorningStatus"] == "NEW_MORNING_ENTRY"
+    assert report.loc["AAA", "PagePresenceConfirmationStatus"] == "DOUBLE_CONFIRMED_EOD_MORNING"
+    assert report.loc["BBB", "PagePresenceConfirmationStatus"] == "NEW_MORNING_ENTRY"
+    assert report.loc["AAA", "PagePresenceDoubleConfirmed"]
+    assert summary["page_presence_double_confirmed"] == 1
+    assert state_path.read_bytes() == original_eod_snapshot
     assert summary["double_confirmed"] == 1
     assert summary["eod_fundamental_pass_repeats"] == 1
     saved_summary = json.loads((output_dir / "volume_gainers_morning_summary.json").read_text())
     assert saved_summary["morning_fundamental_pass"] == 2
+
+
+def test_page_presence_confirmation_is_independent_of_fundamental_status():
+    from strategies.ecms.volume_gainers import _page_presence_confirmation_status
+
+    assert _page_presence_confirmation_status(True, True) == "DOUBLE_CONFIRMED_EOD_MORNING"
+    assert _page_presence_confirmation_status(True, False) == "EOD_ONLY_NOT_ON_MORNING_PAGE"
+    assert _page_presence_confirmation_status(False, True) == "NEW_MORNING_ENTRY"
+    assert _page_presence_confirmation_status(False, False) == "NOT_PRESENT"
+
+
+def test_eod_snapshot_is_atomically_saved_with_current_run_marker(tmp_path, monkeypatch):
+    import json
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "data" / "cache" / "ecms"
+    state_file = state_dir / "volume_gainers_previous_eod.csv"
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "STATE_FILE", state_file)
+    monkeypatch.setenv("GITHUB_RUN_ID", "test-run-123")
+    frame = pd.DataFrame([{
+        "TckrSymb": "AAA", "CompanyName": "AAA Ltd", "PageVolume": 123,
+        "LTP": 10.5, "ChangePct": 2.0,
+    }])
+
+    state = scanner._save_eod_snapshot(frame, date(2026, 11, 13))
+
+    assert state_file.exists()
+    saved = pd.read_csv(state_file, dtype={"TckrSymb": str})
+    assert saved.loc[0, "TckrSymb"] == "AAA"
+    assert saved.loc[0, "EODDate"] == "2026-11-13"
+    assert saved.loc[0, "SnapshotType"] == "EOD"
+    assert saved.loc[0, "SnapshotStatus"] == "VALID"
+    assert saved.loc[0, "EODFundamentalShortlistStatus"] == "NOT_ASSESSED"
+    marker = json.loads((state_dir / "eod_snapshot_run_marker.json").read_text())
+    assert marker["github_run_id"] == "test-run-123"
+    assert marker["symbol_count"] == 1
+    assert marker["eod_date"] == "2026-11-13"
 
 
 def test_ecms_free_source_evidence_preserves_historical_alternates_when_latest_attempt_empty():
