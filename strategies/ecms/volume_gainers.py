@@ -863,6 +863,13 @@ def run_morning():
     if not STATE_FILE.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
     previous=pd.read_csv(STATE_FILE,dtype={"TckrSymb":str})
     if previous.empty or "TckrSymb" not in previous: raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
+    previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
+    if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
+        raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot has blank or duplicate symbols")
+    if "SnapshotType" in previous and not previous["SnapshotType"].astype(str).eq("EOD").all():
+        raise RuntimeError("WAIT_FOR_DATA: cached snapshot is not tagged as EOD")
+    if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
+        raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
     expected_eod = expected_latest_completed_session().isoformat()
     stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
     if stored_dates != {expected_eod}:
