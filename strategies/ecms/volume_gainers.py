@@ -80,7 +80,7 @@ def _volume_number(value):
     raw = str(value).strip().replace(",", "").replace(" ", "")
     if raw.upper() in {"", "-", "NA", "NONE", "NAN"}:
         return None
-    match = re.fullmatch(r"([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))([A-Za-z]*)", raw)
+    match = re.fullmatch(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))([A-Za-z]*)", raw)
     if not match:
         return None
     amount = float(match.group(1))
