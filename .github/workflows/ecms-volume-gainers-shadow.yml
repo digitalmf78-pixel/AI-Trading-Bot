@@ -213,6 +213,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SUMMARY_PATH: outputs/ecms/volume_gainers_eod_summary.json
           RESEARCH_PATH: outputs/ecms/volume_gainers_eod_research.csv
+          PAGE_CSV_PATH: outputs/ecms/volume_gainers_eod_nse_page.csv
         run: |
           python - <<'PY'
           import csv, json, os
@@ -299,6 +300,22 @@ jobs:
               if result.get("ok") is not True:
                   raise RuntimeError(f"Telegram API rejected ECMS EOD message part {index}: {result}")
               print(f"ECMS EOD Telegram part {index}/{len(chunks)} delivered. message_id={result.get('result',{}).get('message_id')}")
+          page_csv = Path(os.getenv("PAGE_CSV_PATH", ""))
+          if page_csv.is_file():
+              with page_csv.open("rb") as handle:
+                  response = requests.post(
+                      f"https://api.telegram.org/bot{token}/sendDocument",
+                      data={"chat_id": chat_id, "caption": f"📥 ECMS EOD — complete NSE Volume Gainers page CSV ({page_csv.name})"},
+                      files={"document": (page_csv.name, handle, "text/csv")},
+                      timeout=60,
+                  )
+              response.raise_for_status()
+              result = response.json()
+              if result.get("ok") is not True:
+                  raise RuntimeError(f"Telegram API rejected ECMS EOD page CSV: {result}")
+              print(f"ECMS EOD NSE page CSV delivered. message_id={result.get('result',{}).get('message_id')} bytes={page_csv.stat().st_size}")
+          else:
+              print(f"ECMS EOD NSE page CSV unavailable; scan/report may have failed before page export: {page_csv}")
           PY
   morning:
     if: >-
@@ -455,6 +472,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SUMMARY_PATH: outputs/ecms/volume_gainers_morning_summary.json
           RESEARCH_PATH: outputs/ecms/volume_gainers_morning_recheck.csv
+          PAGE_CSV_PATH: outputs/ecms/volume_gainers_morning_nse_page.csv
         run: |
           python - <<'PY'
           import csv, json, os
@@ -513,4 +531,20 @@ jobs:
               result = response.json()
               if result.get("ok") is not True: raise RuntimeError(f"Telegram API rejected ECMS morning message part {index}: {result}")
               print(f"ECMS morning Telegram part {index}/{len(chunks)} delivered. message_id={result.get('result',{}).get('message_id')}")
+          page_csv = Path(os.getenv("PAGE_CSV_PATH", ""))
+          if page_csv.is_file():
+              with page_csv.open("rb") as handle:
+                  response = requests.post(
+                      f"https://api.telegram.org/bot{token}/sendDocument",
+                      data={"chat_id": chat_id, "caption": f"📥 ECMS MORNING — complete NSE Volume Gainers page CSV ({page_csv.name})"},
+                      files={"document": (page_csv.name, handle, "text/csv")},
+                      timeout=60,
+                  )
+              response.raise_for_status()
+              result = response.json()
+              if result.get("ok") is not True:
+                  raise RuntimeError(f"Telegram API rejected ECMS Morning page CSV: {result}")
+              print(f"ECMS Morning NSE page CSV delivered. message_id={result.get('result',{}).get('message_id')} bytes={page_csv.stat().st_size}")
+          else:
+              print(f"ECMS Morning NSE page CSV unavailable; scan/report may have failed before page export: {page_csv}")
           PY
