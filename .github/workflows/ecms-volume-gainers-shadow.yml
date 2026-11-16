@@ -224,11 +224,14 @@ jobs:
                           deal_status = (row.get("BulkBlockDealsResearchStatus") or "NOT_VERIFIED").strip()
                           deal_summary = (row.get("BulkBlockDealSummary") or "").strip().replace("\n", " ")
                           recent_deals = (row.get("BulkBlockSummaryLast5Days") or "").strip().replace("\n", " ")
+                          corporate_status = (row.get("CorporateActionResearchStatus") or "NOT_VERIFIED").strip()
+                          corporate_summary = (row.get("CorporateActionSummary") or "").strip().replace("\n", " ")
                           rvol = (row.get("RVOL") or "NOT AVAILABLE").strip()
                           context = (
                               f"; valuation={valuation}; news[{news_status}]={news[:100]}"
                               f"; events[{event_status}]={events[:90]}; next_result={result_date}"
-                              f"; deals[{deal_status}]={deal_summary[:90]}; recent_5d={recent_deals[:70]}; RVOL={rvol}"
+                              f"; deals[{deal_status}]={deal_summary[:90]}; recent_5d={recent_deals[:70]}"
+                              f"; corporate_actions[{corporate_status}]={corporate_summary[:90]}; RVOL={rvol}"
                           )
                           stock_lines.append(
                               f"{symbol}: fundamental={shortlist}; official_XBRL={verified}"
@@ -408,6 +411,8 @@ jobs:
                               f"result={row.get('NextResultDate','NOT ANNOUNCED')}; "
                               f"deals={row.get('BulkBlockDealStatus','NOT AVAILABLE')}:"
                               f"{str(row.get('BulkBlockDealSummary',''))[:100]} "
+                              f"corporate_actions={row.get('CorporateActionResearchStatus','NOT_VERIFIED')}:"
+                              f"{str(row.get('CorporateActionSummary',''))[:100]} "
                               f"RVOL(EOD)={row.get('EODRVOL','NOT AVAILABLE')}"
                           )
               except Exception as exc:
