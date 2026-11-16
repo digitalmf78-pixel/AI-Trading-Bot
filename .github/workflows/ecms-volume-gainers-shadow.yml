@@ -13,8 +13,9 @@ on:
         default: eod
         options: [eod, morning]
   schedule:
-    - cron: "30 11 * * 1-5" # 17:00 IST EOD page snapshot
-    - cron: "50 3 * * 1-5"  # 09:20 IST morning recheck
+    - cron: "30 11 * * *" # 17:00 IST regular-session EOD
+    - cron: "50 3 * * *"  # 09:20 IST regular-session Morning
+    - cron: "55 8 * * *"  # 14:25 IST configured special-session Morning slot
 permissions:
   contents: read
 concurrency:
@@ -40,12 +41,12 @@ jobs:
       - name: Compile and test
         run: |
           python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/debt_equity_xbrl_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py strategies/ecms/filing_metadata_audit.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py test_fundamental_data_provider.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_gemini_research.py tests/test_ecms_secondary_source_periods.py test_fundamental_data_provider.py
 
   eod:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'eod') ||
-      (github.event_name == 'schedule' && github.event.schedule == '30 11 * * 1-5')
+      (github.event_name == 'schedule' && (github.event.schedule == '30 11 * * *'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -104,10 +105,12 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
+            data/cache/ecms/universe/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -137,6 +140,7 @@ jobs:
           python - <<'PY'
           import csv, json, os
           from pathlib import Path
+          from strategies.ecms.volume_gainers import _is_current_run_eod_snapshot_cacheable
           marker_path = Path("data/cache/ecms/eod_snapshot_run_marker.json")
           state_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv")
           valid = False
@@ -144,15 +148,10 @@ jobs:
               marker = json.loads(marker_path.read_text(encoding="utf-8"))
               with state_path.open("r", encoding="utf-8-sig", newline="") as handle:
                   rows = list(csv.DictReader(handle))
-              dates = {row.get("EODDate", "") for row in rows}
-              valid = (
-                  marker.get("snapshot_type") == "EOD"
-                  and marker.get("snapshot_status") == "VALID"
-                  and marker.get("github_run_id") == os.getenv("GITHUB_RUN_ID", "")
-                  and int(marker.get("symbol_count", 0)) > 0
-                  and len(rows) == int(marker.get("symbol_count", 0))
-                  and dates == {marker.get("eod_date", "")}
-                  and all(row.get("SnapshotType") == "EOD" and row.get("SnapshotStatus") == "VALID" for row in rows)
+              # Only a complete EOD snapshot captured on its own session date
+              # may replace the previous-session reference for the next Morning.
+              valid = _is_current_run_eod_snapshot_cacheable(
+                  marker, rows, os.getenv("GITHUB_RUN_ID", "")
               )
           except Exception as exc:
               print(f"Current-run EOD snapshot is not cacheable: {type(exc).__name__}: {exc}")
@@ -166,10 +165,12 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
+            data/cache/ecms/universe/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
         if: always()
@@ -288,7 +289,7 @@ jobs:
   morning:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
-      (github.event_name == 'schedule' && github.event.schedule == '50 3 * * 1-5')
+      (github.event_name == 'schedule' && (github.event.schedule == '50 3 * * *' || github.event.schedule == '55 8 * * *'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -316,10 +317,12 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
+            data/cache/ecms/universe/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -346,18 +349,33 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import csv, os
+          import csv, json, os
           from datetime import datetime
           from zoneinfo import ZoneInfo
           from pathlib import Path
           today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
           path = Path("data/cache/ecms/volume_gainers_same_day_morning.csv")
+          eod_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv")
+          consumed_path = Path("data/cache/ecms/volume_gainers_previous_eod_consumed.json")
+          report_path = Path("outputs/ecms/volume_gainers_morning_recheck.csv")
+          summary_path = Path("outputs/ecms/volume_gainers_morning_summary.json")
           valid = False
           try:
               with path.open("r", encoding="utf-8-sig", newline="") as handle:
                   rows = list(csv.DictReader(handle))
+              with report_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                  report_rows = list(csv.DictReader(handle))
+              summary = json.loads(summary_path.read_text(encoding="utf-8"))
+              consumed = json.loads(consumed_path.read_text(encoding="utf-8"))
               symbols = [str(row.get("TckrSymb", "")).strip().upper() for row in rows]
               dates = {str(row.get("MorningDate", "")).strip() for row in rows}
+              comparison_complete = (
+                  bool(report_rows)
+                  and summary.get("previous_eod_reference_consumed") is True
+                  and consumed.get("status") == "CONSUMED"
+                  and consumed.get("consumed_eod_date") == summary.get("data_as_of_date_ist")
+                  and not eod_path.exists()
+              )
               valid = (
                   bool(rows)
                   and all(symbols)
@@ -366,6 +384,7 @@ jobs:
                   and all(row.get("MorningSnapshotType") == "MORNING" for row in rows)
                   and all(row.get("MorningSnapshotStatus") == "VALID" for row in rows)
                   and all(row.get("MorningRunId") == os.getenv("GITHUB_RUN_ID", "") for row in rows)
+                  and comparison_complete
               )
           except Exception as exc:
               print(f"Current-run Morning snapshot is not cacheable: {type(exc).__name__}: {exc}")
@@ -379,10 +398,12 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
+            data/cache/ecms/universe/
           key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report
         if: always()

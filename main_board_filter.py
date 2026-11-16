@@ -49,11 +49,19 @@ def _symbols_from_csv(payload: bytes) -> set[str]:
     return symbols
 
 
-def _get_official_symbols(name: str, url: str, session: requests.Session | None = None) -> tuple[set[str], str]:
-    """Fetch official CSV; use a previously validated cache if fetch fails."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"{name}.csv"
-    timestamp_path = CACHE_DIR / f"{name}.fetched_at"
+def _get_official_symbols(
+    name: str, url: str, session: requests.Session | None = None,
+    cache_dir: Path | None = None,
+) -> tuple[set[str], str]:
+    """Fetch official CSV; use a previously validated cache if fetch fails.
+
+    ``cache_dir`` is optional so production callers retain the historical
+    ``data/cache/universe`` default while isolated consumers can own their cache.
+    """
+    target_cache_dir = Path(cache_dir) if cache_dir is not None else CACHE_DIR
+    target_cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = target_cache_dir / f"{name}.csv"
+    timestamp_path = target_cache_dir / f"{name}.fetched_at"
     client = session or requests.Session()
     client.headers.update(HEADERS)
     fetch_error: Exception | None = None
@@ -87,10 +95,20 @@ def _get_official_symbols(name: str, url: str, session: requests.Session | None 
     raise RuntimeError(f"Official NSE {name} list unavailable and no validated cache exists: {fetch_error}") from fetch_error
 
 
-def load_official_board_lists(session: requests.Session | None = None) -> tuple[set[str], set[str], dict[str, str]]:
-    """Return (Main Board symbols, SME symbols, source statuses)."""
-    main_symbols, main_source = _get_official_symbols("nse_main_board_equity", NSE_MAIN_BOARD_URL, session)
-    sme_symbols, sme_source = _get_official_symbols("nse_sme_equity", NSE_SME_URL, session)
+def load_official_board_lists(
+    session: requests.Session | None = None, cache_dir: Path | None = None,
+) -> tuple[set[str], set[str], dict[str, str]]:
+    """Return (Main Board symbols, SME symbols, source statuses).
+
+    The default cache remains unchanged for production NSE V8. ECMS may pass
+    its own cache directory to keep writes isolated from shared production state.
+    """
+    main_symbols, main_source = _get_official_symbols(
+        "nse_main_board_equity", NSE_MAIN_BOARD_URL, session, cache_dir=cache_dir
+    )
+    sme_symbols, sme_source = _get_official_symbols(
+        "nse_sme_equity", NSE_SME_URL, session, cache_dir=cache_dir
+    )
     if not main_symbols or not sme_symbols:
         raise RuntimeError("Official Main Board/SME symbol lists must both be non-empty")
     return main_symbols, sme_symbols, {"main_board_source": main_source, "sme_source": sme_source}

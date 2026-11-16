@@ -100,3 +100,63 @@ def test_negative_risk_overrides_positive_headline_terms():
     status, flags = classify_catalyst("Company wins a contract but auditor resignation announced")
     assert status == "NEGATIVE_RISK_REVIEW"
     assert "auditor resignation" in flags
+
+
+def test_ecms_mainboard_loader_uses_ecms_owned_cache_directory(tmp_path, monkeypatch):
+    import main_board_filter
+    import strategies.ecms.eod as ecms_eod
+
+    ecms_cache = tmp_path / "data" / "cache" / "ecms" / "universe"
+    csv_path = ecms_cache / "nse_main_board_equity.csv"
+    csv_path.parent.mkdir(parents=True)
+    pd.DataFrame({
+        "SYMBOL": ["AAA", "ETF1", "BBB"],
+        "NAME OF COMPANY": ["AAA LTD", "INDEX ETF", "BBB LTD"],
+        "ISIN NUMBER": ["INE000A01001", "INF000000001", "INE000B01001"],
+    }).to_csv(csv_path, index=False)
+
+    captured = {}
+
+    def fake_load_official_board_lists(session=None, cache_dir=None):
+        captured["cache_dir"] = cache_dir
+        return {"AAA", "ETF1", "BBB"}, {"SME1"}, {
+            "main_board_source": "OFFICIAL_CACHED",
+            "sme_source": "OFFICIAL_CACHED",
+        }
+
+    monkeypatch.setattr(main_board_filter, "load_official_board_lists", fake_load_official_board_lists)
+    symbols, source = ecms_eod.load_official_mainboard_symbols(universe_dir=ecms_cache)
+
+    assert symbols == {"AAA", "BBB"}
+    assert captured["cache_dir"] == ecms_cache
+    assert "OFFICIAL_CACHED" in source
+
+
+
+def test_expected_latest_completed_session_rolls_weekend_and_holiday_forward(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import strategies.ecms.eod as ecms_eod
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # Normal Friday EOD -> Friday completed session; Monday morning -> Friday.
+    monkeypatch.setattr(ecms_eod, "is_trading_session", lambda day: day.weekday() < 5)
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 13, 17, 0, tzinfo=ist)
+    ) == date(2026, 11, 13)
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 16, 9, 20, tzinfo=ist)
+    ) == date(2026, 11, 13)
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 17, 9, 20, tzinfo=ist)
+    ) == date(2026, 11, 16)
+
+    # If Monday is an NSE holiday, Tuesday morning must still resolve to Friday.
+    monkeypatch.setattr(
+        ecms_eod, "is_trading_session",
+        lambda day: day.weekday() < 5 and day != date(2026, 11, 16),
+    )
+    assert ecms_eod.expected_latest_completed_session(
+        datetime(2026, 11, 17, 9, 20, tzinfo=ist)
+    ) == date(2026, 11, 13)
+

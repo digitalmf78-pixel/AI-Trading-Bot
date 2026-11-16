@@ -62,6 +62,28 @@ def is_trading_session(value: Any) -> bool:
     return session_status(value) in {"REGULAR_SESSION", "SPECIAL_SESSION"}
 
 
+def expected_scan_time(value: Any, mode: str) -> str | None:
+    """Return the official-session scan time (IST); unknown special timings fail closed."""
+    day = _as_date(value)
+    mode_key = str(mode).strip().lower()
+    if mode_key not in {"morning", "eod"}:
+        raise ValueError("mode must be 'morning' or 'eod'")
+    payload = _load_calendar()
+    year_data = payload.get("years", {}).get(str(day.year))
+    if not isinstance(year_data, dict):
+        raise CalendarCoverageError(
+            f"WAIT_FOR_DATA: official NSE calendar not configured for {day.year}"
+        )
+    status = session_status(day)
+    if status == "REGULAR_SESSION":
+        return "09:20" if mode_key == "morning" else "17:00"
+    if status == "SPECIAL_SESSION":
+        slots = year_data.get("special_scan_times", {}).get(day.isoformat(), {})
+        value = slots.get(mode_key) if isinstance(slots, dict) else None
+        return str(value) if value else None
+    return None
+
+
 def official_session_reason(value: Any) -> str:
     """Human-readable official-calendar reason for diagnostics."""
     day = _as_date(value)

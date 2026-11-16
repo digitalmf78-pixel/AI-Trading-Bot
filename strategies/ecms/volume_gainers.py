@@ -21,11 +21,12 @@ from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METAD
 from strategies.ecms.information import (
     attach_valuation, collect_upcoming_events, collect_bulk_block_deals, collect_corporate_actions,
 )
-from nse_trading_calendar import is_trading_session
+from nse_trading_calendar import is_trading_session, expected_scan_time, calendar_coverage_warnings, CalendarCoverageError
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
 STATE_FILE = STATE_DIR / "volume_gainers_previous_eod.csv"
+CONSUMED_EOD_MARKER_FILE = STATE_DIR / "volume_gainers_previous_eod_consumed.json"
 MORNING_STATE_FILE = STATE_DIR / "volume_gainers_same_day_morning.csv"
 REQUEST_TIMEOUT = (8, 20)
 ALIASES = {
@@ -72,6 +73,30 @@ def _number(value):
     if value is None or str(value).strip() in {"","-","NA","None"}: return None
     try: return float(str(value).replace(",","").replace("%","").strip())
     except (TypeError,ValueError): return None
+
+def _volume_number(value):
+    """Parse NSE quantity values, including compact Indian lakh/crore display units."""
+    if value is None:
+        return None
+    raw = str(value).strip().replace(",", "").replace(" ", "")
+    if raw.upper() in {"", "-", "NA", "NONE", "NAN"}:
+        return None
+    match = re.fullmatch(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))([A-Za-z]*)", raw)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    multipliers = {
+        "": 1.0, "unit": 1.0, "units": 1.0,
+        "k": 1_000.0, "thousand": 1_000.0,
+        "l": 100_000.0, "lac": 100_000.0, "lacs": 100_000.0,
+        "lakh": 100_000.0, "lakhs": 100_000.0,
+        "m": 1_000_000.0, "mn": 1_000_000.0, "million": 1_000_000.0,
+        "cr": 10_000_000.0, "crore": 10_000_000.0, "crores": 10_000_000.0,
+        "b": 1_000_000_000.0, "bn": 1_000_000_000.0, "billion": 1_000_000_000.0,
+    }
+    multiplier = multipliers.get(unit)
+    return amount * multiplier if multiplier is not None else None
 def fetch_volume_gainers(session=None):
     client = session or requests.Session()
     client.headers.update(HEADERS)
@@ -87,13 +112,13 @@ def fetch_volume_gainers(session=None):
         exact_volume_field = next((
             str(key) for key in row
             if _key(key) in {_key(alias) for alias in ALIASES["volume"]}
-            and _number(row.get(key)) is not None
+            and _volume_number(row.get(key)) is not None
         ), "")
         fuzzy_volume_fields = [
             str(key) for key in row
             if any(token in _key(key) for token in ("volume", "tradedqty", "tradedquantity", "qtytraded"))
             and not any(token in _key(key) for token in ("avg", "average", "week", "change", "percent"))
-            and _number(row.get(key)) is not None
+            and _volume_number(row.get(key)) is not None
         ]
         volume_field = exact_volume_field or (fuzzy_volume_fields[0] if len(fuzzy_volume_fields) == 1 else "")
         volume_raw = row.get(volume_field) if volume_field else _get(row, ALIASES["volume"])
@@ -105,7 +130,7 @@ def fetch_volume_gainers(session=None):
         normalized.append({
           "TckrSymb":symbol, "CompanyName":str(_get(row,ALIASES["company"]) or ""),
           "Series":str(_get(row,ALIASES["series"]) or "").strip().upper(),
-          "PageVolume":_number(volume_raw), "LTP":_number(_get(row,ALIASES["ltp"])),
+          "PageVolume":_volume_number(volume_raw), "LTP":_number(_get(row,ALIASES["ltp"])),
           "ChangePct":_number(_get(row,ALIASES["change_pct"])), "Turnover":_number(_get(row,ALIASES["turnover"])),
           "AvgVolume1W":_number(_get(row,ALIASES["avg_volume_1w"])),
           "VolumeChangePct1W":_number(_get(row,ALIASES["change_pct_1w"])),
@@ -113,7 +138,7 @@ def fetch_volume_gainers(session=None):
           "VolumeChangePct2W":_number(_get(row,ALIASES["change_pct_2w"])),
           "VolumeChangeTimes1W":_number(_get(row,ALIASES["change_times_1w"])),
           "VolumeChangeTimes2W":_number(_get(row,ALIASES["change_times_2w"])),
-          "PageVolumeDataStatus":"DATA_FOUND" if _number(volume_raw) is not None else "MISSING_FROM_NSE_RESPONSE",
+          "PageVolumeDataStatus":"DATA_FOUND" if _volume_number(volume_raw) is not None else "MISSING_FROM_NSE_RESPONSE",
           "PageVolumeSourceField":volume_field,
           "PageVolumeRawValue":"" if volume_raw is None else str(volume_raw),
           "NSEPayloadKeys":payload_keys,
@@ -873,6 +898,37 @@ def attach_information(assessed, as_of_date):
     )
     return result, news, events, deals, corporate_actions
 
+def _is_current_run_eod_snapshot_cacheable(marker, rows, github_run_id):
+    """Accept only a complete, current-run EOD snapshot for its actual scan session."""
+    if not isinstance(marker, dict) or not rows:
+        return False
+    eod_date = str(marker.get("eod_date", ""))
+    try:
+        symbol_count = int(marker.get("symbol_count", 0))
+    except (TypeError, ValueError):
+        return False
+    if (
+        marker.get("snapshot_type") != "EOD"
+        or marker.get("snapshot_status") != "VALID"
+        or not github_run_id
+        or marker.get("github_run_id") != str(github_run_id)
+        or symbol_count <= 0
+        or len(rows) != symbol_count
+        or not eod_date
+        or marker.get("scan_date", "") != eod_date
+    ):
+        return False
+    dates = {str(row.get("EODDate", "")) for row in rows}
+    return (
+        dates == {eod_date}
+        and all(
+            row.get("SnapshotType") == "EOD"
+            and row.get("SnapshotStatus") == "VALID"
+            for row in rows
+        )
+    )
+
+
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
     if frame.empty or "TckrSymb" not in frame.columns:
@@ -917,6 +973,7 @@ def _save_eod_snapshot(frame, eod_date):
         "symbol_count": int(state["TckrSymb"].nunique()),
         "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
         "github_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        "scan_date": str(snapshot.get("EODScanDate", pd.Series([datetime.now(IST).date().isoformat()])).iloc[0]),
         "captured_at_ist": datetime.now(IST).isoformat(),
     }
     (STATE_DIR / "eod_snapshot_run_marker.json").write_text(
@@ -924,6 +981,44 @@ def _save_eod_snapshot(frame, eod_date):
     )
     return state
 
+
+
+def _consume_previous_eod_snapshot(expected_eod_date):
+    """Consume the prior EOD reference only after Morning comparison is complete."""
+    if not STATE_FILE.exists():
+        raise RuntimeError("ECMS_MORNING_STATE_ERROR: prior EOD reference disappeared before consumption")
+    previous = pd.read_csv(STATE_FILE, dtype={"TckrSymb": str})
+    if previous.empty or "EODDate" not in previous.columns:
+        raise RuntimeError("ECMS_MORNING_STATE_ERROR: prior EOD reference is empty or has no EODDate")
+    dates = set(previous["EODDate"].dropna().astype(str))
+    if dates != {str(expected_eod_date)}:
+        raise RuntimeError(
+            f"ECMS_MORNING_STATE_ERROR: refusing to consume EOD reference dates {sorted(dates)}; "
+            f"expected {expected_eod_date}"
+        )
+    # Persist a tombstone before deleting the active CSV. GitHub Actions cache
+    # extraction is additive: an older cache can resurrect a deleted file.
+    # The consumed-through date prevents that stale EOD CSV being reused.
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    consumed_marker = {
+        "consumed_eod_date": str(expected_eod_date),
+        "consumed_at_ist": datetime.now(IST).isoformat(),
+        "morning_run_id": os.getenv("GITHUB_RUN_ID", ""),
+        "morning_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        "status": "CONSUMED",
+    }
+    temporary_marker = CONSUMED_EOD_MARKER_FILE.with_name(
+        CONSUMED_EOD_MARKER_FILE.name + ".tmp"
+    )
+    temporary_marker.write_text(json.dumps(consumed_marker, indent=2) + "\n", encoding="utf-8")
+    temporary_marker.replace(CONSUMED_EOD_MARKER_FILE)
+    STATE_FILE.unlink()
+    marker_path = STATE_DIR / "eod_snapshot_run_marker.json"
+    try:
+        marker_path.unlink()
+    except FileNotFoundError:
+        pass
+    return True
 
 
 def _save_same_day_morning_snapshot(frame, morning_date):
@@ -1171,6 +1266,19 @@ def run_morning():
         raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
     expected_eod = expected_latest_completed_session().isoformat()
     stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+    if CONSUMED_EOD_MARKER_FILE.exists():
+        try:
+            consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
+            consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
+        except Exception as exc:
+            raise RuntimeError(
+                f"WAIT_FOR_DATA: consumed-EOD cache marker is unreadable: {type(exc).__name__}: {exc}"
+            ) from exc
+        if consumed_through and stored_dates and max(stored_dates) <= consumed_through:
+            raise RuntimeError(
+                f"WAIT_FOR_DATA: cached EOD reference {sorted(stored_dates)} was already consumed "
+                f"through {consumed_through}; refusing stale cache resurrection"
+            )
     if stored_dates != {expected_eod}:
         raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
     live=fetch_volume_gainers()
@@ -1348,6 +1456,9 @@ def run_morning():
       "eod_pass_not_morning_pass":int(report["ConfirmationStatus"].eq("EOD_PASS_MORNING_NOT_PASS").sum()),
       "nse_page":NSE_PAGE,
       "note":"Every eligible 09:20 page candidate receives the same fundamental-only gate. Repeat/new/disappeared labels are informational; no other data field rejects a stock."}
+    # The comparison report and same-day Morning snapshot are now persisted.
+    # Only now consume the previous EOD reference; failures above leave it intact.
+    summary["previous_eod_reference_consumed"] = _consume_previous_eod_snapshot(expected_eod)
     (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def main():
@@ -1357,7 +1468,20 @@ def main():
     # GitHub Actions cron also fires on weekday NSE holidays. Never treat the
     # last available page/session as a fresh scan for a non-trading date.
     today = datetime.now(IST).date()
-    if not is_trading_session(today):
+    for warning in calendar_coverage_warnings(today):
+        print(warning)
+    try:
+        trading_session = is_trading_session(today)
+    except CalendarCoverageError as exc:
+        print(json.dumps({
+            "status": "SKIPPED",
+            "reason": "OFFICIAL_NSE_CALENDAR_UNAVAILABLE",
+            "date_ist": today.isoformat(),
+            "mode": args.mode.upper(),
+            "detail": str(exc),
+        }, indent=2))
+        return
+    if not trading_session:
         print(json.dumps({
             "status": "SKIPPED",
             "reason": "OFFICIAL_NSE_NON_TRADING_DAY",
@@ -1365,5 +1489,37 @@ def main():
             "mode": args.mode.upper(),
         }, indent=2))
         return
+    # Scheduled runs must match the calendar's session-specific scan slot.
+    # Manual dispatch is intentionally allowed at any time on a trading date.
+    if os.getenv("GITHUB_EVENT_NAME", "").lower() == "schedule":
+        try:
+            expected_time = expected_scan_time(today, args.mode)
+        except CalendarCoverageError as exc:
+            expected_time = None
+            schedule_detail = str(exc)
+        else:
+            schedule_detail = ""
+        if not expected_time:
+            print(json.dumps({
+                "status": "SKIPPED",
+                "reason": "OFFICIAL_NSE_SPECIAL_SESSION_SCAN_TIME_NOT_CONFIGURED",
+                "date_ist": today.isoformat(),
+                "mode": args.mode.upper(),
+                "detail": schedule_detail,
+            }, indent=2))
+            return
+        expected_hour, expected_minute = (int(part) for part in expected_time.split(":"))
+        now = datetime.now(IST)
+        difference = abs((now.hour * 60 + now.minute) - (expected_hour * 60 + expected_minute))
+        if difference > 15:
+            print(json.dumps({
+                "status": "SKIPPED",
+                "reason": "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
+                "date_ist": today.isoformat(),
+                "mode": args.mode.upper(),
+                "expected_time_ist": expected_time,
+                "actual_time_ist": now.strftime("%H:%M"),
+            }, indent=2))
+            return
     run_eod() if args.mode=="eod" else run_morning()
 if __name__=="__main__": main()
