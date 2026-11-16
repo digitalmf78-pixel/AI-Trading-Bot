@@ -120,6 +120,7 @@ ECMS runs **only two scheduled scans per official NSE cash-market trading day**.
 - EOD GitHub Actions cron: `30 11 * * 1-5` = **17:00 IST**.
 - Only these two ECMS schedules are permitted. Manual runs are for testing and do not create an additional daily schedule.
 - On an official NSE trading holiday, the corresponding scan must finish as **SKIPPED**; it must not process a stale Volume Gainers page as a new scan or overwrite a valid snapshot. Weekday cron alone is not a holiday calendar, so holiday detection must use the official NSE session date.
+- Calendar coverage is official-notice-only. As of 16-Nov-2026, NSE's official holiday page lists 2026 equity holidays but has not published the 2027 equity holiday list. Keep 2027 unconfigured and fail closed for unknown-year dates until the official NSE Capital Market - Equities circular is available; do not estimate or infer festival holidays. [Official NSE holiday page](https://www.nseindia.com/resources/exchange-communication-holidays).
 - Each scheduled Morning/EOD scan has a **10-minute maximum runtime target** so the Morning result is available before 09:30 IST. A timeout/failure must be reported clearly and must not corrupt the previous valid snapshot. Validate actual end-to-end runtime with Actions evidence; a configured timeout alone is not proof of successful completion within 10 minutes.
 
 These schedules belong only to `.github/workflows/ecms-volume-gainers-shadow.yml`.
