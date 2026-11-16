@@ -1,3 +1,5 @@
+> **Workflow design:** See [ECMS end-to-end workflow design and P0–P8 implementation plan](WORKFLOW_DESIGN.md) for the full Morning → EOD → next-session lifecycle, Mermaid flow, research-layer rules, acceptance gates and execution checklist.
+
 ## Approved ECMS strategy and execution roadmap — 16-Nov-2026
 
 **This section is the current decision record for ECMS. It supersedes older statements elsewhere in this file that describe a permanent fundamental-only rejection gate.** The implementation-status notes below remain historical evidence of what code currently does; they must not be mistaken for completed implementation of this target policy.
