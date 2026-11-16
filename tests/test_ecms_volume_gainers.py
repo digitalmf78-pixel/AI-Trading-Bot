@@ -785,6 +785,7 @@ def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_fo
     monkeypatch.setattr(scanner, "assess_page_fundamentals", fake_fundamentals)
     monkeypatch.setattr(scanner, "attach_information", fake_information)
     monkeypatch.setattr(scanner, "_attach_same_day_morning_confirmation", fake_morning_match)
+    monkeypatch.setattr(scanner, "_load_same_day_morning_snapshot", lambda day: pd.DataFrame({"TckrSymb": ["AAA"]}))
 
     summary = scanner.run_eod()
 
