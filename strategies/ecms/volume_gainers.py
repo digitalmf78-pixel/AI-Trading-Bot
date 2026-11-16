@@ -19,7 +19,7 @@ from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
 from strategies.ecms.information import (
-    attach_valuation, collect_upcoming_events, collect_bulk_block_deals,
+    attach_valuation, collect_upcoming_events, collect_bulk_block_deals, collect_corporate_actions,
 )
 from nse_trading_calendar import is_trading_session
 NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
@@ -614,6 +614,7 @@ def attach_information(assessed, as_of_date):
     news, news_audit = collect_catalysts(result.copy(), as_of_date)
     events, event_audit = collect_upcoming_events(all_symbols, as_of_date)
     deals, deal_audit = collect_bulk_block_deals(all_symbols, as_of_date)
+    corporate_actions, corporate_actions_audit = collect_corporate_actions(all_symbols, as_of_date)
 
     news_defaults = {
         "NewsWindowStart": "", "NewsWindowEnd": "",
@@ -686,12 +687,36 @@ def attach_information(assessed, as_of_date):
     result["CorporateActionAnnouncementSummary"] = [
         corporate_summaries.get(symbol, "") for symbol in symbols
     ]
-    result["CorporateActionResearchStatus"] = [
+    result["CorporateActionDisclosureStatus"] = [
         "DATA_FOUND" if symbol in corporate_summaries
         else "NO_DATA_FOUND" if str(official_status).upper() == "AVAILABLE"
         else "SOURCE_UNAVAILABLE"
         for symbol, official_status in zip(symbols, result["OfficialStatus"])
     ]
+
+    corporate_action_defaults = {
+        "CorporateActionsStatus": "SOURCE_UNAVAILABLE",
+        "CorporateActionCount": 0,
+        "CorporateActionSummary": "NOT AVAILABLE",
+        "CorporateActionWindowStart": "",
+        "CorporateActionWindowEnd": "",
+        "CorporateActionSourceURL": "",
+    }
+    if not corporate_actions_audit.empty:
+        result = result.drop(columns=[
+            c for c in corporate_actions_audit.columns if c != "TckrSymb" and c in result.columns
+        ]).merge(corporate_actions_audit, on="TckrSymb", how="left", validate="one_to_one")
+    for column, default in corporate_action_defaults.items():
+        if column not in result.columns:
+            result[column] = default
+        else:
+            result[column] = result[column].fillna(default)
+    result["CorporateActionResearchStatus"] = result["CorporateActionsStatus"].astype(str).str.upper().map(
+        lambda status: "DATA_FOUND" if status == "DATA_FOUND"
+        else "NO_DATA_FOUND" if status == "NO_DATA_FOUND"
+        else "SOURCE_UNAVAILABLE" if status.startswith("SOURCE_UNAVAILABLE")
+        else "NOT_VERIFIED"
+    )
 
     event_defaults = {
         "UpcomingEventsStatus": "SOURCE_UNAVAILABLE",
@@ -750,7 +775,7 @@ def attach_information(assessed, as_of_date):
     result["RVOLInformationStatus"] = result.get(
         "RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index)
     )
-    return result, news, events, deals
+    return result, news, events, deals, corporate_actions
 
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
@@ -906,7 +931,7 @@ def run_eod():
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
-    assessed, news, events, deals = attach_information(assessed, eod_date)
+    assessed, news, events, deals, corporate_actions = attach_information(assessed, eod_date)
     assessed = _attach_same_day_morning_confirmation(assessed, eod_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
@@ -925,6 +950,7 @@ def run_eod():
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
     events.to_csv(OUTPUT_DIR/"volume_gainers_upcoming_events.csv",index=False)
     deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
+    corporate_actions.to_csv(OUTPUT_DIR/"volume_gainers_corporate_actions.csv",index=False)
     # Refresh the EOD snapshot with available assessment fields, but keep the
     # snapshot valid even if later informational enrichment or Telegram fails.
     _save_eod_snapshot(assessed, eod_date)
@@ -956,7 +982,8 @@ def run_eod():
       "upcoming_events_no_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "bulk_block_deals_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
       "bulk_block_deals_no_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
-      "corporate_action_announcements_found":int(assessed.get("CorporateActionResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "corporate_actions_data_found":int(assessed.get("CorporateActionResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "corporate_action_disclosures_found":int(assessed.get("CorporateActionDisclosureStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
@@ -1028,11 +1055,12 @@ def run_morning():
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    morning_assessed, morning_news, morning_events, morning_deals = attach_information(morning_assessed, today)
+    morning_assessed, morning_news, morning_events, morning_deals, morning_corporate_actions = attach_information(morning_assessed, today)
     _save_same_day_morning_snapshot(morning_assessed, today)
     morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
     morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
     morning_deals.to_csv(OUTPUT_DIR/"volume_gainers_morning_bulk_block_deals.csv", index=False)
+    morning_corporate_actions.to_csv(OUTPUT_DIR/"volume_gainers_morning_corporate_actions.csv", index=False)
     morning_assessed["MorningStrongFundamentalStatus"] = (
         _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
@@ -1124,7 +1152,8 @@ def run_morning():
       "upcoming_events_no_data_found":int(morning_assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("NO_DATA_FOUND").sum()),
       "bulk_block_deals_data_found":int(morning_assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "bulk_block_deals_no_data_found":int(morning_assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=morning_assessed.index)).eq("NO_DATA_FOUND").sum()),
-      "corporate_action_announcements_found":int(morning_assessed.get("CorporateActionResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "corporate_actions_data_found":int(morning_assessed.get("CorporateActionResearchStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
+      "corporate_action_disclosures_found":int(morning_assessed.get("CorporateActionDisclosureStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "morning_new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "eod_fundamental_pass_repeats":int(report["MorningStatus"].eq("EOD_FUNDAMENTAL_PASS_REPEAT").sum()),
        "same_day_morning_snapshot_saved":MORNING_STATE_FILE.exists(),
