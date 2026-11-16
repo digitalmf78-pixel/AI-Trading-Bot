@@ -452,6 +452,7 @@ def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monk
 
     monkeypatch.setattr(scanner, "STATE_DIR", tmp_path)
     monkeypatch.setattr(scanner, "MORNING_STATE_FILE", tmp_path / "volume_gainers_same_day_morning.csv")
+    monkeypatch.setenv("GITHUB_RUN_ID", "test-morning-run-123")
     morning = pd.DataFrame({
         "TckrSymb": ["AAA", "BBB"],
         "PageVolume": [120000, 90000],
@@ -460,7 +461,9 @@ def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monk
         "UpcomingEvents": ["AGM", "NOT AVAILABLE"],
         "NextResultDate": ["2026-11-25", "NOT ANNOUNCED"],
     })
-    scanner._save_same_day_morning_snapshot(morning, date(2026, 11, 16))
+    saved = scanner._save_same_day_morning_snapshot(morning, date(2026, 11, 16))
+    assert saved["MorningRunId"].eq("test-morning-run-123").all()
+    assert saved["MorningSnapshotStatus"].eq("VALID").all()
 
     eod = pd.DataFrame({
         "TckrSymb": ["AAA", "CCC"],
