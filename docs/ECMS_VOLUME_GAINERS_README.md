@@ -39,8 +39,8 @@ This file is the source of truth for ECMS scope, rules, roadmap and hand-off. Re
 7. Run official-filing/XBRL verification for those same candidate symbols. Keep official verification separate from third-party research data.
 8. Produce strict fundamental shortlist status and independent fundamental research score/classification.
 9. Collect five official NSE trading sessions of announcements/news for every eligible candidate; reuse only complete, date-matched cached source results.
-10. Collect the next 90 calendar days of NSE event-calendar entries for every eligible candidate.
-11. Collect 30 calendar days of bulk and block deals for every eligible candidate, with a separate recent five-calendar-day count/summary.
+10. Collect the next 90 calendar days of NSE event-calendar and board-meeting entries for every eligible candidate; expose the next confirmed financial-results date separately.
+11. Collect 30 calendar days of bulk and block deals for every eligible candidate, with a separate recent five-calendar-day count/summary. Normalize both current NSE CSV fields and documented BD-prefixed deal fields; preserve source-unavailable status separately from a checked empty result.
 12. Preserve corporate-action announcements found in the official five-session disclosure/news window. Do not claim a dedicated historical/upcoming corporate-actions feed until its official source and parser are independently validated.
 13. Produce one final EOD research row per eligible candidate plus source-wise statuses and raw/provider/filing/verification/news/event/deal diagnostics. Provider failure must not silently drop a candidate.
 14. Save the EOD candidate snapshot for the morning comparison.
@@ -176,7 +176,7 @@ Current generic score bands:
 
 | Artifact | Purpose |
 |---|---|
-| volume_gainers_page_raw.csv | Raw normalized NSE page rows before Main Board filtering |
+| volume_gainers_page_raw.csv | Raw normalized NSE page rows before Main Board filtering, including original NSE payload keys and volume-field diagnostics |
 | volume_gainers_eod_research.csv | One joined fundamental/research/catalyst assessment per eligible candidate |
 | volume_gainers_catalysts.csv | Five-NSE-session candidate-specific announcement/news evidence for every eligible stock |
 | volume_gainers_upcoming_events.csv | Next-90-calendar-day official event-calendar rows for every eligible stock |
@@ -197,8 +197,8 @@ Required summary counts: page rows; eligible Main Board candidates; assessment r
 ## 8. Research collection windows and status meanings
 
 - Announcements/news: previous five official NSE trading sessions, inclusive of the as-of session.
-- Upcoming events: next 90 calendar days from the as-of date.
-- Bulk and block deals: previous 30 calendar days; also expose separate five-calendar-day counts and summaries.
+- Upcoming events and board meetings: next 90 calendar days from the scan as-of date. Keep each feed's source status visible; a checked empty calendar is not the same as a failed feed.
+- Bulk and block deals: previous 30 calendar days; also expose separate five-calendar-day counts and summaries. Keep the disclosed buyer/seller side, client, date, quantity and price when the source provides them.
 - Corporate actions: include official corporate-action announcements appearing in the five-session disclosure window. A dedicated corporate-actions endpoint remains NOT_VERIFIED until validated against official NSE data; do not infer an empty result from an unavailable source.
 - Each research family must distinguish `DATA_FOUND`, `NO_DATA_FOUND`, `SOURCE_UNAVAILABLE` and `NOT_VERIFIED`. `NO_DATA_FOUND` is valid only when the source was successfully queried for the requested window.
 - Performance: use page-wide batch APIs where available, exact-window persistent cache reuse for complete news results, and existing fundamental cache/cooldown controls. Never cache a failed or partial fetch as a successful empty result.
