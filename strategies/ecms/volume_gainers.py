@@ -856,7 +856,7 @@ def _save_eod_snapshot(frame, eod_date):
     if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
         raise RuntimeError("ECMS_EOD_SNAPSHOT_ERROR: blank or duplicate symbols")
     snapshot["EODDate"] = eod_date.isoformat()
-    keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
+    keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct", "EODScanDate", "EODScanCapturedAtIST",
             "AvgVolume1W", "VolumeChangePct1W", "AvgVolume2W", "VolumeChangePct2W",
             "VolumeChangeTimes1W", "VolumeChangeTimes2W", "PageVolumeDataStatus",
             "PageVolumeSourceField", "FundamentalMetricsPopulatedCount",
@@ -987,6 +987,10 @@ def _attach_same_day_morning_confirmation(eod_frame, morning_date):
 
 
 def run_eod():
+    # ScanDate identifies the actual scan session. DataAsOfDate remains the
+    # latest completed NSE session and is used only for completed-session data.
+    scan_date = datetime.now(IST).date()
+    scan_captured_at = datetime.now(IST).isoformat()
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
     if eligible.empty: raise RuntimeError("WAIT_FOR_DATA: no official Main Board equity symbols found on NSE Volume Gainers page")
@@ -997,7 +1001,10 @@ def run_eod():
     eod_date=expected_latest_completed_session()
     if not is_trading_session(eod_date):
         raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
-    eligible["EODDate"]=eod_date.isoformat(); eligible["PageSource"]=NSE_PAGE
+    eligible["EODDate"]=eod_date.isoformat()
+    eligible["EODScanDate"]=scan_date.isoformat()
+    eligible["EODScanCapturedAtIST"]=scan_captured_at
+    eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
     # Save the raw EOD universe first. Fundamental/news/RVOL enrichment must
     # never be able to prevent tomorrow's 09:20 scanner from seeing this list.
@@ -1008,7 +1015,9 @@ def run_eod():
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
     assessed, news, events, deals, corporate_actions = attach_information(assessed, eod_date)
-    assessed = _attach_same_day_morning_confirmation(assessed, eod_date)
+    # Compare against the Morning scan from this scan's IST calendar date,
+    # not the older completed-session date used by Bhavcopy/RVOL.
+    assessed = _attach_same_day_morning_confirmation(assessed, scan_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
@@ -1035,7 +1044,14 @@ def run_eod():
     provider_status = provider_diag.get("ProviderStatus", pd.Series(dtype=str)).astype(str).str.upper()
     free_attempted = provider_diag.get("FreeSourcesAttempted", pd.Series(False, index=provider_diag.index)).astype(str).str.lower().isin({"true", "1", "yes"})
     shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
-    summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
+    summary={"status":"PASS","scan_date_ist":scan_date.isoformat(),
+      "eod_date_ist":eod_date.isoformat(),"data_as_of_date_ist":eod_date.isoformat(),
+      "eod_scan_captured_at_ist":scan_captured_at,
+      "morning_comparison_date_ist":scan_date.isoformat(),
+      "morning_repeat_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("MORNING_AND_EOD_REPEAT").sum()),
+      "eod_new_entry_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("EOD_NEW_ENTRY").sum()),
+      "morning_snapshot_found":bool(assessed.get("MorningSeenSameDay", pd.Series(False, index=assessed.index)).any()),
+      "nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "page_volume_data_found":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("DATA_FOUND").sum()),
       "page_volume_data_missing":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
@@ -1128,6 +1144,9 @@ def run_morning():
     live=live[live["TckrSymb"].isin(mainboard)].copy()
     if live.empty:
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
+    # Morning RVOL is based on the latest completed Bhavcopy session. It is
+    # explicitly labelled as prior-session context, never as partial intraday RVOL.
+    live = attach_page_rvol(live, expected_latest_completed_session())
     # Record the page-capture time before fundamental and information enrichment.
     live["MorningPageCapturedAtIST"] = datetime.now(IST).isoformat()
 
@@ -1198,8 +1217,12 @@ def run_morning():
           "MorningVolumeChangePct2W":current.get("VolumeChangePct2W"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
           "EODRVOL":old.get("RVOL"),
-          "MorningRVOL":"NOT AVAILABLE",
-          "MorningRVOLDataStatus":"PARTIAL_SESSION_NOT_COMPARABLE_TO_FULL_DAY_20D_AVERAGE",
+          "MorningRVOL":assessed.get("RVOL","NOT AVAILABLE"),
+          "MorningRVOLDataStatus":(
+              "PRIOR_COMPLETED_SESSION_" + str(assessed.get("RVOLDataStatus","WAIT_FOR_DATA"))
+              if str(assessed.get("RVOLDataStatus","")).strip()
+              else "PRIOR_COMPLETED_SESSION_RVOL_NOT_AVAILABLE"
+          ),
           "ValuationLabel":assessed.get("ValuationLabel","NOT AVAILABLE"),
           "ValuationBasis":assessed.get("ValuationBasis","NOT AVAILABLE"),
           "Last5DayNews":assessed.get("Last5DayNews","NOT AVAILABLE"),
