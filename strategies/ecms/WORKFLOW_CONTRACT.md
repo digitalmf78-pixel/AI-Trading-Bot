@@ -5,10 +5,10 @@
 - Workflow file: `.github/workflows/ecms-volume-gainers-shadow.yml`.
 - Regular-session EOD: daily schedule `30 11 * * *` UTC = **17:00 IST**.
 - Regular-session Morning: daily schedule `50 3 * * *` UTC = **09:20 IST**.
-- Special-session EOD/Morning have separate daily trigger slots (`16:00` / `14:25` IST for the configured 2026 Muhurat example); the scanner checks the official calendar's date-specific expected time and skips mismatched clock slots.
+- Special-session Morning can use a date-specific daily trigger slot (`14:25` IST for the configured 2026 Muhurat example); EOD remains at `17:00` IST after the special market close. The scanner checks the official calendar's date-specific expected time and skips mismatched clock slots.
 - The official NSE Capital Market calendar is the session gate. Holidays/weekends skip; officially declared special sessions can run at their circular-defined times.
 - Unknown/missing calendar coverage or a special session without an approved date-specific scan time must fail closed; never infer a trading day or session time from weekdays.
-- When NSE publishes a special-session timing circular, add its Morning/EOD scan times to `data/inputs/nse_trading_calendar.json` and ensure matching UTC cron slots exist in the ECMS workflow before that session. The 2026 Muhurat cash-market circular specifies 14:20–15:30 IST; ECMS's configured scan slots are 14:25 and 16:00 IST.
+- When NSE publishes a special-session timing circular, add its Morning/EOD scan times to `data/inputs/nse_trading_calendar.json` and ensure matching UTC cron slots exist in the ECMS workflow before that session. The 2026 Muhurat cash-market circular specifies 14:20–15:30 IST; ECMS's configured scan slots are 14:25 IST for Morning and 17:00 IST for EOD.
 - These triggers belong only to ECMS. Do not modify the production NSE V8 workflow or any unrelated workflow.
 - The morning job restores the latest active EOD snapshot and ECMS fundamental workspace. After a successful prior-EOD comparison and persistence of the current Morning snapshot/report, it consumes the old active EOD reference. The current Morning snapshot remains for same-session EOD comparison. A valid same-session EOD then becomes the next trading session's active EOD reference.
 - If Morning comparison/report persistence fails, the previous EOD reference remains available for retry. Holiday runs do not create or overwrite snapshots. EOD and morning artifacts/Telegram reports are separate.
