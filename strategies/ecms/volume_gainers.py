@@ -26,6 +26,7 @@ NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
 STATE_FILE = STATE_DIR / "volume_gainers_previous_eod.csv"
+CONSUMED_EOD_MARKER_FILE = STATE_DIR / "volume_gainers_previous_eod_consumed.json"
 MORNING_STATE_FILE = STATE_DIR / "volume_gainers_same_day_morning.csv"
 REQUEST_TIMEOUT = (8, 20)
 ALIASES = {
@@ -995,8 +996,22 @@ def _consume_previous_eod_snapshot(expected_eod_date):
             f"ECMS_MORNING_STATE_ERROR: refusing to consume EOD reference dates {sorted(dates)}; "
             f"expected {expected_eod_date}"
         )
-    # Remove the active reference only. The Morning snapshot is a separate file
-    # and remains available for the same-session EOD comparison.
+    # Persist a tombstone before deleting the active CSV. GitHub Actions cache
+    # extraction is additive: an older cache can resurrect a deleted file.
+    # The consumed-through date prevents that stale EOD CSV being reused.
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    consumed_marker = {
+        "consumed_eod_date": str(expected_eod_date),
+        "consumed_at_ist": datetime.now(IST).isoformat(),
+        "morning_run_id": os.getenv("GITHUB_RUN_ID", ""),
+        "morning_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        "status": "CONSUMED",
+    }
+    temporary_marker = CONSUMED_EOD_MARKER_FILE.with_name(
+        CONSUMED_EOD_MARKER_FILE.name + ".tmp"
+    )
+    temporary_marker.write_text(json.dumps(consumed_marker, indent=2) + "\\n", encoding="utf-8")
+    temporary_marker.replace(CONSUMED_EOD_MARKER_FILE)
     STATE_FILE.unlink()
     marker_path = STATE_DIR / "eod_snapshot_run_marker.json"
     try:
@@ -1251,6 +1266,19 @@ def run_morning():
         raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
     expected_eod = expected_latest_completed_session().isoformat()
     stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+    if CONSUMED_EOD_MARKER_FILE.exists():
+        try:
+            consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
+            consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
+        except Exception as exc:
+            raise RuntimeError(
+                f"WAIT_FOR_DATA: consumed-EOD cache marker is unreadable: {type(exc).__name__}: {exc}"
+            ) from exc
+        if consumed_through and stored_dates and max(stored_dates) <= consumed_through:
+            raise RuntimeError(
+                f"WAIT_FOR_DATA: cached EOD reference {sorted(stored_dates)} was already consumed "
+                f"through {consumed_through}; refusing stale cache resurrection"
+            )
     if stored_dates != {expected_eod}:
         raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
     live=fetch_volume_gainers()
