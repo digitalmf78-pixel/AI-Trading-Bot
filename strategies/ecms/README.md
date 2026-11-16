@@ -43,6 +43,9 @@ GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-
 - Missing secondary observations are recorded as `NO_SECONDARY_OBSERVATION`; no value is inferred from a populated table schema alone.
 - This audit is limited to the ECMS workspace. It does not change shared NSE V8 provider settings or production caches.
 
+- The comparison report also normalizes explicit secondary periods and compares them with the Yahoo observation period as a diagnostic only. It flags invalid placeholders (including Tickertape period `0`) and mismatched/stale periods for quarantine. A period match is not official verification and never changes the Fundamental PASS/FAIL/WAIT decision.
+
+
 ## ECMS isolation
 
 - Shared NSE inputs and production caches are read-only.
