@@ -43,7 +43,8 @@ def test_event_calendar_separates_upcoming_events_and_next_result():
             {"symbol": "AAA", "date": "25-Nov-2026", "purpose": "Investor Meet",
              "details": "Investor conference"},
             {"symbol": "BBB", "date": "21-Nov-2026", "purpose": "Dividend"},
-        ]})
+        ]}),
+        FakeResponse(payload=[]),
     ])
     events, audit = collect_upcoming_events(["AAA", "BBB"], date(2026, 11, 15), session=client)
 
@@ -175,3 +176,45 @@ def test_corporate_actions_are_fetched_once_for_all_symbols_and_cached(tmp_path,
     )
     assert len(actions_again) == 2
     assert audit_again.set_index("TckrSymb").loc["AAA", "CorporateActionsStatus"] == "DATA_FOUND"
+
+
+def test_board_meetings_feed_parses_nse_bm_fields_and_result_date():
+    client = FakeSession([
+        FakeResponse(payload=[]),
+        FakeResponse(payload=[{
+            "bm_symbol": "AAA",
+            "bm_date": "25-Nov-2026",
+            "bm_purpose": "Financial Results",
+            "bm_desc": "To consider and approve quarterly unaudited financial results",
+        }]),
+    ])
+    events, audit = collect_upcoming_events(["AAA", "BBB"], date(2026, 11, 16), session=client)
+
+    assert len(events) == 1
+    assert events.iloc[0]["Source"] == "NSE Board Meetings"
+    row = audit.set_index("TckrSymb").loc["AAA"]
+    assert row["NextResultDate"] == "2026-11-25"
+    assert row["UpcomingEventsSourceCoverageStatus"] == "COMPLETE"
+
+
+def test_bulk_deals_support_official_bd_prefixed_fields():
+    client = FakeSession([
+        FakeResponse(payload=[{
+            "BD_DT_DATE": "01-DEC-2025",
+            "BD_SYMBOL": "AAA",
+            "BD_CLIENT_NAME": "Fund Alpha",
+            "BD_BUY_SELL": "BUY",
+            "BD_QTY_TRD": 108709,
+            "BD_TP_WATP": 826.15,
+            "BD_REMARKS": "Disclosed bulk deal",
+        }]),
+        FakeResponse(payload=[]),
+    ])
+    deals, audit = collect_bulk_block_deals(["AAA"], date(2025, 12, 1), session=client)
+
+    assert len(deals) == 1
+    assert deals.iloc[0]["TckrSymb"] == "AAA"
+    assert deals.iloc[0]["ClientName"] == "Fund Alpha"
+    assert deals.iloc[0]["Quantity"] == 108709
+    assert deals.iloc[0]["PriceINR"] == 826.15
+    assert deals.iloc[0]["Side"] == "BUY"
