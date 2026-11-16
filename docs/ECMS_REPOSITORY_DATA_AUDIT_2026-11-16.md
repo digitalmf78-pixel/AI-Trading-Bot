@@ -31,7 +31,7 @@ File: `.github/workflows/ecms-volume-gainers-shadow.yml`
 
 The current code keeps these responsibilities separate:
 
-1. Previous valid EOD snapshot -> next trading-session Morning.
+1. Previous valid EOD snapshot -> next trading-session Morning (for example Monday EOD -> Tuesday Morning; Tuesday EOD -> Wednesday Morning; and so on).
 2. Same-session Morning snapshot -> same-session EOD.
 3. Current valid EOD snapshot -> next trading-session Morning.
 
