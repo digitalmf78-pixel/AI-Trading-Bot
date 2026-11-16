@@ -153,6 +153,10 @@ jobs:
                   and int(marker.get("symbol_count", 0)) > 0
                   and len(rows) == int(marker.get("symbol_count", 0))
                   and dates == {marker.get("eod_date", "")}
+                  # A weekday EOD run must represent that same trading session.
+                  # Pre-close/manual weekend runs may inspect prior data but must
+                  # never replace the last valid EOD snapshot for the next Morning.
+                  and marker.get("scan_date", "") == marker.get("eod_date", "")
                   and all(row.get("SnapshotType") == "EOD" and row.get("SnapshotStatus") == "VALID" for row in rows)
               )
           except Exception as exc:
