@@ -190,6 +190,22 @@ The longer `docs/ECMS_VOLUME_GAINERS_README.md` describes an independent STRONG 
 - Morning/EOD comparison, schedule, cache handoff, date logic and repeat labels stay unchanged.
 - Production NSE V8 and unrelated workflows stay untouched.
 
-## 7. Immediate next step
+## 7. P0 implementation status — 16 November 2026
 
-Use this audit to revise `ECMS_RESEARCH_ROADMAP_AUDIT_FIRST.md`. Start implementation only with P0 and P1 on this isolated branch, one small PR at a time. Before coding P2-P6, complete source-contract research and collect representative historical samples to prove coverage and correctness.
+Draft PR [#140](https://github.com/digitalmf78-pixel/AI-Trading-Bot/pull/140) is open on `research/ecms-roadmap-audit-first`; it is not merged.
+
+- **Main Board cache isolation:** ECMS now calls the shared Main Board helper with an explicit `data/cache/ecms/universe/` path. The helper's default remains `data/cache/universe/`, preserving existing production callers. The ECMS universe cache is included in EOD and Morning cache restore/save lists so the official Main Board/SME source cache can persist across the rolling scan cycle.
+- **Schedule documentation:** `WORKFLOW_CONTRACT.md` now matches the active `30 11 * * 1-5` UTC EOD trigger (17:00 IST). The 09:20 IST Morning trigger is unchanged.
+- **CI coverage:** the validation command now includes `tests/test_ecms_gemini_research.py` and `tests/test_ecms_secondary_source_periods.py`, previously omitted.
+- **Regression coverage:** added a test proving ECMS supplies its own universe cache directory while preserving ETF ISIN exclusion. A separate Friday-to-Monday, next-day and holiday date regression test is included in the current draft branch.
+- **Comparison logic:** no Morning/EOD comparison function or repeat-label semantics were changed.
+- **Initial CI evidence:** PR run [#43834793464](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43834793464) passed the validation job with **128 tests** before the latest date-regression addition. A fresh validation run is required for the latest commit.
+
+### Remaining P0 acceptance checks
+
+1. Confirm the fresh CI run passes after the date regression test.
+2. Inspect the final PR diff and confirm the production Main Board cache default and production workflow remain unchanged.
+3. Verify the EOD -> next trading session Morning -> same-day EOD handoff from actual Actions artifacts, including Friday/holiday cache continuity. Unit tests alone do not prove Actions cache selection or a live scan.
+4. Keep PR #140 draft/unmerged until all checks and the user review are complete.
+
+Only after P0 is accepted should P1 metric-level fundamental provenance work begin. Do not begin P2-P6 source/strategy changes before the source-contract research and historical coverage evidence are complete.
