@@ -310,8 +310,12 @@ def assess_page_fundamentals(candidates, eod_date):
         failed["FundamentalResearchScore"] = pd.NA
         failed["FundamentalResearchCoveragePct"] = 0.0
         failed["FundamentalResearchProvenanceStatus"] = "NO_ELIGIBLE_METRICS"
-        failed["StrongFundamentalHandOffStatus"] = "NOT_FORWARDED"
-        failed["StrongFundamentalNotForwardedReason"] = "FUNDAMENTAL_COLLECTION_ERROR"
+        decision_fields = pd.DataFrame(
+            failed["FundamentalShortlistStatus"].map(_fundamental_decision_fields).tolist(),
+            index=failed.index,
+        )
+        for column in decision_fields.columns:
+            failed[column] = decision_fields[column]
         pd.DataFrame([{
             "Status": "FUNDAMENTAL_COLLECTION_ERROR",
             "Reason": f"{type(exc).__name__}: {str(exc)[:500]}",
@@ -587,20 +591,20 @@ def assess_page_fundamentals(candidates, eod_date):
     assessed.loc[duplicated, "FundamentalShortlistReason"] = "DUPLICATE_FUNDAMENTAL_CACHE_ROWS"
     assessed.loc[duplicated, "FundamentalAssessmentStatus"] = assessed.loc[duplicated, "FundamentalShortlistStatus"]
     assessed.loc[duplicated, "FundamentalAssessmentReason"] = assessed.loc[duplicated, "FundamentalShortlistReason"]
-    # FundamentalShortlistStatus is the sole stock-level decision gate.
-    # Research scores, catalysts, RVOL and all other context are informational.
+    # Fundamentals are one evidence layer, not the overall stock decision.
+    # Only a complete, current, aligned and officially verified FAIL may act as
+    # a fundamental rejection gate. WAIT_FOR_DATA must continue through every
+    # other research layer; PASS still requires balanced downstream review.
     fundamental_pass = assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("PASS")
     assessed["FundamentalPassStatus"] = fundamental_pass.map({
         True: "FUNDAMENTAL_PASS", False: "NOT_FUNDAMENTAL_PASS"
     })
-    assessed["StrongFundamentalHandOffStatus"] = fundamental_pass.map({
-        True: "PASS_FUNDAMENTAL", False: "NOT_PASS_FUNDAMENTAL"
-    })
-    assessed["StrongFundamentalNotForwardedReason"] = assessed.apply(
-        lambda row: "" if str(row.get("FundamentalShortlistStatus", "")).upper() == "PASS"
-        else "FUNDAMENTAL_" + str(row.get("FundamentalShortlistStatus", "MISSING")).upper(),
-        axis=1,
+    decision_fields = pd.DataFrame(
+        assessed["FundamentalShortlistStatus"].map(_fundamental_decision_fields).tolist(),
+        index=assessed.index,
     )
+    for column in decision_fields.columns:
+        assessed[column] = decision_fields[column]
 
     # Publish current-page candidate snapshots, not the full persistent cache
     # or filing register. The workspace itself remains intact for later reuse.
@@ -1004,6 +1008,7 @@ def _save_eod_snapshot(frame, eod_date):
             "FundamentalMetricsMismatchCount", "FundamentalMetricsReconciliationRequiredCount",
             "FundamentalMetricsFilingMetadataNotConfirmedCount", "FundamentalMetricsMissingNames",
             "FundamentalMetricsCoverageStatus", "FundamentalMetricPeriod", "FundamentalMetricBasis",
+            "FundamentalDecisionRole", "ResearchContinuationStatus",
             "AvgVolume20D", "RVOL", "RVOLDataStatus", "EODDate"]
     keep = [column for column in keep if column in snapshot.columns]
     state = snapshot[keep].copy()
@@ -1018,6 +1023,10 @@ def _save_eod_snapshot(frame, eod_date):
     state["EODStrongFundamentalStatus"] = state["EODFundamentalShortlistStatus"].astype(str).str.upper().map({
         "PASS": "EOD_FUNDAMENTAL_PASS", "FAIL": "EOD_FUNDAMENTAL_FAIL",
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
+    if "FundamentalDecisionRole" in snapshot.columns:
+        state["FundamentalDecisionRole"] = snapshot["FundamentalDecisionRole"].values
+    if "ResearchContinuationStatus" in snapshot.columns:
+        state["ResearchContinuationStatus"] = snapshot["ResearchContinuationStatus"].values
     state["SnapshotType"] = "EOD"
     state["SnapshotStatus"] = "VALID"
     state["SnapshotCapturedAtIST"] = datetime.now(IST).isoformat()
@@ -1306,8 +1315,33 @@ def run_eod():
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
+def _fundamental_decision_fields(status):
+    """Map the verified fundamental result without suppressing WAIT research."""
+    value = str(status or "WAIT_FOR_DATA").strip().upper()
+    if value == "PASS":
+        return {
+            "FundamentalDecisionRole": "VERIFIED_FUNDAMENTAL_PASS",
+            "ResearchContinuationStatus": "CONTINUE_BALANCED_RESEARCH",
+            "StrongFundamentalHandOffStatus": "FORWARDED_TO_BALANCED_RESEARCH",
+            "StrongFundamentalNotForwardedReason": "",
+        }
+    if value == "FAIL":
+        return {
+            "FundamentalDecisionRole": "VERIFIED_FUNDAMENTAL_FAIL",
+            "ResearchContinuationStatus": "FUNDAMENTAL_REJECTION_GATE",
+            "StrongFundamentalHandOffStatus": "REJECTED_BY_VERIFIED_FUNDAMENTALS",
+            "StrongFundamentalNotForwardedReason": "VERIFIED_FUNDAMENTAL_RULE_FAIL",
+        }
+    return {
+        "FundamentalDecisionRole": "FUNDAMENTAL_PENDING_OTHER_RESEARCH_CONTINUES",
+        "ResearchContinuationStatus": "CONTINUE_BALANCED_RESEARCH",
+        "StrongFundamentalHandOffStatus": "FORWARDED_PENDING_FUNDAMENTAL_DATA",
+        "StrongFundamentalNotForwardedReason": "",
+    }
+
+
 def _strong_fundamental_mask(frame):
-    """Fundamental PASS alone defines the morning pass; no score/coverage gate."""
+    """Return a fundamental-PASS indicator only; not an overall stock gate."""
     if frame.empty:
         return pd.Series(False, index=frame.index)
     shortlist = frame.get("FundamentalShortlistStatus", pd.Series("", index=frame.index)).astype(str).str.upper()
