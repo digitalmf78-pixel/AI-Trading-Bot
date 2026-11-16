@@ -815,6 +815,9 @@ def attach_information(assessed, as_of_date):
         "NextResultDate": "NOT ANNOUNCED",
         "NextResultDetails": "",
         "EventCalendarSourceURL": "",
+        "UpcomingEventsSourceCoverageStatus": "UNAVAILABLE",
+        "EventCalendarSourceStatus": "NOT_VERIFIED",
+        "BoardMeetingSourceStatus": "NOT_VERIFIED",
     }
     if not event_audit.empty:
         result = result.drop(columns=[
@@ -840,6 +843,8 @@ def attach_information(assessed, as_of_date):
         "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
         "BulkBlockDealSummary": "",
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
+        "BulkDealsSourceStatus": "NOT_VERIFIED", "BlockDealsSourceStatus": "NOT_VERIFIED",
+        "BulkBlockSourceCoverageStatus": "UNAVAILABLE",
     }
     if not deal_audit.empty:
         result = result.drop(columns=[
@@ -1106,8 +1111,11 @@ def run_eod():
       "news_no_data_found":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "news_source_unavailable":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("SOURCE_UNAVAILABLE").sum()),
       "upcoming_events_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "upcoming_events_source_coverage_partial":int(assessed.get("UpcomingEventsSourceCoverageStatus", pd.Series("", index=assessed.index)).eq("PARTIAL").sum()),
       "upcoming_events_no_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "bulk_block_deals_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "bulk_block_source_coverage_complete":int(assessed.get("BulkBlockSourceCoverageStatus", pd.Series("", index=assessed.index)).eq("COMPLETE").sum()),
+      "bulk_block_source_coverage_partial":int(assessed.get("BulkBlockSourceCoverageStatus", pd.Series("", index=assessed.index)).eq("PARTIAL").sum()),
       "bulk_block_deals_no_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "corporate_actions_data_found":int(assessed.get("CorporateActionResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
       "corporate_action_disclosures_found":int(assessed.get("CorporateActionDisclosureStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
