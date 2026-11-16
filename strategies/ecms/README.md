@@ -3,6 +3,13 @@
 ECMS is an isolated, research-only workflow for stocks appearing on the NSE Volume Gainers page. It does not place orders and must not change or depend on the production NSE V8 scanner.
 
 ## Exact ECMS scope
+## Eligible stock universe — NSE Main Board only
+
+- Read the NSE Volume Gainers page, then keep only symbols present in the official NSE Main Board equity list.
+- Explicitly subtract the official NSE SME list before assessment. SME stocks, ETFs/ETNs, indices, debt securities and other non-Main-Board instruments are excluded from ECMS candidates.
+- The Main Board membership list is the authority for eligibility; a page row or an equity-like symbol/series by itself is not enough.
+- Only eligible NSE Main Board stocks receive the existing fundamental assessment and appear as ECMS stock suggestions. Do not add SME or ETF recommendations.
+
 
 For each eligible NSE Volume Gainer, publish only these seven information groups:
 
