@@ -201,7 +201,10 @@ def assess_page_fundamentals(candidates, eod_date):
             enabled=True,
             asof_date=eod_date,
             free_source_fetcher=fetch_ecms_free_fundamental_sources,
-            force_retry_incomplete=True,
+            # Respect the provider's persisted secondary-source cooldown.
+            # Forcing incomplete retries here bypasses cooldown and can turn a
+            # cache hit into a full provider/statement refetch on every run.
+            force_retry_incomplete=False,
             free_source_audit_metrics=[
                 "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
                 "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",

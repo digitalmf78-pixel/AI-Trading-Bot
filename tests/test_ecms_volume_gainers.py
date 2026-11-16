@@ -53,7 +53,8 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None, force_retry_incomplete=False, free_source_audit_metrics=None):
         assert enabled is True
         assert callable(free_source_fetcher)
-        assert force_retry_incomplete is True
+        # ECMS must preserve the provider cooldown so a reusable cache is not refetched daily.
+        assert force_retry_incomplete is False
         assert free_source_audit_metrics == [
             "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
             "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
