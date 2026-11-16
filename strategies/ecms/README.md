@@ -65,3 +65,73 @@ The EOD and 09:20 workflow jobs and schedules are present in `.github/workflows/
 - Morning never writes a new EOD page universe. It may save the unchanged EOD snapshot alongside its ECMS working cache. The next successful EOD run replaces it for the next trading session.
 - `PagePresenceConfirmationStatus=DOUBLE_CONFIRMED_EOD_MORNING` means the symbol appeared in both page snapshots. The separate `ConfirmationStatus` retains the existing fundamental-based confirmation meaning; do not conflate the two.
 - This is isolated to ECMS files and `.github/workflows/ecms-volume-gainers-shadow.yml`. NSE V8 workflow/configuration and shared production scanner behavior are not changed.
+
+## ECMS-only continuous Morning → EOD → next Morning loop (binding workflow rule)
+
+This is the ECMS operating contract. Keep this workflow, its rules, caches, reports and schedules inside ECMS only. **Do not import ECMS into NSE V8, do not add ECMS dependencies/configuration/cache paths to NSE V8, and do not distribute ECMS as part of NSE V8.** NSE V8 remains a separate project with its own rules and work.
+
+### Daily sequence (Asia/Kolkata)
+
+1. **Previous completed-session EOD → today's Morning (09:20 IST):**
+   - Restore only the latest valid ECMS EOD snapshot as the previous-session page reference.
+   - Read today's live 09:20 NSE Volume Gainers page and create a separate Morning snapshot.
+   - Compare symbols after normalizing them (trim + uppercase). Record previous-EOD presence, current-Morning presence, overlap and new/disappeared entries. The overlap label is informational confirmation only; it is not a new rejection or ranking rule.
+   - Assess the current Morning candidates under the existing ECMS fundamental-only decision gate. Reuse valid ECMS-owned fundamental observations; fetch only missing, stale or newly required observations.
+   - Persist the Morning candidate assessment and all collected information in ECMS-owned cache/report locations. Never overwrite or promote the previous EOD snapshot with Morning data.
+
+2. **Today's Morning → today's EOD (after the cash-market session):**
+   - Read the completed-session EOD Volume Gainers page and create today's new EOD snapshot independently.
+   - Compare today's EOD symbols against today's Morning snapshot. Add a dedicated same-day presence label:
+     - `MORNING_AND_EOD_REPEAT`: present in both today's Morning and today's EOD pages.
+     - `EOD_NEW_ENTRY`: present in today's EOD page, absent from today's Morning page.
+     - `MORNING_ONLY_DROPPED`: present in today's Morning page, absent from today's EOD page.
+   - Retain the actual Morning and EOD capture timestamps and available page-volume observations. Do not treat a partial-session Morning volume as directly comparable with full-session EOD volume.
+   - Reuse valid ECMS fundamental cache rows for Morning/EOD repeat symbols. Fetch data for new EOD symbols and refresh only missing, stale or changed observations.
+   - Save a stock-wise Morning/EOD union comparison to `outputs/ecms/volume_gainers_eod_morning_comparison.csv`, including symbols that appeared only in the Morning page, both page-volume observations, both capture timestamps and the informational status label.
+   - Save the complete EOD assessment and information observations for the next session. The EOD snapshot's symbol universe/date must remain authoritative even if optional enrichment later fails.
+
+3. **Today's EOD → next trading day's Morning:**
+   - The latest valid EOD snapshot becomes the next trading day's previous-EOD reference.
+   - Next Morning creates a fresh Morning snapshot and repeats step 1. The cycle continues: **Morning → same-day EOD → next trading-day Morning → same-day EOD**.
+   - On non-trading days, do not rotate or fabricate a new session snapshot. Keep the latest valid completed-session EOD reference until the next actual NSE trading session.
+
+### ECMS-owned cache contract
+
+Keep these data classes logically and physically separate under ECMS-owned paths (for example, `data/cache/ecms/` and `outputs/ecms/`):
+
+- **Fundamental cache:** reusable per-symbol metric observations, financial period, consolidated/standalone basis, units, source/URL, publication/fetch timestamps, verification state and freshness. A valid observation may be reused by Morning and same-day EOD; stale, missing, conflicting or incomplete observations must remain visibly unresolved and be refreshed/retried under ECMS rules. Never turn `WAIT_FOR_DATA` into a permanent cached pass/fail.
+- **Information/event cache:** news, exchange/company announcements, result filings/result dates, upcoming events and bulk/block-deal observations. Preserve source, URL, publication/event date, retrieval time and as-of date. Reuse still-valid historical observations, but check for new/changed items at each checkpoint; Morning data must not hide announcements published later before EOD.
+- **Morning snapshot:** immutable record of that day's 09:20 eligible page universe and capture metadata.
+- **EOD snapshot:** immutable session-date record of the completed-session eligible page universe and capture metadata; it becomes the next trading session's reference.
+- **Run/report evidence:** separate Morning and EOD summaries, assessment outputs, cache diagnostics and run markers. Use atomic writes and validate date, symbol uniqueness and run ownership before rotating a snapshot.
+
+### Confirmation labels are informational only
+
+Keep these concepts separate; do not collapse them into one score or decision:
+- Previous-session continuity: previous EOD vs today's Morning.
+- Same-day persistence: today's Morning vs today's EOD.
+- Fundamental decision: the existing ECMS fundamental-only PASS / FAIL / WAIT_FOR_DATA result.
+
+A stock appearing on both Morning and EOD pages confirms only that it appeared in both Volume Gainers snapshots. It does not prove accumulation, institutional buying or a guaranteed trade. RVOL, volume, news, announcements, events, valuation, deals and repeat labels remain informational and must not become additional rejection filters.
+
+### Isolation and non-regression boundary
+
+- All ECMS rules, caches, snapshots, event records, reports, tests and workflow changes belong to ECMS.
+- Do not read from, seed, write to, or overwrite NSE V8 production caches as an ECMS cache shortcut. Build and maintain ECMS-owned copies/inputs through an explicitly audited ECMS process. Shared market reference data may be consumed only as a clearly declared read-only input where required; it must not make ECMS dependent on NSE V8 scanner state.
+- Do not modify or distribute through NSE V8: `.github/workflows/nse-test-scheduled.yml`, NSE V8 source/rules, shared production provider behavior, production thresholds, production cache keys or NSE V8 reports.
+- Before enabling this lifecycle, test Morning→EOD overlap, EOD-only and Morning-only cases; cache reuse vs refresh; new symbols; non-trading days; failed/partial runs; and proof that Morning never overwrites EOD state.
+- The workflow retains a one-time compatibility restore using the exact pre-Morning-snapshot cache path list, then restores/saves the expanded ECMS state path list. This is required because GitHub Actions cache archives are versioned by their path list; changing the list without a legacy restore would make the previous EOD reference appear missing on the first migrated Morning run.
+- A successful workflow/CI run alone is not proof of a successful live data cycle. Verify the generated Morning/EOD artifacts and cache markers separately.
+
+
+
+## Independence audit — current implementation gap (do not bypass)
+
+The continuous-loop rule above is the target contract, not a claim that every legacy dependency has already been removed. The current scanner still has legacy shared-cache touchpoints that must be replaced before this branch is eligible for merge or live adoption:
+
+- `strategies/ecms/volume_gainers.py` currently bootstraps its ECMS fundamental workspace from shared `METRICS_PATH`, `FILINGS_PATH` and `EVIDENCE_PATH` when its own files are absent.
+- `strategies/ecms/eod.py` still points fundamental inputs/thresholds and the Main Board universe cache at repository-wide paths.
+- The current workflow restores a legacy NSE cache archive containing production fundamental and other V8 cache paths. These must not become ECMS inputs; retain only explicitly approved read-only market reference data (such as completed-session Bhavcopy), and move any ECMS-maintained reference cache under `data/cache/ecms/`.
+- Removing these paths without replacing their required data acquisition and verification steps would make the fundamental gate fail closed or break RVOL/Main Board acquisition. Therefore, do not simply delete paths or weaken the XBRL gate. Build and test the ECMS-owned acquisition/cache path first.
+
+**Merge gate:** the PR must prove that ECMS runs without reading, seeding, writing or restoring NSE V8 production fundamental caches; all seven required metrics must retain the existing fail-closed official-XBRL verification; Main Board and Bhavcopy inputs must have an explicit read-only/ECMS-owned cache contract; and Morning/EOD lifecycle tests plus CI must pass. Until then, keep the PR draft and do not enable production use.
