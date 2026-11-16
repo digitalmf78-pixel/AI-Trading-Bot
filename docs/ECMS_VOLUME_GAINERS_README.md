@@ -45,6 +45,13 @@ This file is the source of truth for ECMS scope, rules, roadmap and hand-off. Re
 13. Produce one final EOD research row per eligible candidate plus source-wise statuses and raw/provider/filing/verification/news/event/deal diagnostics. Provider failure must not silently drop a candidate.
 14. Save the EOD candidate snapshot for the morning comparison.
 
+### Scan-date vs completed-data-date contract
+
+- Every Morning or EOD run records its IST **ScanDate** and exact capture timestamp separately from **DataAsOfDate** (the latest completed official NSE session).
+- Same-day Morning-to-EOD membership comparison uses ScanDate only. A manual EOD-mode run on the same trading date must compare with that date's valid Morning snapshot even if it runs before market close and the latest completed Bhavcopy date is the prior session.
+- Completed-session indicators such as 20-session RVOL must retain their DataAsOfDate. Morning RVOL is reported only as prior-completed-session context; it must never be described as a live partial-session RVOL.
+- The Morning snapshot date guard remains strict: wrong-date, duplicate-symbol, invalid-type or invalid-status snapshots are rejected.
+
 ### 09:20 IST morning recheck and second fundamental assessment
 
 1. Load the previous valid EOD Volume Gainers snapshot **and its per-symbol fundamental assessment** from ECMS state.
