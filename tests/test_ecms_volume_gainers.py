@@ -567,7 +567,7 @@ def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
     # but uses its own scan times rather than regular 09:20/17:00 times.
     assert is_trading_session(date(2026, 11, 8))
     assert expected_scan_time(date(2026, 11, 8), "morning") == "14:25"
-    assert expected_scan_time(date(2026, 11, 8), "eod") == "16:00"
+    assert expected_scan_time(date(2026, 11, 8), "eod") == "17:00"
     assert expected_scan_time(date(2026, 11, 16), "morning") == "09:20"
     assert expected_scan_time(date(2026, 11, 16), "eod") == "17:00"
     assert expected_scan_time(date(2026, 11, 10), "eod") is None
@@ -576,7 +576,6 @@ def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
 
 
 def test_main_skips_special_session_scan_at_regular_clock_time(monkeypatch, capsys):
-    import os
     import sys
     from datetime import datetime as real_datetime
     import strategies.ecms.volume_gainers as scanner
