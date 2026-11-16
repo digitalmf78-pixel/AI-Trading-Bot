@@ -85,16 +85,16 @@ For each eligible NSE Volume Gainer, publish the seven existing information grou
 3. **Upcoming company events:** only explicitly announced/confirmed NSE event-calendar entries within the next 90 calendar days, with date and source.
 4. **Upcoming result:** next result date only when announced by the company/exchange; otherwise `NOT ANNOUNCED`.
 5. **Valuation:** Indicative Cheap / Fair / Expensive from available P/E, PEG, P/B or EV/EBITDA multiples, with source, as-of date and basis shown; otherwise `NOT AVAILABLE`. These fixed multiple bands are not peer-adjusted and share price alone is not valuation.
-6. **Bulk deals / Block deals:** NSE exchange-disclosed deals over the latest 30 calendar days, including deal date, client name/side, quantity and price. Show this information for fundamental-PASS stocks; it is informational and never a rejection condition.
+6. **Bulk deals / Block deals:** NSE exchange-disclosed deals over the latest 30 calendar days, including deal date, client name/side, quantity and price. Show this information for every eligible page stock where source data is available; preserve source status and missing-data reasons.
 7. **RVOL:** current volume relative to the prior 20 completed sessions' average volume. Display the value and data status; RVOL is informational only and never a rejection condition.
 
-**No non-fundamental field may reject, qualify, rank-gate or suppress a stock.** News sentiment, upcoming events/results, valuation, bulk/block deals and RVOL are context only. Missing context is shown as `NOT AVAILABLE` and does not reject a fundamental-PASS stock. Do not add technical, sector, catalyst, volume or research-score rejection gates.
+This older seven-group list describes the earlier information-only implementation. The approved target strategy above adds price/volume/delivery origin, sector/technical context and evidence-backed P5 trap exclusion. These layers must be implemented in their roadmap phase; until then, do not claim they are active gates. Missing/unavailable data is never itself a rejection reason.
 
 ## Daily operating rule — exactly two scans per NSE trading day (Asia/Kolkata)
 
 ECMS runs **only two scheduled scans per official NSE cash-market trading day**. There is no third/extra scan.
 
-1. **Morning — 09:20 IST:** scan the live NSE Volume Gainers page, assess every eligible page stock using the existing ECMS fundamental-only rejection rule, and save a separate same-day Morning snapshot.
+1. **Morning — 09:20 IST:** scan the live NSE Volume Gainers page, assess every eligible page stock using the conditional fundamental policy and preserve WAIT/PARTIAL candidates for the other research layers, and save a separate same-day Morning snapshot.
 2. **Evening / EOD — 17:00 IST:** scan the completed day's NSE Volume Gainers page, assess stocks with the same existing ECMS rules, restore the same-day Morning snapshot, and mark page overlap separately.
 
 ### The repeating comparison cycle
@@ -158,7 +158,7 @@ The ECMS workflow has exactly two scheduled jobs: Morning at 09:20 IST and EOD a
 ## Same-day Morning-to-EOD cache loop
 
 - The 09:20 Morning run saves a separate, validated same-day snapshot at `data/cache/ecms/volume_gainers_same_day_morning.csv`. It contains the Morning page universe plus the Morning fundamental assessment and available news, event, result and deal observations. `MorningPageCapturedAtIST` records when the page was captured (before enrichment); `MorningSnapshotSavedAtIST` records when the completed snapshot was written.
-- The after-session EOD run restores this Morning snapshot and marks EOD names as `MORNING_AND_EOD_REPEAT` or `EOD_NEW_ENTRY`. These labels are informational page-persistence evidence only; they do not alter the fundamental-only rejection gate.
+- The after-session EOD run restores this Morning snapshot and marks EOD names as `MORNING_AND_EOD_REPEAT` or `EOD_NEW_ENTRY`. These labels are informational page-persistence evidence only; they do not independently alter the fundamental status or the conditional rejection policy.
 - EOD reports retain Morning context fields separately from freshly collected EOD context. EOD still checks for newer news, announcements, results and deal disclosures rather than assuming Morning information is current.
 - The same-day Morning snapshot is separate from `volume_gainers_previous_eod.csv`; EOD updates the previous-EOD reference only after its own valid page capture. The next trading day's Morning run therefore compares against the latest completed EOD snapshot.
 - The Morning snapshot is included in the ECMS-only Actions cache paths for the Morning-to-EOD handoff. No shared NSE V8 workflow or production cache is changed.
