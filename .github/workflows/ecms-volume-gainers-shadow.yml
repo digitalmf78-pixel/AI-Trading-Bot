@@ -138,6 +138,7 @@ jobs:
           python - <<'PY'
           import csv, json, os
           from pathlib import Path
+          from strategies.ecms.volume_gainers import _is_current_run_eod_snapshot_cacheable
           marker_path = Path("data/cache/ecms/eod_snapshot_run_marker.json")
           state_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv")
           valid = False
@@ -145,19 +146,10 @@ jobs:
               marker = json.loads(marker_path.read_text(encoding="utf-8"))
               with state_path.open("r", encoding="utf-8-sig", newline="") as handle:
                   rows = list(csv.DictReader(handle))
-              dates = {row.get("EODDate", "") for row in rows}
-              valid = (
-                  marker.get("snapshot_type") == "EOD"
-                  and marker.get("snapshot_status") == "VALID"
-                  and marker.get("github_run_id") == os.getenv("GITHUB_RUN_ID", "")
-                  and int(marker.get("symbol_count", 0)) > 0
-                  and len(rows) == int(marker.get("symbol_count", 0))
-                  and dates == {marker.get("eod_date", "")}
-                  # A weekday EOD run must represent that same trading session.
-                  # Pre-close/manual weekend runs may inspect prior data but must
-                  # never replace the last valid EOD snapshot for the next Morning.
-                  and marker.get("scan_date", "") == marker.get("eod_date", "")
-                  and all(row.get("SnapshotType") == "EOD" and row.get("SnapshotStatus") == "VALID" for row in rows)
+              # Only a complete EOD snapshot captured on its own session date
+              # may replace the previous-session reference for the next Morning.
+              valid = _is_current_run_eod_snapshot_cacheable(
+                  marker, rows, os.getenv("GITHUB_RUN_ID", "")
               )
           except Exception as exc:
               print(f"Current-run EOD snapshot is not cacheable: {type(exc).__name__}: {exc}")
