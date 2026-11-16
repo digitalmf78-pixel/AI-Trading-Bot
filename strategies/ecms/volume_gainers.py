@@ -696,14 +696,18 @@ def attach_information(assessed, as_of_date):
             result[column] = default
         else:
             result[column] = result[column].fillna(default)
-    result["BulkBlockDealsResearchStatus"] = result["BulkBlockDealStatus"].astype(str).str.upper().map(
-        lambda status: "DATA_FOUND" if status in {"AVAILABLE", "PARTIAL_DATA"}
-        and (int(pd.to_numeric(result.loc[result.index[result["BulkBlockDealStatus"].astype(str).str.upper().eq(status)], "BulkDealCount"], errors="coerce").fillna(0).sum())
-             + int(pd.to_numeric(result.loc[result.index[result["BulkBlockDealStatus"].astype(str).str.upper().eq(status)], "BlockDealCount"], errors="coerce").fillna(0).sum())) > 0
-        else "NO_DATA_FOUND" if status == "NO_DISCLOSED_DEALS_IN_LOOKBACK"
-        else "SOURCE_UNAVAILABLE" if status == "WAIT_FOR_DATA"
-        else "NOT_VERIFIED"
-    )
+    def _deal_research_status(row):
+        status = str(row.get("BulkBlockDealStatus", "")).upper()
+        count = int(pd.to_numeric(row.get("BulkDealCount", 0), errors="coerce") or 0)
+        count += int(pd.to_numeric(row.get("BlockDealCount", 0), errors="coerce") or 0)
+        if count > 0:
+            return "DATA_FOUND"
+        if status == "NO_DISCLOSED_DEALS_IN_LOOKBACK":
+            return "NO_DATA_FOUND"
+        if status == "WAIT_FOR_DATA":
+            return "SOURCE_UNAVAILABLE"
+        return "NOT_VERIFIED"
+    result["BulkBlockDealsResearchStatus"] = result.apply(_deal_research_status, axis=1)
     result["RVOLInformationStatus"] = result.get(
         "RVOLDataStatus", pd.Series("NOT AVAILABLE", index=result.index)
     )
