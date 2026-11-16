@@ -444,3 +444,50 @@ def test_attach_information_handles_zero_fundamental_pass_without_missing_column
     assert result["Last5DayNews"].eq("NOT COLLECTED_FUNDAMENTAL_NOT_PASS").all()
     assert result["FundamentalShortlistStatus"].tolist() == ["FAIL", "WAIT_FOR_DATA"]
     assert news.empty and events.empty and deals.empty
+
+
+def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+    from datetime import date
+
+    monkeypatch.setattr(scanner, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(scanner, "MORNING_STATE_FILE", tmp_path / "volume_gainers_same_day_morning.csv")
+    morning = pd.DataFrame({
+        "TckrSymb": ["AAA", "BBB"],
+        "PageVolume": [120000, 90000],
+        "FundamentalShortlistStatus": ["PASS", "WAIT_FOR_DATA"],
+        "Last5DayNews": ["Morning news A", "Morning news B"],
+        "UpcomingEvents": ["AGM", "NOT AVAILABLE"],
+        "NextResultDate": ["2026-11-25", "NOT ANNOUNCED"],
+    })
+    scanner._save_same_day_morning_snapshot(morning, date(2026, 11, 16))
+
+    eod = pd.DataFrame({
+        "TckrSymb": ["AAA", "CCC"],
+        "PageVolume": [300000, 50000],
+    })
+    result = scanner._attach_same_day_morning_confirmation(eod, date(2026, 11, 16)).set_index("TckrSymb")
+
+    assert result.loc["AAA", "MorningSeenSameDay"]
+    assert result.loc["AAA", "MorningToEODStatus"] == "MORNING_AND_EOD_REPEAT"
+    assert result.loc["AAA", "MorningPageVolume"] == 120000
+    assert result.loc["AAA", "MorningFundamentalStatus"] == "PASS"
+    assert result.loc["AAA", "MorningNewsContext"] == "Morning news A"
+    assert result.loc["CCC", "MorningToEODStatus"] == "EOD_NEW_ENTRY"
+
+
+def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+    from datetime import date
+
+    path = tmp_path / "volume_gainers_same_day_morning.csv"
+    monkeypatch.setattr(scanner, "MORNING_STATE_FILE", path)
+    monkeypatch.setattr(scanner, "STATE_DIR", tmp_path)
+    scanner._save_same_day_morning_snapshot(
+        pd.DataFrame({"TckrSymb": ["AAA"], "PageVolume": [100]}),
+        date(2026, 11, 16),
+    )
+    assert scanner._load_same_day_morning_snapshot(date(2026, 11, 17)).empty
+
+    pd.DataFrame({"TckrSymb": ["AAA", "AAA"], "MorningDate": ["2026-11-16"] * 2}).to_csv(path, index=False)
+    assert scanner._load_same_day_morning_snapshot(date(2026, 11, 16)).empty
