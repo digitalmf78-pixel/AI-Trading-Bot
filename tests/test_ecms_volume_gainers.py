@@ -357,7 +357,7 @@ def test_attach_information_researches_every_symbol_regardless_of_fundamental_st
         calls["news"] = candidates["TckrSymb"].tolist()
         news = pd.DataFrame([{
             "TckrSymb": "AAA", "PublishedDate": "2026-11-14",
-            "Headline": "AAA announces contract", "Source": "NSE",
+            "Headline": "AAA announces dividend record date", "Source": "NSE",
         }])
         audit = pd.DataFrame([
             {"TckrSymb": symbol, "NewsWindowStart": "2026-11-10",
@@ -413,6 +413,9 @@ def test_attach_information_researches_every_symbol_regardless_of_fundamental_st
     rows = result.set_index("TckrSymb")
     assert rows.loc["AAA", "UpcomingEventsStatus"] == "AVAILABLE"
     assert rows.loc["AAA", "NewsResearchStatus"] == "DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionResearchStatus"] == "DATA_FOUND"
+    assert rows.loc["AAA", "CorporateActionAnnouncementCount"] == 1
+    assert rows.loc["BBB", "CorporateActionResearchStatus"] == "NO_DATA_FOUND"
     assert rows.loc["BBB", "NewsResearchStatus"] == "NO_DATA_FOUND"
     assert rows.loc["BBB", "UpcomingEventsResearchStatus"] == "NO_DATA_FOUND"
     assert rows.loc["CCC", "BulkBlockDealsResearchStatus"] == "NO_DATA_FOUND"
