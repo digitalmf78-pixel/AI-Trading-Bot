@@ -104,7 +104,7 @@ def fetch_volume_gainers(session=None):
     client.headers["Referer"] = NSE_PAGE
     landing = client.get(NSE_PAGE, timeout=REQUEST_TIMEOUT); landing.raise_for_status()
     response = client.get(NSE_API, timeout=REQUEST_TIMEOUT); response.raise_for_status()
-    server_date_raw = response.headers.get("Date", "")
+    server_date_raw = getattr(response, "headers", {}).get("Date", "")
     try:
         server_date = parsedate_to_datetime(server_date_raw).astimezone(IST).date().isoformat()
     except (TypeError, ValueError, OverflowError):
