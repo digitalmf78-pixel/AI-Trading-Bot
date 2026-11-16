@@ -457,6 +457,7 @@ def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monk
     morning = pd.DataFrame({
         "TckrSymb": ["AAA", "BBB"],
         "PageVolume": [120000, 90000],
+        "MorningPageCapturedAtIST": ["2026-11-16T09:20:04+05:30", "2026-11-16T09:20:04+05:30"],
         "FundamentalShortlistStatus": ["PASS", "WAIT_FOR_DATA"],
         "Last5DayNews": ["Morning news A", "Morning news B"],
         "UpcomingEvents": ["AGM", "NOT AVAILABLE"],
@@ -475,6 +476,7 @@ def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monk
     assert result.loc["AAA", "MorningSeenSameDay"]
     assert result.loc["AAA", "MorningToEODStatus"] == "MORNING_AND_EOD_REPEAT"
     assert result.loc["AAA", "MorningPageVolume"] == 120000
+    assert result.loc["AAA", "MorningScanTimeIST"] == "2026-11-16T09:20:04+05:30"
     assert result.loc["AAA", "MorningFundamentalStatus"] == "PASS"
     assert result.loc["AAA", "MorningNewsContext"] == "Morning news A"
     assert result.loc["CCC", "MorningToEODStatus"] == "EOD_NEW_ENTRY"
