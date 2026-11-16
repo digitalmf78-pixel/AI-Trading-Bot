@@ -49,32 +49,6 @@ def _symbols_from_csv(payload: bytes) -> set[str]:
     return symbols
 
 
-def _symbols_from_mainboard_equity_csv(payload: bytes) -> set[str]:
-    """Read NSE Main Board equities, excluding ETF/fund units by official ISIN prefix."""
-    frame = pd.read_csv(io.BytesIO(payload), dtype=str)
-    if frame.empty:
-        raise ValueError("Official NSE Main Board CSV is empty")
-    symbol_col = _symbol_column(frame)
-    normalized = {
-        str(col).strip().upper().replace(" ", "").replace("_", ""): col
-        for col in frame.columns
-    }
-    isin_col = normalized.get("ISIN")
-    if isin_col is None:
-        raise ValueError("Official NSE Main Board CSV has no ISIN column; ETF exclusion cannot be verified")
-    isin = frame[isin_col].fillna("").astype(str).str.strip().str.upper()
-    # NSE ETF/fund-unit ISINs use the INF prefix; listed company equities use INE.
-    equity_rows = frame[isin.str.startswith("INE")].copy()
-    symbols = {
-        str(value).strip().upper()
-        for value in equity_rows[symbol_col].dropna().tolist()
-        if str(value).strip() and str(value).strip().lower() not in {"nan", "symbol"}
-    }
-    if not symbols:
-        raise ValueError("Official NSE Main Board CSV contained no verified INE equity symbols")
-    return symbols
-
-
 def _get_official_symbols(name: str, url: str, session: requests.Session | None = None) -> tuple[set[str], str]:
     """Fetch official CSV; use a previously validated cache if fetch fails."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,11 +61,7 @@ def _get_official_symbols(name: str, url: str, session: requests.Session | None 
     try:
         response = client.get(url, timeout=25)
         response.raise_for_status()
-        symbols = (
-            _symbols_from_mainboard_equity_csv(response.content)
-            if name == "nse_main_board_equity"
-            else _symbols_from_csv(response.content)
-        )
+        symbols = _symbols_from_csv(response.content)
         cache_path.write_bytes(response.content)
         timestamp_path.write_text(str(int(time.time())), encoding="utf-8")
         return symbols, "OFFICIAL_LIVE"
@@ -100,12 +70,7 @@ def _get_official_symbols(name: str, url: str, session: requests.Session | None 
 
     if cache_path.exists():
         try:
-            cached_payload = cache_path.read_bytes()
-            symbols = (
-                _symbols_from_mainboard_equity_csv(cached_payload)
-                if name == "nse_main_board_equity"
-                else _symbols_from_csv(cached_payload)
-            )
+            symbols = _symbols_from_csv(cache_path.read_bytes())
             fetched_at = int(timestamp_path.read_text(encoding="utf-8").strip()) if timestamp_path.exists() else 0
             age = max(0, int(time.time()) - fetched_at) if fetched_at else None
             age_text = f"age_seconds={age}" if age is not None else "cache_age=unknown"
