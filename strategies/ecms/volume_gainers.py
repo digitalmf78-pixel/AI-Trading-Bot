@@ -655,6 +655,43 @@ def attach_information(assessed, as_of_date):
         else "NOT_VERIFIED"
     )
 
+    # Explicit corporate-action view over official disclosures in the same
+    # five-trading-session window; this is not a substitute for a dedicated
+    # corporate-actions feed until that endpoint is independently validated.
+    corporate_pattern = re.compile(
+        r"dividend|bonus|stock split|share split|buyback|buy-back|rights issue|"
+        r"preferential issue|merger|amalgamation|demerger|scheme of arrangement|"
+        r"record date|ex-date|capital reduction|delisting",
+        re.IGNORECASE,
+    )
+    corporate_summaries = {}
+    if not news.empty:
+        official_news = news[
+            news.get("SourceType", pd.Series("", index=news.index)).astype(str).str.upper().eq("OFFICIAL")
+        ]
+        for symbol, rows in official_news.groupby(official_news["TckrSymb"].astype(str).str.upper()):
+            matched = rows[
+                rows["Headline"].astype(str).apply(lambda headline: bool(corporate_pattern.search(headline)))
+            ]
+            if not matched.empty:
+                corporate_summaries[symbol] = " | ".join(
+                    f"{row.get('PublishedDate','')}: {row.get('Headline','')}"
+                    for _, row in matched.sort_values("PublishedDate", ascending=False).iterrows()
+                )
+    result["CorporateActionAnnouncementCount"] = [
+        sum(1 for _ in [corporate_summaries[symbol]]) if symbol in corporate_summaries else 0
+        for symbol in symbols
+    ]
+    result["CorporateActionAnnouncementSummary"] = [
+        corporate_summaries.get(symbol, "") for symbol in symbols
+    ]
+    result["CorporateActionResearchStatus"] = [
+        "DATA_FOUND" if symbol in corporate_summaries
+        else "NO_DATA_FOUND" if str(official_status).upper() == "AVAILABLE"
+        else "SOURCE_UNAVAILABLE"
+        for symbol, official_status in zip(symbols, result["OfficialStatus"])
+    ]
+
     event_defaults = {
         "UpcomingEventsStatus": "SOURCE_UNAVAILABLE",
         "UpcomingEvents": "NOT AVAILABLE",
