@@ -37,7 +37,9 @@ GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-
 
 ## Free-source metric comparison audit (ECMS only)
 
-- On each ECMS fundamental collection attempt, request secondary observations for all seven decision metrics even when Yahoo already has a value. Existing Yahoo values remain unchanged; secondary observations are stored in a separate comparison record.
+- When the secondary-source audit is due (the provider retry cooldown has expired), request observations for all seven decision metrics even when Yahoo already has a value. Existing Yahoo values remain unchanged; secondary observations are stored in a separate comparison record.
+- ECMS passes `force_retry_incomplete=False` so the shared provider's persisted retry cooldown is respected. Do not force incomplete secondary-source retries on every Morning/EOD run: doing so bypasses the cooldown and can trigger unnecessary full provider/statement downloads despite a restored ECMS cache.
+- A cache restore is not itself proof of reuse. Confirm reuse from provider diagnostics/performance counters (`cache_complete_skips`, `provider_fetches`) and verify that a subsequent run does not repeatedly fetch unchanged incomplete records.
 - Publish `fundamental_source_comparison_ecms.csv` with one row per candidate/metric/source observation, including Yahoo value/source/period/basis and secondary source/value/period/URL.
 - Every secondary observation is explicitly `NOT_OFFICIALLY_VERIFIED` and `RECONCILIATION_REQUIRED`. It must not be averaged with Yahoo, overwrite an existing metric, or independently change the fundamental PASS/FAIL/WAIT result.
 - Missing secondary observations are recorded as `NO_SECONDARY_OBSERVATION`; no value is inferred from a populated table schema alone.
