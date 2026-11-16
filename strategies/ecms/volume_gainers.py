@@ -862,6 +862,39 @@ def run_eod():
     eligible["MorningSnapshotCapturedAtIST"] = (
         str(morning_snapshot.iloc[0].get("SnapshotCapturedAtIST", "")) if not morning_snapshot.empty else ""
     )
+    # Persist a stock-by-stock union report, including Morning-only names that
+    # disappeared before EOD. This must exist even if later enrichment fails.
+    eod_capture_time = datetime.now(IST).isoformat()
+    eod_by_symbol = eligible.set_index("TckrSymb")
+    comparison_rows = []
+    comparison_symbols = sorted(morning_symbols | eligible_symbols) if morning_snapshot_status == "VALID" else sorted(eligible_symbols)
+    for symbol in comparison_symbols:
+        morning_row = morning_by_symbol.loc[symbol].to_dict() if not morning_snapshot.empty and symbol in morning_by_symbol.index else {}
+        eod_row = eod_by_symbol.loc[symbol].to_dict() if symbol in eod_by_symbol.index else {}
+        morning_present = bool(morning_row)
+        eod_present = bool(eod_row)
+        status = (
+            "MORNING_AND_EOD_REPEAT" if morning_present and eod_present else
+            "EOD_NEW_ENTRY" if eod_present and morning_snapshot_status == "VALID" else
+            "MORNING_ONLY_DROPPED" if morning_present and not eod_present else
+            morning_snapshot_status
+        )
+        comparison_rows.append({
+            "TckrSymb": symbol,
+            "MorningPresent": morning_present,
+            "EODPresent": eod_present,
+            "SameDayPagePresenceStatus": status,
+            "MorningPageVolume": morning_row.get("PageVolume"),
+            "EODPageVolume": eod_row.get("PageVolume"),
+            "MorningLTP": morning_row.get("LTP"),
+            "EODLTP": eod_row.get("LTP"),
+            "MorningSnapshotCapturedAtIST": morning_row.get("SnapshotCapturedAtIST", ""),
+            "EODSnapshotCapturedAtIST": eod_capture_time if eod_present else "",
+            "EODDate": eod_date.isoformat(),
+            "MorningSnapshotStatus": morning_snapshot_status,
+        })
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(comparison_rows).to_csv(OUTPUT_DIR / "volume_gainers_eod_morning_comparison.csv", index=False)
     # Save the raw EOD universe first. Fundamental/news/RVOL enrichment must
     # never be able to prevent the next trading day's Morning scan.
     _save_eod_snapshot(eligible, eod_date)
