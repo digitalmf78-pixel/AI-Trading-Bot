@@ -919,6 +919,7 @@ def test_eod_snapshot_cache_guard_accepts_only_same_session_current_run():
 
 
 def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monkeypatch):
+    import json
     import pytest
     from datetime import date
     import strategies.ecms.volume_gainers as scanner
