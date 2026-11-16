@@ -4,6 +4,10 @@ Automated NSE EOD research and swing-trading analysis pipeline. The scanner prod
 
 ## Project source-of-truth hierarchy
 
+## ECMS — separate Volume Gainers research workflow
+
+The ECMS strategy, approved P0–P8 roadmap, operating decisions and workflow contract are maintained separately from NSE V8 in [strategies/ecms/README.md](strategies/ecms/README.md) and [strategies/ecms/WORKFLOW_CONTRACT.md](strategies/ecms/WORKFLOW_CONTRACT.md). Read these before making ECMS changes. ECMS is research/shadow-only and must not alter NSE V8 production workflows, providers, thresholds or caches.
+
 1. **Master Specification:** [Pasted text(20261009-143842).txt](Pasted%20text%2820261009-143842%29.txt), including its dated authoritative update at the top. The historical specification body is retained below that update.
 2. **Current working parameters and implementation register:** [NSE V8 Hybrid Strategy Master Parameters](NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md). This records current approved parameters, code status, unresolved decisions, and validation evidence; it supplements but does not replace the Master Specification.
 3. **README:** navigation and concise operational status only.
