@@ -46,12 +46,12 @@ def _normalize_ecms_secondary_period(metric, period):
     raw = str(period or "").strip()
     if not raw or raw in {"0", "NA", "N/A", "None", "nan"}:
         return ""
-    if re.fullmatch(r"20\\d{2}-\\d{2}-\\d{2}", raw):
+    if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw):
         try:
             return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
         except ValueError:
             return ""
-    month_match = re.fullmatch(r"([A-Za-z]{3})\\s+(20\\d{2})", raw)
+    month_match = re.fullmatch(r"([A-Za-z]{3})\s+(20\d{2})", raw)
     if month_match:
         try:
             first = datetime.strptime(f"{month_match.group(1)} {month_match.group(2)}", "%b %Y")
@@ -59,17 +59,17 @@ def _normalize_ecms_secondary_period(metric, period):
             return first.replace(day=calendar.monthrange(first.year, first.month)[1]).date().isoformat()
         except ValueError:
             return ""
-    fy_match = re.fullmatch(r"FY\\s*(20\\d{2})", raw, flags=re.IGNORECASE)
+    fy_match = re.fullmatch(r"FY\s*(20\d{2})", raw, flags=re.IGNORECASE)
     if fy_match:
         return f"{int(fy_match.group(1)):04d}-03-31"
-    quarter_match = re.fullmatch(r"Q([1-4])\\s*FY\\s*(20\\d{2})", raw, flags=re.IGNORECASE)
+    quarter_match = re.fullmatch(r"Q([1-4])\s*FY\s*(20\d{2})", raw, flags=re.IGNORECASE)
     if quarter_match:
         quarter, fiscal_year = int(quarter_match.group(1)), int(quarter_match.group(2))
         return {1: f"{fiscal_year - 1:04d}-06-30",
                 2: f"{fiscal_year - 1:04d}-09-30",
                 3: f"{fiscal_year - 1:04d}-12-31",
                 4: f"{fiscal_year:04d}-03-31"}[quarter]
-    growth_match = re.fullmatch(r"FY\\s*(20\\d{2})\\s*->\\s*FY\\s*(20\\d{2})", raw, flags=re.IGNORECASE)
+    growth_match = re.fullmatch(r"FY\s*(20\d{2})\s*->\s*FY\s*(20\d{2})", raw, flags=re.IGNORECASE)
     if growth_match and metric in {"RevenueGrowthPct", "ProfitGrowthPct"}:
         prior_year, current_year = map(int, growth_match.groups())
         if current_year == prior_year + 1:
