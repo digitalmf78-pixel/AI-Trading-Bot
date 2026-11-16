@@ -91,6 +91,7 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -151,6 +152,7 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
         if: always()
@@ -211,19 +213,21 @@ jobs:
                           reason = (row.get("FundamentalShortlistReason") or "").strip().replace("\n", " ")
                           if len(reason) > 100:
                               reason = reason[:97] + "..."
-                          context = ""
-                          if shortlist.upper() == "PASS":
-                              valuation = (row.get("ValuationLabel") or "NOT AVAILABLE").strip()
-                              news = (row.get("Last5DayNews") or "NOT AVAILABLE").strip().replace("\n", " ")
-                              events = (row.get("UpcomingEvents") or "NOT AVAILABLE").strip().replace("\n", " ")
-                              result_date = (row.get("NextResultDate") or "NOT ANNOUNCED").strip()
-                              deal_status = (row.get("BulkBlockDealStatus") or "NOT AVAILABLE").strip()
-                              deal_summary = (row.get("BulkBlockDealSummary") or "").strip().replace("\n", " ")
-                              rvol = (row.get("RVOL") or "NOT AVAILABLE").strip()
-                              context = (
-                                  f"; valuation={valuation}; news={news[:110]}; events={events[:100]}"
-                                  f"; next_result={result_date}; deals={deal_status}:{deal_summary[:100]}; RVOL={rvol}"
-                              )
+                          valuation = (row.get("ValuationLabel") or "NOT AVAILABLE").strip()
+                          news_status = (row.get("NewsResearchStatus") or "NOT_VERIFIED").strip()
+                          news = (row.get("Last5DayNews") or "NOT AVAILABLE").strip().replace("\n", " ")
+                          event_status = (row.get("UpcomingEventsResearchStatus") or "NOT_VERIFIED").strip()
+                          events = (row.get("UpcomingEvents") or "NOT AVAILABLE").strip().replace("\n", " ")
+                          result_date = (row.get("NextResultDate") or "NOT ANNOUNCED").strip()
+                          deal_status = (row.get("BulkBlockDealsResearchStatus") or "NOT_VERIFIED").strip()
+                          deal_summary = (row.get("BulkBlockDealSummary") or "").strip().replace("\n", " ")
+                          recent_deals = (row.get("BulkBlockSummaryLast5Days") or "").strip().replace("\n", " ")
+                          rvol = (row.get("RVOL") or "NOT AVAILABLE").strip()
+                          context = (
+                              f"; valuation={valuation}; news[{news_status}]={news[:100]}"
+                              f"; events[{event_status}]={events[:90]}; next_result={result_date}"
+                              f"; deals[{deal_status}]={deal_summary[:90]}; recent_5d={recent_deals[:70]}; RVOL={rvol}"
+                          )
                           stock_lines.append(
                               f"{symbol}: fundamental={shortlist}; official_XBRL={verified}"
                               + context
@@ -233,7 +237,7 @@ jobs:
                   stock_lines.append(f"Stock-level research report unavailable: {type(exc).__name__}")
           if stock_lines:
               lines.append("")
-              lines.append("STOCK-WISE FUNDAMENTAL DECISION (only rejection gate):")
+              lines.append("STOCK-WISE RESEARCH (all eligible stocks; PASS/FAIL/WAIT do not filter research):")
               lines.extend(stock_lines)
           else:
               lines.append("Stock-wise fundamental CSV unavailable; inspect the run artifact.")
@@ -279,6 +283,7 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-${{ github.ref_name }}-
@@ -340,6 +345,7 @@ jobs:
             data/cache/ecms/volume_gainers_previous_eod.csv
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
+            data/cache/ecms/news/
           key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report
         if: always()
