@@ -721,10 +721,6 @@ def _save_eod_snapshot(frame, eod_date):
     if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
         raise RuntimeError("ECMS_EOD_SNAPSHOT_ERROR: blank or duplicate symbols")
     snapshot["EODDate"] = eod_date.isoformat()
-    for column in ("FundamentalShortlistStatus", "StrongFundamentalNotForwardedReason",
-                   "FundamentalPassStatus"):
-        if column in snapshot.columns:
-            pass
     keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
             "AvgVolume1W", "VolumeChangeTimes1W", "AvgVolume2W",
             "VolumeChangeTimes2W", "AvgVolume20D", "RVOL", "RVOLDataStatus", "EODDate"]
