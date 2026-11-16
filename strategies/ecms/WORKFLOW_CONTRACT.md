@@ -3,7 +3,7 @@
 ## Workflow and schedule
 
 - Workflow file: `.github/workflows/ecms-volume-gainers-shadow.yml`.
-- EOD job: weekday schedule `15 11 * * 1-5` UTC = **16:45 IST**; manual dispatch with mode `eod`.
+- EOD job: weekday schedule `30 11 * * 1-5` UTC = **17:00 IST**; manual dispatch with mode `eod`.
 - Morning job: weekday schedule `50 3 * * 1-5` UTC = **09:20 IST**; manual dispatch with mode `morning`.
 - These triggers belong only to ECMS. Do not modify the production NSE V8 workflow or any unrelated workflow.
 - The morning job restores the previous EOD snapshot and ECMS fundamental workspace. EOD and morning artifacts/Telegram reports are separate.
