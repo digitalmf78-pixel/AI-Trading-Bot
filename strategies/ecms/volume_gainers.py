@@ -712,6 +712,67 @@ def attach_information(assessed, as_of_date):
     return result, news, events, deals
 
 
+MORNING_SNAPSHOT_FILE = STATE_DIR / "volume_gainers_morning_snapshot.csv"
+
+
+def _save_morning_snapshot(frame, morning_date):
+    """Persist today's 09:20 page universe separately; never alter the EOD reference."""
+    if frame.empty or "TckrSymb" not in frame.columns:
+        raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: empty page or missing TckrSymb")
+    snapshot = frame.copy()
+    snapshot["TckrSymb"] = snapshot["TckrSymb"].astype(str).str.strip().str.upper()
+    if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
+        raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: blank or duplicate symbols")
+    snapshot["MorningDate"] = morning_date.isoformat()
+    snapshot["SnapshotType"] = "MORNING"
+    snapshot["SnapshotStatus"] = "VALID"
+    snapshot["SnapshotCapturedAtIST"] = datetime.now(IST).isoformat()
+    columns = [c for c in ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
+        "VolumeChangeTimes1W", "VolumeChangeTimes2W", "MorningDate", "SnapshotType",
+        "SnapshotStatus", "SnapshotCapturedAtIST"] if c in snapshot.columns]
+    state = snapshot[columns].copy()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = MORNING_SNAPSHOT_FILE.with_name(MORNING_SNAPSHOT_FILE.name + ".tmp")
+    state.to_csv(temporary, index=False)
+    temporary.replace(MORNING_SNAPSHOT_FILE)
+    marker = {
+        "snapshot_type": "MORNING", "snapshot_status": "VALID",
+        "morning_date": morning_date.isoformat(), "symbol_count": int(state["TckrSymb"].nunique()),
+        "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
+        "github_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        "captured_at_ist": datetime.now(IST).isoformat(),
+    }
+    marker_path = STATE_DIR / "morning_snapshot_run_marker.json"
+    marker_tmp = marker_path.with_name(marker_path.name + ".tmp")
+    marker_tmp.write_text(json.dumps(marker, indent=2) + "\\n", encoding="utf-8")
+    marker_tmp.replace(marker_path)
+    return state
+
+
+def _load_same_day_morning_snapshot(eod_date):
+    """Return a validated same-session Morning snapshot, or an explicit unavailable status."""
+    if not MORNING_SNAPSHOT_FILE.exists():
+        return pd.DataFrame(), "NOT_CHECKED_NO_MORNING_SNAPSHOT"
+    try:
+        morning = pd.read_csv(MORNING_SNAPSHOT_FILE, dtype={"TckrSymb": str})
+        required = {"TckrSymb", "MorningDate", "SnapshotType", "SnapshotStatus"}
+        if not required.issubset(morning.columns) or morning.empty:
+            raise ValueError("required columns missing or snapshot empty")
+        morning["TckrSymb"] = morning["TckrSymb"].astype(str).str.strip().str.upper()
+        if morning["TckrSymb"].eq("").any() or morning["TckrSymb"].duplicated().any():
+            raise ValueError("blank or duplicate symbols")
+        if set(morning["MorningDate"].astype(str)) != {eod_date.isoformat()}:
+            return pd.DataFrame(), "NOT_CHECKED_MORNING_DATE_MISMATCH"
+        if not morning["SnapshotType"].astype(str).eq("MORNING").all():
+            raise ValueError("snapshot type is not MORNING")
+        if not morning["SnapshotStatus"].astype(str).eq("VALID").all():
+            raise ValueError("snapshot status is not VALID")
+        return morning, "VALID"
+    except Exception as exc:
+        print(f"ECMS same-day Morning snapshot rejected: {type(exc).__name__}: {exc}")
+        return pd.DataFrame(), "NOT_CHECKED_INVALID_MORNING_SNAPSHOT"
+
+
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
     if frame.empty or "TckrSymb" not in frame.columns:
@@ -771,8 +832,25 @@ def run_eod():
         raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
     eligible["EODDate"]=eod_date.isoformat(); eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
+    # Compare today's EOD page with today's immutable Morning checkpoint before
+    # replacing the previous-session EOD reference.
+    morning_snapshot, morning_snapshot_status = _load_same_day_morning_snapshot(eod_date)
+    morning_symbols = set(morning_snapshot["TckrSymb"].astype(str).str.upper()) if not morning_snapshot.empty else set()
+    eligible_symbols = set(eligible["TckrSymb"].astype(str).str.upper())
+    morning_by_symbol = morning_snapshot.set_index("TckrSymb") if not morning_snapshot.empty else pd.DataFrame()
+    eligible["SameDayPagePresenceStatus"] = eligible["TckrSymb"].map(
+        lambda symbol: "MORNING_AND_EOD_REPEAT" if symbol in morning_symbols else
+        "EOD_NEW_ENTRY" if morning_snapshot_status == "VALID" else morning_snapshot_status
+    )
+    eligible["MorningPageVolume"] = eligible["TckrSymb"].map(
+        lambda symbol: morning_by_symbol.loc[symbol, "PageVolume"]
+        if not morning_snapshot.empty and symbol in morning_by_symbol.index and "PageVolume" in morning_snapshot.columns else pd.NA
+    )
+    eligible["MorningSnapshotCapturedAtIST"] = (
+        str(morning_snapshot.iloc[0].get("SnapshotCapturedAtIST", "")) if not morning_snapshot.empty else ""
+    )
     # Save the raw EOD universe first. Fundamental/news/RVOL enrichment must
-    # never be able to prevent tomorrow's 09:20 scanner from seeing this list.
+    # never be able to prevent the next trading day's Morning scan.
     _save_eod_snapshot(eligible, eod_date)
     eligible=attach_page_rvol(eligible,eod_date)
     assessed=assess_page_fundamentals(eligible,eod_date)
@@ -780,6 +858,18 @@ def run_eod():
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
     assessed, news, events, deals = attach_information(assessed, eod_date)
+    assessed["SameDayPagePresenceStatus"] = assessed["TckrSymb"].map(
+        lambda symbol: "MORNING_AND_EOD_REPEAT" if symbol in morning_symbols else
+        "EOD_NEW_ENTRY" if morning_snapshot_status == "VALID" else morning_snapshot_status
+    )
+    assessed["MorningPageVolume"] = assessed["TckrSymb"].map(
+        lambda symbol: morning_by_symbol.loc[symbol, "PageVolume"]
+        if not morning_snapshot.empty and symbol in morning_by_symbol.index and "PageVolume" in morning_snapshot.columns else pd.NA
+    )
+    assessed["MorningSnapshotStatus"] = morning_snapshot_status
+    assessed["MorningSnapshotCapturedAtIST"] = (
+        str(morning_snapshot.iloc[0].get("SnapshotCapturedAtIST", "")) if not morning_snapshot.empty else ""
+    )
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
@@ -821,6 +911,10 @@ def run_eod():
       "provider_cooldown_deferred":int(provider_status.eq("RETRY_COOLDOWN").sum()),
       "provider_failed":int(provider_status.str.contains("ERROR|FAILED", regex=True).sum()),
       "free_source_attempted":int(free_attempted.sum()),
+      "same_day_morning_snapshot_status":morning_snapshot_status,
+      "same_day_morning_and_eod_repeat":int(assessed["SameDayPagePresenceStatus"].eq("MORNING_AND_EOD_REPEAT").sum()),
+      "same_day_eod_new_entry":int(assessed["SameDayPagePresenceStatus"].eq("EOD_NEW_ENTRY").sum()),
+      "same_day_morning_only_dropped":int(len(morning_symbols - eligible_symbols)) if morning_snapshot_status == "VALID" else None,
       "page_limit_note":"Processes every row returned by NSE page; page currently labels table Top 25.",
       "generated_at_ist":datetime.now(IST).isoformat(),"state_file":str(STATE_FILE)}
     (OUTPUT_DIR/"volume_gainers_eod_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
@@ -886,6 +980,9 @@ def run_morning():
     live["EODDate"]=expected_eod
     live["MorningDate"]=today.isoformat()
     live["MainBoardSource"]=board_source
+    # Capture the page universe before any optional fundamental/information work.
+    # This is a separate file from the previous-session EOD snapshot.
+    _save_morning_snapshot(live, today)
     morning_assessed=assess_page_fundamentals(live,today)
     if "FundamentalShortlistStatus" not in morning_assessed:
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
