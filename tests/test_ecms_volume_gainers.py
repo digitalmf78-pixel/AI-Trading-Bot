@@ -563,6 +563,33 @@ def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, 
     pd.DataFrame({"TckrSymb": ["AAA", "AAA"], "MorningDate": ["2026-11-16"] * 2}).to_csv(path, index=False)
     assert scanner._load_same_day_morning_snapshot(date(2026, 11, 16)).empty
 
+
+def test_morning_rejects_consumed_eod_resurrected_by_actions_cache(tmp_path, monkeypatch):
+    import json
+    from datetime import date
+    import pytest
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "ecms"
+    state_dir.mkdir()
+    eod_state = state_dir / "volume_gainers_previous_eod.csv"
+    consumed_marker = state_dir / "volume_gainers_previous_eod_consumed.json"
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "EODDate": "2026-11-13",
+        "SnapshotType": "EOD", "SnapshotStatus": "VALID",
+    }]).to_csv(eod_state, index=False)
+    consumed_marker.write_text(json.dumps({
+        "consumed_eod_date": "2026-11-13",
+        "status": "CONSUMED",
+    }))
+    monkeypatch.setattr(scanner, "STATE_FILE", eod_state)
+    monkeypatch.setattr(scanner, "CONSUMED_EOD_MARKER_FILE", consumed_marker)
+    monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 13))
+
+    with pytest.raises(RuntimeError, match="already consumed"):
+        scanner.run_morning()
+
 def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
     import pytest
     from datetime import date
@@ -899,9 +926,11 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     state_dir = tmp_path / "data" / "cache" / "ecms"
     eod_state = state_dir / "volume_gainers_previous_eod.csv"
     morning_state = state_dir / "volume_gainers_same_day_morning.csv"
+    consumed_marker = state_dir / "volume_gainers_previous_eod_consumed.json"
     monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
     monkeypatch.setattr(scanner, "STATE_FILE", eod_state)
     monkeypatch.setattr(scanner, "MORNING_STATE_FILE", morning_state)
+    monkeypatch.setattr(scanner, "CONSUMED_EOD_MARKER_FILE", consumed_marker)
 
     # Friday EOD is the active reference for Monday Morning.
     scanner._save_eod_snapshot(pd.DataFrame([{
@@ -930,6 +959,7 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     # Successful Monday Morning comparison consumes Friday EOD only.
     assert scanner._consume_previous_eod_snapshot(date(2026, 11, 13))
     assert not eod_state.exists()
+    assert json.loads(consumed_marker.read_text())["consumed_eod_date"] == "2026-11-13"
     assert morning_state.exists()
 
     # Monday EOD compares with Monday Morning, never Friday EOD.
@@ -964,4 +994,5 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     }]), date(2026, 11, 17))
     assert scanner._consume_previous_eod_snapshot(date(2026, 11, 16))
     assert not eod_state.exists()
+    assert json.loads(consumed_marker.read_text())["consumed_eod_date"] == "2026-11-16"
     assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-17"}
