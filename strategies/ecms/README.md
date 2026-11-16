@@ -120,6 +120,7 @@ A stock appearing on both Morning and EOD pages confirms only that it appeared i
 - Do not read from, seed, write to, or overwrite NSE V8 production caches as an ECMS cache shortcut. Build and maintain ECMS-owned copies/inputs through an explicitly audited ECMS process. Shared market reference data may be consumed only as a clearly declared read-only input where required; it must not make ECMS dependent on NSE V8 scanner state.
 - Do not modify or distribute through NSE V8: `.github/workflows/nse-test-scheduled.yml`, NSE V8 source/rules, shared production provider behavior, production thresholds, production cache keys or NSE V8 reports.
 - Before enabling this lifecycle, test Morning→EOD overlap, EOD-only and Morning-only cases; cache reuse vs refresh; new symbols; non-trading days; failed/partial runs; and proof that Morning never overwrites EOD state.
+- The workflow retains a one-time compatibility restore using the exact pre-Morning-snapshot cache path list, then restores/saves the expanded ECMS state path list. This is required because GitHub Actions cache archives are versioned by their path list; changing the list without a legacy restore would make the previous EOD reference appear missing on the first migrated Morning run.
 - A successful workflow/CI run alone is not proof of a successful live data cycle. Verify the generated Morning/EOD artifacts and cache markers separately.
 
 
