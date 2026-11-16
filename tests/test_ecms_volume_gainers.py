@@ -838,17 +838,20 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     monkeypatch.setattr(scanner, "STATE_FILE", eod_state)
     monkeypatch.setattr(scanner, "MORNING_STATE_FILE", morning_state)
 
-    # Friday EOD is the reference used by Monday Morning.
+    # Friday EOD is the active reference for Monday Morning.
     scanner._save_eod_snapshot(pd.DataFrame([{
         "TckrSymb": "AAA", "PageVolume": 100, "EODScanDate": "2026-11-13",
     }]), date(2026, 11, 13))
-    friday_reference = pd.read_csv(eod_state, dtype={"TckrSymb": str})
-    assert set(friday_reference["EODDate"]) == {"2026-11-13"}
+    assert set(pd.read_csv(eod_state)["EODDate"]) == {"2026-11-13"}
 
-    # Monday Morning compares Friday EOD, saves its own snapshot, then
-    # consumes Friday's active EOD reference. The Morning snapshot remains.
+    # Failed/mismatched consumption must preserve Friday active reference.
+    with pytest.raises(RuntimeError, match="refusing to consume"):
+        scanner._consume_previous_eod_snapshot(date(2026, 11, 16))
+    assert eod_state.exists()
+
+    # Monday Morning is stored separately; Friday EOD remains until comparison succeeds.
     scanner._save_same_day_morning_snapshot(pd.DataFrame([{
-        "TckrSymb": "AAA", "PageVolume":  120,
+        "TckrSymb": "AAA", "PageVolume": 120,
         "MorningPageCapturedAtIST": "2026-11-16T09:20:00+05:30",
         "FundamentalShortlistStatus": "PASS",
     }, {
@@ -856,32 +859,15 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
         "MorningPageCapturedAtIST": "2026-11-16T09:20:00+05:30",
         "FundamentalShortlistStatus": "WAIT_FOR_DATA",
     }]), date(2026, 11, 16))
-    assert not eod_state.exists()
+    assert eod_state.exists()
     assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-16"}
 
-    # Tuesday Morning consumes Monday EOD; Tuesday Morning remains for Tuesday EOD.
-    assert scanner._consume_previous_eod_snapshot(date(2026, 11, 16))
-    assert not eod_state.exists()
-    scanner._save_same_day_morning_snapshot(pd.DataFrame([{
-        "TckrSymb": "AAA", "PageVolume": 160,
-        "MorningPageCapturedAtIST": "2026-11-17T09:20:00+05:30",
-        "FundamentalShortlistStatus": "PASS",
-    }]), date(2026, 11, 17))
-    assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-17"}
-
-    # Failed/incorrect-date consumption must preserve the active EOD reference.
-    scanner._save_eod_snapshot(pd.DataFrame([{
-        "TckrSymb": "AAA", "PageVolume": 100, "EODScanDate": "2026-11-13",
-    }]), date(2026, 11, 13))
-    with pytest.raises(RuntimeError, match="refusing to consume"):
-        scanner._consume_previous_eod_snapshot(date(2026, 11, 16))
-    assert eod_state.exists()
-
-    # Consume only after the successful comparison has completed.
+    # Successful Monday Morning comparison consumes Friday EOD only.
     assert scanner._consume_previous_eod_snapshot(date(2026, 11, 13))
     assert not eod_state.exists()
+    assert morning_state.exists()
 
-    # Monday EOD compares against Monday Morning, not Friday EOD.
+    # Monday EOD compares with Monday Morning, never Friday EOD.
     monday_eod_page = pd.DataFrame([
         {"TckrSymb": "AAA", "PageVolume": 150},
         {"TckrSymb": "CCC", "PageVolume": 70},
@@ -894,8 +880,7 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     assert compared.loc["AAA", "MorningPageVolume"] == 120
     assert compared.loc["AAA", "MorningFundamentalStatus"] == "PASS"
 
-    # After Monday EOD, Monday's EOD becomes the next trading day's Morning
-    # reference, while the same-day Morning snapshot remains a separate file.
+    # Valid Monday EOD becomes the next trading session active reference.
     scanner._save_eod_snapshot(pd.DataFrame([{
         "TckrSymb": "AAA", "PageVolume": 150, "EODScanDate": "2026-11-16",
     }, {
@@ -905,3 +890,13 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     assert set(next_morning_reference["EODDate"]) == {"2026-11-16"}
     assert set(next_morning_reference["TckrSymb"]) == {"AAA", "CCC"}
     assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-16"}
+
+    # Tuesday Morning consumes Monday EOD and keeps Tuesday Morning for same-day EOD.
+    scanner._save_same_day_morning_snapshot(pd.DataFrame([{
+        "TckrSymb": "AAA", "PageVolume": 160,
+        "MorningPageCapturedAtIST": "2026-11-17T09:20:00+05:30",
+        "FundamentalShortlistStatus": "PASS",
+    }]), date(2026, 11, 17))
+    assert scanner._consume_previous_eod_snapshot(date(2026, 11, 16))
+    assert not eod_state.exists()
+    assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-17"}
