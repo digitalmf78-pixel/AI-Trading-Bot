@@ -897,6 +897,37 @@ def attach_information(assessed, as_of_date):
     )
     return result, news, events, deals, corporate_actions
 
+def _is_current_run_eod_snapshot_cacheable(marker, rows, github_run_id):
+    """Accept only a complete, current-run EOD snapshot for its actual scan session."""
+    if not isinstance(marker, dict) or not rows:
+        return False
+    eod_date = str(marker.get("eod_date", ""))
+    try:
+        symbol_count = int(marker.get("symbol_count", 0))
+    except (TypeError, ValueError):
+        return False
+    if (
+        marker.get("snapshot_type") != "EOD"
+        or marker.get("snapshot_status") != "VALID"
+        or not github_run_id
+        or marker.get("github_run_id") != str(github_run_id)
+        or symbol_count <= 0
+        or len(rows) != symbol_count
+        or not eod_date
+        or marker.get("scan_date", "") != eod_date
+    ):
+        return False
+    dates = {str(row.get("EODDate", "")) for row in rows}
+    return (
+        dates == {eod_date}
+        and all(
+            row.get("SnapshotType") == "EOD"
+            and row.get("SnapshotStatus") == "VALID"
+            for row in rows
+        )
+    )
+
+
 def _save_eod_snapshot(frame, eod_date):
     """Atomically persist the EOD page universe before optional enrichment can fail."""
     if frame.empty or "TckrSymb" not in frame.columns:
