@@ -619,3 +619,67 @@ def test_volume_gainer_nse_sample_fields_are_mapped_to_correct_units():
     assert _number(_get(row, ALIASES["change_pct_1w"])) == 54.82776067111319
     assert _number(_get(row, ALIASES["avg_volume_2w"])) == 619266
     assert _number(_get(row, ALIASES["change_pct_2w"])) == 56.959989729776865
+
+
+def test_eod_uses_scan_date_for_research_and_morning_match_but_completed_date_for_rvol(tmp_path, monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+    from datetime import date, datetime as real_datetime
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 16, 13, 7, tzinfo=tz)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setattr(scanner, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 13))
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(scanner, "fetch_volume_gainers", lambda: pd.DataFrame({
+        "TckrSymb": ["AAA"], "CompanyName": ["Alpha"], "PageVolume": [100],
+        "PageVolumeDataStatus": ["DATA_FOUND"],
+    }))
+    monkeypatch.setattr(scanner, "_eligible_page_equities", lambda page: (page.copy(), "TEST_MAINBOARD"))
+    monkeypatch.setattr(scanner, "_save_eod_snapshot", lambda frame, day: frame)
+    captured = {}
+
+    def fake_rvol(frame, data_date):
+        captured["rvol_date"] = data_date
+        result = frame.copy()
+        result["RVOL"] = [1.5]
+        result["RVOLDataStatus"] = ["DATA_FOUND"]
+        return result
+
+    def fake_fundamentals(frame, as_of_date):
+        captured["fundamental_date"] = as_of_date
+        result = frame.copy()
+        result["FundamentalShortlistStatus"] = ["WAIT_FOR_DATA"]
+        return result
+
+    def fake_information(frame, as_of_date):
+        captured["information_date"] = as_of_date
+        empty = pd.DataFrame()
+        return frame.copy(), empty, empty, empty, empty
+
+    def fake_morning_match(frame, morning_date):
+        captured["comparison_date"] = morning_date
+        result = frame.copy()
+        result["MorningSeenSameDay"] = [True]
+        result["MorningToEODStatus"] = ["MORNING_AND_EOD_REPEAT"]
+        return result
+
+    monkeypatch.setattr(scanner, "attach_page_rvol", fake_rvol)
+    monkeypatch.setattr(scanner, "assess_page_fundamentals", fake_fundamentals)
+    monkeypatch.setattr(scanner, "attach_information", fake_information)
+    monkeypatch.setattr(scanner, "_attach_same_day_morning_confirmation", fake_morning_match)
+
+    summary = scanner.run_eod()
+
+    assert captured == {
+        "rvol_date": date(2026, 11, 13),
+        "fundamental_date": date(2026, 11, 16),
+        "information_date": date(2026, 11, 16),
+        "comparison_date": date(2026, 11, 16),
+    }
+    assert summary["scan_date_ist"] == "2026-11-16"
+    assert summary["data_as_of_date_ist"] == "2026-11-13"
+    assert summary["morning_repeat_count"] == 1
