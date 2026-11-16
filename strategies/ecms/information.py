@@ -155,6 +155,7 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
     """Return NSE-disclosed bulk/block deal sides without inventing counterparties."""
     symbols = sorted({str(item).strip().upper() for item in symbols if str(item).strip()})
     start_date = as_of_date - timedelta(days=int(lookback_days) - 1)
+    recent_start = as_of_date - timedelta(days=4)
     deals, type_status = [], {}
     client = None
     for deal_type in ("bulk_deals", "block_deals"):
@@ -213,6 +214,9 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
         symbol_rows = deal_frame[deal_frame["TckrSymb"].eq(symbol)] if not deal_frame.empty else pd.DataFrame()
         bulk = symbol_rows[symbol_rows["DealType"].eq("BULK")] if not symbol_rows.empty else pd.DataFrame()
         block = symbol_rows[symbol_rows["DealType"].eq("BLOCK")] if not symbol_rows.empty else pd.DataFrame()
+        recent_rows = symbol_rows[symbol_rows["DealDate"].astype(str).ge(recent_start.isoformat())] if not symbol_rows.empty else pd.DataFrame()
+        recent_bulk = recent_rows[recent_rows["DealType"].eq("BULK")] if not recent_rows.empty else pd.DataFrame()
+        recent_block = recent_rows[recent_rows["DealType"].eq("BLOCK")] if not recent_rows.empty else pd.DataFrame()
         if len(symbol_rows) and all(value == "AVAILABLE" for value in type_status.values()) and len(type_status) == 2:
             status = "AVAILABLE"
         elif len(symbol_rows):
@@ -228,6 +232,12 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             "BulkBlockDealStatus": status,
             "BulkDealCount": int(len(bulk)),
             "BlockDealCount": int(len(block)),
+            "BulkDealCountLast5Days": int(len(recent_bulk)),
+            "BlockDealCountLast5Days": int(len(recent_block)),
+            "BulkBlockSummaryLast5Days": " | ".join(
+                f"{r.DealType} {r.DealDate} {r.Side} {r.ClientName} qty={r.Quantity} price={r.PriceINR}"
+                for r in recent_rows.itertuples()
+            ),
             "BulkBuyers": " | ".join(sorted(set(bulk.loc[bulk["Side"].str.contains("BUY|B", regex=True), "ClientName"].astype(str)))) if not bulk.empty else "",
             "BulkSellers": " | ".join(sorted(set(bulk.loc[bulk["Side"].str.contains("SELL|S", regex=True), "ClientName"].astype(str)))) if not bulk.empty else "",
             "BlockBuyers": " | ".join(sorted(set(block.loc[block["Side"].str.contains("BUY|B", regex=True), "ClientName"].astype(str)))) if not block.empty else "",
