@@ -526,6 +526,10 @@ def test_same_day_morning_snapshot_is_reused_for_eod_confirmation(tmp_path, monk
     eod = pd.DataFrame({
         "TckrSymb": ["AAA", "CCC"],
         "PageVolume": [300000, 50000],
+        # The completed-session data date can differ from today's scan date
+        # when an EOD-mode manual check runs before market close.
+        "EODDate": ["2026-11-13", "2026-11-13"],
+        "EODScanDate": ["2026-11-16", "2026-11-16"],
     })
     result = scanner._attach_same_day_morning_confirmation(eod, date(2026, 11, 16)).set_index("TckrSymb")
 
