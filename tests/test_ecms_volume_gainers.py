@@ -226,7 +226,6 @@ def test_morning_reassesses_every_current_candidate_and_marks_double_confirmatio
         "EODFundamentalShortlistStatus": "PASS",
         "EODStrongFundamentalStatus": "EOD_FUNDAMENTAL_PASS",
     }]).to_csv(state_path, index=False)
-    original_eod_snapshot = state_path.read_bytes()
 
     monkeypatch.setattr(scanner, "STATE_FILE", state_path)
     monkeypatch.setattr(scanner, "STATE_DIR", state_path.parent)
