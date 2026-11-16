@@ -681,6 +681,8 @@ def attach_information(assessed, as_of_date):
     deal_defaults = {
         "BulkBlockDealStatus": "SOURCE_UNAVAILABLE",
         "BulkDealCount": 0, "BlockDealCount": 0,
+        "BulkDealCountLast5Days": 0, "BlockDealCountLast5Days": 0,
+        "BulkBlockSummaryLast5Days": "",
         "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
         "BulkBlockDealSummary": "",
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
