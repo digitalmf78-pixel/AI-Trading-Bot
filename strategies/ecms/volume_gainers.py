@@ -26,6 +26,7 @@ NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
 STATE_FILE = STATE_DIR / "volume_gainers_previous_eod.csv"
+MORNING_STATE_FILE = STATE_DIR / "volume_gainers_same_day_morning.csv"
 REQUEST_TIMEOUT = (8, 20)
 ALIASES = {
  "symbol": ("symbol","tradingSymbol","ticker"),
@@ -201,7 +202,7 @@ def assess_page_fundamentals(candidates, eod_date):
             enabled=True,
             asof_date=eod_date,
             free_source_fetcher=fetch_ecms_free_fundamental_sources,
-            force_retry_incomplete=True,
+            force_retry_incomplete=False,
             free_source_audit_metrics=[
                 "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
                 "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
@@ -758,6 +759,93 @@ def _save_eod_snapshot(frame, eod_date):
     return state
 
 
+
+def _save_same_day_morning_snapshot(frame, morning_date):
+    """Persist the full same-day morning page and its assessment/context for EOD reuse."""
+    if frame.empty or "TckrSymb" not in frame.columns:
+        raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: empty page or missing TckrSymb")
+    snapshot = frame.copy()
+    snapshot["TckrSymb"] = snapshot["TckrSymb"].astype(str).str.strip().str.upper()
+    if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
+        raise RuntimeError("ECMS_MORNING_SNAPSHOT_ERROR: blank or duplicate symbols")
+    snapshot["MorningDate"] = morning_date.isoformat()
+    snapshot["MorningSnapshotSavedAtIST"] = datetime.now(IST).isoformat()
+    snapshot["MorningRunId"] = os.getenv("GITHUB_RUN_ID", "")
+    snapshot["MorningRunAttempt"] = os.getenv("GITHUB_RUN_ATTEMPT", "")
+    snapshot["MorningSnapshotType"] = "MORNING"
+    snapshot["MorningSnapshotStatus"] = "VALID"
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = MORNING_STATE_FILE.with_name(MORNING_STATE_FILE.name + ".tmp")
+    snapshot.to_csv(temporary, index=False)
+    temporary.replace(MORNING_STATE_FILE)
+    return snapshot
+
+
+def _load_same_day_morning_snapshot(morning_date):
+    """Load only a valid, unique Morning snapshot from the current IST trading date."""
+    if not MORNING_STATE_FILE.exists():
+        return pd.DataFrame()
+    snapshot = pd.read_csv(MORNING_STATE_FILE, dtype={"TckrSymb": str})
+    if snapshot.empty or "TckrSymb" not in snapshot.columns:
+        return pd.DataFrame()
+    snapshot["TckrSymb"] = snapshot["TckrSymb"].astype(str).str.strip().str.upper()
+    if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
+        return pd.DataFrame()
+    if set(snapshot.get("MorningDate", pd.Series(dtype=str)).dropna().astype(str)) != {morning_date.isoformat()}:
+        return pd.DataFrame()
+    if "MorningSnapshotType" in snapshot and not snapshot["MorningSnapshotType"].astype(str).eq("MORNING").all():
+        return pd.DataFrame()
+    if "MorningSnapshotStatus" in snapshot and not snapshot["MorningSnapshotStatus"].astype(str).eq("VALID").all():
+        return pd.DataFrame()
+    return snapshot
+
+
+def _attach_same_day_morning_confirmation(eod_frame, morning_date):
+    """Add informational same-day Morning-to-EOD page persistence fields."""
+    result = eod_frame.copy()
+    morning = _load_same_day_morning_snapshot(morning_date)
+    if morning.empty:
+        result["MorningSeenSameDay"] = False
+        result["MorningToEODStatus"] = "NO_VALID_SAME_DAY_MORNING_SNAPSHOT"
+        result["MorningScanTimeIST"] = ""
+        result["MorningPageVolume"] = ""
+        result["MorningFundamentalStatus"] = "NOT_AVAILABLE"
+        result["MorningNewsContext"] = "NOT AVAILABLE"
+        result["MorningUpcomingEvents"] = "NOT AVAILABLE"
+        result["MorningNextResultDate"] = "NOT AVAILABLE"
+        return result
+    morning_by_symbol = morning.set_index("TckrSymb", drop=False)
+    symbols = result["TckrSymb"].astype(str).str.strip().str.upper()
+    result["MorningSeenSameDay"] = symbols.isin(set(morning_by_symbol.index))
+    result["MorningToEODStatus"] = result["MorningSeenSameDay"].map({
+        True: "MORNING_AND_EOD_REPEAT", False: "EOD_NEW_ENTRY"
+    })
+    def morning_value(symbol, column, default=""):
+        if symbol not in morning_by_symbol.index or column not in morning_by_symbol.columns:
+            return default
+        value = morning_by_symbol.at[symbol, column]
+        return default if pd.isna(value) else value
+    result["MorningScanTimeIST"] = symbols.map(
+        lambda symbol: morning_value(symbol, "MorningPageCapturedAtIST", "")
+    )
+    result["MorningPageVolume"] = symbols.map(
+        lambda symbol: morning_value(symbol, "PageVolume", "")
+    )
+    result["MorningFundamentalStatus"] = symbols.map(
+        lambda symbol: morning_value(symbol, "FundamentalShortlistStatus", "NOT AVAILABLE")
+    )
+    result["MorningNewsContext"] = symbols.map(
+        lambda symbol: morning_value(symbol, "Last5DayNews", "NOT AVAILABLE")
+    )
+    result["MorningUpcomingEvents"] = symbols.map(
+        lambda symbol: morning_value(symbol, "UpcomingEvents", "NOT AVAILABLE")
+    )
+    result["MorningNextResultDate"] = symbols.map(
+        lambda symbol: morning_value(symbol, "NextResultDate", "NOT AVAILABLE")
+    )
+    return result
+
+
 def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
@@ -780,6 +868,7 @@ def run_eod():
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
     assessed, news, events, deals = attach_information(assessed, eod_date)
+    assessed = _attach_same_day_morning_confirmation(assessed, eod_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
@@ -879,6 +968,8 @@ def run_morning():
     live=live[live["TckrSymb"].isin(mainboard)].copy()
     if live.empty:
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
+    # Record the page-capture time before fundamental and information enrichment.
+    live["MorningPageCapturedAtIST"] = datetime.now(IST).isoformat()
 
     # Run the same fundamental framework on every eligible symbol visible now,
     # including repeated EOD symbols and new morning entries. The collector
@@ -891,6 +982,7 @@ def run_morning():
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     morning_assessed, morning_news, morning_events, morning_deals = attach_information(morning_assessed, today)
+    _save_same_day_morning_snapshot(morning_assessed, today)
     morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
     morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
     morning_deals.to_csv(OUTPUT_DIR/"volume_gainers_morning_bulk_block_deals.csv", index=False)
@@ -980,6 +1072,7 @@ def run_morning():
       "morning_wait_for_data":int(morning_assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("WAIT_FOR_DATA").sum()),
       "morning_new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "eod_fundamental_pass_repeats":int(report["MorningStatus"].eq("EOD_FUNDAMENTAL_PASS_REPEAT").sum()),
+       "same_day_morning_snapshot_saved":MORNING_STATE_FILE.exists(),
       "eod_only_not_on_morning_page":int(report["MorningStatus"].eq("EOD_ONLY_NOT_ON_MORNING_PAGE").sum()),
       "double_confirmed":int(report["ConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
       "page_presence_double_confirmed":int(report["PagePresenceDoubleConfirmed"].sum()),
@@ -994,5 +1087,16 @@ def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
     parser.add_argument("--mode",choices=("eod","morning"),required=True)
     args=parser.parse_args()
+    # GitHub Actions cron also fires on weekday NSE holidays. Never treat the
+    # last available page/session as a fresh scan for a non-trading date.
+    today = datetime.now(IST).date()
+    if not is_trading_session(today):
+        print(json.dumps({
+            "status": "SKIPPED",
+            "reason": "OFFICIAL_NSE_NON_TRADING_DAY",
+            "date_ist": today.isoformat(),
+            "mode": args.mode.upper(),
+        }, indent=2))
+        return
     run_eod() if args.mode=="eod" else run_morning()
 if __name__=="__main__": main()

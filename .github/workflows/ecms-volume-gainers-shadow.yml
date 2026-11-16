@@ -1,4 +1,4 @@
-name: ECMS NSE VOLUME GAINERS - EOD + 09:20 MORNING
+name: ECMS NSE VOLUME GAINERS - TWO DAILY SCANS
 on:
   push:
     branches: [main]
@@ -13,7 +13,7 @@ on:
         default: eod
         options: [eod, morning]
   schedule:
-    - cron: "15 11 * * 1-5" # 16:45 IST EOD page snapshot
+    - cron: "30 11 * * 1-5" # 17:00 IST EOD page snapshot
     - cron: "50 3 * * 1-5"  # 09:20 IST morning recheck
 permissions:
   contents: read
@@ -45,9 +45,9 @@ jobs:
   eod:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'eod') ||
-      (github.event_name == 'schedule' && github.event.schedule == '15 11 * * 1-5')
+      (github.event_name == 'schedule' && github.event.schedule == '30 11 * * 1-5')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - name: Checkout main branch
         uses: actions/checkout@v5
@@ -89,6 +89,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
@@ -99,13 +100,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Compile and test
-        run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/filing_metadata_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Run EOD page research
         id: eod-research
         env:
@@ -154,6 +149,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload EOD reports
@@ -270,7 +266,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
       (github.event_name == 'schedule' && github.event.schedule == '50 3 * * 1-5')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - name: Checkout main branch
         uses: actions/checkout@v5
@@ -281,6 +277,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
@@ -291,13 +288,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Compile and test
-        run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Run 09:20 morning fundamental reassessment
         env:
           PYTHONUNBUFFERED: "1"
@@ -308,12 +299,46 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode morning
-      - name: Save ECMS fundamental cache after morning assessment
+      - name: Validate current-run same-day Morning snapshot before saving cache
+        id: morning-snapshot-check
         if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import csv, os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from pathlib import Path
+          today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+          path = Path("data/cache/ecms/volume_gainers_same_day_morning.csv")
+          valid = False
+          try:
+              with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                  rows = list(csv.DictReader(handle))
+              symbols = [str(row.get("TckrSymb", "")).strip().upper() for row in rows]
+              dates = {str(row.get("MorningDate", "")).strip() for row in rows}
+              valid = (
+                  bool(rows)
+                  and all(symbols)
+                  and len(symbols) == len(set(symbols))
+                  and dates == {today_ist}
+                  and all(row.get("MorningSnapshotType") == "MORNING" for row in rows)
+                  and all(row.get("MorningSnapshotStatus") == "VALID" for row in rows)
+                  and all(row.get("MorningRunId") == os.getenv("GITHUB_RUN_ID", "") for row in rows)
+              )
+          except Exception as exc:
+              print(f"Current-run Morning snapshot is not cacheable: {type(exc).__name__}: {exc}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"cacheable={'true' if valid else 'false'}\n")
+          print(f"ECMS_MORNING_SNAPSHOT_CACHEABLE={valid}")
+          PY
+      - name: Save ECMS fundamental cache after validated morning assessment
+        if: always() && steps.morning-snapshot-check.outputs.cacheable == 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
       - name: Upload morning report

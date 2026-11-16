@@ -50,6 +50,38 @@ def test_equity_rows_keeps_supported_listed_equity_series_and_excludes_etfs():
     result = _equity_rows(frame)
     assert set(result["TckrSymb"]) == {"AAA", "BBB"}
 
+
+def test_official_mainboard_universe_excludes_etf_isin_prefix():
+    from strategies.ecms.eod import _mainboard_company_equity_symbols
+
+    payload = pd.DataFrame({
+        "SYMBOL": ["AAA", "ETF1", "BBB"],
+        "NAME OF COMPANY": ["AAA LTD", "INDEX ETF", "BBB LTD"],
+        "ISIN NUMBER": ["INE000A01001", "INF000000001", "INE000B01001"],
+    }).to_csv(index=False).encode("utf-8")
+
+    from pathlib import Path
+    csv_path = Path("mainboard_test_equities.csv")
+    csv_path.write_bytes(payload)
+    try:
+        assert _mainboard_company_equity_symbols(csv_path) == {"AAA", "BBB"}
+    finally:
+        csv_path.unlink(missing_ok=True)
+
+
+def test_official_mainboard_universe_fails_closed_without_isin_column():
+    from strategies.ecms.eod import _mainboard_company_equity_symbols
+
+    payload = pd.DataFrame({"SYMBOL": ["AAA"]}).to_csv(index=False).encode("utf-8")
+    from pathlib import Path
+    csv_path = Path("mainboard_test_no_isin.csv")
+    csv_path.write_bytes(payload)
+    try:
+        with pytest.raises(RuntimeError, match="lacks symbol/ISIN columns"):
+            _mainboard_company_equity_symbols(csv_path)
+    finally:
+        csv_path.unlink(missing_ok=True)
+
 def test_expected_latest_completed_session_uses_ist_market_close():
     from datetime import datetime
     from zoneinfo import ZoneInfo

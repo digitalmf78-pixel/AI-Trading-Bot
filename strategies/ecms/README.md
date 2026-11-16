@@ -3,6 +3,15 @@
 ECMS is an isolated, research-only workflow for stocks appearing on the NSE Volume Gainers page. It does not place orders and must not change or depend on the production NSE V8 scanner.
 
 ## Exact ECMS scope
+## Eligible stock universe — NSE Main Board only
+
+- Read the NSE Volume Gainers page, then keep only symbols present in the official NSE Main Board equity list.
+- Explicitly subtract the official NSE SME list before assessment. SME stocks, ETFs/ETNs, indices, debt securities and other non-Main-Board instruments are excluded from ECMS candidates.
+- The Main Board membership list is the authority for eligibility; a page row or an equity-like symbol/series by itself is not enough.
+- ECMS applies an isolated check to the official Main Board CSV: only verified `INE` company-equity ISIN rows are eligible. `INF` ETF/fund-unit ISINs are excluded, and missing ISIN data fails closed rather than allowing an unverified instrument. This stricter gate is in ECMS code; the shared production NSE V8 Main Board filter is unchanged.
+- Subtract the official NSE SME list. Index names and other instruments that are not in the official Main Board equity list are excluded.
+- Only eligible NSE Main Board company stocks receive the existing fundamental assessment and appear as ECMS stock suggestions. Do not add SME, ETF/fund-unit or index recommendations.
+
 
 For each eligible NSE Volume Gainer, publish only these seven information groups:
 
@@ -16,14 +25,39 @@ For each eligible NSE Volume Gainer, publish only these seven information groups
 
 **No non-fundamental field may reject, qualify, rank-gate or suppress a stock.** News sentiment, upcoming events/results, valuation, bulk/block deals and RVOL are context only. Missing context is shown as `NOT AVAILABLE` and does not reject a fundamental-PASS stock. Do not add technical, sector, catalyst, volume or research-score rejection gates.
 
-## Daily checkpoints (Asia/Kolkata)
+## Daily operating rule — exactly two scans per NSE trading day (Asia/Kolkata)
 
-- **EOD:** weekday schedule at **16:45 IST**. Read the completed NSE Volume Gainers page, calculate/display 20-session RVOL, assess fundamentals, and collect the information groups above. Save the EOD symbol/fundamental snapshot in ECMS-owned state.
-- **Morning:** weekday schedule at **09:20 IST**. Re-read the current NSE Volume Gainers page and reassess current-page stocks using the same fundamental-only gate.
-- **Morning repeat marking:** if a stock that passed fundamentals at EOD appears again on the 09:20 page, mark it explicitly as `EOD_FUNDAMENTAL_PASS_REPEAT` (separate from a new morning entry). Also retain clear labels for new entries, EOD names no longer present, and morning fundamental status. A repeat label is informational, not an extra filter.
-- EOD and morning reports/Telegram messages remain separate. The morning run must restore the previous EOD snapshot and ECMS fundamental workspace.
+ECMS runs **only two scheduled scans per official NSE cash-market trading day**. There is no third/extra scan.
 
-GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-5` = 09:20 IST. These schedules belong only to `.github/workflows/ecms-volume-gainers-shadow.yml`.
+1. **Morning — 09:20 IST:** scan the live NSE Volume Gainers page, assess every eligible page stock using the existing ECMS fundamental-only rejection rule, and save a separate same-day Morning snapshot.
+2. **Evening / EOD — 17:00 IST:** scan the completed day's NSE Volume Gainers page, assess stocks with the same existing ECMS rules, restore the same-day Morning snapshot, and mark page overlap separately.
+
+### The repeating comparison cycle
+
+- Previous trading day's EOD snapshot → today's 09:20 Morning scan.
+- Today's Morning snapshot → today's 17:00 EOD scan.
+- Today's valid EOD snapshot → next official trading day's Morning scan.
+- Repeat this cycle on every NSE trading day. Keep Morning and EOD reports/Telegram messages separate.
+
+### Same-stock labels and result handling
+
+- A symbol present in both today's Morning and EOD page lists is marked `MORNING_AND_EOD_REPEAT`.
+- A symbol present only in today's EOD page list is marked `EOD_NEW_ENTRY`.
+- A symbol present only in the Morning list remains identifiable as Morning-only / not present at EOD.
+- The previous EOD → current Morning comparison is also shown separately; do not confuse it with the same-day Morning → EOD comparison.
+- These are **page-presence labels only**. They apply regardless of whether the stock's fundamental result is PASS, FAIL or WAIT_FOR_DATA.
+- Show each stock's actual existing fundamental result alongside its repeat/new label. Do not create a new rejection, ranking, scoring, confirmation or selection rule from repeat status.
+- All seven existing fundamental metrics, thresholds, sector applicability, PASS/FAIL/WAIT_FOR_DATA treatment, and information-only fields remain unchanged.
+
+### Schedule, holidays and runtime
+
+- Morning GitHub Actions cron: `50 3 * * 1-5` = **09:20 IST**.
+- EOD GitHub Actions cron: `30 11 * * 1-5` = **17:00 IST**.
+- Only these two ECMS schedules are permitted. Manual runs are for testing and do not create an additional daily schedule.
+- On an official NSE trading holiday, the corresponding scan must finish as **SKIPPED**; it must not process a stale Volume Gainers page as a new scan or overwrite a valid snapshot. Weekday cron alone is not a holiday calendar, so holiday detection must use the official NSE session date.
+- Each scheduled Morning/EOD scan has a **10-minute maximum runtime target** so the Morning result is available before 09:30 IST. A timeout/failure must be reported clearly and must not corrupt the previous valid snapshot. Validate actual end-to-end runtime with Actions evidence; a configured timeout alone is not proof of successful completion within 10 minutes.
+
+These schedules belong only to `.github/workflows/ecms-volume-gainers-shadow.yml`.
 
 ## Fundamental data quality and sources
 
@@ -52,8 +86,20 @@ GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-
 
 ## Current implementation / delivery status
 
-The EOD and 09:20 workflow jobs and schedules are present in `.github/workflows/ecms-volume-gainers-shadow.yml`. The ECMS branch implementation now uses the fundamental shortlist as the sole decision gate, marks EOD fundamental-PASS repeats in the morning report, and adds informational enrichment for five-day news, the NSE event calendar, result dates, indicative valuation and official NSE bulk/block deal disclosures. Morning RVOL is deliberately shown as unavailable because a partial 09:20 session is not comparable with a full-day 20-session average; the prior EOD RVOL is retained for reference. These changes are under focused CI validation and have not yet been verified by a fresh live EOD/morning run.
+The ECMS workflow has exactly two scheduled jobs: Morning at 09:20 IST and EOD at 17:00 IST. Both scan jobs are capped at 10 minutes; end-to-end completion within that budget still requires successful Actions runtime evidence. The scanner checks the official NSE trading-session calendar before either mode and emits `SKIPPED` on a non-trading date, without reading the page as a new scan or replacing a valid snapshot. Same-day Morning/EOD page overlap is informational and independent of the fundamental PASS/FAIL/WAIT_FOR_DATA result. Morning RVOL is deliberately shown as unavailable because a partial 09:20 session is not comparable with a full-day 20-session average; the prior EOD RVOL is retained for reference. A fresh live EOD → Morning → EOD cycle is still required before calling the loop production-verified.
 
+
+
+## Same-day Morning-to-EOD cache loop
+
+- The 09:20 Morning run saves a separate, validated same-day snapshot at `data/cache/ecms/volume_gainers_same_day_morning.csv`. It contains the Morning page universe plus the Morning fundamental assessment and available news, event, result and deal observations. `MorningPageCapturedAtIST` records when the page was captured (before enrichment); `MorningSnapshotSavedAtIST` records when the completed snapshot was written.
+- The after-session EOD run restores this Morning snapshot and marks EOD names as `MORNING_AND_EOD_REPEAT` or `EOD_NEW_ENTRY`. These labels are informational page-persistence evidence only; they do not alter the fundamental-only rejection gate.
+- EOD reports retain Morning context fields separately from freshly collected EOD context. EOD still checks for newer news, announcements, results and deal disclosures rather than assuming Morning information is current.
+- The same-day Morning snapshot is separate from `volume_gainers_previous_eod.csv`; EOD updates the previous-EOD reference only after its own valid page capture. The next trading day's Morning run therefore compares against the latest completed EOD snapshot.
+- The Morning snapshot is included in the ECMS-only Actions cache paths for the Morning-to-EOD handoff. No shared NSE V8 workflow or production cache is changed.
+- The Morning cache is saved only after a current-run snapshot passes date, uniqueness, status and GitHub run-ID checks. A failed/holiday Morning run cannot publish stale Morning state as a fresh snapshot.
+- ECMS uses the provider's existing retry cooldown (`force_retry_incomplete=False`) so restoring the workspace cache does not force daily refetches of incomplete fundamentals. Fundamental thresholds and missing-data decisions remain unchanged.
+- The full test suite runs in the validation job; scheduled scan jobs install dependencies and run the scan without repeating the test suite, preserving more of the 10-minute scan budget.
 
 ## EOD-to-morning snapshot lifecycle (workflow-only)
 
