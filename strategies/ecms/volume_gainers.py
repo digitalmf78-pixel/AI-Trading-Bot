@@ -186,6 +186,23 @@ def fetch_volume_gainers(session=None):
     frame=pd.DataFrame(normalized)
     if frame.empty: raise RuntimeError("WAIT_FOR_DATA: NSE response contained no valid symbols")
     return frame.drop_duplicates("TckrSymb",keep="first")
+def _build_nse_page_download(page, mainboard_symbols, mode, scan_date, captured_at, board_source):
+    """Preserve every NSE Volume Gainers page row and label Main Board eligibility."""
+    result = page.copy()
+    eligible_symbols = {str(symbol).strip().upper() for symbol in mainboard_symbols}
+    result["ScanMode"] = str(mode).strip().upper()
+    result["ScanDateIST"] = str(scan_date)
+    result["PageCapturedAtIST"] = str(captured_at)
+    result["NSEPageURL"] = NSE_PAGE
+    result["MainBoardEligible"] = result["TckrSymb"].astype(str).str.strip().str.upper().isin(eligible_symbols)
+    result["PageUniverseStatus"] = result["MainBoardEligible"].map({
+        True: "PASS_MAIN_BOARD_EQUITY",
+        False: "PAGE_ROW_NOT_IN_OFFICIAL_MAIN_BOARD_UNIVERSE",
+    })
+    result["MainBoardSource"] = board_source
+    return result
+
+
 def _eligible_page_equities(page):
     mainboard, source=load_official_mainboard_symbols()
     eligible=page[page["TckrSymb"].isin(mainboard)].copy()
@@ -1197,6 +1214,9 @@ def run_eod():
     scan_captured_at = datetime.now(IST).isoformat()
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
+    page_download = _build_nse_page_download(
+        page, eligible["TckrSymb"], "EOD", scan_date, scan_captured_at, board_source
+    )
     if eligible.empty: raise RuntimeError("WAIT_FOR_DATA: no official Main Board equity symbols found on NSE Volume Gainers page")
     # Separate the live NSE page session from the completed Bhavcopy session.
     # Only compare same-day Morning/EOD when NSE's HTTP Date header verifies it.
@@ -1241,6 +1261,7 @@ def run_eod():
     OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
     assessed.to_csv(OUTPUT_DIR/"volume_gainers_eod_research.csv",index=False)
     page.to_csv(OUTPUT_DIR/"volume_gainers_page_raw.csv",index=False)
+    page_download.to_csv(OUTPUT_DIR/"volume_gainers_eod_nse_page.csv", index=False)
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
     events.to_csv(OUTPUT_DIR/"volume_gainers_upcoming_events.csv",index=False)
     deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
@@ -1403,16 +1424,22 @@ def run_morning():
             )
     if stored_dates != {expected_eod}:
         raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
-    live=fetch_volume_gainers()
+    live_page=fetch_volume_gainers()
     mainboard,board_source=load_official_mainboard_symbols()
-    live=live[live["TckrSymb"].isin(mainboard)].copy()
+    morning_page_captured_at = datetime.now(IST).isoformat()
+    page_download = _build_nse_page_download(
+        live_page, mainboard, "MORNING", today.isoformat(), morning_page_captured_at, board_source
+    )
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    page_download.to_csv(OUTPUT_DIR/"volume_gainers_morning_nse_page.csv", index=False)
+    live=live_page[live_page["TckrSymb"].isin(mainboard)].copy()
     if live.empty:
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
     # Morning RVOL is based on the latest completed Bhavcopy session. It is
     # explicitly labelled as prior-session context, never as partial intraday RVOL.
     live = attach_page_rvol(live, expected_latest_completed_session())
     # Record the page-capture time before fundamental and information enrichment.
-    live["MorningPageCapturedAtIST"] = datetime.now(IST).isoformat()
+    live["MorningPageCapturedAtIST"] = morning_page_captured_at
 
     # Run the same fundamental framework on every eligible symbol visible now,
     # including repeated EOD symbols and new morning entries. The collector
