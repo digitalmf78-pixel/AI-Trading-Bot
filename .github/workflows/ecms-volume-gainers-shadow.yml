@@ -93,6 +93,7 @@ jobs:
           # last valid EOD snapshot survives the expanded news/deals cache path list.
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
@@ -105,6 +106,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
@@ -164,6 +166,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
@@ -303,6 +306,7 @@ jobs:
           # last valid EOD snapshot survives the expanded news/deals cache path list.
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
@@ -315,6 +319,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
@@ -346,18 +351,33 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import csv, os
+          import csv, json, os
           from datetime import datetime
           from zoneinfo import ZoneInfo
           from pathlib import Path
           today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
           path = Path("data/cache/ecms/volume_gainers_same_day_morning.csv")
+          eod_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv")
+          consumed_path = Path("data/cache/ecms/volume_gainers_previous_eod_consumed.json")
+          report_path = Path("outputs/ecms/volume_gainers_morning_recheck.csv")
+          summary_path = Path("outputs/ecms/volume_gainers_morning_summary.json")
           valid = False
           try:
               with path.open("r", encoding="utf-8-sig", newline="") as handle:
                   rows = list(csv.DictReader(handle))
+              with report_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                  report_rows = list(csv.DictReader(handle))
+              summary = json.loads(summary_path.read_text(encoding="utf-8"))
+              consumed = json.loads(consumed_path.read_text(encoding="utf-8"))
               symbols = [str(row.get("TckrSymb", "")).strip().upper() for row in rows]
               dates = {str(row.get("MorningDate", "")).strip() for row in rows}
+              comparison_complete = (
+                  bool(report_rows)
+                  and summary.get("previous_eod_reference_consumed") is True
+                  and consumed.get("status") == "CONSUMED"
+                  and consumed.get("consumed_eod_date") == summary.get("data_as_of_date_ist")
+                  and not eod_path.exists()
+              )
               valid = (
                   bool(rows)
                   and all(symbols)
@@ -366,6 +386,7 @@ jobs:
                   and all(row.get("MorningSnapshotType") == "MORNING" for row in rows)
                   and all(row.get("MorningSnapshotStatus") == "VALID" for row in rows)
                   and all(row.get("MorningRunId") == os.getenv("GITHUB_RUN_ID", "") for row in rows)
+                  and comparison_complete
               )
           except Exception as exc:
               print(f"Current-run Morning snapshot is not cacheable: {type(exc).__name__}: {exc}")
@@ -379,6 +400,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
             data/cache/ecms/news/
