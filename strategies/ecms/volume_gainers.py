@@ -1170,7 +1170,7 @@ def run_eod():
     _save_eod_snapshot(eligible, eod_date)
     eligible=attach_page_rvol(eligible,bhavcopy_date)
     # Fundamentals and event/news windows are evaluated as of this scan date;
-    # completed-session RVOL remains tied to eod_date above.
+    # completed-session RVOL remains tied to bhavcopy_date above.
     assessed=assess_page_fundamentals(eligible,scan_date)
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
