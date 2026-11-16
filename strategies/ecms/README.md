@@ -16,14 +16,39 @@ For each eligible NSE Volume Gainer, publish only these seven information groups
 
 **No non-fundamental field may reject, qualify, rank-gate or suppress a stock.** News sentiment, upcoming events/results, valuation, bulk/block deals and RVOL are context only. Missing context is shown as `NOT AVAILABLE` and does not reject a fundamental-PASS stock. Do not add technical, sector, catalyst, volume or research-score rejection gates.
 
-## Daily checkpoints (Asia/Kolkata)
+## Daily operating rule — exactly two scans per NSE trading day (Asia/Kolkata)
 
-- **EOD:** weekday schedule at **16:45 IST**. Read the completed NSE Volume Gainers page, calculate/display 20-session RVOL, assess fundamentals, and collect the information groups above. Save the EOD symbol/fundamental snapshot in ECMS-owned state.
-- **Morning:** weekday schedule at **09:20 IST**. Re-read the current NSE Volume Gainers page and reassess current-page stocks using the same fundamental-only gate.
-- **Morning repeat marking:** if a stock that passed fundamentals at EOD appears again on the 09:20 page, mark it explicitly as `EOD_FUNDAMENTAL_PASS_REPEAT` (separate from a new morning entry). Also retain clear labels for new entries, EOD names no longer present, and morning fundamental status. A repeat label is informational, not an extra filter.
-- EOD and morning reports/Telegram messages remain separate. The morning run must restore the previous EOD snapshot and ECMS fundamental workspace.
+ECMS runs **only two scheduled scans per official NSE cash-market trading day**. There is no third/extra scan.
 
-GitHub Actions cron values are UTC: `15 11 * * 1-5` = 16:45 IST and `50 3 * * 1-5` = 09:20 IST. These schedules belong only to `.github/workflows/ecms-volume-gainers-shadow.yml`.
+1. **Morning — 09:20 IST:** scan the live NSE Volume Gainers page, assess every eligible page stock using the existing ECMS fundamental-only rejection rule, and save a separate same-day Morning snapshot.
+2. **Evening / EOD — 17:00 IST:** scan the completed day's NSE Volume Gainers page, assess stocks with the same existing ECMS rules, restore the same-day Morning snapshot, and mark page overlap separately.
+
+### The repeating comparison cycle
+
+- Previous trading day's EOD snapshot → today's 09:20 Morning scan.
+- Today's Morning snapshot → today's 17:00 EOD scan.
+- Today's valid EOD snapshot → next official trading day's Morning scan.
+- Repeat this cycle on every NSE trading day. Keep Morning and EOD reports/Telegram messages separate.
+
+### Same-stock labels and result handling
+
+- A symbol present in both today's Morning and EOD page lists is marked `MORNING_AND_EOD_REPEAT`.
+- A symbol present only in today's EOD page list is marked `EOD_NEW_ENTRY`.
+- A symbol present only in the Morning list remains identifiable as Morning-only / not present at EOD.
+- The previous EOD → current Morning comparison is also shown separately; do not confuse it with the same-day Morning → EOD comparison.
+- These are **page-presence labels only**. They apply regardless of whether the stock's fundamental result is PASS, FAIL or WAIT_FOR_DATA.
+- Show each stock's actual existing fundamental result alongside its repeat/new label. Do not create a new rejection, ranking, scoring, confirmation or selection rule from repeat status.
+- All seven existing fundamental metrics, thresholds, sector applicability, PASS/FAIL/WAIT_FOR_DATA treatment, and information-only fields remain unchanged.
+
+### Schedule, holidays and runtime
+
+- Morning GitHub Actions cron: `50 3 * * 1-5` = **09:20 IST**.
+- EOD GitHub Actions cron: `30 11 * * 1-5` = **17:00 IST**.
+- Only these two ECMS schedules are permitted. Manual runs are for testing and do not create an additional daily schedule.
+- On an official NSE trading holiday, the corresponding scan must finish as **SKIPPED**; it must not process a stale Volume Gainers page as a new scan or overwrite a valid snapshot. Weekday cron alone is not a holiday calendar, so holiday detection must use the official NSE session date.
+- Each scheduled Morning/EOD scan has a **10-minute maximum runtime target** so the Morning result is available before 09:30 IST. A timeout/failure must be reported clearly and must not corrupt the previous valid snapshot. Validate actual end-to-end runtime with Actions evidence; a configured timeout alone is not proof of successful completion within 10 minutes.
+
+These schedules belong only to `.github/workflows/ecms-volume-gainers-shadow.yml`.
 
 ## Fundamental data quality and sources
 
