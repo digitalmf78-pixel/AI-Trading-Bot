@@ -1010,7 +1010,7 @@ def _consume_previous_eod_snapshot(expected_eod_date):
     temporary_marker = CONSUMED_EOD_MARKER_FILE.with_name(
         CONSUMED_EOD_MARKER_FILE.name + ".tmp"
     )
-    temporary_marker.write_text(json.dumps(consumed_marker, indent=2) + "\\n", encoding="utf-8")
+    temporary_marker.write_text(json.dumps(consumed_marker, indent=2) + "\n", encoding="utf-8")
     temporary_marker.replace(CONSUMED_EOD_MARKER_FILE)
     STATE_FILE.unlink()
     marker_path = STATE_DIR / "eod_snapshot_run_marker.json"
