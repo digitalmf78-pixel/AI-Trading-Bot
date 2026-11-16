@@ -3,10 +3,13 @@
 ## Workflow and schedule
 
 - Workflow file: `.github/workflows/ecms-volume-gainers-shadow.yml`.
-- EOD job: weekday schedule `30 11 * * 1-5` UTC = **17:00 IST**; manual dispatch with mode `eod`.
-- Morning job: weekday schedule `50 3 * * 1-5` UTC = **09:20 IST**; manual dispatch with mode `morning`.
+- EOD job: daily schedule `30 11 * * *` UTC = **17:00 IST**; manual dispatch with mode `eod`.
+- Morning job: daily schedule `50 3 * * *` UTC = **09:20 IST**; manual dispatch with mode `morning`.
+- Daily triggers are intentional: the official NSE Capital Market calendar is the session gate, so holidays/weekends skip while officially declared special sessions (including Saturday sessions) can run.
+- Unknown/missing calendar coverage must fail closed; never infer a trading day from weekdays.
 - These triggers belong only to ECMS. Do not modify the production NSE V8 workflow or any unrelated workflow.
-- The morning job restores the previous EOD snapshot and ECMS fundamental workspace. EOD and morning artifacts/Telegram reports are separate.
+- The morning job restores the latest active EOD snapshot and ECMS fundamental workspace. After a successful prior-EOD comparison and persistence of the current Morning snapshot/report, it consumes the old active EOD reference. The current Morning snapshot remains for same-session EOD comparison. A valid same-session EOD then becomes the next trading session's active EOD reference.
+- If Morning comparison/report persistence fails, the previous EOD reference remains available for retry. Holiday runs do not create or overwrite snapshots. EOD and morning artifacts/Telegram reports are separate.
 
 ## Universe and sole rejection rule
 
