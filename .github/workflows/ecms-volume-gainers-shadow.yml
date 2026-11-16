@@ -352,7 +352,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data")]:
+                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("page_presence_double_confirmed","Stocks present in both EOD and Morning lists"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")
