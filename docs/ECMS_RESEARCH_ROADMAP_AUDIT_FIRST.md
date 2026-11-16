@@ -209,8 +209,82 @@ No data, unavailable data and conflicting data must never be silently treated as
 - Do not add unverified data, invented values or inferred institutional identities.
 - No broker connection, order placement or automated execution.
 
-## 7. Immediate next action
+## 7. Audit outcome and evidence boundary
 
-Complete Phase 0 first. Inspect the full repository implementation, tests, workflow history and available run artifacts. Then revise this roadmap using measured findings and source research. Only after the revised audit-backed roadmap is reviewed should implementation proceed phase by phase.
+The initial ECMS repository/workflow/data audit has been recorded in:
 
-**This document records the agreed direction; it is not authorization to change live selection logic or merge new strategy code.**
+- `docs/ECMS_REPOSITORY_DATA_AUDIT_2026-11-16.md`
+
+The audit found that the existing scanner foundation and date-comparison logic are useful, but the current active Volume Gainers path does not yet provide delivery-history accumulation, multi-quarter institutional ownership trends, promoter pledge trend, official surveillance risk, operator-trap assessment or technical entry readiness.
+
+The latest detailed live EOD artifact available during the audit was Run #335, head `012bd9e79eaee71a385f4cbcae2c77949faa855b`, which predates PR #139. It showed 23 eligible Main Board stocks, missing page volume for 23/23, 20/23 with all seven metric values populated, 17 officially verified metric observations, 25 mismatch observations and 23 WAIT_FOR_DATA assessments. News was found for 19, events for 7, bulk/block deals for 3, and the dedicated corporate-actions feed returned no rows. This is a historical baseline, not proof of current post-PR-#139 live behaviour.
+
+PR #139's scan-date and source-schema changes passed CI (121 tests), but the audit did not find a post-merge live Morning/EOD run. The next live evidence must verify the current merged code before any new module is enabled.
+
+## 8. Audit-based implementation order
+
+The original conceptual phases remain, but the actual implementation order is now data-first and adjusted to the measured gaps:
+
+1. **P0 — Protect and reconcile the existing ECMS baseline.**
+   - Add/lock regression tests for both comparison legs, session dates, holiday skip, cache restoration and separate Morning/EOD reports.
+   - Route ECMS Main Board/SME list caching into an ECMS-owned directory; the current shared helper writes under `data/cache/universe/`, contrary to the read-only contract.
+   - Reconcile `WORKFLOW_CONTRACT.md` EOD time (16:45) with the active 17:00 workflow.
+   - Record the current fundamental-only tests that must change only when the approved trap exclusion is implemented.
+   - Keep comparison semantics and all production NSE V8 files untouched.
+
+2. **P1 — Repair data provenance and coverage reporting.**
+   - Make the per-stock/per-metric report show the actual value source, URL, period, basis and unit separately from the official verification source/status.
+   - Resolve provenance from metric-level maps, not one stock-level period/basis.
+   - Separate primary fundamental provider refresh from secondary-source research cooldown.
+   - Add source-wise coverage, attempt counts, cache age, last successful fetch, last failed fetch and reason codes.
+   - Include the two currently omitted ECMS test files in CI validation.
+
+3. **P2 — Build the price/volume/delivery historical dataset.**
+   - Validate current NSE page volume aliases using a post-PR-#139 artifact.
+   - Resolve a trustworthy source for traded quantity/value when the page does not expose it.
+   - Collect 5/10/20/30-session OHLCV, delivery quantity, delivery percentage, delivered value, volume mean/median, RVOL and average traded value.
+   - Preserve session dates, adjusted/unadjusted status, units, symbol mapping and source coverage.
+   - Do not compare partial Morning volume directly with completed-day baselines.
+
+4. **P3 — Activate stock-specific ownership and institutional research.**
+   - Reuse and audit the existing NSE SHP XBRL parser.
+   - Store quarterly promoter, FII, DII and public holding history with exact filing and reporting-period identity.
+   - Research promoter pledge through a separately validated official disclosure source; current SHP parser does not map pledge.
+   - Add stock-specific insider/PIT/SAST disclosures and bulk/block deal context.
+   - Do not infer institutional identity from delivery or market-wide FII/DII flows.
+
+5. **P4 — Improve company-event and disclosure research.**
+   - Preserve the five-session announcement/news, 90-day event/board-meeting, 30-day deal and corporate-action windows.
+   - Keep batch endpoints batch-based.
+   - Add a bounded EOD incremental refresh after Morning for news and corporate actions so newly published disclosures are not missed when a complete Morning cache is reused.
+   - Add fetched-at/TTL and source-coverage metadata to exact-window caches.
+   - Deduplicate revisions and disclosures without losing the original filing identity.
+
+6. **P5 — Build surveillance and trap-risk research.**
+   - Collect current official ASM/GSM/ESM, Trade-to-Trade, Periodic Call Auction and price-band status with effective dates.
+   - Combine abnormal volume, effort-without-result, upper-wick rejection, gap reversal, failed breakout, delivery/price divergence, multi-session distribution and liquidity evidence.
+   - First run shadow-only; validate historical false positives and missed traps.
+   - Apply the user-approved exclusion only for a validated severe-risk rule or corroborated multi-signal rule. Keep a separate exclusion ledger.
+
+7. **P6 — Build technical entry-readiness research.**
+   - Add 20/50-session trend, Nifty/sector relative strength, breakout/retest/hold, closing quality, supply pressure, support/invalidation, gap risk, liquidity and risk/reward.
+   - Keep entry readiness separate from fundamental status and institutional evidence.
+   - No automated order or buy instruction.
+
+8. **P7 — Balanced candidate decision model.**
+   - Combine fundamentals, verified footprint, low trap risk and technical readiness as separate evidence dimensions.
+   - Fundamental FAIL cannot be overridden. Fundamental WAIT remains WAIT.
+   - High trap risk is excluded from the normal shortlist with reason and evidence preserved.
+   - NOT_VERIFIED/SOURCE_UNAVAILABLE stays verification-pending, never low-risk.
+   - Avoid one opaque weighted score; document all reasons.
+
+9. **P8 — Shadow validation and operational sign-off.**
+   - Validate historical forward outcomes, false exclusions, failed-breakout rate, data freshness, cache continuity, Telegram completeness and actual runtime.
+   - Complete a live post-PR-#139 EOD -> next-session Morning -> same-day EOD cycle.
+   - Enable exclusion/priority rules only after evidence review and explicit user approval.
+
+## 9. Next action
+
+Start with **P0 and P1 only**, on this isolated branch, one small reviewed PR at a time. First complete the exact code/test/source-lineage audit and baseline regression tests. Then correct cache isolation and metric-level provenance. Do not begin footprint scoring, trap exclusion or entry-readiness scoring until the relevant historical data and source coverage have been collected and verified.
+
+**This roadmap update changes documentation only. No scanner code, workflow schedule, comparison rule, cache key, fundamental threshold or production NSE V8 behaviour has been changed.**
