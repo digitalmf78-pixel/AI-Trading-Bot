@@ -792,3 +792,92 @@ def test_eod_snapshot_marker_records_both_scan_date_and_data_date(tmp_path, monk
     marker = json.loads((state_dir / "eod_snapshot_run_marker.json").read_text(encoding="utf-8"))
     assert marker["scan_date"] == "2026-11-16"
     assert marker["eod_date"] == "2026-11-13"
+
+
+def test_eod_snapshot_cache_guard_accepts_only_same_session_current_run():
+    from strategies.ecms.volume_gainers import _is_current_run_eod_snapshot_cacheable
+
+    row = {
+        "TckrSymb": "AAA",
+        "EODDate": "2026-11-13",
+        "SnapshotType": "EOD",
+        "SnapshotStatus": "VALID",
+    }
+    marker = {
+        "snapshot_type": "EOD",
+        "snapshot_status": "VALID",
+        "github_run_id": "run-13",
+        "symbol_count": 1,
+        "eod_date": "2026-11-13",
+        "scan_date": "2026-11-13",
+    }
+    assert _is_current_run_eod_snapshot_cacheable(marker, [row], "run-13")
+
+    # Monday's pre-close page can still show Friday's completed data, but it
+    # must not replace Friday's valid EOD snapshot for the next Morning.
+    stale_preclose = {**marker, "github_run_id": "run-16", "scan_date": "2026-11-16"}
+    assert not _is_current_run_eod_snapshot_cacheable(stale_preclose, [row], "run-16")
+    assert not _is_current_run_eod_snapshot_cacheable(marker, [row], "different-run")
+    assert not _is_current_run_eod_snapshot_cacheable(
+        {**marker, "symbol_count": 2}, [row], "run-13"
+    )
+    assert not _is_current_run_eod_snapshot_cacheable(
+        {**marker, "snapshot_status": "INVALID"}, [row], "run-13"
+    )
+
+
+def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monkeypatch):
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "data" / "cache" / "ecms"
+    eod_state = state_dir / "volume_gainers_previous_eod.csv"
+    morning_state = state_dir / "volume_gainers_same_day_morning.csv"
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "STATE_FILE", eod_state)
+    monkeypatch.setattr(scanner, "MORNING_STATE_FILE", morning_state)
+
+    # Friday EOD is the reference used by Monday Morning.
+    scanner._save_eod_snapshot(pd.DataFrame([{
+        "TckrSymb": "AAA", "PageVolume": 100, "EODScanDate": "2026-11-13",
+    }]), date(2026, 11, 13))
+    friday_reference = pd.read_csv(eod_state, dtype={"TckrSymb": str})
+    assert set(friday_reference["EODDate"]) == {"2026-11-13"}
+
+    # Monday Morning is saved separately; it must not overwrite Friday EOD.
+    scanner._save_same_day_morning_snapshot(pd.DataFrame([{
+        "TckrSymb": "AAA", "PageVolume": 120,
+        "MorningPageCapturedAtIST": "2026-11-16T09:20:00+05:30",
+        "FundamentalShortlistStatus": "PASS",
+    }, {
+        "TckrSymb": "BBB", "PageVolume": 80,
+        "MorningPageCapturedAtIST": "2026-11-16T09:20:00+05:30",
+        "FundamentalShortlistStatus": "WAIT_FOR_DATA",
+    }]), date(2026, 11, 16))
+    assert set(pd.read_csv(eod_state)["EODDate"]) == {"2026-11-13"}
+    assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-16"}
+
+    # Monday EOD compares against Monday Morning, not Friday EOD.
+    monday_eod_page = pd.DataFrame([
+        {"TckrSymb": "AAA", "PageVolume": 150},
+        {"TckrSymb": "CCC", "PageVolume": 70},
+    ])
+    compared = scanner._attach_same_day_morning_confirmation(
+        monday_eod_page, date(2026, 11, 16)
+    ).set_index("TckrSymb")
+    assert compared.loc["AAA", "MorningToEODStatus"] == "MORNING_AND_EOD_REPEAT"
+    assert compared.loc["CCC", "MorningToEODStatus"] == "EOD_NEW_ENTRY"
+    assert compared.loc["AAA", "MorningPageVolume"] == 120
+    assert compared.loc["AAA", "MorningFundamentalStatus"] == "PASS"
+
+    # After Monday EOD, Monday's EOD becomes the next trading day's Morning
+    # reference, while the same-day Morning snapshot remains a separate file.
+    scanner._save_eod_snapshot(pd.DataFrame([{
+        "TckrSymb": "AAA", "PageVolume": 150, "EODScanDate": "2026-11-16",
+    }, {
+        "TckrSymb": "CCC", "PageVolume": 70, "EODScanDate": "2026-11-16",
+    }]), date(2026, 11, 16))
+    next_morning_reference = pd.read_csv(eod_state, dtype={"TckrSymb": str})
+    assert set(next_morning_reference["EODDate"]) == {"2026-11-16"}
+    assert set(next_morning_reference["TckrSymb"]) == {"AAA", "CCC"}
+    assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-16"}
