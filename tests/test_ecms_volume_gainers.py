@@ -516,3 +516,13 @@ def test_eod_rejects_morning_snapshot_when_run_marker_does_not_match(tmp_path, m
 
     assert loaded.empty
     assert status == "NOT_CHECKED_INVALID_MORNING_SNAPSHOT"
+
+
+def test_same_day_page_presence_labels_cover_repeat_new_and_dropped_without_filtering():
+    from strategies.ecms.volume_gainers import _same_day_page_presence_status
+
+    assert _same_day_page_presence_status(True, True) == "MORNING_AND_EOD_REPEAT"
+    assert _same_day_page_presence_status(False, True) == "EOD_NEW_ENTRY"
+    assert _same_day_page_presence_status(True, False) == "MORNING_ONLY_DROPPED"
+    assert _same_day_page_presence_status(False, False) == "NOT_PRESENT"
+    assert _same_day_page_presence_status(True, True, "NOT_CHECKED_INVALID_MORNING_SNAPSHOT") == "NOT_CHECKED_INVALID_MORNING_SNAPSHOT"
