@@ -769,3 +769,26 @@ def test_fetch_volume_gainers_normalizes_compact_volume_and_keeps_raw_value():
     assert row["PageVolumeDataStatus"] == "DATA_FOUND"
     assert row["PageVolumeSourceField"] == "volume"
     assert row["PageVolumeRawValue"] == "23.91 L"
+
+
+
+def test_eod_snapshot_marker_records_both_scan_date_and_data_date(tmp_path, monkeypatch):
+    import json
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "ecms-state"
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "STATE_FILE", state_dir / "volume_gainers_previous_eod.csv")
+    frame = pd.DataFrame({
+        "TckrSymb": ["AAA"],
+        "CompanyName": ["Alpha Limited"],
+        "EODScanDate": ["2026-11-16"],
+        "PageVolume": [2_391_000],
+    })
+
+    scanner._save_eod_snapshot(frame, date(2026, 11, 13))
+
+    marker = json.loads((state_dir / "eod_snapshot_run_marker.json").read_text(encoding="utf-8"))
+    assert marker["scan_date"] == "2026-11-16"
+    assert marker["eod_date"] == "2026-11-13"
