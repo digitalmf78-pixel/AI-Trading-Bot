@@ -107,6 +107,7 @@ jobs:
           python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/filing_metadata_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py
           python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py
       - name: Run EOD page research
+        id: eod-research
         env:
           PYTHONUNBUFFERED: "1"
           V8_AUTO_FETCH_FUNDAMENTALS: "true"
@@ -116,7 +117,39 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode eod
+      - name: Validate current-run EOD snapshot before saving cache
+        id: eod-snapshot-check
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import csv, json, os
+          from pathlib import Path
+          marker_path = Path("data/cache/ecms/eod_snapshot_run_marker.json")
+          state_path = Path("data/cache/ecms/volume_gainers_previous_eod.csv")
+          valid = False
+          try:
+              marker = json.loads(marker_path.read_text(encoding="utf-8"))
+              with state_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                  rows = list(csv.DictReader(handle))
+              dates = {row.get("EODDate", "") for row in rows}
+              valid = (
+                  marker.get("snapshot_type") == "EOD"
+                  and marker.get("snapshot_status") == "VALID"
+                  and marker.get("github_run_id") == os.getenv("GITHUB_RUN_ID", "")
+                  and int(marker.get("symbol_count", 0)) > 0
+                  and len(rows) == int(marker.get("symbol_count", 0))
+                  and dates == {marker.get("eod_date", "")}
+                  and all(row.get("SnapshotType") == "EOD" and row.get("SnapshotStatus") == "VALID" for row in rows)
+              )
+          except Exception as exc:
+              print(f"Current-run EOD snapshot is not cacheable: {type(exc).__name__}: {exc}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"cacheable={'true' if valid else 'false'}\n")
+          print(f"ECMS_EOD_SNAPSHOT_CACHEABLE={valid}")
+          PY
       - name: Save previous EOD page universe and ECMS fundamental cache for morning recheck
+        if: always() && steps.eod-snapshot-check.outputs.cacheable == 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -319,7 +352,7 @@ jobs:
           if path.is_file():
               try:
                   data = json.loads(path.read_text(encoding="utf-8"))
-                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data")]:
+                  for key, label in [("morning_time_ist","Checked at"),("current_page_eligible_symbols","Morning page stocks"),("page_presence_double_confirmed","Stocks present in both EOD and Morning lists"),("morning_fundamental_pass","Morning Fundamental PASS"),("eod_fundamental_pass_repeats","EOD PASS repeated in morning"),("morning_new_entries","New morning entries"),("eod_only_not_on_morning_page","EOD-only not on morning page"),("double_confirmed","Fundamental PASS at both checkpoints"),("eod_pass_not_morning_pass","EOD PASS, morning not PASS"),("morning_wait_for_data","Wait for data")]:
                       if key in data: lines.append(f"{label}: {data[key]}")
               except Exception as exc:
                   lines.append(f"Summary unavailable: {type(exc).__name__}")

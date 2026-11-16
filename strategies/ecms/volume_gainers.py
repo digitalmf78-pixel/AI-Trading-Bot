@@ -712,6 +712,52 @@ def attach_information(assessed, as_of_date):
     return result, news, events, deals
 
 
+def _save_eod_snapshot(frame, eod_date):
+    """Atomically persist the EOD page universe before optional enrichment can fail."""
+    if frame.empty or "TckrSymb" not in frame.columns:
+        raise RuntimeError("ECMS_EOD_SNAPSHOT_ERROR: empty page or missing TckrSymb")
+    snapshot = frame.copy()
+    snapshot["TckrSymb"] = snapshot["TckrSymb"].astype(str).str.strip().str.upper()
+    if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
+        raise RuntimeError("ECMS_EOD_SNAPSHOT_ERROR: blank or duplicate symbols")
+    snapshot["EODDate"] = eod_date.isoformat()
+    keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
+            "AvgVolume1W", "VolumeChangeTimes1W", "AvgVolume2W",
+            "VolumeChangeTimes2W", "AvgVolume20D", "RVOL", "RVOLDataStatus", "EODDate"]
+    keep = [column for column in keep if column in snapshot.columns]
+    state = snapshot[keep].copy()
+    if "FundamentalShortlistStatus" in snapshot.columns:
+        state["EODFundamentalShortlistStatus"] = snapshot["FundamentalShortlistStatus"].values
+    elif "EODFundamentalShortlistStatus" not in state.columns:
+        state["EODFundamentalShortlistStatus"] = "NOT_ASSESSED"
+    if "StrongFundamentalNotForwardedReason" in snapshot.columns:
+        state["EODFundamentalNotForwardedReason"] = snapshot["StrongFundamentalNotForwardedReason"].values
+    if "FundamentalPassStatus" in snapshot.columns:
+        state["FundamentalPassStatus"] = snapshot["FundamentalPassStatus"].values
+    state["EODStrongFundamentalStatus"] = state["EODFundamentalShortlistStatus"].astype(str).str.upper().map({
+        "PASS": "EOD_FUNDAMENTAL_PASS", "FAIL": "EOD_FUNDAMENTAL_FAIL",
+    }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
+    state["SnapshotType"] = "EOD"
+    state["SnapshotStatus"] = "VALID"
+    state["SnapshotCapturedAtIST"] = datetime.now(IST).isoformat()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = STATE_FILE.with_name(STATE_FILE.name + ".tmp")
+    state.to_csv(temporary, index=False)
+    temporary.replace(STATE_FILE)
+    marker = {
+        "snapshot_type": "EOD", "snapshot_status": "VALID",
+        "eod_date": eod_date.isoformat(),
+        "symbol_count": int(state["TckrSymb"].nunique()),
+        "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
+        "github_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        "captured_at_ist": datetime.now(IST).isoformat(),
+    }
+    (STATE_DIR / "eod_snapshot_run_marker.json").write_text(
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8"
+    )
+    return state
+
+
 def run_eod():
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
@@ -725,6 +771,9 @@ def run_eod():
         raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
     eligible["EODDate"]=eod_date.isoformat(); eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
+    # Save the raw EOD universe first. Fundamental/news/RVOL enrichment must
+    # never be able to prevent tomorrow's 09:20 scanner from seeing this list.
+    _save_eod_snapshot(eligible, eod_date)
     eligible=attach_page_rvol(eligible,eod_date)
     assessed=assess_page_fundamentals(eligible,eod_date)
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
@@ -748,23 +797,9 @@ def run_eod():
     news.to_csv(OUTPUT_DIR/"volume_gainers_catalysts.csv",index=False)
     events.to_csv(OUTPUT_DIR/"volume_gainers_upcoming_events.csv",index=False)
     deals.to_csv(OUTPUT_DIR/"volume_gainers_bulk_block_deals.csv",index=False)
-    STATE_DIR.mkdir(parents=True,exist_ok=True)
-    state_columns=["TckrSymb","CompanyName","PageVolume","LTP","ChangePct","AvgVolume1W",
-      "VolumeChangeTimes1W","AvgVolume2W","VolumeChangeTimes2W","AvgVolume20D","RVOL",
-      "RVOLDataStatus","EODDate"]
-    for column in ("FundamentalShortlistStatus", "StrongFundamentalNotForwardedReason",
-                   "FundamentalPassStatus"):
-        if column in assessed.columns:
-            state_columns.append(column)
-    state=assessed[state_columns].copy()
-    state=state.rename(columns={
-      "FundamentalShortlistStatus":"EODFundamentalShortlistStatus",
-      "StrongFundamentalNotForwardedReason":"EODFundamentalNotForwardedReason"})
-    state["EODStrongFundamentalStatus"] = state["EODFundamentalShortlistStatus"].astype(str).str.upper().map({
-        "PASS": "EOD_FUNDAMENTAL_PASS",
-        "FAIL": "EOD_FUNDAMENTAL_FAIL",
-    }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
-    state.to_csv(STATE_FILE,index=False)
+    # Refresh the EOD snapshot with available assessment fields, but keep the
+    # snapshot valid even if later informational enrichment or Telegram fails.
+    _save_eod_snapshot(assessed, eod_date)
     provider_diag_path = OUTPUT_DIR / "fundamental_provider_diagnostics.csv"
     provider_diag = pd.read_csv(provider_diag_path) if provider_diag_path.exists() and provider_diag_path.stat().st_size else pd.DataFrame()
     provider_status = provider_diag.get("ProviderStatus", pd.Series(dtype=str)).astype(str).str.upper()
@@ -798,6 +833,17 @@ def _strong_fundamental_mask(frame):
     return shortlist.eq("PASS")
 
 
+def _page_presence_confirmation_status(eod_present, morning_present):
+    """Workflow-only confirmation: the same symbol appeared at both checkpoints."""
+    if eod_present and morning_present:
+        return "DOUBLE_CONFIRMED_EOD_MORNING"
+    if eod_present:
+        return "EOD_ONLY_NOT_ON_MORNING_PAGE"
+    if morning_present:
+        return "NEW_MORNING_ENTRY"
+    return "NOT_PRESENT"
+
+
 def _confirmation_status(eod_pass, present, morning_pass):
     if eod_pass and present and morning_pass:
         return "DOUBLE_CONFIRMED_EOD_MORNING"
@@ -817,6 +863,13 @@ def run_morning():
     if not STATE_FILE.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
     previous=pd.read_csv(STATE_FILE,dtype={"TckrSymb":str})
     if previous.empty or "TckrSymb" not in previous: raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
+    previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
+    if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
+        raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot has blank or duplicate symbols")
+    if "SnapshotType" in previous and not previous["SnapshotType"].astype(str).eq("EOD").all():
+        raise RuntimeError("WAIT_FOR_DATA: cached snapshot is not tagged as EOD")
+    if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
+        raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
     expected_eod = expected_latest_completed_session().isoformat()
     stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
     if stored_dates != {expected_eod}:
@@ -875,6 +928,10 @@ def run_morning():
              "EOD_REPEAT_NOT_FUNDAMENTAL_PASS" if symbol in previous_symbols and present else
              "EOD_ONLY_NOT_ON_MORNING_PAGE" if symbol in previous_symbols else "NEW_MORNING_ENTRY"
           ),
+          "PagePresenceConfirmationStatus": _page_presence_confirmation_status(
+             symbol in previous_symbols, present
+          ),
+          "PagePresenceDoubleConfirmed": bool(symbol in previous_symbols and present),
           "EODPageVolume":old.get("PageVolume"),
           "MorningPageVolume":current.get("PageVolume"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
@@ -925,6 +982,9 @@ def run_morning():
       "eod_fundamental_pass_repeats":int(report["MorningStatus"].eq("EOD_FUNDAMENTAL_PASS_REPEAT").sum()),
       "eod_only_not_on_morning_page":int(report["MorningStatus"].eq("EOD_ONLY_NOT_ON_MORNING_PAGE").sum()),
       "double_confirmed":int(report["ConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
+      "page_presence_double_confirmed":int(report["PagePresenceDoubleConfirmed"].sum()),
+      "page_presence_eod_only":int(report["PagePresenceConfirmationStatus"].eq("EOD_ONLY_NOT_ON_MORNING_PAGE").sum()),
+      "page_presence_morning_only":int(report["PagePresenceConfirmationStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "eod_pass_not_morning_pass":int(report["ConfirmationStatus"].eq("EOD_PASS_MORNING_NOT_PASS").sum()),
       "nse_page":NSE_PAGE,
       "note":"Every eligible 09:20 page candidate receives the same fundamental-only gate. Repeat/new/disappeared labels are informational; no other data field rejects a stock."}
