@@ -1010,11 +1010,15 @@ def run_eod():
     # never be able to prevent tomorrow's 09:20 scanner from seeing this list.
     _save_eod_snapshot(eligible, eod_date)
     eligible=attach_page_rvol(eligible,eod_date)
-    assessed=assess_page_fundamentals(eligible,eod_date)
+    # Fundamentals and event/news windows are evaluated as of this scan date;
+    # completed-session RVOL remains tied to eod_date above.
+    assessed=assess_page_fundamentals(eligible,scan_date)
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
-    assessed, news, events, deals, corporate_actions = attach_information(assessed, eod_date)
+    # Research windows (news, announcements, deals, events and actions) use
+    # the current scan date, not a potentially older completed Bhavcopy date.
+    assessed, news, events, deals, corporate_actions = attach_information(assessed, scan_date)
     # Compare against the Morning scan from this scan's IST calendar date,
     # not the older completed-session date used by Bhavcopy/RVOL.
     assessed = _attach_same_day_morning_confirmation(assessed, scan_date)
