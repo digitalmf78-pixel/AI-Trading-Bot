@@ -72,6 +72,9 @@ def test_bulk_and_block_deals_are_parsed_as_disclosed_sides():
     aaa = audit.set_index("TckrSymb").loc["AAA"]
     assert aaa["BulkDealCount"] == 2
     assert aaa["BlockDealCount"] == 1
+    assert aaa["BulkDealCountLast5Days"] == 2
+    assert aaa["BlockDealCountLast5Days"] == 1
+    assert "BULK 2026-11-14" in aaa["BulkBlockSummaryLast5Days"]
     assert aaa["BulkBuyers"] == "Fund Alpha"
     assert aaa["BulkSellers"] == "Fund Beta"
     assert audit.set_index("TckrSymb").loc["BBB", "BulkBlockDealStatus"] == "NO_DISCLOSED_DEALS_IN_LOOKBACK"
@@ -94,3 +97,41 @@ def test_as_date_recognizes_iso_exchange_date_without_dayfirst_ambiguity():
     from strategies.ecms.information import _as_date
     assert _as_date("2026-11-15") == date(2026, 11, 15)
     assert _as_date("15-Nov-2026") == date(2026, 11, 15)
+
+
+
+def test_news_uses_five_trading_sessions_and_reuses_only_complete_exact_window_cache(tmp_path, monkeypatch):
+    from strategies.ecms import eod
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(eod, "UNIVERSE_DIR", tmp_path / "missing-universe")
+    monkeypatch.setattr(eod, "is_trading_session", lambda day: day.weekday() < 5)
+    calls = {"official": 0, "secondary": 0}
+    requested = []
+
+    def official(symbol, start, end):
+        calls["official"] += 1
+        requested.append((start, end))
+        return ([{"TckrSymb": symbol, "PublishedDate": end.isoformat(),
+                  "Headline": "Official filing", "Source": "NSE",
+                  "SourceType": "OFFICIAL", "URL": "https://nseindia.com"}], "AVAILABLE")
+
+    def secondary(symbol, company, start, end):
+        calls["secondary"] += 1
+        return ([], "AVAILABLE")
+
+    candidates = pd.DataFrame([{"TckrSymb": "AAA"}])
+    first, audit = eod.collect_catalysts(
+        candidates, date(2026, 11, 13),
+        official_fetcher=official, secondary_fetcher=secondary,
+    )
+    second, second_audit = eod.collect_catalysts(
+        candidates, date(2026, 11, 13),
+        official_fetcher=official, secondary_fetcher=secondary,
+    )
+
+    assert requested == [(date(2026, 11, 9), date(2026, 11, 13))]
+    assert calls == {"official": 1, "secondary": 1}
+    assert len(first) == len(second) == 1
+    assert audit.iloc[0]["NewsWindowStart"] == "2026-11-09"
+    assert second_audit.iloc[0]["CatalystStatus"] == "CATALYST_FOUND"
