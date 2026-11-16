@@ -18,7 +18,7 @@ from fundamental_shortlist import build_fundamental_shortlist
 
 ROOT = Path(".")
 BHAVCOPY_DIR = ROOT / "data/bhavcopy"
-UNIVERSE_DIR = ROOT / "data/cache/universe"
+UNIVERSE_DIR = ROOT / "data/cache/ecms/universe"
 METRICS_PATH = ROOT / "data/inputs/fundamental_metrics.csv"
 THRESHOLDS_PATH = ROOT / "data/inputs/fundamental_thresholds.json"
 FILINGS_PATH = ROOT / "outputs/v8_official_financial_results_filings.csv"
@@ -209,7 +209,7 @@ def load_official_mainboard_symbols(universe_dir: Path = UNIVERSE_DIR) -> tuple[
     """
     from main_board_filter import load_official_board_lists
 
-    main_symbols, sme_symbols, sources = load_official_board_lists()
+    main_symbols, sme_symbols, sources = load_official_board_lists(cache_dir=universe_dir)
     # The shared universe fetcher remains unchanged for production NSE V8.
     # ECMS applies its own stricter company-equity gate using the official ISIN column.
     csv_path = universe_dir / "nse_main_board_equity.csv"
