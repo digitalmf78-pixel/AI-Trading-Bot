@@ -35,10 +35,10 @@ This list describes the earlier reporting baseline. The approved target strategy
 
 ## Morning repeat classification
 
-- Reassess every eligible stock visible on the 09:20 NSE Volume Gainers page with the same fundamental-only rule. Include the EOD RVOL for context; do not compare partial-session morning volume with full-day RVOL.
-- If a stock had Fundamental PASS in the saved EOD snapshot and appears again on the morning page, label it `EOD_FUNDAMENTAL_PASS_REPEAT`.
-- Distinguish that from `NEW_MORNING_ENTRY`, `EOD_ONLY_NOT_ON_MORNING_PAGE`, and `MORNING_FUNDAMENTAL_FAIL` / `MORNING_WAIT_FOR_DATA`.
-- Repeat/new/disappeared labels remain page-presence context only and do not independently change fundamental status or create a separate rejection rule.
+- Reassess every eligible stock visible on the 09:20 NSE Volume Gainers page. Fundamental status is one evidence layer, not the overall morning decision. Include the EOD RVOL for context; do not compare partial-session morning volume with full-day RVOL.
+- Repeat/new/disappeared labels describe page presence only, independent of fundamental status. Keep the EOD and Morning fundamental results in separate columns.
+- `PASS` means the fundamental layer passed and the stock still proceeds to balanced research. A fully verified `FAIL` may invoke the approved fundamental rejection rule. `WAIT_FOR_DATA` / `PARTIAL` must be forwarded to the remaining research layers; missing evidence alone is never a rejection.
+- `FundamentalDecisionRole` and `ResearchContinuationStatus` must make this distinction explicit in Morning and EOD outputs. Do not label a page repeat as a fundamental pass or as an overall stock confirmation.
 
 ## Sources and quality
 
