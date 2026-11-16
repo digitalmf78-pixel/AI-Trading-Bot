@@ -516,3 +516,23 @@ def test_main_skips_holiday_without_running_scan(monkeypatch, capsys):
     assert '"reason": "OFFICIAL_NSE_NON_TRADING_DAY"' in output
     assert '"mode": "MORNING"' in output
 
+
+def test_eligible_page_equities_keeps_only_official_mainboard_symbols(monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+
+    monkeypatch.setattr(
+        scanner,
+        "load_official_mainboard_symbols",
+        lambda: ({"MAIN1", "MAIN2"}, "official-nse-mainboard-minus-sme"),
+    )
+    page = pd.DataFrame({
+        "TckrSymb": ["MAIN1", "SME1", "ETF1", "INDEX1", "MAIN2"],
+        "Series": ["EQ", "SM", "ETF", "INDEX", "EQ"],
+    })
+
+    eligible, source = scanner._eligible_page_equities(page)
+
+    assert eligible["TckrSymb"].tolist() == ["MAIN1", "MAIN2"]
+    assert eligible["PageUniverseStatus"].eq("PASS_MAIN_BOARD_EQUITY").all()
+    assert source == "official-nse-mainboard-minus-sme"
+
