@@ -1,4 +1,4 @@
-# ECMS workflow contract — fundamental-only gate
+# ECMS workflow contract — approved volume-origin research strategy
 
 ## Workflow and schedule
 
@@ -13,13 +13,13 @@
 - The morning job restores the latest active EOD snapshot and ECMS fundamental workspace. After a successful prior-EOD comparison and persistence of the current Morning snapshot/report, it consumes the old active EOD reference. The current Morning snapshot remains for same-session EOD comparison. A valid same-session EOD then becomes the next trading session's active EOD reference.
 - If Morning comparison/report persistence fails, the previous EOD reference remains available for retry. Holiday runs do not create or overwrite snapshots. EOD and morning artifacts/Telegram reports are separate.
 
-## Universe and sole rejection rule
+## Universe and conditional fundamental gate
 
 - Process eligible NSE Main Board equity rows returned by the NSE Volume Gainers page.
-- **Fundamental assessment is the only stock rejection filter.**
+- Fundamentals may act as a rejection gate only when all applicable required metrics are complete, current, period/basis aligned and sufficiently verified. If data is incomplete, stale, conflicting or unverified, retain WAIT/PARTIAL status and continue other research; do not reject solely for missing data.
 - Required applicable fundamental metrics: Revenue Growth, Profit Growth, ROE, ROCE, Debt/Equity, Interest Coverage and Operating Cash Flow, using the configured threshold file and approved sector applicability.
-- Fundamental PASS is the only status that includes a stock in the fundamental-pass set. Fundamental FAIL is rejected. Missing/stale/conflicting/unverified required fundamental evidence is `WAIT_FOR_DATA`; never force it to PASS.
-- Do not add RVOL, catalyst/news sentiment, upcoming events/results, valuation, bulk/block deals, research score/grade, coverage percentage, sector momentum or technical conditions as rejection, ranking-gate or suppression rules.
+- Fundamental PASS/FAIL/WAIT remains a separate assessment. A verified fundamental FAIL may be rejected under approved sector-specific rules; WAIT/PARTIAL is not a pass, but it is not automatically rejected for missing evidence. Never force WAIT to PASS.
+- RVOL, delivery/price behaviour, catalysts/news/events, valuation, bulk/block deals, sector context and technical evidence contribute to the later balanced research classification. They must not be used as unverified standalone rejection gates. Confirmed severe trap/surveillance risk may exclude only under the P5 evidence policy.
 
 ## Seven report information groups
 
@@ -55,3 +55,16 @@ All groups except fundamentals are informational. Their positive, negative or un
 - ECMS state/cache stays under `data/cache/ecms/`; reports stay under `outputs/ecms/`.
 - No edits to `.github/workflows/nse-test-scheduled.yml`, NSE V8, shared providers, production scanner, shared thresholds or unrelated workflows.
 - Research/shadow-only. No broker integration, order placement, auto-buy or auto-sell.
+
+
+## Approved strategy decisions and P0–P8 roadmap (16-Nov-2026)
+
+The current target strategy and phase order are defined in [ECMS README — Approved ECMS strategy and execution roadmap](README.md#approved-ecms-strategy-and-execution-roadmap--16-nov-2026). That section is the ECMS decision record and supersedes older fundamental-only wording in this contract.
+
+- Objective: identify whether NSE Volume Gainer volume has positive demand/accumulation evidence, negative selling/distribution evidence, a genuine event catalyst or suspicious/high-risk evidence. A Volume Gainer is a research candidate, not a buy signal; profit is not guaranteed.
+- Process every eligible Main Board stock returned by the NSE Volume Gainers page; no Top-N cap on eligible page rows.
+- No basket construction and no historical backtesting. P8 means live Morning/EOD shadow-output, cache, report, Telegram, coverage and runtime verification only.
+- Collect fundamentals for every eligible page stock. Complete, current, applicable and verified fundamentals may use the approved fundamental rejection rules. Incomplete/unverified fundamentals remain WAIT/PARTIAL and must not alone reject; continue the remaining research layers without calling the stock fundamentally strong.
+- Positive/negative volume-origin classification must combine price, volume, delivery and follow-through with company disclosures and other available evidence. High delivery alone does not prove accumulation; missing data does not prove negative activity or a clean bill of health.
+- Trap handling is EXCLUDE only for severe risk supported by a validated rule or corroborated evidence. Preserve a separate evidence-backed exclusion ledger.
+- Work strictly P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8. Do not change the two-scan schedule or production NSE V8 boundaries.
