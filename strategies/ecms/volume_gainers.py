@@ -982,6 +982,30 @@ def _save_eod_snapshot(frame, eod_date):
 
 
 
+def _consume_previous_eod_snapshot(expected_eod_date):
+    """Consume the prior EOD reference only after Morning comparison is complete."""
+    if not STATE_FILE.exists():
+        raise RuntimeError("ECMS_MORNING_STATE_ERROR: prior EOD reference disappeared before consumption")
+    previous = pd.read_csv(STATE_FILE, dtype={"TckrSymb": str})
+    if previous.empty or "EODDate" not in previous.columns:
+        raise RuntimeError("ECMS_MORNING_STATE_ERROR: prior EOD reference is empty or has no EODDate")
+    dates = set(previous["EODDate"].dropna().astype(str))
+    if dates != {str(expected_eod_date)}:
+        raise RuntimeError(
+            f"ECMS_MORNING_STATE_ERROR: refusing to consume EOD reference dates {sorted(dates)}; "
+            f"expected {expected_eod_date}"
+        )
+    # Remove the active reference only. The Morning snapshot is a separate file
+    # and remains available for the same-session EOD comparison.
+    STATE_FILE.unlink()
+    marker_path = STATE_DIR / "eod_snapshot_run_marker.json"
+    try:
+        marker_path.unlink()
+    except FileNotFoundError:
+        pass
+    return True
+
+
 def _save_same_day_morning_snapshot(frame, morning_date):
     """Persist the full same-day morning page and its assessment/context for EOD reuse."""
     if frame.empty or "TckrSymb" not in frame.columns:
@@ -1404,6 +1428,9 @@ def run_morning():
       "eod_pass_not_morning_pass":int(report["ConfirmationStatus"].eq("EOD_PASS_MORNING_NOT_PASS").sum()),
       "nse_page":NSE_PAGE,
       "note":"Every eligible 09:20 page candidate receives the same fundamental-only gate. Repeat/new/disappeared labels are informational; no other data field rejects a stock."}
+    # The comparison report and same-day Morning snapshot are now persisted.
+    # Only now consume the previous EOD reference; failures above leave it intact.
+    summary["previous_eod_reference_consumed"] = _consume_previous_eod_snapshot(expected_eod)
     (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def main():
