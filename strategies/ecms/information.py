@@ -16,6 +16,7 @@ from strategies.ecms.eod import HEADERS
 from nse_trading_calendar import is_trading_session
 
 NSE_EVENT_CALENDAR_URL = "https://www.nseindia.com/api/event-calendar"
+NSE_BOARD_MEETINGS_URL = "https://www.nseindia.com/api/corporate-board-meetings"
 NSE_DEALS_URL = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
 NSE_EVENT_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar"
 NSE_DEALS_PAGE = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
@@ -82,10 +83,14 @@ def _as_date(value):
 
 def collect_upcoming_events(symbols, as_of_date: date, lookahead_days=EVENT_LOOKAHEAD_DAYS,
                             session=None):
-    """Return confirmed NSE event-calendar rows and per-symbol status."""
+    """Combine NSE's event calendar and board-meeting calendar for the full cohort."""
     symbols = sorted({str(item).strip().upper() for item in symbols if str(item).strip()})
     end_date = as_of_date + timedelta(days=int(lookahead_days))
     rows, audit = [], []
+    client = None
+    calendar_status = "SOURCE_UNAVAILABLE"
+    board_status = "SOURCE_UNAVAILABLE"
+
     try:
         client = _nse_session(session, NSE_EVENT_PAGE)
         response = client.get(
@@ -101,56 +106,108 @@ def collect_upcoming_events(symbols, as_of_date: date, lookahead_days=EVENT_LOOK
         raw_rows = _payload_rows(response)
         if any(not isinstance(item, dict) for item in raw_rows):
             raise ValueError("NSE event calendar contains non-object rows")
+        calendar_status = "AVAILABLE"
         for item in raw_rows:
-            symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol")).strip().upper()
+            symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol", "BD_SYMBOL")).strip().upper()
             if symbol not in symbols:
                 continue
-            event_date = _as_date(_pick(item, "date", "eventDate", "meetingDate", "meeting_date"))
+            event_date = _as_date(_pick(item, "date", "eventDate", "event_date", "meetingDate", "meeting_date"))
             if event_date is None or not as_of_date <= event_date <= end_date:
                 continue
             purpose = str(_pick(item, "purpose", "Purpose", "eventType", "category")).strip()
             details = str(_pick(item, "details", "Details", "description", "subject")).strip()
             rows.append({
-                "TckrSymb": symbol,
-                "EventDate": event_date.isoformat(),
-                "EventType": purpose or "COMPANY_EVENT",
-                "EventDetails": details,
-                "Source": "NSE Event Calendar",
-                "SourceType": "OFFICIAL",
+                "TckrSymb": symbol, "EventDate": event_date.isoformat(),
+                "EventType": purpose or "COMPANY_EVENT", "EventDetails": details,
+                "Source": "NSE Event Calendar", "SourceType": "OFFICIAL",
                 "SourceURL": NSE_EVENT_PAGE,
-                "IsResultEvent": bool(re.search(r"financial\s*results?|quarterly\s*results?", purpose + " " + details, re.I)),
+                "IsResultEvent": bool(re.search(
+                    r"financial\s*results?|quarterly\s*results?|unaudited|audited results",
+                    purpose + " " + details, re.I
+                )),
             })
-        events = pd.DataFrame(rows, columns=[
-            "TckrSymb", "EventDate", "EventType", "EventDetails",
-            "Source", "SourceType", "SourceURL", "IsResultEvent",
-        ])
-        for symbol in symbols:
-            symbol_rows = events[events["TckrSymb"].eq(symbol)].sort_values("EventDate") if not events.empty else pd.DataFrame()
-            result_rows = symbol_rows[symbol_rows["IsResultEvent"].astype(bool)].sort_values("EventDate") if not symbol_rows.empty else pd.DataFrame()
-            audit.append({
-                "TckrSymb": symbol,
-                "UpcomingEventsStatus": "AVAILABLE" if not symbol_rows.empty else "NO_CONFIRMED_UPCOMING_EVENTS",
-                "UpcomingEvents": " | ".join(
-                    f"{r.EventDate}: {r.EventType}" for r in symbol_rows.itertuples()
-                ),
-                "NextResultDate": result_rows.iloc[0]["EventDate"] if not result_rows.empty else "NOT ANNOUNCED",
-                "NextResultDetails": result_rows.iloc[0]["EventDetails"] if not result_rows.empty else "",
-                "EventCalendarSourceURL": NSE_EVENT_PAGE,
-            })
-        return events, pd.DataFrame(audit)
     except Exception as exc:
-        audit = [{
+        calendar_status = f"SOURCE_UNAVAILABLE:{type(exc).__name__}"
+
+    try:
+        if client is None:
+            client = _nse_session(session, NSE_EVENT_PAGE)
+        response = client.get(
+            NSE_BOARD_MEETINGS_URL,
+            params={
+                "index": "equities",
+                "from_date": as_of_date.strftime("%d-%m-%Y"),
+                "to_date": end_date.strftime("%d-%m-%Y"),
+            },
+            timeout=(5, 20),
+        )
+        response.raise_for_status()
+        raw_rows = _payload_rows(response)
+        if any(not isinstance(item, dict) for item in raw_rows):
+            raise ValueError("NSE board-meetings response contains non-object rows")
+        board_status = "AVAILABLE"
+        for item in raw_rows:
+            symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol", "bm_symbol")).strip().upper()
+            if symbol not in symbols:
+                continue
+            meeting_date = _as_date(_pick(item, "meetingDate", "meeting_date", "bm_date", "date"))
+            if meeting_date is None or not as_of_date <= meeting_date <= end_date:
+                continue
+            purpose = str(_pick(item, "purpose", "bm_purpose", "eventType", "category")).strip()
+            details = str(_pick(item, "description", "bm_desc", "details", "subject")).strip()
+            rows.append({
+                "TckrSymb": symbol, "EventDate": meeting_date.isoformat(),
+                "EventType": purpose or "BOARD_MEETING", "EventDetails": details,
+                "Source": "NSE Board Meetings", "SourceType": "OFFICIAL",
+                "SourceURL": NSE_EVENT_PAGE,
+                "IsResultEvent": bool(re.search(
+                    r"financial\s*results?|quarterly\s*results?|unaudited|audited results",
+                    purpose + " " + details, re.I
+                )),
+            })
+    except Exception as exc:
+        board_status = f"SOURCE_UNAVAILABLE:{type(exc).__name__}"
+
+    events = pd.DataFrame(rows, columns=[
+        "TckrSymb", "EventDate", "EventType", "EventDetails",
+        "Source", "SourceType", "SourceURL", "IsResultEvent",
+    ])
+    if not events.empty:
+        events = events.drop_duplicates(
+            subset=["TckrSymb", "EventDate", "EventType", "EventDetails"], keep="first"
+        ).sort_values(["TckrSymb", "EventDate", "EventType"]).reset_index(drop=True)
+
+    coverage = (
+        "COMPLETE" if calendar_status == "AVAILABLE" and board_status == "AVAILABLE"
+        else "PARTIAL" if calendar_status == "AVAILABLE" or board_status == "AVAILABLE"
+        else "UNAVAILABLE"
+    )
+    for symbol in symbols:
+        symbol_rows = events[events["TckrSymb"].eq(symbol)] if not events.empty else pd.DataFrame()
+        result_rows = (
+            symbol_rows[symbol_rows["IsResultEvent"].astype(bool)].sort_values("EventDate")
+            if not symbol_rows.empty else pd.DataFrame()
+        )
+        if not symbol_rows.empty:
+            status = "AVAILABLE"
+        elif coverage == "COMPLETE":
+            status = "NO_CONFIRMED_UPCOMING_EVENTS"
+        else:
+            status = "WAIT_FOR_DATA"
+        audit.append({
             "TckrSymb": symbol,
-            "UpcomingEventsStatus": f"WAIT_FOR_DATA:{type(exc).__name__}",
-            "UpcomingEvents": "NOT AVAILABLE",
-            "NextResultDate": "NOT AVAILABLE",
-            "NextResultDetails": "",
+            "UpcomingEventsStatus": status,
+            "UpcomingEventsSourceCoverageStatus": coverage,
+            "EventCalendarSourceStatus": calendar_status,
+            "BoardMeetingSourceStatus": board_status,
+            "UpcomingEvents": " | ".join(
+                f"{r.EventDate}: {r.EventType} ({r.Source})" for r in symbol_rows.itertuples()
+            ),
+            "NextResultDate": result_rows.iloc[0]["EventDate"] if not result_rows.empty else "NOT ANNOUNCED",
+            "NextResultDetails": result_rows.iloc[0]["EventDetails"] if not result_rows.empty else "",
             "EventCalendarSourceURL": NSE_EVENT_PAGE,
-        } for symbol in symbols]
-        return pd.DataFrame(columns=[
-            "TckrSymb", "EventDate", "EventType", "EventDetails",
-            "Source", "SourceType", "SourceURL", "IsResultEvent",
-        ]), pd.DataFrame(audit)
+        })
+    return events, pd.DataFrame(audit)
 
 
 def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKBACK_DAYS,
@@ -181,17 +238,17 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             for item in raw_rows:
                 if not isinstance(item, dict):
                     continue
-                symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol")).strip().upper()
+                symbol = str(_pick(item, "symbol", "SYMBOL", "tradingSymbol", "BD_SYMBOL")).strip().upper()
                 if symbol not in symbols:
                     continue
-                deal_date = _as_date(_pick(item, "date", "tradeDate", "dealDate"))
+                deal_date = _as_date(_pick(item, "date", "tradeDate", "dealDate", "BD_DT_DATE", "BD_DT_ORDER"))
                 if deal_date is None or not start_date <= deal_date <= as_of_date:
                     continue
-                side = str(_pick(item, "buySell", "buy/sell", "side", "buySellIndicator")).strip().upper()
-                client_name = str(_pick(item, "clientName", "client name", "client")).strip()
-                quantity = _pick(item, "quantityTraded", "quantity traded", "quantity", "qty")
-                price = _pick(item, "tradePrice", "trade price", "trade price / wght. avg. price", "trade price / weighted average price", "weighted average price", "price")
-                remarks = str(_pick(item, "remarks", "remark")).strip()
+                side = str(_pick(item, "buySell", "buy/sell", "side", "buySellIndicator", "BD_BUY_SELL")).strip().upper()
+                client_name = str(_pick(item, "clientName", "client name", "client", "BD_CLIENT_NAME")).strip()
+                quantity = _pick(item, "quantityTraded", "quantity traded", "quantity", "qty", "BD_QTY_TRD")
+                price = _pick(item, "tradePrice", "trade price", "trade price / wght. avg. price", "trade price / weighted average price", "weighted average price", "price", "BD_TP_WATP")
+                remarks = str(_pick(item, "remarks", "remark", "BD_REMARKS")).strip()
                 deals.append({
                     "TckrSymb": symbol,
                     "DealDate": deal_date.isoformat(),
@@ -252,6 +309,13 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             "BulkBlockLookbackStart": start_date.isoformat(),
             "BulkBlockLookbackEnd": as_of_date.isoformat(),
             "BulkBlockSourceURL": NSE_DEALS_PAGE,
+            "BulkDealsSourceStatus": type_status.get("bulk_deals", "NOT_ATTEMPTED"),
+            "BlockDealsSourceStatus": type_status.get("block_deals", "NOT_ATTEMPTED"),
+            "BulkBlockSourceCoverageStatus": (
+                "COMPLETE" if all(type_status.get(key) == "AVAILABLE" for key in ("bulk_deals", "block_deals"))
+                else "PARTIAL" if any(type_status.get(key) == "AVAILABLE" for key in ("bulk_deals", "block_deals"))
+                else "UNAVAILABLE"
+            ),
         })
     return deal_frame, pd.DataFrame(audit)
 

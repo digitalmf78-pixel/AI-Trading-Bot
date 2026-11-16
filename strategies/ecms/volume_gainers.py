@@ -32,7 +32,7 @@ ALIASES = {
  "symbol": ("symbol","tradingSymbol","ticker"),
  "company": ("securityName","companyName","company","name"),
  "series": ("series","securitySeries"),
- "volume": ("volume","totalTradedVolume","totalTradedQty","tradedVolume","quantity"),
+ "volume": ("volume","totalTradedVolume","totalTradedQty","totalTradedQuantity","tradedVolume","tradedQty","tradedQuantity","quantityTraded","qtyTraded","volumeTraded","totalVolume","quantity"),
  "ltp": ("ltp","lastPrice","lastTradedPrice","closePrice"),
  "change_pct": ("pChange","perChange","changePercent","percentChange"),
  "turnover": ("turnover","totalTradedValue","value"),
@@ -84,10 +84,28 @@ def fetch_volume_gainers(session=None):
     for row in rows:
         symbol=str(_get(row,ALIASES["symbol"]) or "").strip().upper()
         if not symbol or symbol in {"-","NAN","NONE"}: continue
+        exact_volume_field = next((
+            str(key) for key in row
+            if _key(key) in {_key(alias) for alias in ALIASES["volume"]}
+            and _number(row.get(key)) is not None
+        ), "")
+        fuzzy_volume_fields = [
+            str(key) for key in row
+            if any(token in _key(key) for token in ("volume", "tradedqty", "tradedquantity", "qtytraded"))
+            and not any(token in _key(key) for token in ("avg", "average", "week", "change", "percent"))
+            and _number(row.get(key)) is not None
+        ]
+        volume_field = exact_volume_field or (fuzzy_volume_fields[0] if len(fuzzy_volume_fields) == 1 else "")
+        volume_raw = row.get(volume_field) if volume_field else _get(row, ALIASES["volume"])
+        payload_keys = "|".join(sorted(str(key) for key in row))
+        volume_like_fields = "|".join(sorted(
+            str(key) for key in row
+            if any(token in _key(key) for token in ("volume", "tradedqty", "tradedquantity", "qtytraded"))
+        ))
         normalized.append({
           "TckrSymb":symbol, "CompanyName":str(_get(row,ALIASES["company"]) or ""),
           "Series":str(_get(row,ALIASES["series"]) or "").strip().upper(),
-          "PageVolume":_number(_get(row,ALIASES["volume"])), "LTP":_number(_get(row,ALIASES["ltp"])),
+          "PageVolume":_number(volume_raw), "LTP":_number(_get(row,ALIASES["ltp"])),
           "ChangePct":_number(_get(row,ALIASES["change_pct"])), "Turnover":_number(_get(row,ALIASES["turnover"])),
           "AvgVolume1W":_number(_get(row,ALIASES["avg_volume_1w"])),
           "VolumeChangePct1W":_number(_get(row,ALIASES["change_pct_1w"])),
@@ -95,8 +113,11 @@ def fetch_volume_gainers(session=None):
           "VolumeChangePct2W":_number(_get(row,ALIASES["change_pct_2w"])),
           "VolumeChangeTimes1W":_number(_get(row,ALIASES["change_times_1w"])),
           "VolumeChangeTimes2W":_number(_get(row,ALIASES["change_times_2w"])),
-          "PageVolumeDataStatus":"DATA_FOUND" if _number(_get(row,ALIASES["volume"])) is not None else "MISSING_FROM_NSE_RESPONSE",
-          "PageVolumeSourceField":next((str(k) for k in row if _key(k) in {_key(a) for a in ALIASES["volume"]} and _number(row.get(k)) is not None), ""),
+          "PageVolumeDataStatus":"DATA_FOUND" if _number(volume_raw) is not None else "MISSING_FROM_NSE_RESPONSE",
+          "PageVolumeSourceField":volume_field,
+          "PageVolumeRawValue":"" if volume_raw is None else str(volume_raw),
+          "NSEPayloadKeys":payload_keys,
+          "NSEPayloadVolumeLikeFields":volume_like_fields,
           "NSEUpdatedAt":str(_get(row,ALIASES["updated_at"]) or ""),
         })
     frame=pd.DataFrame(normalized)
@@ -794,6 +815,9 @@ def attach_information(assessed, as_of_date):
         "NextResultDate": "NOT ANNOUNCED",
         "NextResultDetails": "",
         "EventCalendarSourceURL": "",
+        "UpcomingEventsSourceCoverageStatus": "UNAVAILABLE",
+        "EventCalendarSourceStatus": "NOT_VERIFIED",
+        "BoardMeetingSourceStatus": "NOT_VERIFIED",
     }
     if not event_audit.empty:
         result = result.drop(columns=[
@@ -819,6 +843,8 @@ def attach_information(assessed, as_of_date):
         "BulkBuyers": "", "BulkSellers": "", "BlockBuyers": "", "BlockSellers": "",
         "BulkBlockDealSummary": "",
         "BulkBlockLookbackStart": "", "BulkBlockLookbackEnd": "", "BulkBlockSourceURL": "",
+        "BulkDealsSourceStatus": "NOT_VERIFIED", "BlockDealsSourceStatus": "NOT_VERIFIED",
+        "BulkBlockSourceCoverageStatus": "UNAVAILABLE",
     }
     if not deal_audit.empty:
         result = result.drop(columns=[
@@ -856,10 +882,10 @@ def _save_eod_snapshot(frame, eod_date):
     if snapshot["TckrSymb"].eq("").any() or snapshot["TckrSymb"].duplicated().any():
         raise RuntimeError("ECMS_EOD_SNAPSHOT_ERROR: blank or duplicate symbols")
     snapshot["EODDate"] = eod_date.isoformat()
-    keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct",
+    keep = ["TckrSymb", "CompanyName", "PageVolume", "LTP", "ChangePct", "EODScanDate", "EODScanCapturedAtIST",
             "AvgVolume1W", "VolumeChangePct1W", "AvgVolume2W", "VolumeChangePct2W",
             "VolumeChangeTimes1W", "VolumeChangeTimes2W", "PageVolumeDataStatus",
-            "PageVolumeSourceField", "FundamentalMetricsPopulatedCount",
+            "PageVolumeSourceField", "PageVolumeRawValue", "NSEPayloadKeys", "NSEPayloadVolumeLikeFields", "FundamentalMetricsPopulatedCount",
             "FundamentalMetricsMissingCount", "FundamentalMetricsOfficiallyVerifiedCount",
             "FundamentalMetricsMismatchCount", "FundamentalMetricsReconciliationRequiredCount",
             "FundamentalMetricsFilingMetadataNotConfirmedCount", "FundamentalMetricsMissingNames",
@@ -987,6 +1013,10 @@ def _attach_same_day_morning_confirmation(eod_frame, morning_date):
 
 
 def run_eod():
+    # ScanDate identifies the actual scan session. DataAsOfDate remains the
+    # latest completed NSE session and is used only for completed-session data.
+    scan_date = datetime.now(IST).date()
+    scan_captured_at = datetime.now(IST).isoformat()
     page=fetch_volume_gainers()
     eligible,board_source=_eligible_page_equities(page)
     if eligible.empty: raise RuntimeError("WAIT_FOR_DATA: no official Main Board equity symbols found on NSE Volume Gainers page")
@@ -997,18 +1027,27 @@ def run_eod():
     eod_date=expected_latest_completed_session()
     if not is_trading_session(eod_date):
         raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
-    eligible["EODDate"]=eod_date.isoformat(); eligible["PageSource"]=NSE_PAGE
+    eligible["EODDate"]=eod_date.isoformat()
+    eligible["EODScanDate"]=scan_date.isoformat()
+    eligible["EODScanCapturedAtIST"]=scan_captured_at
+    eligible["PageSource"]=NSE_PAGE
     eligible["MainBoardSource"]=board_source
     # Save the raw EOD universe first. Fundamental/news/RVOL enrichment must
     # never be able to prevent tomorrow's 09:20 scanner from seeing this list.
     _save_eod_snapshot(eligible, eod_date)
     eligible=attach_page_rvol(eligible,eod_date)
-    assessed=assess_page_fundamentals(eligible,eod_date)
+    # Fundamentals and event/news windows are evaluated as of this scan date;
+    # completed-session RVOL remains tied to eod_date above.
+    assessed=assess_page_fundamentals(eligible,scan_date)
     assessed["EODConfirmationLabel"] = assessed["FundamentalShortlistStatus"].astype(str).str.upper().map({
       "PASS":"EOD_FUNDAMENTAL_PASS", "FAIL":"EOD_FUNDAMENTAL_FAIL"
     }).fillna("EOD_FUNDAMENTAL_WAIT_FOR_DATA")
-    assessed, news, events, deals, corporate_actions = attach_information(assessed, eod_date)
-    assessed = _attach_same_day_morning_confirmation(assessed, eod_date)
+    # Research windows (news, announcements, deals, events and actions) use
+    # the current scan date, not a potentially older completed Bhavcopy date.
+    assessed, news, events, deals, corporate_actions = attach_information(assessed, scan_date)
+    # Compare against the Morning scan from this scan's IST calendar date,
+    # not the older completed-session date used by Bhavcopy/RVOL.
+    assessed = _attach_same_day_morning_confirmation(assessed, scan_date)
     if (len(assessed) != len(eligible)
             or set(assessed["TckrSymb"].astype(str).str.upper()) != set(eligible["TckrSymb"].astype(str).str.upper())
             or assessed["TckrSymb"].astype(str).str.upper().duplicated().any()):
@@ -1035,7 +1074,15 @@ def run_eod():
     provider_status = provider_diag.get("ProviderStatus", pd.Series(dtype=str)).astype(str).str.upper()
     free_attempted = provider_diag.get("FreeSourcesAttempted", pd.Series(False, index=provider_diag.index)).astype(str).str.lower().isin({"true", "1", "yes"})
     shortlist_status = assessed["FundamentalShortlistStatus"].astype(str).str.upper()
-    summary={"status":"PASS","eod_date_ist":eod_date.isoformat(),"nse_page":NSE_PAGE,
+    summary={"status":"PASS","scan_date_ist":scan_date.isoformat(),
+      "eod_date_ist":eod_date.isoformat(),"data_as_of_date_ist":eod_date.isoformat(),
+      "eod_scan_captured_at_ist":scan_captured_at,
+      "morning_comparison_date_ist":scan_date.isoformat(),
+      "morning_repeat_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("MORNING_AND_EOD_REPEAT").sum()),
+      "eod_new_entry_count":int(assessed.get("MorningToEODStatus", pd.Series(dtype=str)).eq("EOD_NEW_ENTRY").sum()),
+      "morning_snapshot_found":not _load_same_day_morning_snapshot(scan_date).empty,
+      "morning_page_symbols":int(len(_load_same_day_morning_snapshot(scan_date))),
+      "nse_page":NSE_PAGE,
       "page_rows":int(len(page)),"eligible_mainboard_equities":int(len(eligible)),
       "page_volume_data_found":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("DATA_FOUND").sum()),
       "page_volume_data_missing":int(eligible.get("PageVolumeDataStatus", pd.Series("", index=eligible.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
@@ -1065,8 +1112,11 @@ def run_eod():
       "news_no_data_found":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "news_source_unavailable":int(assessed.get("NewsResearchStatus", pd.Series("", index=assessed.index)).eq("SOURCE_UNAVAILABLE").sum()),
       "upcoming_events_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "upcoming_events_source_coverage_partial":int(assessed.get("UpcomingEventsSourceCoverageStatus", pd.Series("", index=assessed.index)).eq("PARTIAL").sum()),
       "upcoming_events_no_data_found":int(assessed.get("UpcomingEventsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "bulk_block_deals_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
+      "bulk_block_source_coverage_complete":int(assessed.get("BulkBlockSourceCoverageStatus", pd.Series("", index=assessed.index)).eq("COMPLETE").sum()),
+      "bulk_block_source_coverage_partial":int(assessed.get("BulkBlockSourceCoverageStatus", pd.Series("", index=assessed.index)).eq("PARTIAL").sum()),
       "bulk_block_deals_no_data_found":int(assessed.get("BulkBlockDealsResearchStatus", pd.Series("", index=assessed.index)).eq("NO_DATA_FOUND").sum()),
       "corporate_actions_data_found":int(assessed.get("CorporateActionResearchStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
       "corporate_action_disclosures_found":int(assessed.get("CorporateActionDisclosureStatus", pd.Series("", index=assessed.index)).eq("DATA_FOUND").sum()),
@@ -1128,6 +1178,9 @@ def run_morning():
     live=live[live["TckrSymb"].isin(mainboard)].copy()
     if live.empty:
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
+    # Morning RVOL is based on the latest completed Bhavcopy session. It is
+    # explicitly labelled as prior-session context, never as partial intraday RVOL.
+    live = attach_page_rvol(live, expected_latest_completed_session())
     # Record the page-capture time before fundamental and information enrichment.
     live["MorningPageCapturedAtIST"] = datetime.now(IST).isoformat()
 
@@ -1198,8 +1251,12 @@ def run_morning():
           "MorningVolumeChangePct2W":current.get("VolumeChangePct2W"),
           "EODLTP":old.get("LTP"),"MorningLTP":current.get("LTP"),
           "EODRVOL":old.get("RVOL"),
-          "MorningRVOL":"NOT AVAILABLE",
-          "MorningRVOLDataStatus":"PARTIAL_SESSION_NOT_COMPARABLE_TO_FULL_DAY_20D_AVERAGE",
+          "MorningRVOL":assessed.get("RVOL","NOT AVAILABLE"),
+          "MorningRVOLDataStatus":(
+              "PRIOR_COMPLETED_SESSION_" + str(assessed.get("RVOLDataStatus","WAIT_FOR_DATA"))
+              if str(assessed.get("RVOLDataStatus","")).strip()
+              else "PRIOR_COMPLETED_SESSION_RVOL_NOT_AVAILABLE"
+          ),
           "ValuationLabel":assessed.get("ValuationLabel","NOT AVAILABLE"),
           "ValuationBasis":assessed.get("ValuationBasis","NOT AVAILABLE"),
           "Last5DayNews":assessed.get("Last5DayNews","NOT AVAILABLE"),
@@ -1241,6 +1298,8 @@ def run_morning():
           "MorningVolumeChangeTimes2W":current.get("VolumeChangeTimes2W"),
           "MorningPageVolumeDataStatus":current.get("PageVolumeDataStatus","MISSING_FROM_NSE_RESPONSE"),
           "MorningPageVolumeSourceField":current.get("PageVolumeSourceField",""),
+           "MorningPagePayloadKeys":current.get("NSEPayloadKeys",""),
+           "MorningPageVolumeLikeFields":current.get("NSEPayloadVolumeLikeFields",""),
           "DataQuality":"LIVE_PAGE_AND_FUNDAMENTALS" if present and assessed else
             "NOT_ON_CURRENT_PAGE" if not present else "PARTIAL_LIVE_DATA"})
     report=pd.DataFrame(rows)
@@ -1248,7 +1307,11 @@ def run_morning():
     report.to_csv(OUTPUT_DIR/"volume_gainers_morning_recheck.csv",index=False)
     # Preserve the original EOD snapshot; only the fundamental workspace cache
     # is enriched by the morning assessment.
-    summary={"status":"PASS","morning_time_ist":datetime.now(IST).isoformat(),
+    summary={"status":"PASS","scan_date_ist":today.isoformat(),
+      "data_as_of_date_ist":expected_eod,
+      "morning_time_ist":datetime.now(IST).isoformat(),
+      "morning_rvol_data_found":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
+      "morning_rvol_data_missing":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").isna().sum()),
       "previous_eod_symbols":len(previous_symbols),"current_page_eligible_symbols":len(live_symbols),
       "morning_page_volume_data_found":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "morning_page_volume_data_missing":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
