@@ -111,13 +111,13 @@ def fetch_volume_gainers(session=None):
         exact_volume_field = next((
             str(key) for key in row
             if _key(key) in {_key(alias) for alias in ALIASES["volume"]}
-            and _number(row.get(key)) is not None
+            and _volume_number(row.get(key)) is not None
         ), "")
         fuzzy_volume_fields = [
             str(key) for key in row
             if any(token in _key(key) for token in ("volume", "tradedqty", "tradedquantity", "qtytraded"))
             and not any(token in _key(key) for token in ("avg", "average", "week", "change", "percent"))
-            and _number(row.get(key)) is not None
+            and _volume_number(row.get(key)) is not None
         ]
         volume_field = exact_volume_field or (fuzzy_volume_fields[0] if len(fuzzy_volume_fields) == 1 else "")
         volume_raw = row.get(volume_field) if volume_field else _get(row, ALIASES["volume"])
