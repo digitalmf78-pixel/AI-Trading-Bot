@@ -1088,3 +1088,25 @@ def test_metric_value_provenance_keeps_provider_and_official_sources_separate():
     assert result["ValueBasis"] == "ANNUAL_ALIGNED_STATEMENTS"
     assert result["ValueCurrency"] == "INR"
     assert result["ValueUnit"] == "PERCENT"
+
+
+def test_nse_page_download_preserves_all_rows_and_marks_mainboard_eligibility():
+    from strategies.ecms.volume_gainers import _build_nse_page_download
+
+    page = pd.DataFrame({
+        "TckrSymb": ["AAA", "BBB", "CCC"],
+        "CompanyName": ["A Ltd", "B Ltd", "C Ltd"],
+        "PageVolume": [1000, 2000, 3000],
+    })
+    result = _build_nse_page_download(
+        page, {"AAA", "CCC"}, "morning", "2026-11-17",
+        "2026-11-17T09:20:00+05:30", "official-mainboard.csv",
+    )
+    assert result["TckrSymb"].tolist() == ["AAA", "BBB", "CCC"]
+    assert result["MainBoardEligible"].tolist() == [True, False, True]
+    assert result["PageUniverseStatus"].tolist() == [
+        "PASS_MAIN_BOARD_EQUITY",
+        "PAGE_ROW_NOT_IN_OFFICIAL_MAIN_BOARD_UNIVERSE",
+        "PASS_MAIN_BOARD_EQUITY",
+    ]
+    assert result["ScanMode"].eq("MORNING").all()
