@@ -309,6 +309,13 @@ def collect_bulk_block_deals(symbols, as_of_date: date, lookback_days=DEAL_LOOKB
             "BulkBlockLookbackStart": start_date.isoformat(),
             "BulkBlockLookbackEnd": as_of_date.isoformat(),
             "BulkBlockSourceURL": NSE_DEALS_PAGE,
+            "BulkDealsSourceStatus": type_status.get("bulk_deals", "NOT_ATTEMPTED"),
+            "BlockDealsSourceStatus": type_status.get("block_deals", "NOT_ATTEMPTED"),
+            "BulkBlockSourceCoverageStatus": (
+                "COMPLETE" if all(type_status.get(key) == "AVAILABLE" for key in ("bulk_deals", "block_deals"))
+                else "PARTIAL" if any(type_status.get(key) == "AVAILABLE" for key in ("bulk_deals", "block_deals"))
+                else "UNAVAILABLE"
+            ),
         })
     return deal_frame, pd.DataFrame(audit)
 
