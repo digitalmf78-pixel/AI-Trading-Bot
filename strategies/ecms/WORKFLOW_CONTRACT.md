@@ -69,3 +69,7 @@ The current target strategy and phase order are defined in [ECMS README — Appr
 - Positive/negative volume-origin classification must combine price, volume, delivery and follow-through with company disclosures and other available evidence. High delivery alone does not prove accumulation; missing data does not prove negative activity or a clean bill of health.
 - Trap handling is EXCLUDE only for severe risk supported by a validated rule or corroborated evidence. Preserve a separate evidence-backed exclusion ledger.
 - Work strictly P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8. Do not change the two-scan schedule or production NSE V8 boundaries.
+
+## Manual NSE page CSV delivery
+
+Both Morning and EOD runs export the complete row set returned by the NSE Volume Gainers page to a separate CSV and attach it to the respective Telegram report using a document upload. The export labels official Main Board eligibility without removing non-eligible page rows. This is for manual comparison during scanner validation; it does not alter the scanner's eligible research universe or the two-scan lifecycle. “Complete page” means all rows returned by the NSE page, not every NSE-listed security.
