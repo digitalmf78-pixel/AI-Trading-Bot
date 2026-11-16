@@ -87,6 +87,7 @@ This is the ECMS operating contract. Keep this workflow, its rules, caches, repo
      - `MORNING_ONLY_DROPPED`: present in today's Morning page, absent from today's EOD page.
    - Retain the actual Morning and EOD capture timestamps and available page-volume observations. Do not treat a partial-session Morning volume as directly comparable with full-session EOD volume.
    - Reuse valid ECMS fundamental cache rows for Morning/EOD repeat symbols. Fetch data for new EOD symbols and refresh only missing, stale or changed observations.
+   - Save a stock-wise Morning/EOD union comparison to `outputs/ecms/volume_gainers_eod_morning_comparison.csv`, including symbols that appeared only in the Morning page, both page-volume observations, both capture timestamps and the informational status label.
    - Save the complete EOD assessment and information observations for the next session. The EOD snapshot's symbol universe/date must remain authoritative even if optional enrichment later fails.
 
 3. **Today's EOD → next trading day's Morning:**
