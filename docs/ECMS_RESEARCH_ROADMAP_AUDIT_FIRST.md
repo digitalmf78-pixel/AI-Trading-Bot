@@ -1,6 +1,6 @@
 # ECMS Research Roadmap — Audit First
 
-**Status:** Planning baseline; implementation is blocked until the repository/data audit is complete.  
+**Status:** P0 implementation is in an isolated draft PR for CI/review; no production merge or live behaviour change.  
 **Base:** `main` at `9e4b722c2be223ffa8ec78df4a1c5aeb84e28794` (verified before this planning branch was created).  
 **Scope:** ECMS only. Research and shadow testing only. No broker/order execution.
 
@@ -287,4 +287,4 @@ The original conceptual phases remain, but the actual implementation order is no
 
 Start with **P0 and P1 only**, on this isolated branch, one small reviewed PR at a time. First complete the exact code/test/source-lineage audit and baseline regression tests. Then correct cache isolation and metric-level provenance. Do not begin footprint scoring, trap exclusion or entry-readiness scoring until the relevant historical data and source coverage have been collected and verified.
 
-**This roadmap update changes documentation only. No scanner code, workflow schedule, comparison rule, cache key, fundamental threshold or production NSE V8 behaviour has been changed.**
+**P0 implementation update (16 Nov 2026):** draft PR [#140](https://github.com/digitalmf78-pixel/AI-Trading-Bot/pull/140) adds an optional cache-directory argument to the shared Main Board helper while preserving its production default, routes ECMS to `data/cache/ecms/universe/`, persists that ECMS cache in the two ECMS state-cache handoffs, adds the omitted ECMS tests to CI, adds a cache-isolation regression test, and aligns the workflow contract with the active 17:00 IST cron. A separate Friday/Monday/holiday date regression test is being added. The first PR validation run passed **128 tests** before that additional date test. Morning/EOD comparison code was not changed. PR #140 remains draft/unmerged; no live schedule or production NSE V8 behaviour has changed.
