@@ -767,6 +767,19 @@ def _load_same_day_morning_snapshot(eod_date):
             raise ValueError("snapshot type is not MORNING")
         if not morning["SnapshotStatus"].astype(str).eq("VALID").all():
             raise ValueError("snapshot status is not VALID")
+        marker_path = STATE_DIR / "morning_snapshot_run_marker.json"
+        if not marker_path.is_file():
+            raise ValueError("morning run marker is missing")
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        captured = set(morning.get("SnapshotCapturedAtIST", pd.Series(dtype=str)).astype(str))
+        if (
+            marker.get("snapshot_type") != "MORNING"
+            or marker.get("snapshot_status") != "VALID"
+            or marker.get("morning_date") != eod_date.isoformat()
+            or int(marker.get("symbol_count", -1)) != int(morning["TckrSymb"].nunique())
+            or captured != {str(marker.get("captured_at_ist", ""))}
+        ):
+            raise ValueError("morning marker does not match snapshot date/count/capture time")
         return morning, "VALID"
     except Exception as exc:
         print(f"ECMS same-day Morning snapshot rejected: {type(exc).__name__}: {exc}")
