@@ -1043,3 +1043,26 @@ def test_ecms_three_step_eod_morning_eod_next_morning_state_loop(tmp_path, monke
     assert not eod_state.exists()
     assert json.loads(consumed_marker.read_text())["consumed_eod_date"] == "2026-11-16"
     assert set(pd.read_csv(morning_state)["MorningDate"]) == {"2026-11-17"}
+
+
+def test_metric_value_provenance_keeps_provider_and_official_sources_separate():
+    from strategies.ecms.volume_gainers import _metric_value_provenance
+
+    row = {
+        "MetricSourcesJSON": '{"RevenueGrowthPct":"Yahoo Finance via yfinance"}',
+        "MetricSourceURLsJSON": '{"RevenueGrowthPct":"https://provider.example/financials"}',
+        "MetricSourcePeriodsJSON": '{"RevenueGrowthPct":"2026-03-31"}',
+        "MetricCalculationBasesJSON": '{"RevenueGrowthPct":"ANNUAL_ALIGNED_STATEMENTS"}',
+        "MetricSourceCurrenciesJSON": '{"RevenueGrowthPct":"INR"}',
+        "Source": "NSE_OFFICIAL_XBRL_AUDIT",
+        "FinancialPeriodEnd": "2026-03-31",
+        "MetricCalculationBasis": "UNVERIFIED",
+    }
+    result = _metric_value_provenance(row, "RevenueGrowthPct")
+
+    assert result["ValueSource"] == "Yahoo Finance via yfinance"
+    assert result["ValueSourceURL"] == "https://provider.example/financials"
+    assert result["ValuePeriodEnd"] == "2026-03-31"
+    assert result["ValueBasis"] == "ANNUAL_ALIGNED_STATEMENTS"
+    assert result["ValueCurrency"] == "INR"
+    assert result["ValueUnit"] == "PERCENT"
