@@ -93,7 +93,6 @@ jobs:
           # last valid EOD snapshot survives the expanded news/deals cache path list.
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
-            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
@@ -306,7 +305,6 @@ jobs:
           # last valid EOD snapshot survives the expanded news/deals cache path list.
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
-            data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/fundamental_workspace/
           key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
