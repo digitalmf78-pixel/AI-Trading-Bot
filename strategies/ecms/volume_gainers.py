@@ -1317,7 +1317,7 @@ def run_eod():
     print(json.dumps(summary,indent=2)); return summary
 def _fundamental_decision_fields(status):
     """Map the verified fundamental result without suppressing WAIT research."""
-    value = str(status or "WAIT_FOR_DATA").strip().upper()
+    value = "WAIT_FOR_DATA" if status is None or pd.isna(status) else str(status).strip().upper()
     if value == "PASS":
         return {
             "FundamentalDecisionRole": "VERIFIED_FUNDAMENTAL_PASS",
