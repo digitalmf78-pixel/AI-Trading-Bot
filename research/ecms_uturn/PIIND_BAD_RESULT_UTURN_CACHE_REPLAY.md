@@ -61,7 +61,7 @@ The price-zone touch is a valuation/price observation, not a buy signal. The evi
 
 ## Method and limitations
 
-- Pre-result peak = highest High across the 20 completed sessions strictly before the 4 Nov result announcement date.
+- Pre-result peak = highest High across the 20 completed sessions strictly before the 4 Nov result announcement date (ending 3 Nov 2026).
 - Annual diluted EPS only; consolidated FY2025/FY2026 basis used consistently.
 - Target = peak × current annual diluted EPS / previous annual diluted EPS.
 - Zone = ±2% around the target; this is a research tolerance, not an order band.
