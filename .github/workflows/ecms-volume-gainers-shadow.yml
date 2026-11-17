@@ -451,6 +451,7 @@ jobs:
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
           key: ecms-vg-state-v2-${{ github.ref_name }}-${{ github.run_id }}
+          # One-time bootstrap: exact, previously verified 16-Nov-2026 EOD run only; never use the broad legacy prefix.
           restore-keys: |
             ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.completed_session_date }}-
             ecms-vg-state-${{ github.ref_name }}-43866492965
