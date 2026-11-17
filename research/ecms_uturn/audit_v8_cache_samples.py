@@ -67,7 +67,7 @@ def verify_bhav(symbol, session, path):
     df=load_table(path)
     datecol=find_date_col(df,["TradDt","DATE1","Date"])
     if not datecol: return {"status":"WAIT_FOR_DATA","reason":"No recognised session-date column","path":str(path)}
-    dates=pd.to_datetime(df[datecol],errors="coerce",dayfirst=True).dt.date.astype("string")
+    # NSE UDiFF TradDt is ISO YYYY-MM-DD; dayfirst=True silently swaps month/day.\n    dates=pd.to_datetime(df[datecol],errors="coerce",dayfirst=False).dt.date.astype("string")
     actual=dates.dropna().unique().tolist()
     if session not in actual: return {"status":"UNVERIFIED","reason":f"File date mismatch; expected {session}, row dates sample={actual[:3]}","path":str(path)}
     url=f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{session.replace('-','')}_F_0000.csv.zip"
