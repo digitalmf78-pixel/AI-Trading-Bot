@@ -1181,3 +1181,32 @@ def test_manual_auto_mode_before_market_close_is_skipped(monkeypatch):
 
     assert calls == []
     assert statuses == [("eod", "SKIPPED", "MANUAL_RUN_BEFORE_NSE_CLOSE")]
+
+
+
+def test_manual_auto_mode_resolves_eod_until_0759():
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 7, 59)) == "eod"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 0, 0)) == "eod"
+
+
+def test_manual_auto_mode_resolves_morning_from_0915_to_1159():
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 15)) == "morning"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 20)) == "morning"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 11, 59)) == "morning"
+
+
+def test_manual_auto_mode_skips_locked_and_intraday_windows():
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 8, 0)) is None
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 14)) is None
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 12, 0)) is None
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 15, 29)) is None
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 15, 30)) == "eod"
