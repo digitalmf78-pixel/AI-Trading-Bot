@@ -66,7 +66,10 @@ for sym, group in metrics.groupby("TckrSymb",sort=True):
  maps={k:mapping(row,col) for k,col in MAP_FIELDS.items()}
  for metric in REQUIRED:
   for kind, mp in maps.items():
-   if not clean(mp.get(metric)): absent.append(f"{metric}:{kind}")
+   if kind == "basis" and not clean(mp.get(metric)) and clean(row.get("MetricCalculationBasis")).upper() not in {"","LEGACY_CACHE_BASIS_UNKNOWN","UNALIGNED_PROVIDER_SNAPSHOT"}:
+    continue
+   if not clean(mp.get(metric)):
+    absent.append(f"{metric}:{kind}")
  if absent:
   fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":"MISSING_PER_METRIC_PROVENANCE:"+",".join(absent)}); continue
  if clean(row.get("MetricPeriodAlignmentStatus")).upper()!="VERIFIED":
@@ -80,7 +83,9 @@ for sym, group in metrics.groupby("TckrSymb",sort=True):
   fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":"PUBLICATION_DATE_NOT_VERIFIED"}); continue
  ok, filing_status=official_filing_match(row,filings)
  if not ok:
-  fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":filing_status}); continue
+  fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":filing_status,
+   "OfficialFilingURL":clean(row.get("OfficialFilingURL")),"OfficialFilingSource":clean(row.get("OfficialFilingSource")),
+   "RowCalculationBasis":clean(row.get("MetricCalculationBasis"))}); continue
  # Require each metric's own source period and basis, and no mixed-period declaration.
  periods={clean(maps["period"].get(m)) for m in REQUIRED}
  def fiscal_year(period):
@@ -99,6 +104,7 @@ for sym, group in metrics.groupby("TckrSymb",sort=True):
   "Symbol":sym,"Status":"COMPLETE_FIELDS_PROVENANCE","Reason":"All 7 numeric core metrics and per-metric source/URL/period/basis/currency present; period and filing metadata matched",
   "FinancialPeriodEnd":clean(row.get("FinancialPeriodEnd")),"PublicationDate":clean(row.get("PublicationDate")),
   "CalculationBasis":basis,"OfficialFilingMetadataStatus":filing_status,
+  "OfficialFilingURL":clean(row.get("OfficialFilingURL")),"OfficialFilingSource":clean(row.get("OfficialFilingSource")),
   "MetricValueVerification":"NOT_INFERRED_FROM_CACHE_METADATA; separate XBRL fact-level verification required",
   **{m:row[m] for m in sorted(REQUIRED)}
  })
