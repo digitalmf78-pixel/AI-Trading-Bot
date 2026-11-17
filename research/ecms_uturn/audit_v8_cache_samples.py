@@ -93,7 +93,13 @@ for sym in symbols:
         records.append({"session_date":day,"source_url":f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{day.replace('-','')}_F_0000.csv.zip","bhavcopy":load_table(chosen_path)})
     # The parser requires complete 20-row coverage; feed only successful dated records.
     result=build_nse_symbol_ohlc_window(records,symbol=sym,expected_sessions=expected,announcement_date=next(r["Result_Announcement_Date"] for r in PEAK if r["Symbol"]==sym),window_sessions=20)
-    windows.append({"Symbol":sym,"ExpectedSessions":20,"VerifiedSessions":len(records),"Status":result["status"],"Reason":result["reason"],"WindowStart":result.get("window_start",""),"WindowEnd":result.get("window_end",""),"ISIN":result.get("ISIN","")})
+    peak_date=""; peak_high=""
+    if result.get("status")=="READY":
+        peak_frame=result["ohlc"].copy()
+        peak_frame["High"]=pd.to_numeric(peak_frame["High"],errors="coerce")
+        peak_row=peak_frame.loc[peak_frame["High"].idxmax()]
+        peak_date=str(peak_row["Date"]); peak_high=float(peak_row["High"])
+    windows.append({"Symbol":sym,"ExpectedSessions":20,"VerifiedSessions":len(records),"Status":result["status"],"Reason":result["reason"],"WindowStart":result.get("window_start",""),"WindowEnd":result.get("window_end",""),"ISIN":result.get("ISIN",""),"PeakDate":peak_date,"PeakHigh":peak_high})
     for item in symbol_results:
         delivery_candidates=delivery_idx.get(item["Date"],[])
         if len(delivery_candidates)!=1:
