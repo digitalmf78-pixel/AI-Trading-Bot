@@ -214,7 +214,7 @@ def run_audit(root: Path = Path(".")) -> dict:
     if not errors:
         for row in event_results:
             row["PreResultCalendarCrossCheck"] = "VERIFIED_OFFICIAL_NSE_2026_EQUITY_HOLIDAYS"
-            row["CorporateActionStatus"] = "REVIEWED_NO_STOCK_ACTION; CASH_DIVIDENDS_EXCLUDED"
+            row["CorporateActionStatus"] = "REVIEWED_NO_STOCK_ACTION; CASH_DIVIDENDS_ADDED_SEPARATELY"
         columns = list(event_results[0].keys()) if event_results else []
         with event_results_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns)
