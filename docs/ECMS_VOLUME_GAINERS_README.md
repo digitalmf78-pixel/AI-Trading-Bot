@@ -48,7 +48,7 @@ This file is the source of truth for ECMS scope, rules, roadmap and hand-off. Re
 ### Scan-date vs completed-data-date contract
 
 - Every Morning or EOD run records its IST **ScanDate** and exact capture timestamp separately from **DataAsOfDate** (the latest completed official NSE session).
-- Same-day Morning-to-EOD membership comparison uses ScanDate only. A manual EOD-mode run on the same trading date must compare with that date's valid Morning snapshot even if it runs before market close and the latest completed Bhavcopy date is the prior session.
+- Same-day Morning-to-EOD membership comparison uses ScanDate only. The EOD run on a trading date must compare with that date's valid Morning snapshot; completed Bhavcopy indicators retain their separate DataAsOfDate.
 - Completed-session indicators such as 20-session RVOL must retain their DataAsOfDate. Morning RVOL is reported only as prior-completed-session context; it must never be described as a live partial-session RVOL.
 - The Morning snapshot date guard remains strict: wrong-date, duplicate-symbol, invalid-type or invalid-status snapshots are rejected.
 
@@ -261,7 +261,7 @@ Remaining ECMS-only work:
 1. Validate the opt-in retry behavior, complete-cache reuse, all-candidate row preservation, strict-PASS-but-not-STRONG rejection and true STRONG acceptance in CI.
 2. Verify the 09:20 report emits distinct EOD, morning-under-observation and DOUBLE_CONFIRMED_EOD_MORNING statuses; the latter requires strict PASS + STRONG at both checkpoints.
 3. Review provider diagnostics to ensure every missing metric, provider attempt/defer/error and cache reuse is visible per candidate.
-4. Run ECMS EOD manually for an end-to-end artifact audit; run morning mode separately on a valid trading day with valid prior state.
+4. Use the single ECMS workflow-dispatch button; its IST router selects EOD, EOD snapshot reuse, Morning, or SKIP.
 5. Confirm actual morning artifacts contain every eligible current-page candidate's fundamental assessment and accurate EOD/Morning confirmation counts.
 
 The code changes remain ECMS-only; the V8 production workflow and its default collector behavior are not changed.
@@ -269,13 +269,14 @@ The code changes remain ECMS-only; the V8 production workflow and its default co
 **Do not broaden ECMS work beyond these requirements.**
 
 
-## Manual dispatch mode — session-close rule (17-Nov-2026)
+## Manual dispatch mode — one-click IST routing (17-Nov-2026)
 
-- Every manual `workflow_dispatch` starts through one automatic EOD resolver; users do not choose EOD or Morning in the GitHub form.
-- On an official NSE trading session, a manual run at or after 15:30 IST resolves to EOD. A manual dispatch before 15:30 IST is explicitly SKIPPED as `MANUAL_RUN_BEFORE_NSE_CLOSE`; it is not silently converted into a Morning scan.
-- The resolver uses IST wall-clock time. The official NSE trading calendar still blocks holidays and unavailable calendar coverage. Scheduled Morning/EOD jobs retain their explicit schedule-specific modes and slot validation.
-- The previous EOD CSV remains eligible as the Morning reference only when its snapshot metadata, session date, completeness and consumption state pass the existing validation. A CSV artifact alone is not sufficient proof of a valid persisted EOD snapshot.
-- ECMS state cache uses a new versioned namespace and NSE-session-date prefixes. Morning restores only the cache partition for the exact latest completed NSE session; EOD prefers the current session's Morning partition, then the immediately preceding completed session. Older unscoped cache keys are deliberately excluded. The independent fundamental cache remains restored separately.
+- Every manual `workflow_dispatch` starts through one automatic IST router; users do not choose EOD or Morning in the GitHub form.
+- At/after 15:30 IST, a manual dispatch runs the completed-session EOD scan. From 00:00–07:59 IST, it reuses the latest validated EOD snapshot without fetching or refreshing live NSE data.
+- From 09:15–11:59 IST, a manual dispatch runs Morning confirmation and new-stock observation. From 08:00–09:14 and 12:00–15:29 IST, it is SKIPPED with an explicit reason.
+- The official NSE trading calendar still blocks holidays and unavailable calendar coverage. Scheduled scans route by their configured cron: 17:01 IST EOD and 09:21 IST Morning, with each mode's existing slot/data-date validation.
+- The previous EOD CSV remains eligible as the Morning reference only when its snapshot metadata, session date, completeness and consumption state pass validation. A CSV artifact alone is not sufficient proof of a valid persisted EOD snapshot.
+- ECMS state cache uses a versioned namespace and NSE-session-date prefixes. Morning restores only the cache partition for the exact latest completed NSE session; EOD prefers the current session's Morning partition, then the immediately preceding completed session. Older unscoped cache keys are deliberately excluded. The independent fundamental cache remains restored separately.
 
 
 ### EOD snapshot validation — 16-Nov-2026
