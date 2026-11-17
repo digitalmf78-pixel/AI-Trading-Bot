@@ -31,8 +31,8 @@ from strategies.ecms.uturn_nse_ohlc import (
 RESEARCH = ROOT / "research" / "ecms_uturn"
 OUTPUT = Path(os.environ.get("UTURN_OUTPUT_DIR", "uturn_nse_audit_output"))
 USER_AGENT = "Mozilla/5.0 (compatible; ECMS-U-Turn-Research/1.0; +https://github.com/digitalmf78-pixel/AI-Trading-Bot)"
-CONNECT_TIMEOUT_SECONDS = 15
-READ_TIMEOUT_SECONDS = 35
+CONNECT_TIMEOUT_SECONDS = 20
+READ_TIMEOUT_SECONDS = 90
 MAX_ATTEMPTS = 2
 _thread_local = threading.local()
 
@@ -61,12 +61,18 @@ def _nse_session() -> requests.Session:
         "Referer": "https://www.nseindia.com/all-reports",
     })
     # Establish the public-site session first; no login or credentials used.
+    print("NSE_SESSION_WARMUP_START https://www.nseindia.com/", flush=True)
     warm = session.get(
         "https://www.nseindia.com/",
         headers={"Accept": "text/html,application/xhtml+xml"},
         timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
     )
     warm.raise_for_status()
+    print(
+        f"NSE_SESSION_WARMUP_OK status={warm.status_code} "
+        f"cookies={len(session.cookies)}",
+        flush=True,
+    )
     _thread_local.session = session
     return session
 
@@ -149,8 +155,44 @@ def main() -> int:
     downloaded = {}
     archive_audit = []
     failures = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        futures = {pool.submit(fetch_archive, url): url for url in url_to_expected}
+
+    # Fail fast on one known, recent archive before spending minutes on the
+    # full historical sample. This separates host/session reachability from
+    # individual missing archive dates.
+    probe_url = close_manifest[0]["NSE_UDiFF_Bhavcopy_URL"]
+    print(f"NSE_ARCHIVE_PREFLIGHT_START {probe_url}", flush=True)
+    try:
+        probe_payload, probe_table = fetch_archive(probe_url)
+        downloaded[probe_url] = probe_table
+        archive_audit.append({
+            "SourceURL": probe_url,
+            "Status": "DOWNLOADED_SCHEMA_VALID",
+            "Bytes": len(probe_payload),
+            "SHA256": hashlib.sha256(probe_payload).hexdigest(),
+            "Rows": len(probe_table),
+            "ExpectedDates": ";".join(sorted(url_to_expected[probe_url])),
+        })
+        print(
+            f"NSE_ARCHIVE_PREFLIGHT_OK bytes={len(probe_payload)} "
+            f"rows={len(probe_table)}",
+            flush=True,
+        )
+    except Exception as exc:
+        failures.append({"SourceURL": probe_url, "Error": str(exc)})
+        archive_audit.append({
+            "SourceURL": probe_url,
+            "Status": "PREFLIGHT_FAILED",
+            "Bytes": 0,
+            "SHA256": "",
+            "Rows": 0,
+            "ExpectedDates": ";".join(sorted(url_to_expected[probe_url])),
+        })
+        print(f"NSE_ARCHIVE_PREFLIGHT_FAILED {exc}", flush=True)
+
+    remaining_urls = [url for url in url_to_expected if url not in downloaded]
+    if not failures:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {pool.submit(fetch_archive, url): url for url in remaining_urls}
         for future in concurrent.futures.as_completed(futures):
             url = futures[future]
             try:
