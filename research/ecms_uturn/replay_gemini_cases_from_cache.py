@@ -129,6 +129,9 @@ for case in CASES:
         & (s["RVOL"]>=case["RvolMin"])
     )
     signal_indices=list(s.index[s["Signal"]])
+    zone_mask=s["Close"].between(case["ZoneLow"],case["ZoneHigh"])
+    delivery_mask=s["DeliveryPct"]>=case["DeliveryMin"]
+    rvol_mask=s["RVOL"]>=case["RvolMin"]
     for i in signal_indices:
         sig=s.iloc[i]
         all_signals.append({"Symbol":symbol,"SignalDate":sig["Date"],"SignalClose":sig["Close"],"DeliveryPct":sig["DeliveryPct"],"RVOL":sig["RVOL"],"ZoneLow":case["ZoneLow"],"ZoneHigh":case["ZoneHigh"]})
@@ -183,7 +186,15 @@ for case in CASES:
         "ObservedCloseMin":float(s["Close"].min()),"ObservedCloseMax":float(s["Close"].max()),
         "ObservedLowMin":float(s["Low"].min()),"ObservedHighMax":float(s["High"].max()),
         "ObservedCloseMinDate":str(s.loc[s["Close"].idxmin(),"Date"]),"ObservedCloseMaxDate":str(s.loc[s["Close"].idxmax(),"Date"]),
-        "ClosesInsideZone":int(s["Close"].between(case["ZoneLow"],case["ZoneHigh"]).sum()),
+        "CloseMin":round(float(s["Close"].min()),2),"CloseMax":round(float(s["Close"].max()),2),
+        "DeliveryPctMin":round(float(s["DeliveryPct"].min()),2) if s["DeliveryPct"].notna().any() else None,
+        "DeliveryPctMax":round(float(s["DeliveryPct"].max()),2) if s["DeliveryPct"].notna().any() else None,
+        "SessionsDeliveryAtLeast60":int(delivery_mask.sum()),
+        "SessionsRVOLAtLeast1_5":int(rvol_mask.sum()),
+        "SessionsCloseInZoneAndDelivery60":int((zone_mask & delivery_mask).sum()),
+        "SessionsCloseInZoneAndRVOL15":int((zone_mask & rvol_mask).sum()),
+        "SessionsDelivery60AndRVOL15":int((delivery_mask & rvol_mask).sum()),
+        "ClosesInsideZone":int(zone_mask.sum()),
         "ValidEODSignals":len(signal_indices),
         "NextOpenStillInsideZone":sum(1 for i in signal_indices if i+1<len(s) and case["ZoneLow"]<=float(s.iloc[i+1]["Open"])<=case["ZoneHigh"]),
         "ExecutedNonOverlappingTrades":len(executed),"Wins":wins,"Losses":losses,
