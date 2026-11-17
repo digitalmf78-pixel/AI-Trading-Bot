@@ -231,7 +231,6 @@ def audit_signal_frame(frame, prices, source_name):
             complete = horizon_coverage.get(horizon, "").startswith("COMPLETE_")
             horizon_ready[f"T1DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t1_valid and complete else "WAIT_FOR_DATA"
             horizon_ready[f"T2DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t2_valid and complete else "WAIT_FOR_DATA"
-            stop_results = {}
             stop_results[horizon] = (
                 first_stop_exit(prices, symbol, forward_dates[:horizon], stop)
                 if common_plan_valid and complete else
