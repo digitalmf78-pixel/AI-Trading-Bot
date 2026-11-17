@@ -9,6 +9,7 @@ def rows(count=20):
             "eps_period": f"TTM ending {i}",
             "eps_basis": "TTM_DILUTED",
             "source": "fixture:synthetic",
+            "point_in_time_status": "HISTORICAL_POINT_IN_TIME_VERIFIED",
         }
         for i in range(count)
     ]
@@ -43,6 +44,11 @@ def test_rejects_non_positive_or_non_finite_current_eps():
         assert calculate(current_eps=eps)["reason"] == "CURRENT_EPS_NOT_POSITIVE_FINITE"
 
 
+def test_rejects_non_ttm_diluted_current_eps_basis():
+    result = calculate(current_eps_basis="ANNUAL_ALIGNED_STATEMENTS")
+    assert result["reason"] == "CURRENT_EPS_BASIS_NOT_TTM_DILUTED"
+
+
 def test_rejects_non_positive_historical_pe():
     data = rows()
     data[0]["pe"] = 0
@@ -63,6 +69,18 @@ def test_rejects_missing_source_provenance():
     data = rows()
     data[0]["source"] = ""
     assert calculate(data)["reason"] == "HISTORICAL_PROVENANCE_MISSING"
+
+
+def test_rejects_missing_point_in_time_status():
+    data = rows()
+    del data[0]["point_in_time_status"]
+    assert calculate(data)["reason"] == "HISTORICAL_PROVENANCE_MISSING"
+
+
+def test_rejects_current_provider_snapshot_not_historical():
+    data = rows()
+    data[0]["point_in_time_status"] = "CURRENT_PROVIDER_SNAPSHOT_NOT_HISTORICAL"
+    assert calculate(data)["reason"] == "HISTORICAL_POINT_IN_TIME_NOT_VERIFIED"
 
 
 def test_rejects_duplicate_dates():
