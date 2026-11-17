@@ -41,4 +41,4 @@ jobs:
         run: python -m py_compile strategies/ecms/fundamental_uturn.py
 
       - name: Run U-Turn research unit tests only
-        run: python -m pytest -q tests/test_ecms_fundamental_uturn.py
+        run: python -m pytest -q tests/test_ecms_fundamental_uturn.py tests/test_ecms_uturn_nse_ohlc.py
