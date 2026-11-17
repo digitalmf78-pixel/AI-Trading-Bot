@@ -2092,15 +2092,13 @@ def calculate_breakout_pullback(result, historical):
             common_breakout_data_ready
             and pd.notna(current_open) and pd.notna(previous_close)
             and pd.notna(correction_from_high)
-            and (pd.notna(ema20_value) or pd.notna(ema44_value))
+            and pd.notna(ema44_value) and ema44_value > 0
             and pd.notna(low_volume_days)
             and trend_text not in ("WAIT_FOR_DATA", "Insufficient Data", "nan", "")
         )
 
-        near_ema20 = (
-            pd.notna(ema20_value) and ema20_value > 0
-            and abs(current_close - ema20_value) / ema20_value <= 0.03
-        )
+        # Type A pullback uses EMA44 only. EMA20 remains an informational
+        # indicator and must never qualify a pullback by proximity.
         near_ema44 = (
             pd.notna(ema44_value) and ema44_value > 0
             and abs(current_close - ema44_value) / ema44_value <= 0.03
@@ -2119,7 +2117,7 @@ def calculate_breakout_pullback(result, historical):
             pullback_structure = (
                 ("Bullish" in trend_text)
                 and controlled_pullback
-                and (near_ema20 or near_ema44)
+                and near_ema44
                 and current_rvol <= 1.5
             )
             # Preserve the existing 3-of-5 low-volume and bullish-candle rule.
