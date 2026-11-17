@@ -146,7 +146,13 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
 
         for i, day in enumerate(dates):
             pos = date_pos.get(day, -1)
-            if pos < 20 or i < MIN_WARMUP_BARS - 1:
+            if pos < MIN_WARMUP_BARS - 1:
+                rejected["insufficient_44_session_history"] += 1
+                continue
+            # EMA44 is only accepted when all 44 official sessions (including
+            # the signal date) exist for this symbol; no shortened warm-up.
+            ema44_dates = market_dates[pos-(MIN_WARMUP_BARS-1):pos+1]
+            if len(ema44_dates) != MIN_WARMUP_BARS or any(d not in idx_by_date for d in ema44_dates):
                 rejected["insufficient_44_session_history"] += 1
                 continue
             prior_dates = market_dates[pos-20:pos]
@@ -161,7 +167,13 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             if (not np.isfinite(values20).all() or not np.isfinite(volumes20).all()
                 or not np.isfinite(current_values).all() or (values20 < 0).any()
                 or (volumes20 < 0).any() or close[i] <= 0 or low[i] <= 0
-                or high[i] < low[i] or cols["OPEN"][i] <= 0 or ema44[i] <= 0):
+                or high[i] < low[i] or cols["OPEN"][i] <= 0 or ema44[i] <= 0
+                or np.isnan(high[prior_idx]).any() or np.isnan(low[prior_idx]).any()
+                or np.isnan(close[prior_idx]).any()
+                or (high[prior_idx] <= 0).any() or (low[prior_idx] <= 0).any()
+                or (close[prior_idx] <= 0).any()
+                or low[i] > min(cols["OPEN"][i], close[i])
+                or high[i] < max(cols["OPEN"][i], close[i])):
                 rejected["invalid_ohlcv_or_traded_value"] += 1
                 continue
 
