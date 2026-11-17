@@ -60,19 +60,39 @@ def _nse_session() -> requests.Session:
         "Connection": "keep-alive",
         "Referer": "https://www.nseindia.com/all-reports",
     })
-    # Establish the public-site session first; no login or credentials used.
-    print("NSE_SESSION_WARMUP_START https://www.nseindia.com/", flush=True)
-    warm = session.get(
+    # Try the alternate official NSE reports portal first. The primary
+    # www.nseindia.com host has timed out from GitHub-hosted runners; do not
+    # spend the full archive timeout on session warm-up. The archive request
+    # is still made only against the official nsearchives.nseindia.com host.
+    warmup_urls = (
+        "https://www.nseindia.in/all-reports",
         "https://www.nseindia.com/",
-        headers={"Accept": "text/html,application/xhtml+xml"},
-        timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
     )
-    warm.raise_for_status()
-    print(
-        f"NSE_SESSION_WARMUP_OK status={warm.status_code} "
-        f"cookies={len(session.cookies)}",
-        flush=True,
-    )
+    for warmup_url in warmup_urls:
+        try:
+            print(f"NSE_SESSION_WARMUP_START {warmup_url}", flush=True)
+            warm = session.get(
+                warmup_url,
+                headers={"Accept": "text/html,application/xhtml+xml"},
+                timeout=(10, 18),
+            )
+            warm.raise_for_status()
+            print(
+                f"NSE_SESSION_WARMUP_OK url={warmup_url} "
+                f"status={warm.status_code} cookies={len(session.cookies)}",
+                flush=True,
+            )
+            break
+        except Exception as exc:
+            print(
+                f"NSE_SESSION_WARMUP_FAILED url={warmup_url} error={exc}",
+                flush=True,
+            )
+    else:
+        print(
+            "NSE_SESSION_WARMUP_SKIPPED archive will be tried without website cookies",
+            flush=True,
+        )
     _thread_local.session = session
     return session
 
