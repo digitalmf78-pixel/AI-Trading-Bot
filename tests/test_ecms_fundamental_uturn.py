@@ -75,6 +75,13 @@ def test_reporting_basis_must_match_and_be_explicit():
     assert mismatch["U_Turn_Status"] == "WAIT_FOR_DATA"
 
 
+def test_missing_official_source_url_is_unverified():
+    result = calculate_uturn_targets(
+        pd.DataFrame([_row(Current_EPS_Source_URL="")])
+    ).iloc[0]
+    assert result["U_Turn_Status"] == "UNVERIFIED"
+
+
 def test_unverified_eps_or_peak_fails_closed():
     for changes in ({"EPS_Verified": False}, {"Peak_Price_Verified": False}):
         result = calculate_uturn_targets(pd.DataFrame([_row(**changes)])).iloc[0]
