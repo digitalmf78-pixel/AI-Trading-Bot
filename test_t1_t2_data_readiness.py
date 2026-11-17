@@ -47,5 +47,20 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(records, {})
             self.assertTrue(any(item.startswith("INVALID_OHLC:") for item in errors))
 
+    def test_t1_and_t2_data_readiness_is_horizon_specific(self):
+        signal_date = "2026-10-28"
+        dates = official_sessions_after(signal_date, 20)
+        prices = {("TEST", day): {"OPEN": 100.0, "HIGH": 125.0, "LOW": 95.0, "CLOSE": 110.0} for day in dates}
+        frame = pd.DataFrame([{
+            "EODDate": signal_date, "Symbol": "TEST", "EntryPricePlan": 100.0,
+            "StopLossPlan": 90.0, "TargetPricePlan": 110.0, "TargetSource": "SR_20D_HIGH",
+            "SR20DHigh": 110.0, "SR50DHigh": 120.0,
+        }])
+        result = audit_signal_frame(frame, prices, "fixture.csv").iloc[0]
+        self.assertEqual(result["T1DataReady5D"], "DATA_READY")
+        self.assertEqual(result["T2DataReady5D"], "DATA_READY")
+        self.assertEqual(result["T1DataReady20D"], "DATA_READY")
+        self.assertEqual(result["T2DataReady20D"], "DATA_READY")
+
 if __name__ == "__main__":
     unittest.main()
