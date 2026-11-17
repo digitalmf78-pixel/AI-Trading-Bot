@@ -41,10 +41,9 @@ def calculate_historical_pe_reference(
 ) -> dict[str, Any]:
     """Return lower/median/upper historical-PE references or WAIT_FOR_DATA.
 
-    Every observation must carry a positive PE and metric-level provenance.
-    Historical and current EPS bases must match exactly. No rows are silently
-    discarded, no negative-earnings PE is interpreted, and no technical signal
-    is generated.
+    This research prototype accepts only TTM diluted EPS and historical
+    point-in-time PE observations. Current provider snapshots are not historical
+    observations and must be rejected, even when their quote dates are populated.
     """
     def wait(reason: str) -> dict[str, Any]:
         return {"status": "WAIT_FOR_DATA", "reason": reason}
@@ -55,6 +54,8 @@ def calculate_historical_pe_reference(
         current_eps_basis, current_eps_period, current_eps_source, as_of_date
     )):
         return wait("CURRENT_EPS_PROVENANCE_MISSING")
+    if current_eps_basis != "TTM_DILUTED":
+        return wait("CURRENT_EPS_BASIS_NOT_TTM_DILUTED")
     try:
         cutoff = date.fromisoformat(as_of_date)
     except ValueError:
@@ -77,9 +78,14 @@ def calculate_historical_pe_reference(
     for row in rows:
         if not isinstance(row, dict) or any(
             field not in row or not isinstance(row[field], str) or not row[field].strip()
-            for field in ("price_date", "eps_period", "eps_basis", "source")
+            for field in (
+                "price_date", "eps_period", "eps_basis", "source",
+                "point_in_time_status",
+            )
         ):
             return wait("HISTORICAL_PROVENANCE_MISSING")
+        if row["point_in_time_status"] != "HISTORICAL_POINT_IN_TIME_VERIFIED":
+            return wait("HISTORICAL_POINT_IN_TIME_NOT_VERIFIED")
         if not _positive_finite(row.get("pe")):
             return wait("HISTORICAL_PE_NOT_POSITIVE_FINITE")
         if row["eps_basis"] != current_eps_basis:
