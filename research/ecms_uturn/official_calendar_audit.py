@@ -94,6 +94,8 @@ def run_audit(root: Path = Path(".")) -> dict:
             errors.append(f"{symbol}: strict window summary is not READY")
         if not event_result or int(event_result["PreResultSessionsInCache"]) != 20:
             errors.append(f"{symbol}: event-study did not use exactly 20 pre-result sessions")
+        if event_result and not str(event_result.get("EPSSourceAudit", "")).startswith("VERIFIED_OFFICIAL_"):
+            errors.append(f"{symbol}: annual diluted EPS source audit is not verified")
         if strict_window and event_result:
             if strict_window["PeakDate"] != event_result["PeakHighDate"]:
                 errors.append(f"{symbol}: strict/event-study peak date mismatch")
@@ -165,6 +167,10 @@ def run_audit(root: Path = Path(".")) -> dict:
     horizon_path = root / "uturn_cache_backtest/post_result_horizon_observations.csv"
     horizon_rows = _read_csv(horizon_path)
     dividend_return_rows = []
+    expected_horizons = {(symbol, horizon) for symbol in symbols for horizon in (21, 63, 126)}
+    observed_horizons = {(row["Symbol"], int(row["HorizonSessions"])) for row in horizon_rows}
+    if observed_horizons != expected_horizons or any(row["HorizonStatus"] != "COMPLETE" for row in horizon_rows):
+        errors.append("21/63/126-session horizon observations are incomplete")
     for row in horizon_rows:
         symbol = row["Symbol"]
         start_session = date.fromisoformat(row["StartSession"])
