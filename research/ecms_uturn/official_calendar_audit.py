@@ -160,7 +160,7 @@ def run_audit(root: Path = Path(".")) -> dict:
             "ExDate": row["ExDate"],
             "RecordDate": row["RecordDate"],
             "AmountINRPerShare": float(row["AmountINRPerShare"]),
-            "Treatment": "EXCLUDED_FROM_PRICE_ONLY_RETURN; total-return series not computed",
+            "Treatment": "Excluded from price-only return; included in separate gross cash-dividend simple estimate; no reinvestment",
             "SourceURL": row["SourceURL"],
         })
 
@@ -182,6 +182,7 @@ def run_audit(root: Path = Path(".")) -> dict:
             and start_session < date.fromisoformat(item["ExDate"]) <= end_session
         )
         row["GrossCashDividendPerShare"] = f"{gross_cash:.2f}"
+        row["CorporateActionStatus"] = "REVIEWED_NO_STOCK_ACTION; CASH_DIVIDENDS_ADDED_SEPARATELY"
         if row["HorizonStatus"] == "COMPLETE":
             adjusted_return = dividend_inclusive_simple_return_pct(
                 float(row["StartClose"]), float(row["EndClose"]), gross_cash
@@ -237,6 +238,7 @@ def run_audit(root: Path = Path(".")) -> dict:
         summary_path = root / "uturn_cache_backtest/backtest_summary.json"
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         summary["calendar_cross_check"] = "VERIFIED: all 20-session windows exactly match official NSE 2026 equity holiday calendar"
+        summary["eps_source_audit"] = "Verified official consolidated annual diluted EPS pairs for all three pilot names; matching FY basis and official source URLs recorded"
         summary["corporate_action_review"] = "REVIEWED: no stock action found in event windows; gross cash dividends added separately to horizon simple-return estimate; no reinvestment or tax adjustment"
         summary["event_timing_audit"] = "Official company/NSE event evidence recorded; ACI exact public release minute remains unverified"
         summary["dividend_return_method"] = "Price-only and gross cash-dividend-inclusive simple returns reported separately; no reinvestment, taxes, fees or P&L simulation"
