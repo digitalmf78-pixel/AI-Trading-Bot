@@ -86,6 +86,14 @@ def load_price_cache(price_dir):
             errors.append(f"CSV_READ_ERROR:{path.name}:{type(exc).__name__}")
             continue
         frame.columns = [str(c).strip() for c in frame.columns]
+        date_col = next((name for name in ("BizDt", "TradDt", "TRADDT", "BUSINESS_DATE", "DATE") if name in frame.columns), None)
+        if date_col is None:
+            errors.append(f"INTERNAL_DATE_COLUMN_MISSING:{path.name}")
+            continue
+        internal_dates = set(pd.to_datetime(frame[date_col], errors="coerce", dayfirst=False).dt.date.dropna().tolist())
+        if internal_dates != {day}:
+            errors.append(f"INTERNAL_DATE_MISMATCH:{path.name}:{sorted(str(x) for x in internal_dates)}")
+            continue
         upper = {c.upper(): c for c in frame.columns}
         aliases = {
             "SYMBOL": ("SYMBOL", "TCKRSYMB"), "SERIES": ("SERIES", "SCTYSRS"),
