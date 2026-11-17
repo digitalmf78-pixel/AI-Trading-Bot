@@ -155,13 +155,21 @@ def audit_signal_frame(frame, prices, source_name):
         if not math.isfinite(t1[0]): reasons.append("T1_VERIFIED_RESISTANCE_MISSING")
         if not math.isfinite(t2[0]): reasons.append("T2_DISTINCT_VERIFIED_RESISTANCE_MISSING")
         next_session, forward_dates, coverage = None, [], "WAIT_FOR_DATA"
+        horizon_coverage = {}
         if day is not None:
             try:
                 forward_dates = official_sessions_after(day, 20)
                 next_session = forward_dates[0]
-                missing = [d for d in forward_dates if (symbol, d) not in prices]
-                coverage = "COMPLETE_20_SESSIONS" if not missing else f"MISSING_{len(missing)}_OF_20"
-                if missing: reasons.append("FORWARD_OHLC_COVERAGE_INCOMPLETE")
+                for horizon in (5, 10, 20):
+                    required = forward_dates[:horizon]
+                    missing = [d for d in required if (symbol, d) not in prices]
+                    horizon_coverage[horizon] = (
+                        f"COMPLETE_{horizon}_SESSIONS" if not missing
+                        else f"MISSING_{len(missing)}_OF_{horizon}"
+                    )
+                coverage = horizon_coverage[20]
+                if any(value.startswith("MISSING") for value in horizon_coverage.values()):
+                    reasons.append("FORWARD_OHLC_COVERAGE_INCOMPLETE")
             except CalendarCoverageError as exc:
                 reasons.append("OFFICIAL_CALENDAR_COVERAGE_MISSING:" + str(exc))
             except Exception as exc:
@@ -176,7 +184,10 @@ def audit_signal_frame(frame, prices, source_name):
             "Target2": t2[0] if math.isfinite(t2[0]) else "", "Target2Source": t2[1],
             "NextOfficialSession": next_session.isoformat() if next_session else "",
             "NextSessionOpen": next_open if next_open is not None else "",
-            "ForwardOHLC20Coverage": coverage, "ResistanceCandidateCount": len(levels),
+            "ForwardOHLC5Coverage": horizon_coverage.get(5, "WAIT_FOR_DATA"),
+            "ForwardOHLC10Coverage": horizon_coverage.get(10, "WAIT_FOR_DATA"),
+            "ForwardOHLC20Coverage": horizon_coverage.get(20, "WAIT_FOR_DATA"),
+            "ResistanceCandidateCount": len(levels),
             "ReadinessStatus": "READY_FOR_POLICY_SIMULATION" if not reasons else "WAIT_FOR_DATA",
             "ReadinessReasons": ";".join(reasons),
         })
