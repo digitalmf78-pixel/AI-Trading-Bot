@@ -1648,13 +1648,11 @@ def _write_execution_status(mode, status, reason="", **details):
 def _reuse_previous_eod_snapshot():
     """Publish the verified latest EOD snapshot without refreshing live NSE data."""
     import json
-    marker_path = STATE_DIR / "eod_snapshot_run_marker.json"
-    if not STATE_FILE.is_file() or not marker_path.is_file():
+    if not STATE_FILE.is_file():
         _write_execution_status("eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_NOT_FOUND_FOR_REUSE")
         return None
     try:
         snapshot = pd.read_csv(STATE_FILE, dtype={"TckrSymb": str})
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
     except Exception as exc:
         _write_execution_status(
             "eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_UNREADABLE_FOR_REUSE",
@@ -1673,14 +1671,15 @@ def _reuse_previous_eod_snapshot():
         )
         return None
     valid = (
-        "SnapshotType" in snapshot
+        "TckrSymb" in snapshot
+        and snapshot["TckrSymb"].astype(str).str.strip().ne("").all()
+        and not snapshot["TckrSymb"].astype(str).str.upper().duplicated().any()
+        and "SnapshotType" in snapshot
         and snapshot["SnapshotType"].astype(str).eq("EOD").all()
         and "SnapshotStatus" in snapshot
         and snapshot["SnapshotStatus"].astype(str).eq("VALID").all()
-        and marker.get("snapshot_type") == "EOD"
-        and marker.get("snapshot_status") == "VALID"
-        and marker.get("eod_date") == expected_date.isoformat()
-        and int(marker.get("symbol_count", -1)) == len(snapshot)
+        and "SnapshotCapturedAtIST" in snapshot
+        and snapshot["SnapshotCapturedAtIST"].astype(str).str.strip().ne("").all()
     )
     if not valid:
         _write_execution_status(
