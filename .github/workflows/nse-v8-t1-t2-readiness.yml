@@ -26,6 +26,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Restore existing NSE cache read-only
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/cache/restore@v5
         with:
           path: |
@@ -44,6 +45,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas pytest
 
       - name: Download archived EOD report artifact
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
@@ -60,12 +62,13 @@ jobs:
           python -m unittest -v test_t1_t2_data_readiness
 
       - name: Audit archived EOD signals against read-only cache
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python t1_t2_data_readiness.py \
             --signals research_inputs/eod_artifact/outputs/v8_eod_watchlist.csv
 
       - name: Report restored cache inventory
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         run: |
           echo "BHAVCOPY_FILE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_*.csv' 2>/dev/null | wc -l)"
           echo "DELIVERY_FILE_COUNT=$(find data/cache/delivery -maxdepth 1 -type f -name 'sec_bhavdata_full_*.csv' 2>/dev/null | wc -l)"
