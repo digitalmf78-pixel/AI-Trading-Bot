@@ -123,15 +123,22 @@ def build_nse_symbol_ohlc_window(
     rows = []
     for session in sessions:
         record = by_date[session]
+        source_url = str(record.get("source_url", ""))
+        if session.strftime("%Y%m%d") not in source_url:
+            return {"status": "UNVERIFIED", "reason": f"{session}: source URL does not identify the expected bhavcopy date"}
         result = extract_nse_eq_ohlc_row(
             record.get("bhavcopy"),
             symbol=symbol,
             expected_session=session,
-            source_url=record.get("source_url", ""),
+            source_url=source_url,
         )
         if result["status"] != "READY":
             return {"status": result["status"], "reason": f"{session}: {result['reason']}"}
         rows.append(result)
+
+    isins = {row["ISIN"] for row in rows}
+    if len(isins) != 1:
+        return {"status": "UNVERIFIED", "reason": "ISIN changed within the 20-session window; corporate-action/security identity review required"}
 
     return {
         "status": "READY",
