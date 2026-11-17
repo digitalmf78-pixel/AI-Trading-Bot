@@ -11,7 +11,7 @@ Find better-quality opportunities from **every eligible NSE Volume Gainers page 
 ### Locked operating decisions
 
 - **No basket strategy and no basket construction.** Evaluate and report individual stocks.
-- **No historical backtesting.** P8 is live shadow-output and operational validation only. Do not add historical backtesting jobs, datasets or requirements.
+- **No basket strategy or production ECMS scanner backtesting.** A narrowly scoped U-Turn historical event-study is explicitly authorized on the isolated research branch using the already-restored V8 cache only. It must be reviewed before any ECMS implementation; it is not a trading P&L simulation and does not alter P8 live shadow validation.
 - Keep exactly the existing two ECMS scans: Morning and EOD. Preserve the previous-EOD → next-Morning and same-day-Morning → EOD comparison cycle, official NSE holiday/session handling and separate reports.
 - Research every eligible Main Board company stock returned by the NSE Volume Gainers page. Do not impose a Top-20/Top-25 cap on the returned eligible rows.
 - Keep ECMS isolated from NSE V8 production workflows, providers, thresholds, caches and selection logic.
