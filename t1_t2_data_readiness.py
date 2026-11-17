@@ -147,7 +147,7 @@ def official_sessions_after(day, count):
 
 def evaluate_daily_stop_bar(bar, stop):
     """Apply approved daily stop trigger and gap-through execution."""
-    opening, high, low, close, stop_value = (number(bar.get(k)) for k in ("OPEN", "HIGH", "LOW", "CLOSE"))
+    opening, high, low, close = (number(bar.get(k)) for k in ("OPEN", "HIGH", "LOW", "CLOSE"))
     stop_value = number(stop)
     vals = (opening, high, low, close, stop_value)
     if (not all(math.isfinite(v) for v in vals) or stop_value <= 0 or low <= 0
