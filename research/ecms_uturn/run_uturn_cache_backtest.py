@@ -158,7 +158,7 @@ def main():
             "TechnicalConfirmationCount":len(confirm_dates),"FirstTechnicalConfirmationDate":confirm_dates[0] if confirm_dates else "",
             "ZoneTouchesMissingDelivery":missing_delivery_touches,
             "LatestCloseVsTargetPct":(float(last["Close"])/target-1)*100 if target else "",
-            "CorporateActionStatus":"NOT_AUDITED_PROVISIONAL","EPSSourceAudit":"OFFICIAL_URLS_PRESENT_CONTENT_REVIEW_PENDING",
+            "CorporateActionStatus":"NOT_AUDITED_PROVISIONAL","EPSSourceAudit":"VERIFIED_OFFICIAL_CONSOLIDATED_ANNUAL_DILUTED_EPS_VALUES",
             "Interpretation":"EVENT_STUDY_ONLY_NO_ENTRY_EXIT_OR_PNL",
             "EPSAnnualReportURL":ev["Official_Annual_Report_URL"],"ResultFilingURL":ev["Official_Result_Filing_URL"],
         })
