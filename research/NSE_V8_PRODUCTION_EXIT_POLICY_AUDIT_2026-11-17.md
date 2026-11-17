@@ -82,20 +82,22 @@ Do not label that result an execution backtest.
 
 ## Decisions required before an execution-level backtest
 
-The following are **proposals requiring explicit user approval**, not current production rules:
+The following are proposals or decisions for research only; they do not change production behavior:
 
-| Decision | Conservative research proposal | Needs approval |
+| Decision | Research policy | Status |
 |---|---|---|
-| Entry | Next official NSE session Open after an eligible signal | Yes |
-| Initial stop | Use the production StopLossPlan captured as-of signal date; never recompute with future data | Confirm |
-| Stop trigger | Daily Low <= stop; if Open < stop, model fill at Open, otherwise at stop | Yes |
-| Target trigger | Daily High >= structural target | Yes |
-| Same-day stop and target both touched | Stop-first (conservative ambiguity resolution) | Yes |
-| Target action | Full exit, or specify a fixed partial quantity/percentage | Yes |
-| Trailing stop | Disabled in baseline until activation and update rules are defined | Yes |
-| Time exit | Treat 5D/10D/20D as measurement horizons only; no automatic time exit unless specified | Yes |
-| Costs | Retain previously tested cost/slippage assumptions only if user reconfirms they are appropriate | Confirm |
-| Portfolio simulation | Keep signal-level first; add concurrency/sizing/drawdown only after account assumptions are explicitly supplied | Yes |
+| Entry | Next official NSE session Open after an eligible signal | Awaiting approval |
+| Initial stop | Use the production StopLossPlan captured as-of signal date; never recompute with future data | Awaiting confirmation |
+| Stop trigger | Daily Low <= stop; if Open < stop, model fill at Open, otherwise at stop | Awaiting approval |
+| Target trigger | Daily High >= target | Awaiting approval |
+| Same-day stop and target both touched | Stop-first (conservative ambiguity resolution) | **User approved for research backtest** |
+| Target levels and quantity | Define Target 1 as the nearest verified overhead resistance and Target 2 as the next distinct verified overhead resistance above Target 1. Run two separate research scenarios: (A) sell **100% of the position at Target 1**; (B) sell **100% of the position at Target 2**. Do not split quantity between targets. If a valid Target 2 cannot be established from data available on the signal date, mark that scenario WAIT_FOR_DATA; do not invent a target. | **User approved: full quantity; compare T1 and T2 scenarios** |
+| Trailing stop | Disabled in baseline until activation and update rules are defined | Awaiting approval |
+| Time exit | Treat 5D/10D/20D as measurement horizons only; no automatic time exit unless specified | Awaiting approval |
+| Costs | Retain previously tested cost/slippage assumptions only if user reconfirms they are appropriate | Awaiting confirmation |
+| Portfolio simulation | Keep signal-level first; add concurrency/sizing/drawdown only after account assumptions are explicitly supplied | Awaiting approval |
+
+For each T1/T2 scenario, the full position exits at the first applicable stop or that scenario's target. The same-day stop/target collision is resolved stop-first. These are backtest assumptions only, not live trading instructions or production changes.
 
 Any future implementation must validate OHLC consistency (Low <= Open/Close <= High), official NSE session sequence, no future leakage, duplicate/missing bars, and stop/target collision handling. Data validation must not be weakened for speed.
 
