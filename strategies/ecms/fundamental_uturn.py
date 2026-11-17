@@ -18,9 +18,15 @@ DEFAULT_TOLERANCE_PCT = 3.0
 
 REQUIRED_COLUMNS = {
     "Symbol", "Previous_FY", "Current_FY", "Previous_EPS", "Current_EPS",
-    "EPS_Basis", "Reporting_Basis", "Result_Announcement_Date",
-    "Peak_Price", "Latest_Post_Result_Close", "Latest_Post_Result_Session",
-    "EPS_Verified", "Peak_Price_Verified", "Corporate_Action_Adjusted",
+    "Previous_EPS_Basis", "Current_EPS_Basis",
+    "Previous_Reporting_Basis", "Current_Reporting_Basis",
+    "Previous_EPS_Unit", "Current_EPS_Unit",
+    "Previous_EPS_Source_URL", "Current_EPS_Source_URL",
+    "Result_Announcement_Source_URL", "Result_Announcement_Date",
+    "Peak_Price", "Peak_Price_Source_URL",
+    "Latest_Post_Result_Close", "Latest_Post_Result_Session",
+    "Latest_Post_Result_Source_URL", "EPS_Verified", "Peak_Price_Verified",
+    "Corporate_Action_Adjusted",
 }
 
 
@@ -145,11 +151,28 @@ def calculate_uturn_targets(
             finish("WAIT_FOR_DATA", "Missing NSE symbol")
             continue
 
-        if str(row.get("EPS_Basis", "")).strip().upper() != "DILUTED":
-            finish("WAIT_FOR_DATA", "Diluted EPS only; Basic/missing basis is not accepted")
+        previous_eps_basis = str(row.get("Previous_EPS_Basis", "")).strip().upper()
+        current_eps_basis = str(row.get("Current_EPS_Basis", "")).strip().upper()
+        if previous_eps_basis != "DILUTED" or current_eps_basis != "DILUTED":
+            finish("WAIT_FOR_DATA", "Both financial years require diluted EPS; Basic EPS fallback is prohibited")
             continue
-        if str(row.get("Reporting_Basis", "")).strip().upper() not in {"CONSOLIDATED", "STANDALONE"}:
-            finish("WAIT_FOR_DATA", "Reporting basis must be explicit")
+        previous_reporting_basis = str(row.get("Previous_Reporting_Basis", "")).strip().upper()
+        current_reporting_basis = str(row.get("Current_Reporting_Basis", "")).strip().upper()
+        if (previous_reporting_basis not in {"CONSOLIDATED", "STANDALONE"}
+                or current_reporting_basis != previous_reporting_basis):
+            finish("WAIT_FOR_DATA", "Previous/current reporting basis must match and be explicit")
+            continue
+        if (str(row.get("Previous_EPS_Unit", "")).strip().upper() != "INR/SHARE"
+                or str(row.get("Current_EPS_Unit", "")).strip().upper() != "INR/SHARE"):
+            finish("WAIT_FOR_DATA", "Both EPS observations must use INR/share")
+            continue
+        source_fields = [
+            "Previous_EPS_Source_URL", "Current_EPS_Source_URL",
+            "Result_Announcement_Source_URL", "Peak_Price_Source_URL",
+            "Latest_Post_Result_Source_URL",
+        ]
+        if any(not str(row.get(field, "")).strip().startswith("https://") for field in source_fields):
+            finish("UNVERIFIED", "One or more official filing/announcement/OHLC source URLs are missing")
             continue
         if row.get("EPS_Verified") is not True and row.get("EPS_Verified") != 1:
             finish("UNVERIFIED", "Annual diluted EPS is not verified against official filings")
