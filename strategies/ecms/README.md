@@ -210,3 +210,5 @@ The CSV preserves every returned page row, including rows outside the official M
 - Full design and remaining gates: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
 
 - Sample intake template (5 blank issuer rows): [U-Turn sample universe intake CSV](../../research/ecms_uturn/sample_universe_intake_template.csv). No issuer data is prefilled or fabricated. Candidate admission requires NSE Main Board proof, audited annual diluted EPS for both consecutive FYs on the same reporting basis, official result-announcement date/time, 20 valid pre-result daily High observations, post-result completed Close and corporate-action reconciliation.
+
+- Initial source-verified sample: [FY2026 sample universe and evidence](../../research/ecms_uturn/SAMPLE_UNIVERSE_FY2026.md) — INFY, ACI and AARTIIND; EPS/event data only. OHLC peak, post-result close and corporate-action verification remain pending.
