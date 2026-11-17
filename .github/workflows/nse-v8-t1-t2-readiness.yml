@@ -1,6 +1,11 @@
 name: NSE V8 T1 T2 Research Data Readiness
 
 on:
+  pull_request:
+    paths:
+      - 't1_t2_data_readiness.py'
+      - 'test_t1_t2_data_readiness.py'
+      - '.github/workflows/nse-v8-t1-t2-readiness.yml'
   workflow_dispatch:
     inputs:
       source_run_id:
