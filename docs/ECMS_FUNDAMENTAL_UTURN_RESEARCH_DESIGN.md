@@ -1,7 +1,7 @@
 # ECMS Fundamental U-Turn Module — Research Design
 
 **Design date:** 2026-11-17  
-**Status:** Research implementation v1 added on the isolated research branch; dedicated CI passed 17 unit tests on 17-Nov-2026. Issuer-level OHLC/corporate-action reconciliation remains pending; not production-approved.  
+**Status:** Research implementation v1 added on the isolated research branch; dedicated CI passed 23 unit tests on 17-Nov-2026 (confirmed in Runs #13 and #14). Issuer-level OHLC/corporate-action reconciliation remains pending; not production-approved.  
 **Scope:** ECMS only, on branch `research/bharat-sm-data-fundamental-audit-2026-11-17`.  
 **User-confirmed inputs:** annual EPS comparison; peak price means the price peak before the result announcement.  
 **No backtesting, basketting, trading order or buy/sell signal is included.**
