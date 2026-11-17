@@ -1689,7 +1689,10 @@ def _reuse_previous_eod_snapshot():
     report["ScanDateIST"] = expected_date.isoformat()
     report["DataAsOfDateIST"] = expected_date.isoformat()
     report["EODSnapshotReuse"] = True
+    if "FundamentalShortlistStatus" not in report and "EODFundamentalShortlistStatus" in report:
+        report["FundamentalShortlistStatus"] = report["EODFundamentalShortlistStatus"]
     report.to_csv(OUTPUT_DIR / "volume_gainers_eod_nse_page.csv", index=False)
+    report.to_csv(OUTPUT_DIR / "volume_gainers_eod_research.csv", index=False)
     summary = {
         "status": "REUSED",
         "scan_date_ist": expected_date.isoformat(),
