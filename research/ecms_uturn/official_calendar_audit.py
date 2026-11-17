@@ -157,6 +157,40 @@ def run_audit(root: Path = Path(".")) -> dict:
             "SourceURL": row["SourceURL"],
         })
 
+    horizon_path = root / "uturn_cache_backtest/post_result_horizon_observations.csv"
+    horizon_rows = _read_csv(horizon_path)
+    dividend_return_rows = []
+    for row in horizon_rows:
+        symbol = row["Symbol"]
+        start_session = date.fromisoformat(row["StartSession"])
+        end_session = date.fromisoformat(row["EndSession"])
+        gross_cash = sum(
+            item["AmountINRPerShare"]
+            for item in dividends
+            if item["Symbol"] == symbol
+            and start_session < date.fromisoformat(item["ExDate"]) <= end_session
+        )
+        row["GrossCashDividendPerShare"] = f"{gross_cash:.2f}"
+        if row["HorizonStatus"] == "COMPLETE":
+            adjusted_return = dividend_inclusive_simple_return_pct(
+                float(row["StartClose"]), float(row["EndClose"]), gross_cash
+            )
+            row["DividendInclusiveSimpleReturnPct"] = f"{adjusted_return:.6f}"
+        else:
+            row["DividendInclusiveSimpleReturnPct"] = ""
+        row["DividendReturnMethod"] = "Gross cash added; no reinvestment, tax or fees; not a full total-return index"
+        dividend_return_rows.append({
+            "Symbol": symbol,
+            "HorizonSessions": int(row["HorizonSessions"]),
+            "GrossCashDividendPerShare": round(gross_cash, 2),
+            "PriceOnlyReturnPct": float(row["CloseReturnPct"]) if row["CloseReturnPct"] else None,
+            "DividendInclusiveSimpleReturnPct": float(row["DividendInclusiveSimpleReturnPct"]) if row["DividendInclusiveSimpleReturnPct"] else None,
+        })
+    if horizon_rows:
+        with horizon_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(horizon_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(horizon_rows)
     audit = {
         "status": "PASS" if not errors else "BLOCKED",
         "errors": errors,
@@ -168,7 +202,8 @@ def run_audit(root: Path = Path(".")) -> dict:
         "latest_post_result_close_ready_symbols": sorted(close_ready),
         "stock_action_review": "No bonus/split/rights/demerger found in reviewed event-window sources; explicit evidence links are in corporate_action_audit.csv",
         "cash_dividends": dividends,
-        "dividend_treatment": "Cash dividends excluded from price-only returns; no total-return series calculated",
+        "dividend_inclusive_simple_horizon_returns": dividend_return_rows,
+        "dividend_treatment": "Price-only returns retained; gross cash dividends separately added to horizon return as a no-reinvestment simple estimate; not a full total-return index",
         "sample_scope": "Three-stock descriptive pilot; not randomized and not statistically representative",
         "promotion_status": "PROVISIONAL_RESEARCH_ONLY; not a trade signal or production approval",
     }
@@ -189,8 +224,9 @@ def run_audit(root: Path = Path(".")) -> dict:
         summary_path = root / "uturn_cache_backtest/backtest_summary.json"
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         summary["calendar_cross_check"] = "VERIFIED: all 20-session windows exactly match official NSE 2026 equity holiday calendar"
-        summary["corporate_action_review"] = "REVIEWED: no stock action found in event windows; cash dividends excluded from price-only returns; total-return series not computed"
+        summary["corporate_action_review"] = "REVIEWED: no stock action found in event windows; gross cash dividends added separately to horizon simple-return estimate; no reinvestment or tax adjustment"
         summary["event_timing_audit"] = "Official company/NSE event evidence recorded; ACI exact public release minute remains unverified"
+        summary["dividend_return_method"] = "Price-only and gross cash-dividend-inclusive simple returns reported separately; no reinvestment, taxes, fees or P&L simulation"
         summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print(json.dumps(audit, indent=2))
