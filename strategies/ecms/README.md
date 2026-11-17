@@ -247,3 +247,10 @@ The CSV preserves every returned page row, including rows outside the official M
 - Initial source-verified sample: [FY2026 sample universe and evidence](../../research/ecms_uturn/SAMPLE_UNIVERSE_FY2026.md) — INFY, ACI and AARTIIND; FY2025/FY2026 consolidated diluted EPS and event date/time verified against NSE filings/annual reports. OHLC peak, post-result close and corporate-action verification remain pending.
 
 - The initial 20-session date windows are recorded for INFY (20-Mar–22-Apr), AARTIIND (01-Apr–30-Apr) and ACI (09-Apr–08-May), each excluding its entire result announcement date. The dates use NSE's published 2026 equity holiday calendar; the raw daily archive files still need to be downloaded and checked before any peak calculation. The latest completed post-result close as of 17-Nov-2026 is expected to be 16-Nov-2026; source URLs are listed in `research/ecms_uturn/post_result_close_manifest.csv`, with actual closes pending verification.
+
+
+### P2/P7 research evidence — official NSE U-Turn sample OHLC
+
+- The 3-stock U-Turn sample has a 60-row, 20-session-per-stock pre-result manifest plus a separate 16-Nov-2026 latest completed post-result close manifest.
+- `research/ecms_uturn/download_verify_nse_bhavcopy.py` fetches only the official NSE UDiFF archive URLs, validates symbol/date/CM/STK/EQ/ISIN/High/Close, records archive SHA-256 and emits an evidence artifact. The isolated `ECMS U-Turn NSE Sample Data Audit` workflow is scoped to the research branch and these files only.
+- The fetcher intentionally does not certify corporate-action comparability and does not calculate valuation targets. A successful download/parse is only raw price-row verification; corporate-action and diluted-EPS share-basis checks remain a separate gate.
