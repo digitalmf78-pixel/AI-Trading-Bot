@@ -106,6 +106,8 @@ jobs:
           PY
         env:
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      - name: Install isolated audit parser dependency
+        run: python -m pip install --disable-pip-version-check pandas
       - name: Verify sample OHLC, delivery and diluted-EPS evidence from restored cache
         run: python research/ecms_uturn/audit_v8_cache_samples.py
       - name: Upload read-only cache audit
