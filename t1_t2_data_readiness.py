@@ -145,6 +145,33 @@ def official_sessions_after(day, count):
         cursor += pd.Timedelta(days=1)
     raise RuntimeError(f"Could not resolve {count} official sessions after {day}")
 
+def evaluate_daily_stop_bar(bar, stop):
+    """Apply approved daily stop trigger and gap-through execution."""
+    opening, high, low, close, stop_value = (number(bar.get(k)) for k in ("OPEN", "HIGH", "LOW", "CLOSE"))
+    stop_value = number(stop)
+    vals = (opening, high, low, close, stop_value)
+    if (not all(math.isfinite(v) for v in vals) or stop_value <= 0 or low <= 0
+            or low > opening or low > close or high < opening or high < close or high < low):
+        return {"status": "WAIT_FOR_DATA", "exit_price": float("nan"), "reason": "INVALID_OHLC_OR_STOP"}
+    if low <= stop_value:
+        if opening < stop_value:
+            return {"status": "STOP_HIT", "exit_price": opening, "reason": "GAP_THROUGH_STOP_AT_OPEN"}
+        return {"status": "STOP_HIT", "exit_price": stop_value, "reason": "INTRADAY_STOP_AT_STOP_PRICE"}
+    return {"status": "NO_STOP_HIT", "exit_price": float("nan"), "reason": ""}
+
+def first_stop_exit(prices, symbol, sessions, stop):
+    """Find first stop event; daily stop/target collision resolves stop-first."""
+    for day in sessions:
+        bar = prices.get((symbol, day))
+        if bar is None:
+            return {"status": "WAIT_FOR_DATA", "date": "", "exit_price": float("nan"), "reason": "SESSION_OHLC_MISSING"}
+        result = evaluate_daily_stop_bar(bar, stop)
+        if result["status"] == "WAIT_FOR_DATA":
+            return {"status": "WAIT_FOR_DATA", "date": day.isoformat(), "exit_price": float("nan"), "reason": result["reason"]}
+        if result["status"] == "STOP_HIT":
+            return {"status": "STOP_HIT", "date": day.isoformat(), "exit_price": result["exit_price"], "reason": result["reason"]}
+    return {"status": "NO_STOP_HIT_IN_HORIZON", "date": "", "exit_price": float("nan"), "reason": ""}
+
 def audit_signal_frame(frame, prices, source_name):
     output = []
     for idx, row in frame.iterrows():
@@ -199,10 +226,17 @@ def audit_signal_frame(frame, prices, source_name):
         if not math.isfinite(t2[0]): reasons.append("T2_DISTINCT_VERIFIED_RESISTANCE_MISSING_ABOVE_ENTRY_FILL")
         t1_valid, t2_valid = math.isfinite(t1[0]), math.isfinite(t2[0])
         horizon_ready = {}
+        stop_results = {}
         for horizon in (5, 10, 20):
             complete = horizon_coverage.get(horizon, "").startswith("COMPLETE_")
             horizon_ready[f"T1DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t1_valid and complete else "WAIT_FOR_DATA"
             horizon_ready[f"T2DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t2_valid and complete else "WAIT_FOR_DATA"
+            stop_results = {}
+            stop_results[horizon] = (
+                first_stop_exit(prices, symbol, forward_dates[:horizon], stop)
+                if common_plan_valid and complete else
+                {"status": "WAIT_FOR_DATA", "date": "", "exit_price": float("nan"), "reason": "ENTRY_OR_HORIZON_DATA_INCOMPLETE"}
+            )
         any_horizon_ready = any(value == "DATA_READY" for value in horizon_ready.values())
         output.append({
             "SourceFile": source_name, "SourceRow": int(idx)+1,
@@ -220,6 +254,10 @@ def audit_signal_frame(frame, prices, source_name):
             "ForwardOHLC10Coverage": horizon_coverage.get(10, "WAIT_FOR_DATA"),
             "ForwardOHLC20Coverage": horizon_coverage.get(20, "WAIT_FOR_DATA"),
             **horizon_ready,
+            **{f"StopStatus{h}D": stop_results[h]["status"] for h in (5, 10, 20)},
+            **{f"StopDate{h}D": stop_results[h]["date"] for h in (5, 10, 20)},
+            **{f"StopExitPrice{h}D": stop_results[h]["exit_price"] if math.isfinite(stop_results[h]["exit_price"]) else "" for h in (5, 10, 20)},
+            **{f"StopExitReason{h}D": stop_results[h]["reason"] for h in (5, 10, 20)},
             "ResistanceCandidateCount": len(levels),
             "ReadinessStatus": "PARTIAL_DATA_READY" if any_horizon_ready else "WAIT_FOR_DATA",
             "ReadinessReasons": ";".join(reasons),
