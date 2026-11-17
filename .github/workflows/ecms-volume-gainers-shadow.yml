@@ -440,6 +440,36 @@ jobs:
           print(f"ECMS_CACHE_COMPLETED_SESSION={completed}")
           print(f"ECMS_CACHE_PREVIOUS_SESSION={previous}")
           PY
+      - name: Restore shared NSE bhavcopy and market cache read-only (same cache contract as production)
+        id: shared-cache
+        uses: actions/cache/restore@v5
+        with:
+          # Keep this path list and order identical to nse-test-scheduled.yml and the ECMS EOD job.
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+            nse-bhavcopy-${{ runner.os }}-main-
+      - name: Report shared NSE cache restore result
+        run: |
+          echo "ECMS_SHARED_NSE_CACHE_HIT=${{ steps.shared-cache.outputs.cache-hit }}"
+          echo "ECMS_SHARED_NSE_CACHE_PRIMARY_KEY=${{ steps.shared-cache.outputs.cache-primary-key }}"
+          echo "ECMS_SHARED_NSE_CACHE_MATCHED_KEY=${{ steps.shared-cache.outputs.cache-matched-key }}"
       - name: Restore previous EOD page universe and ECMS fundamental cache
         uses: actions/cache/restore@v4
         with:
