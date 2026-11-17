@@ -188,3 +188,11 @@ Until the scanner is fully validated, every successful Morning and EOD scan also
 - Morning: `outputs/ecms/volume_gainers_morning_nse_page.csv`
 
 The CSV preserves every returned page row, including rows outside the official Main Board universe, and explicitly labels `MainBoardEligible` and `PageUniverseStatus`. It also records scan mode/date, page capture time and NSE page source. The scanner's research universe remains the eligible Main Board subset; the downloadable page CSV is a manual comparison aid and does not change stock selection. The page currently labels its table Top 25, so “complete” means all rows returned by that NSE page response, not the entire NSE-listed universe.
+
+
+## Fundamental U-Turn research module (not production)
+
+- Design document: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
+- User-confirmed basis: consecutive completed annual EPS values; pre-result price peak.
+- The research design uses a proposed configurable 20-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone. The 20-session window remains a proposal pending confirmation.
+- The module is isolated research only. It must not change P0–P8, EOD/Morning behavior, fundamental gating, production caches, Telegram decision messages or NSE V8. No backtesting, basketting, order or buy/sell signal.
