@@ -124,14 +124,17 @@ def test_pre_result_peak_uses_last_20_sessions_and_excludes_event_date():
 
 def test_pre_result_peak_requires_full_unique_valid_sessions():
     dates = pd.bdate_range("2026-04-20", periods=20)
+    event_date = (dates[-1] + pd.Timedelta(days=1)).date().isoformat()
     short = pd.DataFrame({"Date": dates[:19], "High": [100.0] * 19})
-    assert select_pre_result_peak(short, "2026-05-01")["status"] == "WAIT_FOR_DATA"
+    assert select_pre_result_peak(short, event_date)["status"] == "WAIT_FOR_DATA"
 
-    duplicate = pd.concat([short, short.iloc[[0]]], ignore_index=True)
-    assert select_pre_result_peak(duplicate, "2026-05-01")["status"] == "WAIT_FOR_DATA"
+    duplicate = pd.concat([pd.DataFrame({"Date": dates, "High": [100.0] * 20}),
+                           pd.DataFrame({"Date": [dates[0]], "High": [100.0]})],
+                          ignore_index=True)
+    assert select_pre_result_peak(duplicate, event_date)["status"] == "WAIT_FOR_DATA"
 
     invalid = pd.DataFrame({"Date": dates, "High": [100.0] * 19 + [None]})
-    assert select_pre_result_peak(invalid, "2026-05-01")["status"] == "WAIT_FOR_DATA"
+    assert select_pre_result_peak(invalid, event_date)["status"] == "WAIT_FOR_DATA"
 
 
 def test_invalid_tolerance_rejected():
