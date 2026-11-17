@@ -23,6 +23,12 @@ class OfficialNSECalendarAuditTests(unittest.TestCase):
         self.assertEqual(sessions[0], "2026-03-20")
         self.assertEqual(sessions[-1], "2026-04-22")
 
+    def test_aartiind_20_session_window_matches_nse_holidays(self):
+        sessions = expected_nse_sessions(date(2026, 4, 1), date(2026, 4, 30), self.holidays)
+        self.assertEqual(len(sessions), 20)
+        self.assertEqual(sessions[0], "2026-04-01")
+        self.assertEqual(sessions[-1], "2026-04-30")
+
     def test_aci_20_session_window_matches_nse_holidays(self):
         sessions = expected_nse_sessions(date(2026, 4, 9), date(2026, 5, 8), self.holidays)
         self.assertEqual(len(sessions), 20)
