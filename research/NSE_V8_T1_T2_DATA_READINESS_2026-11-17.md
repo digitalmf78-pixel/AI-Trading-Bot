@@ -132,3 +132,12 @@ The user approved this stop-only rule:
 - If the same daily bar reaches stop and target, resolve unknown intraday ordering conservatively as stop-first.
 
 The audit reports first stop status/date/exit price/reason independently for 5D, 10D and 20D horizons. It does not calculate target exits, returns, P&L, win rate or expectancy. Target-touch and target-gap execution remain unapproved.
+## Approved research target execution rule
+
+The user approved this target-only research assumption:
+- Target is triggered when validated session High is greater than or equal to the target.
+- If session Open is greater than or equal to the target, assume gap-through exit at Open.
+- Otherwise assume exit at the target price.
+- Stop remains higher priority on a daily bar that touches both stop and target.
+
+For T1 and T2 independently, the audit reports the first stop-or-target event/status/date/exit price/reason for 5D, 10D and 20D horizons. This is still a simplified daily-OHLC research simulation; intraday sequencing is unknown, so stop-first collision resolution is conservative. It does not apply fees, slippage, trailing stops, time exits, or portfolio-level sizing and does not alter production trading behavior.
