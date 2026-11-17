@@ -134,3 +134,57 @@ def test_ecms_metric_provenance_records_actual_moneycontrol_request_url(monkeypa
     assert "referenceId=ratios" in result["metric_urls"]["EPS"]
     assert "scId=MC123" in result["metric_urls"]["EPS"]
     assert result["metric_urls"]["EPS"] != "https://www.moneycontrol.com/"
+
+
+def test_operating_cash_flow_metric_is_requested_and_extracted_from_cash_flow_table(monkeypatch):
+    class FakeMoneyControl:
+        def __init__(self):
+            self.session = None
+            self._free_source_last_http = {}
+
+        def _frame(self, reference_id, frame):
+            self._free_source_last_http = {
+                "url": (
+                    "https://www.moneycontrol.com/mc/widget/mcfinancials/"
+                    f"getFinancialData?referenceId={reference_id}&scId=MC123"
+                )
+            }
+            return frame
+
+        def get_ticker(self, search_text):
+            return "MC123", {"ticker": "ABC", "sc_id": "MC123", "stock_name": "ABC Limited"}
+
+        def get_ratios_mini_statement(self, ticker, statement_type="consolidated"):
+            return self._frame("ratios", pd.DataFrame())
+
+        def get_overview_mini_statement(self, ticker, statement_type="consolidated", statement_frequency=12):
+            return self._frame("overview", pd.DataFrame())
+
+        def get_income_mini_statement(self, ticker, statement_type="consolidated", statement_frequency=3):
+            return self._frame("income", pd.DataFrame())
+
+        def get_balance_sheet_mini_statement(self, ticker, statement_type="consolidated"):
+            return self._frame("balance-sheet", pd.DataFrame())
+
+        def get_cash_flow_mini_statement(self, ticker, statement_type="consolidated"):
+            return self._frame(
+                "cash-flow",
+                pd.DataFrame({"Mar 2026": [125.0]}, index=["Cash from operating activities"]),
+            )
+
+    fake_client = FakeMoneyControl()
+    monkeypatch.setattr(
+        shared_free_sources, "_instantiate_bounded_client", lambda factory: fake_client
+    )
+    result = shared_free_sources.fetch_free_fundamental_sources(
+        "ABC",
+        company_name="ABC Limited",
+        missing_metrics={"OperatingCashFlowINR"},
+        pause_seconds=0,
+        source_factories={"moneycontrol": lambda: fake_client},
+        capture_metric_source_urls=True,
+    )
+
+    assert result["metrics"]["OperatingCashFlowINR"] == 125.0
+    assert result["metric_periods"]["OperatingCashFlowINR"] == "Mar 2026"
+    assert "referenceId=cash-flow" in result["metric_urls"]["OperatingCashFlowINR"]
