@@ -26,6 +26,12 @@ def next_nse_session(event_date: date, holidays: set[date]) -> date:
     return day
 
 
+def dividend_inclusive_simple_return_pct(start_close: float, end_close: float, gross_cash_dividends: float) -> float:
+    """Gross cash-dividend-inclusive simple return; no reinvestment or tax adjustment."""
+    if start_close <= 0:
+        raise ValueError("start_close must be positive")
+    return ((end_close + gross_cash_dividends - start_close) / start_close) * 100.0
+
 def _read_csv(path: Path) -> list[dict]:
     with path.open(encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
