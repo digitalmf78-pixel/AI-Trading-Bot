@@ -103,6 +103,7 @@ for sym in symbols:
         symbol_results.append({"Symbol":sym,"Date":day,"Status":"READY","Reason":"","High":res.get("High"),"Close":res.get("Close"),"ISIN":res.get("ISIN"),"CachePath":str(chosen_path)})
         ohlc_rows.append(res)
         records.append({"session_date":day,"source_url":f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{day.replace('-','')}_F_0000.csv.zip","bhavcopy":load_table(chosen_path)})
+    session_audit_rows.extend(symbol_results)
     # The parser requires complete 20-row coverage; feed only successful dated records.
     result=build_nse_symbol_ohlc_window(records,symbol=sym,expected_sessions=expected,announcement_date=next(r["Result_Announcement_Date"] for r in PEAK if r["Symbol"]==sym),window_sessions=20)
     peak_date=""; peak_high=""
