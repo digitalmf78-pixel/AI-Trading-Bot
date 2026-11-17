@@ -1,0 +1,115 @@
+name: ECMS research - read-only NSE V8 cache audit
+
+on:
+  push:
+    branches:
+      - research/bharat-sm-data-fundamental-audit-2026-11-17
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout isolated ECMS research branch
+        uses: actions/checkout@v5
+      - name: Restore shared NSE cache read-only using exact V8 cache path contract
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: ecms-v8-readonly-audit-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-main-
+      - name: Report cache restore metadata
+        run: |
+          echo "CACHE_HIT=${{ steps.cache.outputs.cache-hit }}"
+          echo "CACHE_MATCHED_KEY=${{ steps.cache.outputs.cache-matched-key }}"
+      - name: Inventory cache without modifying source files
+        run: |
+          python - <<'PY'
+          import csv, json, os, re, zipfile
+          from pathlib import Path
+          from datetime import datetime
+          roots = [
+              Path("data/bhavcopy"), Path("data/cache/delivery"),
+              Path("data/inputs/fundamental_metrics.csv"),
+              Path("data/cache/fundamental_history"),
+              Path("data/cache/xbrl_samples"), Path("data/cache/xbrl_period_pairs"),
+              Path("outputs/v8_official_financial_results_filings.csv"),
+          ]
+          date_cols = {"trad_dt","date","timestamp","trading_date","tradedate","as_of_date","period_end","period"}
+          rows_out, summary = [], {"cache_hit": os.getenv("CACHE_HIT","unknown"), "files": 0, "bhavcopy_files": 0, "delivery_files": 0, "fundamental_files": 0}
+          def inspect_csv(path, label):
+              try:
+                  with path.open("r", encoding="utf-8-sig", newline="") as f:
+                      reader = csv.DictReader(f)
+                      headers = reader.fieldnames or []
+                      count, dates = 0, []
+                      for row in reader:
+                          count += 1
+                          for key, value in row.items():
+                              if key and key.strip().lower() in date_cols and value:
+                                  dates.append(str(value).strip())
+                      rows_out.append({"path":str(path),"type":label,"rows":count,"columns":headers,"date_samples":dates[:3],"date_min":min(dates) if dates else None,"date_max":max(dates) if dates else None})
+              except Exception as exc:
+                  rows_out.append({"path":str(path),"type":label,"error":f"{type(exc).__name__}: {exc}"})
+          for root in roots:
+              if not root.exists():
+                  rows_out.append({"path":str(root),"type":"missing"})
+                  continue
+              files = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file())
+              for p in files:
+                  summary["files"] += 1
+                  low = str(p).lower()
+                  label = "other"
+                  if "bhavcopy" in low: label = "bhavcopy"; summary["bhavcopy_files"] += 1
+                  elif "delivery" in low: label = "delivery"; summary["delivery_files"] += 1
+                  elif "fundamental" in low or "xbrl" in low or "financial_results" in low: label = "fundamental"; summary["fundamental_files"] += 1
+                  if p.suffix.lower() == ".csv":
+                      inspect_csv(p,label)
+                  elif p.suffix.lower() == ".zip":
+                      try:
+                          with zipfile.ZipFile(p) as z:
+                              entries = z.namelist()
+                              rows_out.append({"path":str(p),"type":label,"zip_entries":entries[:20],"zip_entry_count":len(entries),"bytes":p.stat().st_size})
+                      except Exception as exc:
+                          rows_out.append({"path":str(p),"type":label,"error":f"{type(exc).__name__}: {exc}"})
+                  else:
+                      rows_out.append({"path":str(p),"type":label,"bytes":p.stat().st_size})
+          Path("v8_cache_audit").mkdir(exist_ok=True)
+          Path("v8_cache_audit/inventory.json").write_text(json.dumps({"summary":summary,"items":rows_out},indent=2),encoding="utf-8")
+          with Path("v8_cache_audit/inventory.csv").open("w",newline="",encoding="utf-8") as f:
+              w=csv.DictWriter(f,fieldnames=["path","type","rows","columns","date_samples","date_min","date_max","zip_entries","zip_entry_count","bytes","error"])
+              w.writeheader()
+              for row in rows_out:
+                  w.writerow({k:json.dumps(row.get(k)) if isinstance(row.get(k),(list,dict)) else row.get(k) for k in w.fieldnames})
+          print(json.dumps(summary,indent=2))
+          print(f"Inventory items: {len(rows_out)}")
+          PY
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      - name: Upload read-only cache audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-v8-cache-readonly-audit-${{ github.run_id }}
+          path: v8_cache_audit/
+          if-no-files-found: error
+          retention-days: 14
