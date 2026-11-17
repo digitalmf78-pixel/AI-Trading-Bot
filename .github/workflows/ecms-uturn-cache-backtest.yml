@@ -49,8 +49,14 @@ jobs:
           python -m py_compile research/ecms_uturn/run_uturn_cache_backtest.py research/ecms_uturn/replay_gemini_cases_from_cache.py research/ecms_uturn/uturn_research_engine.py
           python -m unittest discover -s tests -p 'test_ecms_uturn_cache_backtest_contract.py'
           python -m unittest discover -s tests -p 'test_uturn_research_engine.py'
+      - name: Strictly audit the 20-session NSE windows from this same restored cache
+        run: python research/ecms_uturn/audit_v8_cache_samples.py
+        env:
+          PYTHONPATH: .
       - name: Run historical event-study using cached NSE UDiFF data
         run: python research/ecms_uturn/run_uturn_cache_backtest.py
+      - name: Fail closed unless both parsers agree on every pre-result peak
+        run: python research/ecms_uturn/validate_event_study_cache_consistency.py
       - name: Replay Gemini reference cases against cached OHLCV and delivery
         run: python research/ecms_uturn/replay_gemini_cases_from_cache.py
       - name: Upload backtest evidence
