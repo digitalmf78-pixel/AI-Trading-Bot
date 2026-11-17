@@ -80,6 +80,13 @@ U_Turn_Estimate = Pre_Result_Peak_High - Expected_Correction
 - U-Turn output is attached to each eligible stock as a separate research observation. It **must not** reject or promote a candidate, alter the seven-metric fundamental gate, override volume-origin/trap evidence, change EOD entry trigger or Morning confirmation, or affect cache/Telegram decisions.
 - No backtesting, basketting, broker/order action, auto-buy/sell or NSE V8 changes. Keep the module and its data in the isolated ECMS research scope until issuer-level evidence and P8 shadow review are complete.
 
+**Two-sided U-Turn — bottom and overextension context (research only):**
+
+- **Downside / possible-bottom side:** retain the annual diluted-EPS valuation-reset estimate above. The separate OHLCV context may label `RESET_ZONE_ONLY` when Close is near the reset zone, or `BOTTOM_WATCH` only when zone proximity is accompanied by oversold RSI and one-session price/RSI stabilization. Neither confirms a bottom or support.
+- **Upside / overextension side:** observe Wilder RSI(14), SMA20/SMA50, Close extension versus SMA20, and Volume versus the preceding 20 completed sessions. Initial research defaults: RSI >= 70 and extension >= 10% together produce `OVEREXTENDED`; one condition alone produces `STRETCHED`. Positive trend alignment can be `MOMENTUM_STRONG`; weakness with elevated volume can be `WEAKENING`. These are contextual labels, not confirmed tops or reversal signals.
+- EPS growth is separate fundamental context; do not reverse the downside formula into a guaranteed upside target. Preserve separate valuation-reset and price-context statuses; missing inputs on either side remain `WAIT_FOR_DATA`.
+- The two-sided context is placed under **P7**, using fundamentals from P1, OHLCV/delivery from P2, event dates from P4 and technical context from P6; P8 reviews live shadow output. It does not alter P0–P8 execution order or any production scan decision.
+
 Implementation/design references: [U-Turn research design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md), [downside EPS calculator](fundamental_uturn.py), [NSE UDiFF OHLC parser](uturn_nse_ohlc.py), [two-sided price-context module](uturn_two_sided.py).
 
 ### Execution discipline
