@@ -276,7 +276,7 @@ The code changes remain ECMS-only; the V8 production workflow and its default co
 - From 09:15–11:59 IST, a manual dispatch runs Morning confirmation and new-stock observation. From 08:00–09:14 and 12:00–15:29 IST, it is SKIPPED with an explicit reason.
 - The official NSE trading calendar still blocks holidays and unavailable calendar coverage. Scheduled scans route by their configured cron: 17:01 IST EOD and 09:21 IST Morning, with each mode's existing slot/data-date validation.
 - The previous EOD CSV remains eligible as the Morning reference only when its snapshot metadata, session date, completeness and consumption state pass validation. A CSV artifact alone is not sufficient proof of a valid persisted EOD snapshot.
-- ECMS state cache uses a versioned namespace and NSE-session-date prefixes. Morning restores only the cache partition for the exact latest completed NSE session; EOD prefers the current session's Morning partition, then the immediately preceding completed session. Older unscoped cache keys are deliberately excluded. The independent fundamental cache remains restored separately.
+- ECMS state cache uses a versioned namespace and NSE-session-date prefixes. Morning restores only the cache partition for the exact latest completed NSE session; EOD prefers the current session's Morning partition, then the immediately preceding completed session. Broad legacy cache prefixes are excluded. A one-time fallback is pinned to the exact previously verified 16-Nov-2026 EOD run (`43866492965`) solely to migrate this first v2 Morning cycle; scanner-side session-date and snapshot-integrity checks still apply. The independent fundamental cache remains restored separately.
 
 
 ### EOD snapshot validation — 16-Nov-2026
@@ -303,3 +303,11 @@ ECMS has one workflow-dispatch button and no user-selected EOD/Morning input. A 
 Scheduled routing remains at 17:01 IST for EOD and 09:21 IST for Morning. The official NSE trading calendar and each mode's existing data-date checks remain authoritative; a weekday schedule on a holiday must not create a scan. A skipped manual dispatch writes its routing decision to the Actions step summary and sends a short Telegram notice when Telegram secrets are configured.
 
 EOD is the primary selection and entry-trigger engine. Morning is confirmation/observation only: it must not overwrite the EOD entry trigger or convert a new observation into an EOD entry signal. The 00:00–07:59 IST window is snapshot reuse only; it must not refresh live NSE data. The 08:00 IST lock closes EOD reuse until Morning opens at 09:15.
+
+
+### One-time v2 cache bootstrap — 17-Nov-2026
+
+- The first v2 Morning dispatch exposed a namespace migration gap: the validated 16-Nov EOD cache had been saved under the old exact key `ecms-vg-state-main-43866492965`, while the new Morning job searched only `ecms-vg-state-v2-*` keys.
+- Morning restore now tries the date-scoped v2 key first, then only that exact verified legacy run key. It does **not** restore the broad `ecms-vg-state-main-` prefix, so the cancelled/stale 17-Nov cache cannot be selected by this migration fallback.
+- The scanner still validates the restored snapshot's expected latest completed NSE session, EOD type/status, capture timestamp, and unique symbols before using it. Once the first v2 Morning state is saved, normal date-scoped v2 restores take over.
+- The failed 17-Nov 10:45 IST Morning attempt did not produce a valid Morning snapshot or CSV; do not count it as a completed Morning cycle. No workflow was re-run as part of this fix.
