@@ -1,4 +1,4 @@
-name: ECMS NSE VOLUME GAINERS - TWO DAILY SCANS
+name: ECMS NSE VOLUME GAINERS - AUTO ROUTED SCANS
 on:
   push:
     branches: [main]
