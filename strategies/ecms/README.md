@@ -254,3 +254,10 @@ The CSV preserves every returned page row, including rows outside the official M
 - The 3-stock U-Turn sample has a 60-row, 20-session-per-stock pre-result manifest plus a separate 16-Nov-2026 latest completed post-result close manifest.
 - `research/ecms_uturn/download_verify_nse_bhavcopy.py` fetches only the official NSE UDiFF archive URLs, validates symbol/date/CM/STK/EQ/ISIN/High/Close, records archive SHA-256 and emits an evidence artifact. The isolated `ECMS U-Turn NSE Sample Data Audit` workflow is scoped to the research branch and these files only.
 - The fetcher intentionally does not certify corporate-action comparability and does not calculate valuation targets. A successful download/parse is only raw price-row verification; corporate-action and diluted-EPS share-basis checks remain a separate gate.
+
+
+#### NSE sample downloader execution correction — 17-Nov-2026
+
+- The first session-warmed downloader revision completed its GitHub Actions step with exit code 0 but produced no output directory or artifact. Log inspection found the Python file defined download helpers but had no executable `main()` entry point; therefore the workflow had not attempted any archive downloads. This was a false-green workflow step, not evidence of NSE access.
+- Corrected in commit `ac6fc37e0d9ced68993eafe1ef55bf064873ef03`: added the manifest-driven runner, bounded two-worker downloads, per-archive SHA-256/schema audit, per-symbol exact 20-session parser validation, post-result close extraction, CSV/JSON evidence outputs, and a non-zero exit whenever archives, any 20-session window, or post-result closes are incomplete.
+- The corrected commit should trigger the research-only workflow through the existing path filter. Do not treat this correction as a successful fetch until the new run has a non-empty artifact and the summary/CSV rows have been inspected. Corporate-action review and EPS/share-basis reconciliation remain pending; no U-Turn targets are calculated.
