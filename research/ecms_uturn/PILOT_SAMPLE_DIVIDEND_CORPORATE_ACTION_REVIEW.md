@@ -1,20 +1,33 @@
-# Pilot Sample — Cash Dividend / Corporate-Action Review
+# Pilot Sample — Dividend and Corporate-Action Review
 
-**Status:** partial review only. No split/bonus/de-merger price adjustment has been applied. All price-only outcomes remain provisional.
+**Status:** official issuer / exchange evidence reviewed for INFY, ACI and AARTIIND. No bonus, split, rights issue or demerger requiring price-series adjustment was found in the reviewed event windows. Cash dividends are recorded separately.
 
-| Symbol | Cash dividend evidence during post-result window | Date evidence | Treatment in current event study |
-|---|---|---|---|
-| INFY | ₹25 final dividend; ₹26 interim dividend | NSE corporate-actions page lists ₹25 ex-date 10-Jun-2026; Infosys filing states ₹26 interim dividend ex/record date 03-Nov-2026 | Ex-dates fall within the observed post-result window. Cash dividends are excluded from reported price-only returns. |
-| ACI | ₹2.50 final dividend per ₹2 share recommended for FY2025-26 | Company filing dated 11-May-2026 gives record date 05-Jun-2026; exact ex-date still needs independent NSE action-table verification | Cash dividend excluded from reported price-only returns. |
-| AARTIIND | ₹1.00 final dividend per ₹5 share recommended for FY2025-26 | Company/NSE notice gives record date 14-Sep-2026; exact ex-date still needs independent NSE action-table verification | Cash dividend excluded from reported price-only returns. |
+| Symbol | Cash dividend ex-date | Record date | Amount/share | Treatment |
+|---|---|---|---:|---|
+| INFY | 10-Jun-2026 | 10-Jun-2026 | ₹25.00 | Added to gross dividend-inclusive simple-return estimate for horizons ending after ex-date |
+| INFY | 03-Nov-2026 | 03-Nov-2026 | ₹26.00 | Recorded; after INFY 126-session endpoint (26-Oct), so not included in that horizon |
+| ACI | 04-Jun-2026 | 05-Jun-2026 | ₹2.50 | Added to gross dividend-inclusive simple-return estimates for 21/63/126 sessions |
+| AARTIIND | 11-Sep-2026 | 14-Sep-2026 | ₹1.00 | Added to 126-session simple-return estimate; outside 21/63-session endpoints |
+
+## Stock-action review
+
+- **INFY:** NSE corporate-action records reviewed for the 2026 event window show cash dividends and no bonus/split/rights/de-merger event in the window.
+- **ACI:** FY2025-26 annual report states no bonus shares were issued during the preceding five years; reviewed exchange/company records show the FY26 cash dividend and no stock-action event in the pilot window.
+- **AARTIIND:** FY2025-26 annual report share-capital reconciliation records PSOP share issuance and no bonus issue during FY2025-26; its historical 1:1 bonus predates the pilot by years. NSE quote/corporate-action records show the ₹1 FY26 cash dividend in September 2026 and no stock-action event in the pilot window.
 
 ## Official evidence
 
-- INFY ₹25 dividend ex-date 10-Jun-2026: [NSE corporate actions page](https://www.nseindia.com/companies-listing/corporate-filings-actions?symbol=INFY&tabIndex=equity).
-- INFY ₹26 interim dividend ex/record date 03-Nov-2026: [Infosys board outcome](https://archives.nseindia.com/corporate/Infosys_23102026160704_BM_Outcome_Oct232026_1.pdf).
-- ACI ₹2.50 final dividend recommendation and 05-Jun-2026 record date: [NSE-hosted company filing](https://nsearchives.nseindia.com/corporate/ARCHEAN_12052026010551_Record_Date_Intimation.pdf).
-- AARTIIND ₹1.00 final dividend recommendation and 14-Sep-2026 record date: [NSE-hosted notice](https://nsearchives.nseindia.com/corporate/AARTIIND_28082026144106_AARTIIND_Newspaper.pdf).
+- INFY ₹25 final dividend ex-date 10-Jun-2026: [NSE corporate actions](https://www.nseindia.com/companies-listing/corporate-filings-actions?symbol=INFY&tabIndex=equity).
+- INFY ₹26 interim dividend ex/record date 03-Nov-2026: [NSE-hosted Infosys board outcome](https://archives.nseindia.com/corporate/Infosys_23102026160704_BM_Outcome_Oct232026_1.pdf).
+- ACI ₹2.50 final dividend recommendation and 05-Jun-2026 record date: [NSE-hosted company filing](https://nsearchives.nseindia.com/corporate/ARCHEAN_12052026010551_Record_Date_Intimation.pdf). Ex-date 04-Jun-2026: [MSE corporate-action record](https://www.msei.in/corporates/corporate-securities-information/corporate-update/default?symbol=ACI&type=4&vmode=vm). Stock-action review: [ACI FY26 annual report](https://www.archeanchemicals.com/investor-relations/admin/assets/products/ACIL%20Annual%20Report%2025-26.pdf).
+- AARTIIND ₹1 final dividend ex-date 11-Sep-2026 and record date 14-Sep-2026: [NSE quote / corporate-actions page](https://www.nseindia.in/get-quote/equity/AARTIIND/Aarti-Industries-Ltd). Stock-action review: [AARTIIND FY26 annual report](https://nsearchives.nseindia.com/annual_reports/AR_30737_AARTIIND_2025_2026_A_22486837_27082026184733.pdf).
 
-## Consequence
+## Return calculation treatment
 
-The event-study 21/63/126-session figures are **price-only close-to-close observations**, not total shareholder returns. Dividend cash has not been added back, and tax/reinvestment are not modeled. Before promoting any return comparison, reconcile exact ex-dates and calculate a separately labelled dividend-inclusive total-return series. Do not silently adjust the raw OHLC series used for target-zone touch detection.
+The event-study retains its original price-only close-to-close returns. A second, explicitly labelled gross cash-dividend-inclusive simple estimate is calculated as:
+
+`(EndClose + GrossCashDividends - StartClose) / StartClose × 100`
+
+Only dividends with ex-dates after the start session and on/before the horizon end are added. No reinvestment, taxes, fees, or official total-return index is modeled. Raw OHLC is not silently adjusted, so zone-touch and delivery/RVOL calculations remain based on the observed NSE cache rows.
+
+Machine-readable evidence: `corporate_action_audit.csv` and `v8_cache_audit/official_calendar_corporate_action_audit.json`.
