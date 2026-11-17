@@ -118,7 +118,7 @@ jobs:
           FREE_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
-        run: python -m strategies.ecms.volume_gainers --mode ${{ 'auto' if github.event_name == 'workflow_dispatch' else 'eod' }}
+        run: python -m strategies.ecms.volume_gainers --mode ${{ github.event_name == 'workflow_dispatch' && 'auto' || 'eod' }}
       - name: Validate current-run EOD snapshot before saving cache
         id: eod-snapshot-check
         if: always()
