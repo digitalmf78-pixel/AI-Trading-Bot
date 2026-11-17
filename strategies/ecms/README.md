@@ -298,3 +298,18 @@ The CSV preserves every returned page row, including rows outside the official M
 - The three `OVEREXTENDED` observations were NAVKARURB, NDGL and SPECTRUM. These are technical research flags only, not sell/avoid calls or recommendations.
 - This pass does not certify every metric value as `OFFICIAL_XBRL_VERIFIED`; source/provenance completeness is distinct from metric-level XBRL fact verification. The bottom-side valuation zone was not run because annual diluted EPS and corporate-action-adjusted pre-result peaks were not independently verified for this broad symbol set. No `BOTTOM_WATCH` or valuation reset is claimed.
 - Artifact: `ecms-v8-cache-readonly-audit-44051940288` (12 output files; includes full 906-symbol eligibility/rejection table and 237-symbol technical output). Shared cache remains restore-only; no V8 production files or workflows were changed.
+
+
+---
+
+### Latest U-Turn research validation addendum — 17-Nov-2026
+
+This addendum supersedes earlier pending-status notes in the historical U-Turn implementation log below. It does **not** authorize production integration.
+
+- Detailed P0–P8 research design and locked acceptance rules: [isolated U-Turn research README](../../research/ecms_uturn/README.md).
+- Latest successful same-run event-study / parser consistency run: [#44075834518](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834518). Latest successful read-only cache audit: [#44075834526](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834526). A subsequent CI pass adds official calendar/corporate-action and dividend-inclusive checks; see the current research branch Actions runs before treating those additions as accepted.
+- Three pilot stocks each have 20/20 strict pre-result OHLC sessions, matching ISIN, peak date/High agreement between parsers, and 20/20 delivery rows. Official NSE 2026 holiday-calendar comparison matches all three windows.
+- Post-result close rows are 3/3 READY. No bonus/split/rights/demerger adjustment was found in reviewed event windows; cash dividends are separately recorded.
+- ACI is the only EPS-decline pilot. Its target zone was touched on eight sessions, but no zone-touch session met both delivery >=60% and RVOL >=1.5x. INFY and AARTIIND are no-decline controls and receive no downside target.
+- A fixed-seed five-stock source-verification draw remains separate and unchanged; it produced no verified EPS-decline case. The three-stock event-study pilot is not randomized or statistically representative.
+- Research only: no Volume Gainers integration, no buy/sell signal, no orders, no P&L simulation, and no production ECMS/V8 changes.
