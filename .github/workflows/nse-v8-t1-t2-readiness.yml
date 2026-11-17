@@ -1,6 +1,13 @@
 name: NSE V8 T1 T2 Research Data Readiness
 
 on:
+  push:
+    branches:
+      - research/nse-v8-t1-t2-data-readiness-2026-11-17
+    paths:
+      - 't1_t2_data_readiness.py'
+      - 'test_t1_t2_data_readiness.py'
+      - '.github/workflows/nse-v8-t1-t2-readiness.yml'
   pull_request:
     paths:
       - 't1_t2_data_readiness.py'
