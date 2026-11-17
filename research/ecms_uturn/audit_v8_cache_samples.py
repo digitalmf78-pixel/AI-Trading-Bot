@@ -154,7 +154,8 @@ for base in search_roots:
                 for ln in lines[:10]:
                     eps_hits.append({"Symbol":sym,"Path":str(p),"EvidenceClass":"DISCOVERY_ONLY_NOT_VERIFIED","LineExcerpt":ln})
         except Exception: pass
-pd.DataFrame(ohlc_rows).to_csv(OUT/"cached_ohlc_verified_rows.csv",index=False)\npd.DataFrame(session_audit_rows).to_csv(OUT/"cached_ohlc_session_audit.csv",index=False)
+pd.DataFrame(ohlc_rows).to_csv(OUT/"cached_ohlc_verified_rows.csv",index=False)
+pd.DataFrame(session_audit_rows).to_csv(OUT/"cached_ohlc_session_audit.csv",index=False)
 pd.DataFrame(windows).to_csv(OUT/"cached_ohlc_window_summary.csv",index=False)
 pd.DataFrame(post_rows).to_csv(OUT/"cached_post_result_close.csv",index=False)
 pd.DataFrame(delivery_rows).to_csv(OUT/"cached_delivery_coverage.csv",index=False)
