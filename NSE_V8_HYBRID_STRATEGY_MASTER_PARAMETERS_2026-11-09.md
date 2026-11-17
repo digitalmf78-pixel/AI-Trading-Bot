@@ -694,12 +694,14 @@ The user corrected the proposed EMA50 reference: **EMA44 is the intended moving-
 
 ### D. Two separate entry setup types are to be researched and backtested
 
-**Type A — EMA44 Pullback Entry**
-- Candidate remains eligible from the upstream selection gates.
-- Observe price approaching EMA44 and whether it holds/reclaims the EMA44 area with valid price/volume evidence.
-- A touch of EMA44 alone is not an entry signal.
-- Require a separately defined bullish/reclaim confirmation, structural stop and all existing V8 confirmation/risk controls before an entry can be confirmed.
-- Exact pullback tolerance, candle confirmation and volume conditions remain pending definition/backtest.
+**Type A — EMA44-only Pullback Entry (approved implementation direction, 17-Nov-2026)**
+- EMA44 is the only moving-average proximity reference used by the Type A pullback setup. EMA20 may still be calculated/displayed as supporting information, but EMA20 proximity alone must never qualify a Type A pullback.
+- Reuse the current validated pullback thresholds for the first isolated implementation/backtest: controlled correction 1–15% from the recent 20-session high; close within 3% of EMA44; current RVOL <=1.5; at least 3 of the last 5 sessions classified as low-volume; bullish reversal candle with Close > Open, Close > previous Close and CLV >0.50; the existing bullish trend classification (Close > EMA44) remains required.
+- EMA44 proximity or a touch alone is not an entry signal. The existing bullish reversal/volume conditions remain necessary.
+- Missing/invalid EMA44 data must return WAIT_FOR_DATA for the Type A pullback evaluation; EMA20 must not be used as a fallback.
+- The existing 5-session EMA44 slope observation (>0.10% = RISING; <-0.10% = FALLING; otherwise FLAT) remains informational only for this phase; it is not a new hard gate. Any change to slope lookback/threshold requires separate approval and backtest.
+- This change is limited to the Pullback setup classification. Breakout thresholds, upstream Delivery/Liquidity gates, 3+1 confirmation, structural stop/target, R:R, Chase and portfolio-risk controls remain unchanged.
+- The existing pullback thresholds are inherited starting parameters, not proven profitable settings. Type A must be backtested independently with realistic costs/slippage before treating it as a production-ready trading edge.
 
 **Type B — Base/Pivot Breakout Entry**
 - Detect a valid consolidation/base and persist its objectively detected boundaries.
@@ -732,4 +734,4 @@ These are proposed consolidated lifecycle labels. Before implementation, map the
 5. Test across market regimes and Large/Mid/Small Mainboard stocks; report survivorship and point-in-time data limitations.
 6. Only after user review/approval, implement behind isolated NSE V8 branch/PR, add regression tests and compare old/new scanner outputs. Do not merge without explicit approval.
 
-**Current status (17-Nov-2026):** Architecture direction documented. EMA44 selected over EMA50 for this entry design; Type A EMA44 Pullback and Type B Base/Pivot Breakout both selected for separate research/backtesting. Exact thresholds, final hard-gate status and production implementation remain pending. No scanner code, workflow, cache, production selection rule or original Master Specification was changed by this documentation decision.
+**Current status (17-Nov-2026):** Architecture direction documented. EMA44 selected over EMA50 for this entry design; Type A EMA44 Pullback and Type B Base/Pivot Breakout both selected for separate research/backtesting. Type A EMA44-only proximity rule and inherited pullback thresholds are approved for isolated implementation/backtest; EMA44 slope remains informational. Type B base/pivot thresholds and broader lifecycle separation remain pending. No scanner code, workflow, cache, production selection rule or original Master Specification was changed by this documentation decision.
