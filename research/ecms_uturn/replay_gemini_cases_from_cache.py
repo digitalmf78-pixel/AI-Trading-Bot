@@ -25,10 +25,10 @@ CASES=[
 def date_tokens(path):
     stem=path.stem
     out=set()
-    for token in re.findall(r"(?<!\\d)(20\\d{6})(?!\\d)",stem):
+    for token in re.findall(r"(?<!\d)(20\d{6})(?!\d)",stem):
         try: out.add(pd.to_datetime(token,format="%Y%m%d").date().isoformat())
         except Exception: pass
-    for a,b,c in re.findall(r"(?<!\\d)(\\d{2})(\\d{2})(20\\d{2})(?!\\d)",stem):
+    for a,b,c in re.findall(r"(?<!\d)(\d{2})(\d{2})(20\d{2})(?!\d)",stem):
         try: out.add(pd.to_datetime(a+b+c,format="%d%m%Y").date().isoformat())
         except Exception: pass
     return out
