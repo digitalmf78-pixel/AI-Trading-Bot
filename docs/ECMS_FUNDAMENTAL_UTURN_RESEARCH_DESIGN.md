@@ -179,3 +179,41 @@ The research-only parser `strategies/ecms/uturn_nse_ohlc.py` consumes caller-sup
 NSE's official archive pages list security-wise price/volume archives and daily bhavcopy reports. The UDiFF cash-market bhavcopy uses fields including `TradDt`, `TckrSymb`, `SctySrs`, `HghPric` and `ClsPric`. Reference: [NSE Historical Reports](https://www.nseindia.in/static/resources/historical-reports-capital-market-daily-monthly-archives), [NSE All Reports](https://www.nseindia.com/all-reports/).
 
 No actual 20-session files have yet been downloaded or reconciled for INFY, ACI or AARTIIND. The parser's fixture tests validate logic only; they do not substitute for issuer-specific source-file verification.
+
+
+## 13. Two-sided U-Turn research extension
+
+The U-Turn concept has two distinct research directions. They must remain separate calculations and separate status fields; neither is a trade signal.
+
+### A. Downside / potential-bottom side
+
+The existing annual diluted-EPS valuation-reset calculator remains the downside valuation component. It estimates a reset zone only when the prior and current completed-FY diluted EPS values are positive, comparable and verified. The price-context layer may then report:
+- `RESET_ZONE_ONLY`: completed-session Close is inside the estimated valuation zone, without the required price/RSI stabilization evidence.
+- `BOTTOM_WATCH`: Close is inside the zone, RSI is at/below the configurable oversold research threshold, and both Close and RSI have improved versus the previous completed session.
+- `WAIT_FOR_DATA`: incomplete OHLCV history or invalid inputs.
+
+Even `BOTTOM_WATCH` is only a research observation, not a confirmed bottom, support or entry signal.
+
+### B. Upside / overextension side
+
+A separate OHLCV context module, `strategies/ecms/uturn_two_sided.py`, measures:
+- Wilder RSI (default 14 sessions);
+- 20-session and 50-session simple moving averages;
+- latest Close extension versus SMA20;
+- latest Volume versus the preceding 20 completed sessions' average Volume (the current session is excluded from the average).
+
+Initial configurable research defaults: RSI >= 70, Close extension >= 10% above SMA20, and volume expansion ratio >= 1.5. These are exploratory thresholds only, not validated trading thresholds. Classifications:
+- `OVEREXTENDED`: RSI and SMA20 extension conditions are both met.
+- `STRETCHED`: only one of those conditions is met.
+- `MOMENTUM_STRONG`: Close > SMA20 > SMA50 with RSI >= 55; this is explicitly not an overextension call.
+- `WEAKENING`: Close < SMA20, RSI < 50 and volume ratio >= the configured expansion threshold.
+- `NEUTRAL`: none of the above.
+- `WAIT_FOR_DATA`: incomplete/invalid completed-session OHLCV history.
+
+These labels identify momentum/extension context, not a market top or reversal. An overbought RSI alone does not prove a top; strong trends can remain overbought. EPS growth/decline remains a separate fundamental context and must not be inferred from price indicators.
+
+### Two-sided output contract and isolation
+
+Keep the existing downside valuation result (for example `U_Turn_Target` and `U_Turn_Status`) separate from the price-context result (for example `Price_Context_Status`, `RSI14`, `SMA20`, `SMA50`, `ExtensionPct_SMA20`, `VolumeRatio_Prior20`). Do not merge the two statuses into a single buy/sell label. For every stock, preserve `WAIT_FOR_DATA` independently on either side when inputs are missing.
+
+The two-sided module is research-only. It does not alter the seven fundamental metrics, candidate inclusion, P0–P8 order, EOD trigger, Morning confirmation, production cache, Telegram decisions, schedules or NSE V8. No historical backtesting, basketting, orders or auto-buy/sell.
