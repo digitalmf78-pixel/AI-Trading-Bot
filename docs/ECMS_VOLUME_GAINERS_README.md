@@ -276,3 +276,12 @@ The code changes remain ECMS-only; the V8 production workflow and its default co
 - The resolver uses IST wall-clock time. The official NSE trading calendar still blocks holidays and unavailable calendar coverage. Scheduled Morning/EOD jobs retain their explicit schedule-specific modes and slot validation.
 - The previous EOD CSV remains eligible as the Morning reference only when its snapshot metadata, session date, completeness and consumption state pass the existing validation. A CSV artifact alone is not sufficient proof of a valid persisted EOD snapshot.
 - ECMS state cache uses a new versioned namespace and NSE-session-date prefixes. Morning restores only the cache partition for the exact latest completed NSE session; EOD prefers the current session's Morning partition, then the immediately preceding completed session. Older unscoped cache keys are deliberately excluded. The independent fundamental cache remains restored separately.
+
+
+### EOD snapshot validation — 16-Nov-2026
+
+- Verified manual EOD run [43866492965](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43866492965): EOD job SUCCESS; the Morning job was correctly skipped for this EOD dispatch.
+- The run reported `ECMS_EOD_SNAPSHOT_CACHEABLE=True` and saved the ECMS state cache. Telegram delivered all four report parts (message IDs 2303–2306) and the full NSE page CSV (message ID 2307; 14,324 bytes).
+- Artifact `ecms-volume-gainers-eod-43866492965` (ID 14226655517) was inspected: `volume_gainers_eod_nse_page.csv` contains 25 rows, 22 official Main Board eligible; every row has `ScanMode=EOD` and `ScanDateIST=2026-11-16`. Summary dates are ScanDate 16-Nov, DataAsOfDate 16-Nov and EOD date 16-Nov.
+- The following Morning run #433 (run ID 44018285950) failed closed because cache restore selected a later 17-Nov snapshot instead of the required 16-Nov EOD reference. A later cancelled pre-close manual EOD run #427 had also written a same-prefix state cache, illustrating why date-unscoped restore keys were unsafe.
+- The 17-Nov fix therefore introduces a new `ecms-vg-state-v2` namespace, saves state by NSE scan-session date plus run ID, and restores Morning state only from the exact latest completed NSE session date. Legacy unscoped state caches are not eligible for v2 restores.
