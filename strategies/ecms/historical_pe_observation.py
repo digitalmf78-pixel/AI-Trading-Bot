@@ -11,9 +11,12 @@ from typing import Any, Iterable
 
 
 def _positive_finite(value: Any) -> bool:
+    # bool is a numeric subclass in Python (True == 1); never accept it as EPS/PE.
+    if isinstance(value, bool):
+        return False
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
     return isfinite(number) and number > 0
 
@@ -60,9 +63,11 @@ def calculate_historical_pe_reference(
         cutoff = date.fromisoformat(as_of_date)
     except ValueError:
         return wait("AS_OF_DATE_INVALID")
+    if isinstance(lower_percentile, bool):
+        return wait("LOWER_PERCENTILE_OUT_OF_RANGE")
     try:
         percentile = float(lower_percentile)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return wait("LOWER_PERCENTILE_OUT_OF_RANGE")
     if not isfinite(percentile) or not 0 < percentile < 50:
         return wait("LOWER_PERCENTILE_OUT_OF_RANGE")
