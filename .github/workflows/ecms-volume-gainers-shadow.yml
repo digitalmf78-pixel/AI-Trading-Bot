@@ -8,13 +8,71 @@ on:
   schedule:
     - cron: "31 11 * * *" # 17:01 IST regular-session EOD
     - cron: "51 3 * * *"  # 09:21 IST regular-session Morning
-    - cron: "56 8 * * *"  # 14:26 IST configured special-session Morning slot
 permissions:
   contents: read
 concurrency:
   group: ecms-volume-gainers-shadow
   cancel-in-progress: false
 jobs:
+  route:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      mode: ${{ steps.resolve.outputs.mode }}
+      reason: ${{ steps.resolve.outputs.reason }}
+    steps:
+      - name: Resolve one-click ECMS scan mode using IST clock and official schedule
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime, time
+          from zoneinfo import ZoneInfo
+          from urllib.request import Request, urlopen
+          from urllib.parse import urlencode
+          import os
+          event = os.getenv("EVENT_NAME", "")
+          schedule = os.getenv("EVENT_SCHEDULE", "")
+          now = datetime.now(ZoneInfo("Asia/Kolkata"))
+          mode, reason = "skip", "OUTSIDE_ECMS_SCAN_WINDOW"
+          if event == "schedule":
+              if schedule == "31 11 * * *":
+                  mode, reason = "eod", "SCHEDULED_EOD_1701_IST"
+              elif schedule == "51 3 * * *":
+                  mode, reason = "morning", "SCHEDULED_MORNING_0921_IST"
+              else:
+                  reason = "UNRECOGNIZED_ECMS_SCHEDULE"
+          elif event == "workflow_dispatch":
+              current = now.time().replace(tzinfo=None)
+              if current >= time(15, 30) or current < time(8, 0):
+                  mode, reason = "eod", "MANUAL_TIME_ROUTED_EOD"
+              elif time(9, 15) <= current < time(12, 0):
+                  mode, reason = "morning", "MANUAL_TIME_ROUTED_MORNING"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"mode={mode}\\nreason={reason}\\n")
+          summary = (
+              f"## ECMS automatic scan routing\\n"
+              f"- Current IST: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\\n"
+              f"- Selected mode: **{mode.upper()}**\\n"
+              f"- Reason: {reason}\\n"
+          )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write(summary)
+          print(summary)
+          if mode == "skip":
+              token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+              if token and chat_id:
+                  payload = urlencode({"chat_id": chat_id, "text": f"⏭ ECMS scan SKIPPED\\nIST: {now.strftime('%Y-%m-%d %H:%M')}\\nReason: {reason}\\nRun: {os.getenv('RUN_URL','')}"}).encode()
+                  request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=payload)
+                  with urlopen(request, timeout=20) as response:
+                      print(f"ECMS skip Telegram HTTP {response.status}")
+          PY
   validate:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -37,9 +95,8 @@ jobs:
           python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_gemini_research.py tests/test_ecms_secondary_source_periods.py test_fundamental_data_provider.py
 
   eod:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'schedule' && (github.event.schedule == '31 11 * * *'))
+    needs: route
+    if: needs.route.outputs.mode == 'eod'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -152,7 +209,7 @@ jobs:
           FREE_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
-        run: python -m strategies.ecms.volume_gainers --mode ${{ github.event_name == 'workflow_dispatch' && 'auto' || 'eod' }}
+        run: python -m strategies.ecms.volume_gainers --mode eod
       - name: Validate current-run EOD snapshot before saving cache
         id: eod-snapshot-check
         if: always()
@@ -340,8 +397,8 @@ jobs:
               print(f"ECMS EOD NSE page CSV unavailable; scan/report may have failed before page export: {page_csv}")
           PY
   morning:
-    if: >-
-      (github.event_name == 'schedule' && (github.event.schedule == '51 3 * * *' || github.event.schedule == '56 8 * * *'))
+    needs: route
+    if: needs.route.outputs.mode == 'morning'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
