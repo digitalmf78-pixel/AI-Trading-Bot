@@ -31,6 +31,11 @@ ALIASES = {
     "ROCEPercent": ("return on capital employed", "roce", "roce %"),
     "DebtToEquity": ("debt equity", "debt to equity", "debt/equity", "debt equity ratio", "debt to equity (x)"),
     "InterestCoverage": ("interest coverage", "interest coverage ratio", "interest coverage ratios (x)"),
+    "OperatingCashFlowINR": (
+        "cash from operating activities", "cash flow from operating activities",
+        "operating cash flow", "cash from operations",
+        "net cash from operating activities", "cash generated from operations",
+    ),
     "GrossMarginPct": ("gross margin", "gross margin %", "gross profit margin"),
     "OperatingMarginPct": ("operating margin", "operating margin %", "ebit margin"),
     "NetProfitMarginPct": ("net profit margin", "net margin", "net profit margin %"),
