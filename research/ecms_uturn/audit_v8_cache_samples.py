@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv, json, re
 from pathlib import Path
 import pandas as pd
+from research.ecms_uturn.cache_date_utils import normalize_session_dates
 from strategies.ecms.uturn_nse_ohlc import extract_nse_eq_ohlc_row, build_nse_symbol_ohlc_window
 
 ROOT=Path(".")
@@ -38,7 +39,7 @@ def index_files(root, date_columns):
                 datecol=next((norm[name.lower()] for name in date_columns if name.lower() in norm),None)
                 if not datecol:
                     continue
-                dates=pd.to_datetime(frame[datecol],errors="coerce",dayfirst=False).dt.date.astype("string")
+                dates=normalize_session_dates(frame[datecol])
                 for day in sorted(set(dates.dropna().tolist())):
                     idx.setdefault(day,[]).append(p)
             except Exception:
@@ -67,7 +68,7 @@ def verify_bhav(symbol, session, path):
     df=load_table(path)
     datecol=find_date_col(df,["TradDt","DATE1","Date"])
     if not datecol: return {"status":"WAIT_FOR_DATA","reason":"No recognised session-date column","path":str(path)}
-    # NSE UDiFF TradDt is ISO YYYY-MM-DD; dayfirst=True silently swaps month/day.\n    dates=pd.to_datetime(df[datecol],errors="coerce",dayfirst=False).dt.date.astype("string")
+    # NSE UDiFF TradDt is ISO YYYY-MM-DD; dayfirst=True silently swaps month/day.\n    dates=normalize_session_dates(df[datecol])
     actual=dates.dropna().unique().tolist()
     if session not in actual: return {"status":"UNVERIFIED","reason":f"File date mismatch; expected {session}, row dates sample={actual[:3]}","path":str(path)}
     url=f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{session.replace('-','')}_F_0000.csv.zip"
@@ -125,7 +126,7 @@ for sym in symbols:
             qcol=norm.get("DELIV_QTY"); pcol=norm.get("DELIV_PER")
             if not all([scol,dcol,qcol,pcol]):
                 raise ValueError(f"Delivery columns missing; headers={list(dd.columns)}")
-            ds=pd.to_datetime(dd[dcol],errors="coerce",dayfirst=True).dt.date.astype("string")
+            ds=normalize_session_dates(dd[dcol])
             ss=dd[dd[scol].astype(str).str.strip().str.upper().eq(sym) & ds.eq(item["Date"])]
             delivery_rows.append({"Symbol":sym,"Date":item["Date"],"Status":"READY" if len(ss)==1 else "WAIT_FOR_DATA","RowsFound":len(ss),"DeliveryQty":ss.iloc[0][qcol] if len(ss)==1 else "","DeliveryPct":ss.iloc[0][pcol] if len(ss)==1 else "","CachePath":str(delivery_candidates[0]),"Reason":"" if len(ss)==1 else "Expected exactly one symbol/date delivery row"})
         except Exception as e:
