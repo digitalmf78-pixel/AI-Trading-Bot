@@ -34,3 +34,8 @@ For each symbol, retrieve exactly the 20 completed NSE sessions strictly before 
 The 60-row manifest `research/ecms_uturn/nse_ohlc_download_manifest.csv` lists 20 expected NSE sessions for each issuer (INFY, AARTIIND, ACI), the official UDiFF archive URL for each date and the NSE holiday-calendar reference. The windows end on 22-Apr-2026, 30-Apr-2026 and 08-May-2026 respectively. The complete result announcement date is excluded for all issuers, including ACI's after-market 18:00 announcement on 11-May-2026.
 
 These are expected calendar sessions, not proof that each archive file was downloaded or that each security row exists. Every row remains `EXPECTED_SESSION_PENDING_BHAVCOPY_VERIFICATION` until the actual NSE archive is read and its symbol/series/ISIN/High/Close fields are checked.
+
+
+## Latest post-result close as-of snapshot
+
+As of 17-Nov-2026 before the current session has completed, the latest completed session for all three issuers is expected to be 16-Nov-2026. The exact NSE UDiFF source URLs are recorded in `research/ecms_uturn/post_result_close_manifest.csv`. The close values are intentionally blank until each official daily bhavcopy is retrieved and its symbol/series/ISIN/close is checked. Do not use an intraday 17-Nov price.
