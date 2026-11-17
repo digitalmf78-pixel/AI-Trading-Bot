@@ -50,7 +50,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_ecms_uturn_cache_backtest_contract.py'
       - name: Run historical event-study using cached NSE UDiFF data
         run: python research/ecms_uturn/run_uturn_cache_backtest.py
-      - name: Upload backtest evidence
+      - name: Replay Gemini reference cases against cached OHLCV and delivery\n        run: python research/ecms_uturn/replay_gemini_cases_from_cache.py\n      - name: Upload backtest evidence
         uses: actions/upload-artifact@v4
         with:
           name: ecms-uturn-cache-backtest-${{ github.run_id }}
