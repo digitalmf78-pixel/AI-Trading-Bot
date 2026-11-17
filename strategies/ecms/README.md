@@ -60,6 +60,14 @@ Use transparent classifications such as POSITIVE_EVIDENCE, NEGATIVE_EVIDENCE, EV
 
 ### P7 sub-layer — Fundamental U-Turn research (ECMS only)
 
+
+**Two-sided interpretation:** keep two separate outputs rather than one combined signal.
+
+- **Downside / potential-bottom:** the annual diluted-EPS reset estimate and ±3% valuation proximity zone remain the existing method. A separate price-context check may label `RESET_ZONE_ONLY` or `BOTTOM_WATCH`; the latter requires valuation-zone proximity plus oversold RSI and one-session price/RSI stabilization. Neither label confirms a bottom or support.
+- **Upside / overextension:** a separate research check observes Wilder RSI(14), SMA20/SMA50, Close extension versus SMA20, and volume versus the prior 20 completed sessions. Initial exploratory defaults are RSI >= 70 and extension >= 10% for `OVEREXTENDED`; one condition alone is `STRETCHED`. Strong momentum and weakening have their own separate labels. These defaults are not validated thresholds and do not identify a confirmed top.
+- EPS improvement is recorded as fundamental context, not automatically converted into an upside target. The downside EPS-reset formula must not be reversed and presented as a guaranteed upside target.
+- Preserve separate `U_Turn_Status` and `Price_Context_Status` fields. Missing data on either side remains `WAIT_FOR_DATA`; do not force a combined label.
+
 The U-Turn concept is placed under **P7 as an optional explanatory research layer**. Its inputs are prepared earlier: P1 provides comparable annual diluted EPS, P2 provides validated daily OHLC, and P4 provides the exact official result-announcement timestamp. P8 reviews the output and confirms that it remains isolated. This does not reorder P0–P8 or change the Morning/EOD lifecycle.
 
 **Purpose:** estimate a possible valuation reset after an annual EPS decline by applying the pre-result peak valuation multiple to the latest completed FY diluted EPS, then report whether the latest completed post-result Close is near that estimate. It is not a prediction, confirmed support, reversal confirmation, entry trigger or Buy/Sell recommendation.
