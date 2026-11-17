@@ -45,7 +45,7 @@ def official_filing_match(row, filings):
  x=f.iloc[0]
  if clean(x.get("PublicationDate"))[:10]!=pub: return False,"FILING_PUBLICATION_DATE_MISMATCH"
  if clean(x.get("PublicationDateStatus")).upper()!="VERIFIED": return False,"FILING_PUBLICATION_DATE_NOT_VERIFIED"
- if not url.startswith("https://nsearchives.nseindia.com/corporate/xbrl/"): return False,"FILING_URL_NOT_OFFICIAL_NSE_XBRL"
+ if not url.startswith("https://nsearchives.nseindia.in/corporate/xbrl/"): return False,"FILING_URL_NOT_OFFICIAL_NSE_XBRL"
  return True,"OFFICIAL_FILING_METADATA_MATCHED_VALUE_FACTS_STILL_REQUIRE_METRIC_LEVEL_VERIFICATION"
 
 if not METRICS.is_file(): raise FileNotFoundError(METRICS)
