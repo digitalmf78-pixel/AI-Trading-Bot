@@ -48,14 +48,38 @@ Use transparent classifications such as POSITIVE_EVIDENCE, NEGATIVE_EVIDENCE, EV
 | Phase | Scope | Completion evidence |
 |---|---|---|
 | **P0 — Workflow protection** | Morning/EOD lifecycle, date/session and holiday handling, snapshot/cache restore-save, Telegram/report integrity, ECMS/V8 isolation and regression protection. | Actual Morning/EOD runtime evidence for both comparison legs; no stale snapshot overwrite; cache lifecycle verified. |
-| **P1 — Fundamentals** | Seven-metric coverage, official verification, metric-level source/URL/period/basis/unit, sector applicability, persistent ECMS cache and missing/stale retry behaviour. | Per-stock/per-metric evidence and source coverage; actual cache reuse/provider-skip logs. |
-| **P2 — Volume origin** | Price/volume/liquidity and 5/10/20/30-session delivery history where reliable; positive vs negative volume evidence. | Session-aligned, source-attributed stock reports; missing fields explicitly identified. |
+| **P1 — Fundamentals** | Seven-metric coverage, official verification, metric-level source/URL/period/basis/unit, sector applicability, persistent ECMS cache and missing/stale retry behaviour. Also collect consecutive completed-FY diluted EPS as a separate U-Turn research input; it does not silently become an eighth fundamental gate metric. | Per-stock/per-metric evidence and source coverage; annual diluted-EPS provenance with matching period, reporting basis and unit. |
+| **P2 — Volume origin** | Price/volume/liquidity and 5/10/20/30-session delivery history where reliable; positive vs negative volume evidence. Preserve validated daily OHLC history needed for the U-Turn pre-result 20-session peak; this is a separate research calculation, not a new scan filter. | Session-aligned, source-attributed stock reports; missing fields explicitly identified; U-Turn OHLC provenance where available. |
 | **P3 — Institutional evidence** | Official quarterly ownership/shareholding changes, promoter/pledge and insider disclosures where source mapping is verified, plus stock-specific bulk/block deals. | Period- and filing-attributed ownership/deal evidence; no inferred institutional identities. |
-| **P4 — News and events** | Announcements, results, result dates, orders, corporate actions, events and Morning-to-EOD incremental updates. | Source-linked, date-correct, deduplicated disclosure/event reports. |
+| **P4 — News and events** | Announcements, results, exact official result-publication date/time, orders, corporate actions, events and Morning-to-EOD incremental updates. Preserve the result timestamp used to anchor the U-Turn window. | Source-linked, date-correct, deduplicated disclosure/event reports with issuer and event-date provenance. |
 | **P5 — Trap/surveillance** | Official surveillance lists and multi-signal suspicious/distribution risk assessment. | Evidence-backed risk reasons and separate exclusion ledger; missing data never treated as clean or guilty. |
 | **P6 — Market/technical context** | Nifty/sector relative strength, simple trend, breakout/retest/closing-strength and liquidity/exit-readiness observations. | Reproducible, data-complete context fields; no guessed thresholds. |
-| **P7 — Balanced decision** | Combine fundamental status, volume origin, company/institutional evidence, catalyst, sector/technical context and trap risk. | Transparent individual-stock classification and inclusion/exclusion reasons; no basket or opaque forced score. |
+| **P7 — Balanced decision** | Combine fundamental status, volume origin, company/institutional evidence, catalyst, sector/technical context and trap risk. Add the optional ECMS Fundamental U-Turn research observation after its P1/P2/P4 inputs are validated. | Transparent individual-stock classification and inclusion/exclusion reasons; U-Turn shown separately as explanatory valuation-reset/proximity evidence, never as a gate or signal; no basket or opaque forced score. |
 | **P8 — Live shadow validation** | Run the existing Morning/EOD workflow, inspect real reports/logs/cache/Telegram, correct defects and confirm operational consistency. | Live run evidence, coverage/runtime/report checks and user review. **No historical backtesting.** |
+
+
+### P7 sub-layer — Fundamental U-Turn research (ECMS only)
+
+The U-Turn concept is placed under **P7 as an optional explanatory research layer**. Its inputs are prepared earlier: P1 provides comparable annual diluted EPS, P2 provides validated daily OHLC, and P4 provides the exact official result-announcement timestamp. P8 reviews the output and confirms that it remains isolated. This does not reorder P0–P8 or change the Morning/EOD lifecycle.
+
+**Purpose:** estimate a possible valuation reset after an annual EPS decline by applying the pre-result peak valuation multiple to the latest completed FY diluted EPS, then report whether the latest completed post-result Close is near that estimate. It is not a prediction, confirmed support, reversal confirmation, entry trigger or Buy/Sell recommendation.
+
+```text
+Reference_PE = Pre_Result_Peak_High / Previous_FY_Diluted_EPS
+Expected_Correction = (Previous_FY_Diluted_EPS - Current_FY_Diluted_EPS) * Reference_PE
+U_Turn_Estimate = Pre_Result_Peak_High - Expected_Correction
+              = Pre_Result_Peak_High * Current_FY_Diluted_EPS / Previous_FY_Diluted_EPS
+```
+
+- Compare the immediately preceding completed FY with the latest completed FY, using **diluted EPS only**. Both years must have the same consolidated/standalone basis, INR/share unit and comparable corporate-action/share basis. Never substitute Basic EPS.
+- Pre-result peak = maximum daily High from the **20 completed NSE trading sessions strictly before** the official result-announcement calendar date. Exclude the entire announcement date, even if results are filed after market close.
+- Compare only with a valid completed-session Close strictly after the announcement date. Initial research proximity tolerance is ±3%; it is configurable and not a trading threshold.
+- If current diluted EPS is equal to or above prior-year EPS, return `NO_EPS_DECLINE` and no reset estimate. Missing/unverified EPS, mismatched FY/basis/unit, missing official result timestamp, incomplete OHLC, unresolved corporate action or missing post-result Close must return `WAIT_FOR_DATA`, `UNVERIFIED` or a review status. Never infer missing values.
+- Loss/profit sign transitions are `NOT_COMPARABLE_FOR_THIS_FORMULA`. A proximity zone is not confirmed support and does not prove accumulation or reversal.
+- Attach the result as a separate per-stock research observation. It **must not** reject/promote candidates, alter the seven-metric fundamental gate, override volume-origin/trap evidence, change EOD entry trigger or Morning confirmation, or affect cache/Telegram decisions.
+- No backtesting, basketting, broker/order action, auto-buy/sell or NSE V8 changes. Calculator and data intake remain isolated research code until issuer-level evidence and P8 shadow review are complete.
+
+Research design and implementation remain on the isolated ECMS research branch: [U-Turn design](https://github.com/digitalmf78-pixel/AI-Trading-Bot/blob/research/bharat-sm-data-fundamental-audit-2026-11-17/docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md), [calculator](https://github.com/digitalmf78-pixel/AI-Trading-Bot/blob/research/bharat-sm-data-fundamental-audit-2026-11-17/strategies/ecms/fundamental_uturn.py), [NSE UDiFF OHLC parser](https://github.com/digitalmf78-pixel/AI-Trading-Bot/blob/research/bharat-sm-data-fundamental-audit-2026-11-17/strategies/ecms/uturn_nse_ohlc.py).
 
 ### Execution discipline
 
