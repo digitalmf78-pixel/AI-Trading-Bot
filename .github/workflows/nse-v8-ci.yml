@@ -5,16 +5,34 @@ on:
   pull_request:
     paths:
       - '**.py'
-      - '.github/workflows/**'
+      - '.github/workflows/nse-test-scheduled.yml'
+      - '.github/workflows/nse-v8-ci.yml'
+      - '.github/workflows/seed-delivery-cache.yml'
+      - '.github/workflows/update-nse-calendar.yml'
+      - '.github/workflows/delivery_60_valuation_watchlist.yml'
+      - '.github/workflows/research-historical-nse-announcements-scheduled.yml'
       - 'data/inputs/fundamental_thresholds.json'
+      # Exclude ECMS-only code and workflow changes from NSE V8 CI.
+      - '!strategies/ecms/**'
+      - '!tests/test_ecms_*.py'
+      - '!.github/workflows/ecms-*.yml'
   push:
     branches:
       - main
       - audit/implementation-roadmap-2026-11-10
     paths:
       - '**.py'
-      - '.github/workflows/**'
+      - '.github/workflows/nse-test-scheduled.yml'
+      - '.github/workflows/nse-v8-ci.yml'
+      - '.github/workflows/seed-delivery-cache.yml'
+      - '.github/workflows/update-nse-calendar.yml'
+      - '.github/workflows/delivery_60_valuation_watchlist.yml'
+      - '.github/workflows/research-historical-nse-announcements-scheduled.yml'
       - 'data/inputs/fundamental_thresholds.json'
+      # Exclude ECMS-only code and workflow changes from NSE V8 CI.
+      - '!strategies/ecms/**'
+      - '!tests/test_ecms_*.py'
+      - '!.github/workflows/ecms-*.yml'
 
 permissions:
   contents: read
