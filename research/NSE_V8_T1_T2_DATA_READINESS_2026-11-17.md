@@ -41,3 +41,25 @@ The archived EOD artifact nse-v8-reports-42830154736 was downloaded and its outp
 | T1 available but no distinct T2 | 11 |
 
 This is a point-in-time plan-field availability count only. It is not a win-rate or return result. The current cache's per-symbol 5/10/20 forward OHLC coverage must still be measured in the read-only Actions workflow. No target is invented for the 17 rows without a distinct T2.
+
+
+## Historical price-cache audit — workflow run 44074064336
+
+The cache was restored using the exact path manifest from the main NSE scheduled workflow. The cache key restored was nse-bhavcopy-Linux-main-44069755492. This fixed an initial cache miss caused by using only a partial path manifest.
+
+- Bhavcopy files restored: 202
+- Delivery report files restored: 200
+- Validated EQ OHLC rows: 506,231
+- Cache validation errors: 0
+- Cache writes / downloads / pruning: none; this run restored and read the cache only.
+
+The 54 archived EOD rows were matched to the restored price history:
+- 5-session forward OHLC complete: 50/54; 4 rows have one or more missing symbol-session bars.
+- 10-session forward OHLC complete: 16/54.
+- 20-session forward OHLC complete: 0/54 (the 20-session future horizon has not elapsed for these signals yet).
+- T1 plan plus complete 5-session OHLC: 44 rows.
+- T2 plan plus complete 5-session OHLC: 35 rows.
+- T1 plan plus complete 10-session OHLC: 14 rows.
+- T2 plan plus complete 10-session OHLC: 10 rows.
+
+These are data-coverage counts only. No stop/target touch outcomes or returns have been computed. The research tool now reports separate T1/T2 data-readiness flags for each 5D/10D/20D horizon so an incomplete 20D horizon does not hide already-complete 5D/10D data.
