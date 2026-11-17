@@ -113,13 +113,17 @@ def test_proximity_boundaries_are_inclusive():
 
 def test_pre_result_peak_uses_last_20_sessions_and_excludes_event_date():
     dates = pd.bdate_range("2026-04-20", periods=22)
-    frame = pd.DataFrame({"Date": dates, "High": [100.0] * 22})
+    frame = pd.DataFrame({
+        "Date": dates, "High": [100.0] * 22,
+        "SourceURL": [f"https://nsearchives.nseindia.com/content/cm/{day:%Y%m%d}.zip" for day in dates],
+    })
     frame.loc[frame["Date"] == dates[-1], "High"] = 999.0
     result = select_pre_result_peak(frame, dates[-1], window_sessions=20)
     assert result["status"] == "READY"
     assert result["Peak_Price"] == pytest.approx(100.0)
     assert result["Peak_Window_Sessions"] == 20
     assert result["Peak_Window_End"] == dates[-2].date().isoformat()
+    assert result["Peak_Price_Source_URL"] == f"https://nsearchives.nseindia.com/content/cm/{dates[0]:%Y%m%d}.zip"
 
 
 def test_pre_result_peak_requires_full_unique_valid_sessions():
