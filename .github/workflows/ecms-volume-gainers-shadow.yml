@@ -13,9 +13,9 @@ on:
         default: eod
         options: [eod, morning]
   schedule:
-    - cron: "31 11 * * *" # 17:00 IST regular-session EOD
-    - cron: "51 3 * * *"  # 09:20 IST regular-session Morning
-    - cron: "56 8 * * *"  # 14:25 IST configured special-session Morning slot
+    - cron: "31 11 * * *" # 17:01 IST regular-session EOD
+    - cron: "51 3 * * *"  # 09:21 IST regular-session Morning
+    - cron: "56 8 * * *"  # 14:26 IST configured special-session Morning slot
 permissions:
   contents: read
 concurrency:
