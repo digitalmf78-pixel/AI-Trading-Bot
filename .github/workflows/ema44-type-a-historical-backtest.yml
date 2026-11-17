@@ -1,0 +1,110 @@
+name: NSE V8 EMA44 Type A Historical Backtest (Read-only Price Cache)
+
+on:
+  push:
+    branches:
+      - research/ema44-type-a-validation-run-2026-11-17
+    paths:
+      - ".github/workflows/ema44-type-a-historical-backtest.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ema44-type-a-historical-backtest
+  cancel-in-progress: false
+
+jobs:
+  ema44-backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout isolated research branch
+        uses: actions/checkout@v5
+
+      - name: Restore existing NSE V8 cache only (no cache save)
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-ema44-research-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-
+            nse-bhavcopy-${{ runner.os }}-main-
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas numpy pytest requests
+
+      - name: Audit restored price cache (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRICE_COUNT=$(find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' 2>/dev/null | wc -l || true)
+          echo "RESTORED_PRICE_CACHE_FILES=$PRICE_COUNT"
+          if [ "$PRICE_COUNT" -lt 200 ]; then
+            echo "::error::Expected at least 200 existing Bhavcopy files; refusing to download or modify price cache."
+            exit 1
+          fi
+          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' | sort | head -1
+          find data/bhavcopy -maxdepth 1 -type f -name 'bhavcopy_????????.csv' -printf '%f\n' | sort | tail -1
+
+      - name: Run Delivery backfill integrity tests
+        run: python -m pytest -q test_delivery_history_backfill.py test_ema44_type_a_backtest.py
+
+      - name: Backfill historical Delivery reports for existing 200 Bhavcopy sessions only
+        run: |
+          set -euo pipefail
+          python -u delivery_history_backfill.py --sessions 200
+          cat outputs/delivery_history_backfill/summary.json
+
+      - name: Run strict EMA44 Type A backtest
+        run: |
+          set -euo pipefail
+          python -u ema44_type_a_backtest.py
+          echo "===== CACHE COVERAGE ====="
+          cat outputs/ema44_type_a_backtest/cache_coverage.csv
+          echo "===== COHORT COMPARISON ====="
+          cat outputs/ema44_type_a_backtest/comparison.csv
+          echo "===== REJECTION COUNTS ====="
+          cat outputs/ema44_type_a_backtest/rejection_counts.csv
+          echo "===== SIGNAL SAMPLE ====="
+          head -11 outputs/ema44_type_a_backtest/signals.csv
+
+      - name: Verify Bhavcopy cache unchanged
+        if: always()
+        shell: bash
+        run: |
+          echo "This workflow uses actions/cache/restore only; no Bhavcopy writer or cache-save action is configured."
+          echo "Delivery backfill may write only data/cache/delivery/ in the ephemeral runner workspace."
+
+      - name: Upload EMA44 research reports and Delivery backfill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ema44-type-a-historical-backtest-${{ github.run_id }}
+          path: |
+            outputs/ema44_type_a_backtest/
+            outputs/delivery_history_backfill/
+          if-no-files-found: warn
+          retention-days: 30
