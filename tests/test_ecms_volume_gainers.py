@@ -1129,3 +1129,53 @@ def test_main_persists_explicit_skipped_execution_status(tmp_path, monkeypatch):
     assert saved["mode"] == "MORNING"
     assert saved["github_run_id"] == "test-run-42"
     assert saved["expected_time_ist"] == "09:20"
+
+
+def test_manual_auto_mode_after_market_close_runs_eod(monkeypatch):
+    import sys
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 17, 15, 31, tzinfo=tz)
+
+    calls = []
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda _day: [])
+    monkeypatch.setattr(scanner, "run_eod", lambda: calls.append("eod") or {})
+    monkeypatch.setattr(scanner, "run_morning", lambda: calls.append("morning") or {})
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: {"mode": mode})
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "auto"])
+
+    scanner.main()
+
+    assert calls == ["eod"]
+
+
+def test_manual_auto_mode_before_market_close_runs_morning(monkeypatch):
+    import sys
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 17, 15, 29, tzinfo=tz)
+
+    calls = []
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda _day: [])
+    monkeypatch.setattr(scanner, "run_eod", lambda: calls.append("eod") or {})
+    monkeypatch.setattr(scanner, "run_morning", lambda: calls.append("morning") or {})
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: {"mode": mode})
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "auto"])
+
+    scanner.main()
+
+    assert calls == ["morning"]
