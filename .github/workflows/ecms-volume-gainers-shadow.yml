@@ -193,6 +193,7 @@ jobs:
           name: ecms-volume-gainers-eod-${{ github.run_id }}
           path: |
             outputs/ecms/volume_gainers_*
+            outputs/ecms/ecms_execution_status.json
             outputs/ecms/fundamental_*.csv
             outputs/ecms/fundamental_metric_verification*.csv
             outputs/ecms/v8_fundamental_metric_verification*.csv
@@ -214,6 +215,7 @@ jobs:
           SUMMARY_PATH: outputs/ecms/volume_gainers_eod_summary.json
           RESEARCH_PATH: outputs/ecms/volume_gainers_eod_research.csv
           PAGE_CSV_PATH: outputs/ecms/volume_gainers_eod_nse_page.csv
+          EXECUTION_STATUS_PATH: outputs/ecms/ecms_execution_status.json
         run: |
           python - <<'PY'
           import csv, json, os
@@ -224,6 +226,14 @@ jobs:
               print("ECMS Telegram skipped: Telegram secrets are not configured.")
               raise SystemExit(0)
           lines = [f"📊 ECMS EOD FUNDAMENTAL + INFORMATION REPORT", f"Status: {os.getenv('JOB_STATUS', 'unknown').upper()}"]
+          status_path = Path(os.getenv("EXECUTION_STATUS_PATH", ""))
+          if status_path.is_file():
+              try:
+                  execution = json.loads(status_path.read_text(encoding="utf-8"))
+                  lines[1] = f"Status: {execution.get('status', 'UNKNOWN')} — {execution.get('reason', '')}"
+                  lines.append(f"Scan date (IST): {execution.get('date_ist', 'unknown')}")
+              except Exception as exc:
+                  lines.append(f"Execution status file unreadable: {type(exc).__name__}: {exc}")
           path = Path(os.getenv("SUMMARY_PATH", ""))
           if path.is_file():
               try:
@@ -473,6 +483,7 @@ jobs:
           SUMMARY_PATH: outputs/ecms/volume_gainers_morning_summary.json
           RESEARCH_PATH: outputs/ecms/volume_gainers_morning_recheck.csv
           PAGE_CSV_PATH: outputs/ecms/volume_gainers_morning_nse_page.csv
+          EXECUTION_STATUS_PATH: outputs/ecms/ecms_execution_status.json
         run: |
           python - <<'PY'
           import csv, json, os
@@ -483,6 +494,14 @@ jobs:
               print("ECMS Telegram skipped: Telegram secrets are not configured.")
               raise SystemExit(0)
           lines = ["🌅 ECMS 09:20 MORNING FUNDAMENTAL RECHECK", f"Status: {os.getenv('JOB_STATUS','unknown').upper()}"]
+          status_path = Path(os.getenv("EXECUTION_STATUS_PATH", ""))
+          if status_path.is_file():
+              try:
+                  execution = json.loads(status_path.read_text(encoding="utf-8"))
+                  lines[1] = f"Status: {execution.get('status', 'UNKNOWN')} — {execution.get('reason', '')}"
+                  lines.append(f"Scan date (IST): {execution.get('date_ist', 'unknown')}")
+              except Exception as exc:
+                  lines.append(f"Execution status file unreadable: {type(exc).__name__}: {exc}")
           path = Path(os.getenv("SUMMARY_PATH", ""))
           if path.is_file():
               try:
