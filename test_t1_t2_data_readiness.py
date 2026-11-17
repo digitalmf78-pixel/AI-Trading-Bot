@@ -65,6 +65,34 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(result["EntryExecutionPrice"], 100.0)
         self.assertEqual(result["EntryExecutionStatus"], "ENTRY_READY")
 
+    def test_targets_are_above_actual_next_open_fill(self):
+        signal_date = "2026-10-28"
+        dates = official_sessions_after(signal_date, 20)
+        prices = {("TEST", day): {"OPEN": 115.0 if i == 0 else 100.0, "HIGH": 135.0, "LOW": 95.0, "CLOSE": 110.0} for i, day in enumerate(dates)}
+        frame = pd.DataFrame([{
+            "EODDate": signal_date, "Symbol": "TEST", "EntryPricePlan": 100.0,
+            "StopLossPlan": 90.0, "TargetPricePlan": 110.0, "TargetSource": "SR_20D_HIGH",
+            "SR20DHigh": 110.0, "SR50DHigh": 120.0, "SR100DHigh": 130.0,
+        }])
+        result = audit_signal_frame(frame, prices, "fixture.csv").iloc[0]
+        self.assertEqual(result["EntryExecutionPrice"], 115.0)
+        self.assertEqual(result["Target1"], 120.0)
+        self.assertEqual(result["Target2"], 130.0)
+
+    def test_next_open_at_or_below_stop_blocks_entry(self):
+        signal_date = "2026-10-28"
+        dates = official_sessions_after(signal_date, 20)
+        prices = {("TEST", day): {"OPEN": 89.0 if i == 0 else 100.0, "HIGH": 125.0, "LOW": 85.0, "CLOSE": 95.0} for i, day in enumerate(dates)}
+        frame = pd.DataFrame([{
+            "EODDate": signal_date, "Symbol": "TEST", "EntryPricePlan": 100.0,
+            "StopLossPlan": 90.0, "TargetPricePlan": 110.0, "TargetSource": "SR_20D_HIGH",
+            "SR20DHigh": 110.0, "SR50DHigh": 120.0,
+        }])
+        result = audit_signal_frame(frame, prices, "fixture.csv").iloc[0]
+        self.assertEqual(result["EntryExecutionStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(result["T1DataReady5D"], "WAIT_FOR_DATA")
+        self.assertIn("NEXT_SESSION_OPEN_AT_OR_BELOW_STOP", result["ReadinessReasons"])
+
     def test_missing_next_session_open_blocks_entry_readiness(self):
         signal_date = "2026-10-28"
         dates = official_sessions_after(signal_date, 20)
