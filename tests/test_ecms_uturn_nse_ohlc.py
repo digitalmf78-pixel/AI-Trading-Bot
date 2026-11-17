@@ -98,6 +98,5 @@ def test_requires_same_isin_and_valid_prices_across_window():
         records, symbol="ACI", expected_sessions=sessions,
         announcement_date="2026-05-12", window_sessions=20,
     )
-    # The extractor validates that each row is an Indian equity ISIN. Cross-row
-    # ISIN consistency is checked by the window builder and must fail closed.
     assert result["status"] == "UNVERIFIED"
+    assert "ISIN changed" in result["reason"]
