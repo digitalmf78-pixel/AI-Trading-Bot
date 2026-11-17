@@ -48,6 +48,36 @@ class ReadinessTests(unittest.TestCase):
         result = evaluate_daily_stop_bar({"OPEN":100,"HIGH":125,"LOW":89,"CLOSE":110},90)
         self.assertEqual(result["status"],"STOP_HIT")
         self.assertEqual(result["exit_price"],90)
+    def test_target_intraday_touch_exits_at_target(self):
+        from t1_t2_data_readiness import evaluate_daily_target_bar
+        result = evaluate_daily_target_bar({"OPEN":100,"HIGH":121,"LOW":95,"CLOSE":115},90,120)
+        self.assertEqual(result["status"],"TARGET_HIT")
+        self.assertEqual(result["exit_price"],120)
+        self.assertEqual(result["reason"],"INTRADAY_TARGET_AT_TARGET_PRICE")
+
+    def test_gap_above_target_exits_at_open(self):
+        from t1_t2_data_readiness import evaluate_daily_target_bar
+        result = evaluate_daily_target_bar({"OPEN":125,"HIGH":130,"LOW":115,"CLOSE":127},90,120)
+        self.assertEqual(result["status"],"TARGET_HIT")
+        self.assertEqual(result["exit_price"],125)
+        self.assertEqual(result["reason"],"GAP_THROUGH_TARGET_AT_OPEN")
+
+    def test_stop_wins_when_stop_and_target_touched_same_day(self):
+        from t1_t2_data_readiness import evaluate_daily_target_bar
+        result = evaluate_daily_target_bar({"OPEN":100,"HIGH":125,"LOW":85,"CLOSE":110},90,120)
+        self.assertEqual(result["status"],"STOP_HIT")
+        self.assertEqual(result["exit_price"],90)
+        self.assertEqual(result["reason"],"STOP_FIRST_SAME_DAY_COLLISION")
+
+    def test_target_not_touched(self):
+        from t1_t2_data_readiness import evaluate_daily_target_bar
+        result = evaluate_daily_target_bar({"OPEN":100,"HIGH":119,"LOW":95,"CLOSE":110},90,120)
+        self.assertEqual(result["status"],"NO_LEVEL_HIT")
+
+    def test_invalid_target_levels_fail_closed(self):
+        from t1_t2_data_readiness import evaluate_daily_target_bar
+        result = evaluate_daily_target_bar({"OPEN":100,"HIGH":125,"LOW":95,"CLOSE":110},90,85)
+        self.assertEqual(result["status"],"WAIT_FOR_DATA")
     def test_missing_stop_and_t2_fail_closed(self):
         frame = pd.DataFrame([{"EODDate":"2026-11-10","Symbol":"TEST","EntryPricePlan":100.0,
                                "TargetPricePlan":120.0,"TargetSource":"SR_RESISTANCE"}])
