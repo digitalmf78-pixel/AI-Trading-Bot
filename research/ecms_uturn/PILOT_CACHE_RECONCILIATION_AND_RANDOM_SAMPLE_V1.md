@@ -1,27 +1,46 @@
 # U-Turn V1 — Cache Reconciliation and Random Source-Verification Sample
 
 **Date:** 2026-11-17  
-**Scope:** Isolated research branch only. Shared NSE V8 cache read-only. No production ECMS changes.
+**Scope:** Isolated ECMS research branch only. Shared NSE V8 cache read-only. No production ECMS changes.
 
-## 1. Correction: pilot event-study results are provisional pending a same-cache gate
+## 1. Reconciliation — resolved for the three-stock pilot
 
-Two successful GitHub workflows produced inconsistent pre-result-window coverage:
+Earlier event-study and strict-audit workflows disagreed on 20-session coverage. Root causes were identified and corrected:
 
-- Event-study run [#44063268302](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44063268302) reported 20/20 pre-result sessions for INFY, ACI and AARTIIND, 606 symbol-session OHLCV rows and 202 sessions.
-- Read-only audit run [#44063268268](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44063268268) reported only 13/20, 14/20 and 13/20 verified sessions, respectively.
+- Legacy NSE cache date fields include day-first formats; the strict parser now uses format-aware parsing rather than treating every value as month-first.
+- The strict audit now uses filename date hints only to prune candidates, then verifies the actual table date and exact symbol/ISIN/CM-STK-EQ row.
+- If multiple candidate files exist, it accepts only one candidate containing exactly one valid symbol row. Index-history or unrelated files are not mistaken for a stock bhavcopy.
+- Parsed audit tables are cached during the read-only scan.
+- Cache inventory is bounded to headers and sample rows rather than scanning every row in every file.
 
-The audit parser was prematurely rejecting a session whenever the cache filename index returned more than one candidate file, before checking whether exactly one of those files contained the requested symbol's valid CM/STK/EQ row. The event-study parser instead read candidate files and filtered symbol rows. This explains a likely parser inconsistency, but the outputs must not be treated as reconciled until the same-run check passes.
+### Latest acceptance runs
 
-### Fix applied
+- U-Turn event-study / same-run consistency gate: [run #44075834518](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834518) — **SUCCESS**.
+- Read-only cache audit: [run #44075834526](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834526) — **SUCCESS**.
+- The latest U-Turn artifact includes the strict audit, event-study, consistency gate, official calendar/corporate-action audit and read-only cache provenance.
 
-- The strict audit now examines every candidate file for the exact symbol/session and accepts only one verified matching row; zero or multiple valid matches remain WAIT_FOR_DATA.
-- The strict audit now records its peak date and high.
-- The U-Turn workflow now runs the strict audit and event-study in the same job and restored cache snapshot, then compares 20-session coverage, peak date and peak high for every pilot symbol.
-- A fail-closed consistency gate blocks the workflow if the two parsers disagree.
+Verified outcomes:
+- INFY: 20/20 pre-result sessions; peak High ₹1,376.90 on 08-Apr-2026.
+- ACI: 20/20 pre-result sessions; peak High ₹639.80 on 04-May-2026.
+- AARTIIND: 20/20 pre-result sessions; peak High ₹512.40 on 29-Apr-2026.
+- 60/60 strict OHLC session rows READY; 60/60 delivery rows matched.
+- Latest post-result close rows: 3/3 READY.
+- Both parsers agree on coverage, peak date and peak High for all three names.
+- All three manifest windows exactly match weekday NSE equity sessions after excluding the official 2026 NSE equity holidays.
 
-**Until this gate passes, all previously reported 21/63/126-session returns, zone touches and ACI target observations are provisional and should not be used as strategy evidence.** The earlier report remains as an archived run output, not a final validated result.
+See [PILOT_OFFICIAL_CALENDAR_EVENT_TIME_AUDIT.md](PILOT_OFFICIAL_CALENDAR_EVENT_TIME_AUDIT.md) for official sources and the exact event-time caveat for ACI.
 
-## 2. Reproducible random source-verification sample
+## 2. Pilot event-study interpretation
+
+The original three-stock pilot is descriptive, not randomized:
+- ACI is the only EPS-decline case. Its calculated zone was touched on 8 sessions, but no same-session zone touch met both delivery >=60% and RVOL >=1.5x.
+- INFY and AARTIIND had no annual diluted EPS decline; the engine correctly withheld downside targets.
+- Price-only returns and gross cash-dividend-inclusive simple returns are reported separately. The latter adds gross cash dividends without reinvestment, tax or fee adjustments; it is not an official total-return index.
+- No entry/exit, position sizing, fees, slippage, stop-loss or P&L was simulated.
+
+See [PILOT_EVENT_STUDY_V1_RESULTS.md](PILOT_EVENT_STUDY_V1_RESULTS.md).
+
+## 3. Reproducible random source-verification sample
 
 The cache audit found:
 - 906 symbols in the fundamental-metrics universe.
@@ -49,22 +68,22 @@ See [RANDOM_SOURCE_VERIFICATION_SAMPLE_V1.csv](RANDOM_SOURCE_VERIFICATION_SAMPLE
 | KEYFINSERV | Not verified | WAIT_FOR_DATA; no official annual diluted EPS pair accepted |
 | JSWSTEEL | ₹14.32 → ₹91.25 | No EPS decline; official NSE consolidated XBRL. FY26 EPS includes a material exceptional gain, retained as disclosed rather than adjusted |
 
-Three symbols have a usable official annual diluted EPS pair and matching basis for a source-only check (UNITDSPR, INSPIRISYS, JSWSTEEL). BORANA's EPS values appear in the official NSE audited standalone results, but the PDF header's ISIN (INE16SF010106) differs from the NSE security master ISIN (INE16SF01016); therefore do not use BORANA in price event-study until the identity discrepancy is resolved. KEYFINSERV remains a failed-data sample; third-party/basic EPS must not be substituted.
+Three symbols have a usable official annual diluted EPS pair and matching basis for a source-only check (UNITDSPR, INSPIRISYS, JSWSTEEL). BORANA's EPS values appear in the official NSE audited standalone results, but the PDF header's ISIN (INE16SF010106) differs from the NSE security master ISIN (INE16SF01016); therefore do not use BORANA in a price event-study until the identity discrepancy is resolved. KEYFINSERV remains a failed-data sample; third-party/basic EPS must not be substituted.
 
-**Important:** This random draw produced no verified EPS-decline case. It must remain unchanged; do not replace stocks to manufacture a positive/negative case mix. It is a source-verification pilot, not yet an event-study sample. A broader random draw or stratified design would need to be predeclared before a later research batch.
+**Important:** This random draw produced no verified EPS-decline case. It must remain unchanged; do not replace stocks to manufacture a positive/negative case mix. It is a source-verification pilot, not an event-study sample.
 
-## 3. Two-sided cache context is not the U-Turn valuation test
+## 4. Two-sided cache context is not the U-Turn valuation test
 
 The read-only audit found 237 rows with complete metric fields/provenance metadata and generated descriptive RSI/SMA/volume context for those rows. The summary explicitly states that underlying metric values are not individually verified and the bottom-side valuation zone was not run because verified annual diluted EPS and corporate-action-adjusted peak windows were unavailable.
 
-These descriptive labels (NEUTRAL, MOMENTUM_STRONG, STRETCHED, WEAKENING, OVEREXTENDED) are not signals, and cannot be promoted to U-Turn outcomes.
+These descriptive labels (NEUTRAL, MOMENTUM_STRONG, STRETCHED, WEAKENING, OVEREXTENDED) are not signals and cannot be promoted to U-Turn outcomes.
 
-## 4. Next acceptance gates
+## 5. Remaining acceptance gates
 
-1. Same-run strict cache/event-study consistency gate must pass for the original three-symbol pilot.
-2. Independently verify official NSE session calendar and result announcement timing for the five random sample names.
-3. Reconcile each selected security's ISIN and corporate actions before price comparisons.
-4. Verify annual diluted EPS from audited official statements, including continuing/discontinued operations treatment and consistent standalone/consolidated basis.
-5. Only then run a new event-study. Keep all data failures and no-decline controls; do not alter the random sample after results are known.
+1. Expand to a predeclared random or stratified event-study sample with adequate EPS-decline and no-decline representation; freeze universe, seed, eligibility and exclusions before looking at outcomes.
+2. Preserve all missing-data and negative outcomes; never replace a name after seeing its EPS or price result.
+3. Independently verify each new sample's annual diluted EPS, basis, units, result announcement session, ISIN and corporate actions.
+4. Do not tune the 20-session peak window, ±2% zone, 60% delivery or 1.5x RVOL thresholds after seeing outcomes.
+5. Keep all outputs research-only. Production ECMS integration requires separate explicit approval after the Volume Gainers tape test succeeds.
 
-No entry/exit simulation, P&L, buy/sell signal, Volume Gainers integration or production changes are part of this work.
+No buy/sell signal, entry/exit, P&L simulation, Volume Gainers integration or production changes are part of this work.
