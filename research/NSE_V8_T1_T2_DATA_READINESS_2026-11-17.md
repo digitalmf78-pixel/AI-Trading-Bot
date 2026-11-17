@@ -84,3 +84,13 @@ Validation:
 - New focused research tests: 8 passed.
 - Full NSE V8 CI: success, including compile, unit/data-audit tests, V8 regression script and sector/news/official-index tests.
 - No production files, Master Specification, Bhavcopy cache, Delivery cache, or scheduled production workflow changed.
+
+
+## Approved entry assumption
+
+The user approved the research entry timing: **enter at the Open of the next official NSE trading session after the EOD signal date**. The audit now records:
+- EntryExecutionRule = NEXT_OFFICIAL_SESSION_OPEN
+- EntryExecutionPrice = next official session's validated EQ Open
+- EntryExecutionStatus = ENTRY_READY only when that next-session Open exists and is valid; otherwise WAIT_FOR_DATA.
+
+This is an explicit research assumption only. It does not change production EntryPricePlan, production scanner behavior, or place orders. All T1/T2 horizon readiness flags now require a valid next-session Open as well as valid point-in-time Entry/Stop and the relevant forward OHLC coverage.
