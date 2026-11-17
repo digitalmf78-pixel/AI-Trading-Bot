@@ -65,6 +65,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Record NSE workflow trigger diagnostics
+        if: always()
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+          import os
+
+          now_utc = datetime.now(timezone.utc)
+          now_ist = now_utc.astimezone(ZoneInfo("Asia/Kolkata"))
+          event = os.getenv("GITHUB_EVENT_NAME", "unknown")
+          schedule = os.getenv("GITHUB_EVENT_SCHEDULE", "") or "NONE"
+          if schedule == "30 2 * * 1-5":
+              expected_mode = "PREMARKET (08:00 IST)"
+          elif schedule == "40 16 * * 1-5":
+              expected_mode = "EOD (22:10 IST)"
+          else:
+              expected_mode = "MANUAL_OR_PUSH"
+          print(f"NSE_TRIGGER_EVENT={event}")
+          print(f"NSE_TRIGGER_SCHEDULE={schedule}")
+          print(f"NSE_TRIGGER_EXPECTED_MODE={expected_mode}")
+          print(f"NSE_TRIGGER_UTC={now_utc.isoformat()}")
+          print(f"NSE_TRIGGER_IST={now_ist.isoformat()}")
+          print(f"NSE_TRIGGER_RUN_ID={os.getenv('GITHUB_RUN_ID', 'unknown')}")
+          print(f"NSE_TRIGGER_RUN_ATTEMPT={os.getenv('GITHUB_RUN_ATTEMPT', 'unknown')}")
+          print(f"NSE_TRIGGER_REF={os.getenv('GITHUB_REF', 'unknown')}")
+          PY
+
       - name: Restore NSE, delivery, and sector history caches
         uses: actions/cache@v5
         with:
