@@ -295,7 +295,7 @@ High volume or high delivery alone does not prove institutional accumulation. A 
 - Invalid/incomplete inputs return `WAIT_FOR_DATA`. The output explicitly says it is not support, not a floor and not a trading signal; technical status remains `NOT_ASSESSED`.
 - The prototype currently has **13 synthetic-fixture test functions** covering arithmetic and fail-closed guards. The PR validation workflow has now been updated to compile this module and run this test file; the updated CI result is pending. These tests are not real-stock validation, not historical performance evidence, and not proof of a high-probability edge.
 - Still pending: repository CI result for this draft PR, issuer-level historical PE/EPS source audit, lookback/window and percentile sensitivity review, and a separately specified technical-confirmation protocol.
-- No production ECMS integration, no scan/workflow/cache/Telegram changes, no NSE V8 changes and no backtesting.
+- No production ECMS integration or operational scan/workflow/cache/Telegram behavior changes. The PR validation-only job was extended to compile and run this isolated calculator's tests. No NSE V8 changes and no trading-strategy backtesting.
 
 
 ### Historical data availability audit — 17-Nov-2026
