@@ -55,7 +55,7 @@ def _read_delivery_cache_strict(delivery_dir: Path) -> tuple[dict[pd.Timestamp, 
     files = sorted(delivery_dir.glob("sec_bhavdata_full_????????.csv")) if delivery_dir.exists() else []
     for path in files:
         import re
-        match = re.fullmatch(r"sec_bhavdata_full_(\\d{8})\\.csv", path.name)
+        match = re.fullmatch(r"sec_bhavdata_full_(\d{8})\.csv", path.name)
         if not match:
             continue
         report_date = pd.to_datetime(match.group(1), format="%d%m%Y", errors="coerce")
