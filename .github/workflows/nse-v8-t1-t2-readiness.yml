@@ -52,7 +52,7 @@ jobs:
       - name: Compile and test research audit
         run: |
           python -m py_compile t1_t2_data_readiness.py
-          python -m unittest tests.test_t1_t2_data_readiness -v
+          python -m unittest -v test_t1_t2_data_readiness
 
       - name: Audit archived EOD signals against read-only cache
         run: |
