@@ -61,6 +61,23 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(result["T2DataReady5D"], "DATA_READY")
         self.assertEqual(result["T1DataReady20D"], "DATA_READY")
         self.assertEqual(result["T2DataReady20D"], "DATA_READY")
+        self.assertEqual(result["EntryExecutionRule"], "NEXT_OFFICIAL_SESSION_OPEN")
+        self.assertEqual(result["EntryExecutionPrice"], 100.0)
+        self.assertEqual(result["EntryExecutionStatus"], "ENTRY_READY")
+
+    def test_missing_next_session_open_blocks_entry_readiness(self):
+        signal_date = "2026-10-28"
+        dates = official_sessions_after(signal_date, 20)
+        prices = {("TEST", day): {"OPEN": 100.0, "HIGH": 125.0, "LOW": 95.0, "CLOSE": 110.0} for day in dates[1:]}
+        frame = pd.DataFrame([{
+            "EODDate": signal_date, "Symbol": "TEST", "EntryPricePlan": 100.0,
+            "StopLossPlan": 90.0, "TargetPricePlan": 110.0, "TargetSource": "SR_20D_HIGH",
+            "SR20DHigh": 110.0, "SR50DHigh": 120.0,
+        }])
+        result = audit_signal_frame(frame, prices, "fixture.csv").iloc[0]
+        self.assertEqual(result["EntryExecutionStatus"], "WAIT_FOR_DATA")
+        self.assertEqual(result["T1DataReady5D"], "WAIT_FOR_DATA")
+        self.assertEqual(result["T2DataReady5D"], "WAIT_FOR_DATA")
 
 if __name__ == "__main__":
     unittest.main()
