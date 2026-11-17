@@ -267,3 +267,12 @@ Remaining ECMS-only work:
 The code changes remain ECMS-only; the V8 production workflow and its default collector behavior are not changed.
 
 **Do not broaden ECMS work beyond these requirements.**
+
+
+## Manual dispatch mode — session-close rule (17-Nov-2026)
+
+- Every manual `workflow_dispatch` starts through one automatic mode resolver; users do not choose EOD or Morning in the GitHub form.
+- On an official NSE trading session, a manual run before 15:30 IST resolves to Morning; at or after 15:30 IST it resolves to EOD. This implements the rule that any manual run after the trading-day close is an EOD scan.
+- The resolver uses IST wall-clock time. The official NSE trading calendar still blocks holidays and unavailable calendar coverage. Scheduled Morning/EOD jobs retain their explicit schedule-specific modes and slot validation.
+- The previous EOD CSV remains eligible as the Morning reference only when its snapshot metadata, session date, completeness and consumption state pass the existing validation. A CSV artifact alone is not sufficient proof of a valid persisted EOD snapshot.
+- Legacy and expanded ECMS state-cache restores must not restore the same snapshot paths in sequence. The independent fundamental cache remains restored separately.
