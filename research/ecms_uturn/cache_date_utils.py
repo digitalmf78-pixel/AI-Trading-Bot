@@ -15,12 +15,12 @@ def parse_nse_session_date(value):
 
     # UDiFF TradDt is ISO. Preserve year-month-day rather than applying Indian
     # day-first parsing to an already unambiguous ISO value.
-    if re.match(r"^\\d{4}-\\d{2}-\\d{2}(?:$|[ T])", raw):
+    if re.match(r"^\d{4}-\d{2}-\d{2}(?:$|[ T])", raw):
         return pd.to_datetime(raw, errors="coerce")
 
     # Compact exchange dates are YYYYMMDD when they begin with a 19xx/20xx year;
     # otherwise interpret them as the legacy DDMMYYYY representation.
-    if re.fullmatch(r"\\d{8}", raw):
+    if re.fullmatch(r"\d{8}", raw):
         fmt = "%Y%m%d" if raw.startswith(("19", "20")) else "%d%m%Y"
         return pd.to_datetime(raw, format=fmt, errors="coerce")
 
