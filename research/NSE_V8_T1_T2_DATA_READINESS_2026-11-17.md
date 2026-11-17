@@ -99,3 +99,26 @@ This is an explicit research assumption only. It does not change production Entr
 ### Entry-gap integrity
 
 The research audit validates the next-session Open against the stored initial stop. If the next-session Open is at or below the initial stop, it does not create an entry and marks the row WAIT_FOR_DATA for execution analysis. T1/T2 are recalculated as the nearest two distinct verified structural levels strictly above the actual next-session Open. A gap above the prior planned T1 therefore does not count an already-underneath resistance as a valid target; the next verified overhead levels are used instead. No synthetic targets are created.
+
+
+## Updated audit after approved next-session-open entry (run 44075612379)
+
+The initial coverage counts above were based on the planned EntryZone/EntryPricePlan as the resistance comparison point. The updated audit applies the approved next-official-session Open as the actual research entry fill, rejects an Open at/below the initial stop, and only accepts resistance levels strictly above that actual fill. These updated figures supersede earlier target-readiness counts:
+
+- 54 archived signal rows audited.
+- 48 next-session Open entries valid; 6 rows WAIT_FOR_DATA for entry (missing/invalid Open or Open at/below stop).
+- T1 + 5D: 44 rows DATA_READY.
+- T2 + 5D: 40 rows DATA_READY.
+- T1 + 10D: 12 rows DATA_READY.
+- T2 + 10D: 12 rows DATA_READY.
+- T1/T2 + 20D: 0 rows DATA_READY (future horizon not yet elapsed).
+- Overall: 44 rows have at least one target/horizon scenario ready; 10 remain WAIT_FOR_DATA for every current horizon.
+
+Cache integrity remained unchanged: 202 Bhavcopy files, 200 Delivery reports, 506,231 valid EQ OHLC rows, zero validation errors. No cache writes or network fetches were performed.
+
+Validation on updated branch:
+- 529 pytest tests passed (1 warning).
+- 34 V8 regression tests passed.
+- 49 sector/news/official-index unit tests passed.
+- Research data-readiness workflow run 44075612379: success.
+- Full NSE V8 PR checks run 44075612402: success.
