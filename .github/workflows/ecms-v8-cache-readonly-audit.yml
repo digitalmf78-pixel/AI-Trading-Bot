@@ -62,13 +62,15 @@ jobs:
                   with path.open("r", encoding="utf-8-sig", newline="") as f:
                       reader = csv.DictReader(f)
                       headers = reader.fieldnames or []
-                      count, dates = 0, []
-                      for row in reader:
-                          count += 1
+                      sample_rows = [next(reader, None) for _ in range(3)]
+                      dates = []
+                      for row in sample_rows:
+                          if not row:
+                              continue
                           for key, value in row.items():
                               if key and key.strip().lower() in date_cols and value:
                                   dates.append(str(value).strip())
-                      rows_out.append({"path":str(path),"type":label,"rows":count,"columns":headers,"date_samples":dates[:3],"date_min":min(dates) if dates else None,"date_max":max(dates) if dates else None})
+                      rows_out.append({"path":str(path),"type":label,"columns":headers,"sampled_rows":len([r for r in sample_rows if r]),"date_samples":dates})
               except Exception as exc:
                   rows_out.append({"path":str(path),"type":label,"error":f"{type(exc).__name__}: {exc}"})
           for root in roots:
