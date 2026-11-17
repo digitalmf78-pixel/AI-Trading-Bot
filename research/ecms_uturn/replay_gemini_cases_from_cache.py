@@ -87,7 +87,9 @@ for case in CASES:
   summaries.append({"Symbol":case["Symbol"],"Status":"WAIT_FOR_DATA","Reason":"NO_CACHED_OHLCV","Sessions":0}); continue
  s["Signal"]=(s.Close.between(case["ZoneLow"],case["ZoneHigh"]))&(s.DeliveryPct>=case["DeliveryMin"])&(s.RVOL>=case["RvolMin"])
  eligible=s[s.Signal].copy()
+ last_exit_date=""
  for _,sig in eligible.iterrows():
+  if last_exit_date and sig.Date<=last_exit_date: continue
   signals.append({"Symbol":case["Symbol"],"SignalDate":sig.Date,"SignalClose":sig.Close,"DeliveryPct":sig.DeliveryPct,"RVOL":sig.RVOL,"ZoneLow":case["ZoneLow"],"ZoneHigh":case["ZoneHigh"]})
  i=int(s.index[s.Date.eq(sig.Date)][0]); entry_i=i+1
  if entry_i>=len(s): continue
