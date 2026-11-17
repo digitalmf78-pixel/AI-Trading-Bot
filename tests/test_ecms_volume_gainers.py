@@ -1184,12 +1184,12 @@ def test_manual_auto_mode_before_market_close_is_skipped(monkeypatch):
 
 
 
-def test_manual_auto_mode_resolves_eod_until_0759():
+def test_manual_auto_mode_resolves_eod_snapshot_reuse_until_0759():
     from datetime import datetime as real_datetime
     import strategies.ecms.volume_gainers as scanner
 
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 7, 59)) == "eod"
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 0, 0)) == "eod"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 7, 59)) == "eod-reuse"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 0, 0)) == "eod-reuse"
 
 
 def test_manual_auto_mode_resolves_morning_from_0915_to_1159():
@@ -1227,6 +1227,9 @@ def test_reuse_previous_eod_snapshot_publishes_cached_data_without_live_fetch(tm
         "SnapshotStatus": "VALID",
         "PageVolume": 1000,
     }]).to_csv(state, index=False)
+    marker = state.parent / "eod_snapshot_run_marker.json"
+    marker.write_text('{"snapshot_type":"EOD","snapshot_status":"VALID","eod_date":"2026-11-16","symbol_count":1}', encoding="utf-8")
+    monkeypatch.setattr(scanner, "STATE_DIR", state.parent)
     monkeypatch.setattr(scanner, "STATE_FILE", state)
     monkeypatch.setattr(scanner, "OUTPUT_DIR", output)
     monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 16))
@@ -1252,6 +1255,9 @@ def test_reuse_previous_eod_snapshot_rejects_wrong_date(tmp_path, monkeypatch):
         "SnapshotType": "EOD",
         "SnapshotStatus": "VALID",
     }]).to_csv(state, index=False)
+    marker = state.parent / "eod_snapshot_run_marker.json"
+    marker.write_text('{"snapshot_type":"EOD","snapshot_status":"VALID","eod_date":"2026-11-13","symbol_count":1}', encoding="utf-8")
+    monkeypatch.setattr(scanner, "STATE_DIR", state.parent)
     monkeypatch.setattr(scanner, "STATE_FILE", state)
     monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 16))
     statuses = []
