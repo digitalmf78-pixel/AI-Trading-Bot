@@ -154,11 +154,22 @@ for sym in symbols:
 
 for row in CLOSE:
     sym=row["Symbol"]; day=row["Latest_Completed_Post_Result_Session_AsOf_2026_11_17"]; cand=bhav_idx.get(day,[])
-    if len(cand)!=1:
-        post_rows.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":f"Expected one cached bhavcopy file; found {len(cand)}"}); continue
-    try:
-        res=verify_bhav(sym,day,cand[0]); post_rows.append({"Symbol":sym,"Date":day,"Status":res.get("status"),"Close":res.get("Close"),"High":res.get("High"),"ISIN":res.get("ISIN"),"CachePath":str(cand[0]),"Reason":res.get("reason","")})
-    except Exception as e: post_rows.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":f"{type(e).__name__}: {e}"})
+    ready=[]; failures=[]
+    for candidate in cand:
+        try:
+            res=verify_bhav(sym,day,candidate)
+            if res.get("status")=="READY":
+                ready.append((candidate,res))
+            else:
+                failures.append(f"{candidate}:{res.get('status')}:{res.get('reason','')}")
+        except Exception as e:
+            failures.append(f"{candidate}:{type(e).__name__}:{e}")
+    if len(ready)==1:
+        chosen,res=ready[0]
+        post_rows.append({"Symbol":sym,"Date":day,"Status":"READY","Close":res.get("Close"),"High":res.get("High"),"ISIN":res.get("ISIN"),"CachePath":str(chosen),"Reason":""})
+    else:
+        reason=(f"No candidate contained one verified EQ row; {' | '.join(failures[:5])}" if not ready else f"Ambiguous: {len(ready)} candidate files each contain a valid row")
+        post_rows.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":reason,"CachePaths":";".join(map(str,cand))})
 
 # EPS search is deliberately discovery-only: provider EPS columns are not proof of annual diluted EPS.
 eps_hits=[]
