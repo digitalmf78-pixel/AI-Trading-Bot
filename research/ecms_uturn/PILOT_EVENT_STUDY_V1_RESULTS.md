@@ -1,8 +1,8 @@
 # ECMS U-Turn Pilot Event Study — V1 Results
 
 **Status:** validation gates passed for this three-symbol descriptive pilot. Results remain research-only and are not a trade signal.  
-**Latest successful U-Turn CI:** [run #44075834518](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834518)  
-**Latest successful read-only cache audit:** [run #44075834526](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834526)
+**Latest successful U-Turn CI:** [run #44077735477](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44077735477)  
+**Latest successful read-only cache audit:** [run #44077339832](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44077339832)
 
 No production ECMS changes, Volume Gainers dependency, orders, entry/exit simulation or P&L.
 
