@@ -27,3 +27,10 @@
 ## Next validation gate
 
 For each symbol, retrieve exactly the 20 completed NSE sessions strictly before the result announcement calendar date, validate each daily High, select the maximum High, then retrieve the first/latest chosen completed post-result session Close under a documented rule. Check splits, bonuses, rights, ESOP dilution and other share-basis events. Only after this may `Peak_Price_Verified` and `Corporate_Action_Adjusted` be set true and the calculator run.
+
+
+## 13. Session-date manifest
+
+The 60-row manifest `research/ecms_uturn/nse_ohlc_download_manifest.csv` lists 20 expected NSE sessions for each issuer (INFY, AARTIIND, ACI), the official UDiFF archive URL for each date and the NSE holiday-calendar reference. The windows end on 22-Apr-2026, 30-Apr-2026 and 08-May-2026 respectively. The complete result announcement date is excluded for all issuers, including ACI's after-market 18:00 announcement on 11-May-2026.
+
+These are expected calendar sessions, not proof that each archive file was downloaded or that each security row exists. Every row remains `EXPECTED_SESSION_PENDING_BHAVCOPY_VERIFICATION` until the actual NSE archive is read and its symbol/series/ISIN/High/Close fields are checked.
