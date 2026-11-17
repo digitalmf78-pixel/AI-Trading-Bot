@@ -269,3 +269,12 @@ The CSV preserves every returned page row, including rows outside the official M
 - NSE's official All Reports page is also published at https://www.nseindia.in/all-reports; it lists CM-UDiFF Common Bhavcopy Final (zip). The older CM Bhavcopy formats are explicitly marked discontinued from 08-Jul-2024.
 - Downloader commit 01a40149a2d66f9c4c1f075d733a457a7b4784f8 now tries the alternate official reports portal first with bounded warm-up timeouts, then the original NSE host, and finally permits the official archive request without website cookies if both warm-ups fail. This is a connectivity fallback only; archive host, ZIP/schema checks, exact session checks, and fail-closed behavior are unchanged.
 - Pending CI evidence: successful retrieval of all manifest archives, 60 exact pre-result OHLC rows, and 3 post-result closes. Until verified, all sample symbols remain WAIT_FOR_DATA. Corporate-action and diluted-EPS basis review remain separate mandatory gates.
+
+#### Read-only V8 cache reuse for issuer sample audit — 17-Nov-2026
+
+- The isolated workflow `.github/workflows/ecms-v8-cache-readonly-audit.yml` restores the existing shared NSE V8 cache using `actions/cache/restore@v5` and the `nse-bhavcopy-${{ runner.os }}-main-` restore prefix. It does not save or mutate the shared cache and has no V8 workflow/code changes.
+- `research/ecms_uturn/audit_v8_cache_samples.py` indexes cached Bhavcopy and delivery files by their filename session date, then independently validates row-level `TradDt`/`DATE1`, CM/STK/EQ, symbol, ISIN, High/Close, and exact manifest session coverage for INFY, ACI and AARTIIND.
+- Delivery is audited as separate date/symbol coverage evidence only; it is not an input to the EPS valuation-reset formula.
+- EPS cache/XBRL matches are emitted as discovery-only evidence. An ordinary EPS column or keyword match is not annual diluted EPS verification. The official annual diluted-EPS and corporate-action gates remain pending until the actual filing facts, FY, consolidated basis and INR/share unit are reconciled.
+- Outputs are `v8_cache_audit/cached_ohlc_verified_rows.csv`, `cached_ohlc_window_summary.csv`, `cached_post_result_close.csv`, `cached_delivery_coverage.csv`, `diluted_eps_discovery_only.csv` and `symbol_audit_summary.json`.
+- A successful workflow only proves that the audit completed; each issuer's row-level status controls readiness. No U-Turn target is calculated, and no production integration is permitted.
