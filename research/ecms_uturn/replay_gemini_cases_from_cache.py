@@ -18,6 +18,7 @@ DELIVERY=ROOT/"data/cache/delivery"
 OUT=ROOT/"uturn_cache_backtest"
 OUT.mkdir(exist_ok=True)
 CASES=[
+ {"Symbol":"PIIND","Name":"PI Industries","DynamicAnnualEPSZone":True,"ResultDate":"2026-11-04","PreviousFYDilutedEPS":109.42,"CurrentFYDilutedEPS":87.06,"EPSBasis":"Consolidated annual diluted EPS; FY2025 vs FY2026","DeliveryMin":60.0,"RvolMin":1.5,"TargetPct":12.0,"StopPct":5.0,"MaxHoldSessions":63},
  {"Symbol":"HDFCBANK","Name":"HDFC Bank","ZoneLow":1650.0,"ZoneHigh":1690.0,"DeliveryMin":60.0,"RvolMin":1.5,"TargetPct":12.0,"StopPct":4.0,"MaxHoldSessions":63},
  {"Symbol":"63MOONS","Name":"63 Moons Technologies","ZoneLow":425.0,"ZoneHigh":450.0,"DeliveryMin":60.0,"RvolMin":1.5,"TargetPct":15.0,"StopPct":5.0,"MaxHoldSessions":63},
 ]
@@ -71,7 +72,7 @@ for day, paths in sorted(bhav_index.items()):
             df["Sgmt"].astype(str).str.upper().eq("CM")
             & df["FinInstrmTp"].astype(str).str.upper().eq("STK")
             & df["SctySrs"].astype(str).str.upper().eq("EQ")
-            & df["TckrSymb"].astype(str).str.upper().isin(["HDFCBANK","63MOONS"])
+            & df["TckrSymb"].astype(str).str.upper().isin(["HDFCBANK","63MOONS","PIIND"])
         ]
         for _, row in df.iterrows():
             vals=[float(row[c]) for c in ("OpnPric","HghPric","LwPric","ClsPric","TtlTradgVol")]
@@ -94,7 +95,7 @@ for day, paths in sorted(delivery_index.items()):
         pct_col=norm.get("DELIV_PER")
         if not all([sym_col,date_col,pct_col]): continue
         dates=pd.to_datetime(df[date_col],errors="coerce",dayfirst=True).dt.date.astype("string")
-        for symbol in ("HDFCBANK","63MOONS"):
+        for symbol in ("HDFCBANK","63MOONS","PIIND"):
             selected=df[df[sym_col].astype(str).str.strip().str.upper().eq(symbol)&dates.eq(day)]
             if len(selected)==1:
                 delivery_rows.append({"Symbol":symbol,"Date":day,"DeliveryPct":number(selected[pct_col]).iloc[0],"DeliveryPath":str(paths[0])})
@@ -120,6 +121,26 @@ summaries=[]
 for case in CASES:
     symbol=case["Symbol"]
     s=data[data["Symbol"].eq(symbol)].sort_values("Date").reset_index(drop=True).copy()
+    if case.get("DynamicAnnualEPSZone") and not s.empty:
+        pre=s[s["Date"]<case["ResultDate"]].tail(20)
+        post=s[s["Date"]>case["ResultDate"]]
+        if len(pre)!=20 or post.empty:
+            summaries.append({"Symbol":symbol,"Status":"WAIT_FOR_DATA","Reason":f"Need 20 pre-result sessions and post-result data; got pre={len(pre)}, post={len(post)}"})
+            continue
+        peak_row=pre.loc[pre["High"].idxmax()]
+        peak_high=float(peak_row["High"])
+        prior_eps=float(case["PreviousFYDilutedEPS"]); current_eps=float(case["CurrentFYDilutedEPS"])
+        if prior_eps<=0 or current_eps<=0 or current_eps>=prior_eps:
+            summaries.append({"Symbol":symbol,"Status":"WAIT_FOR_DATA","Reason":"Annual diluted EPS inputs invalid or no decline"})
+            continue
+        correction=peak_high*(prior_eps-current_eps)/prior_eps
+        target=peak_high-correction
+        case["PeakHighPreResult"]=peak_high
+        case["PeakHighDate"]=str(peak_row["Date"])
+        case["UturnTarget"]=target
+        case["ZoneLow"]=target*0.98
+        case["ZoneHigh"]=target*1.02
+        case["EPSDeclinePct"]=(prior_eps-current_eps)/prior_eps*100
     if s.empty:
         summaries.append({"Symbol":symbol,"Status":"WAIT_FOR_DATA","Reason":"NO_CACHED_OHLCV","Sessions":0})
         continue
@@ -129,6 +150,9 @@ for case in CASES:
         & (s["RVOL"]>=case["RvolMin"])
     )
     signal_indices=list(s.index[s["Signal"]])
+    post_result=s[s["Date"]>case.get("ResultDate","0000-00-00")] if case.get("DynamicAnnualEPSZone") else pd.DataFrame()
+    post_low_row=post_result.loc[post_result["Low"].idxmin()] if not post_result.empty else None
+    post_latest=post_result.iloc[-1] if not post_result.empty else None
     zone_mask=s["Close"].between(case["ZoneLow"],case["ZoneHigh"])
     delivery_mask=s["DeliveryPct"]>=case["DeliveryMin"]
     rvol_mask=s["RVOL"]>=case["RvolMin"]
@@ -199,7 +223,22 @@ for case in CASES:
         "NextOpenStillInsideZone":sum(1 for i in signal_indices if i+1<len(s) and case["ZoneLow"]<=float(s.iloc[i+1]["Open"])<=case["ZoneHigh"]),
         "ExecutedNonOverlappingTrades":len(executed),"Wins":wins,"Losses":losses,
         "WinRatePct":round(wins/len(executed)*100,2) if executed else None,
-        "EPSInputs":"NOT_SUPPLIED; EPS valuation formula not tested",
+        "EPSInputs":case.get("EPSBasis","NOT_SUPPLIED; EPS valuation formula not tested"),
+        "ResultDate":case.get("ResultDate",""),
+        "PreviousFYDilutedEPS":case.get("PreviousFYDilutedEPS",""),
+        "CurrentFYDilutedEPS":case.get("CurrentFYDilutedEPS",""),
+        "EPSDeclinePct":round(case.get("EPSDeclinePct",0.0),2) if case.get("DynamicAnnualEPSZone") else "",
+        "PreResult20SessionPeakHigh":case.get("PeakHighPreResult",""),
+        "PreResultPeakDate":case.get("PeakHighDate",""),
+        "CalculatedUturnTarget":round(case.get("UturnTarget",0.0),2) if case.get("DynamicAnnualEPSZone") else "",
+        "CalculatedZoneLow":round(case.get("ZoneLow",0.0),2) if case.get("DynamicAnnualEPSZone") else "",
+        "CalculatedZoneHigh":round(case.get("ZoneHigh",0.0),2) if case.get("DynamicAnnualEPSZone") else "",
+        "PostResultLowestLow":round(float(post_low_row["Low"]),2) if post_low_row is not None else "",
+        "PostResultLowestLowDate":str(post_low_row["Date"]) if post_low_row is not None else "",
+        "PostResultLatestClose":round(float(post_latest["Close"]),2) if post_latest is not None else "",
+        "LatestCloseVsTargetPct":round((float(post_latest["Close"])/float(case["UturnTarget"])-1)*100,2) if post_latest is not None and case.get("DynamicAnnualEPSZone") else "",
+        "LowestLowTouchedTargetZone":bool(post_low_row is not None and float(post_low_row["Low"])<=float(case["ZoneHigh"])) if case.get("DynamicAnnualEPSZone") else "",
+        "ReboundFromPostResultLowPct":round((float(post_latest["Close"])/float(post_low_row["Low"])-1)*100,2) if post_low_row is not None and post_latest is not None else "",
     })
 
 pd.DataFrame(all_signals).to_csv(OUT/"gemini_case_signal_sessions.csv",index=False)
@@ -217,7 +256,7 @@ summary={
  "intraday_ambiguity":"stop-first when both stop and target fall within same daily candle; gap-through-stop exits at open",
  "corporate_actions":"NOT_AUDITED; raw-price outcomes provisional",
  "transaction_costs":"EXCLUDED",
- "eps_formula":"NOT_TESTED; no actual result date or annual diluted EPS periods supplied",
+ "eps_formula":"PIIND annual diluted EPS target computed from FY2025/FY2026 inputs; HDFCBANK/63MOONS remain fixed Gemini cases with EPS formula untested",
  "volume_gainer_filter_used":False,"production_changes":False,
 }
 (OUT/"gemini_case_replay_summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
