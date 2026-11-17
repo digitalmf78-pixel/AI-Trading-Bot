@@ -4,6 +4,7 @@ from datetime import date
 from research.ecms_uturn.official_calendar_audit import (
     expected_nse_sessions,
     next_nse_session,
+    dividend_inclusive_simple_return_pct,
 )
 
 
@@ -33,6 +34,10 @@ class OfficialNSECalendarAuditTests(unittest.TestCase):
         sessions = expected_nse_sessions(date(2026, 4, 9), date(2026, 5, 8), self.holidays)
         self.assertEqual(len(sessions), 20)
         self.assertNotIn("2026-05-01", sessions)
+
+    def test_gross_cash_dividend_simple_return(self):
+        value = dividend_inclusive_simple_return_pct(100.0, 95.0, 2.5)
+        self.assertAlmostEqual(value, -2.5)
 
     def test_next_post_result_session(self):
         self.assertEqual(
