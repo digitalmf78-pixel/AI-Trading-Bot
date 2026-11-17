@@ -212,6 +212,24 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode ${{ needs.route.outputs.mode == 'eod-reuse' && 'eod-reuse' || 'eod' }}
+      - name: Fail scheduled EOD job when scan did not complete
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("outputs/ecms/ecms_execution_status.json")
+          if not path.is_file():
+              raise SystemExit("Scheduled ECMS EOD produced no execution-status file")
+          status = json.loads(path.read_text(encoding="utf-8"))
+          if str(status.get("status", "")).upper() != "SUCCESS":
+              raise SystemExit(
+                  "Scheduled ECMS EOD did not complete: "
+                  f"{status.get('status', 'UNKNOWN')} — {status.get('reason', 'NO_REASON')}"
+              )
+          print("Scheduled ECMS EOD scan completed successfully.")
+          PY
       - name: Validate current-run EOD snapshot before saving cache
         id: eod-snapshot-check
         if: always()
@@ -512,6 +530,24 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode morning
+      - name: Fail scheduled Morning job when scan did not complete
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("outputs/ecms/ecms_execution_status.json")
+          if not path.is_file():
+              raise SystemExit("Scheduled ECMS Morning produced no execution-status file")
+          status = json.loads(path.read_text(encoding="utf-8"))
+          if str(status.get("status", "")).upper() != "SUCCESS":
+              raise SystemExit(
+                  "Scheduled ECMS Morning did not complete: "
+                  f"{status.get('status', 'UNKNOWN')} — {status.get('reason', 'NO_REASON')}"
+              )
+          print("Scheduled ECMS Morning scan completed successfully.")
+          PY
       - name: Validate current-run same-day Morning snapshot before saving cache
         id: morning-snapshot-check
         if: always()
