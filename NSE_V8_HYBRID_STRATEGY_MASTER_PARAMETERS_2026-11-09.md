@@ -328,7 +328,6 @@ Before taking action on this repository:
 - Breakout Ready is written after the existing final EOD layers. It reports BREAKOUT_CONFIRMED, PULLBACK_CONFIRMED, ENTRY_CANDIDATE, CHASED, WAIT_FOR_DATA or NO_SETUP using the existing breakout/pullback and chase outputs.
 - Confirmed Entry is ENTRY_CANDIDATE only when the existing final EOD status is WATCH and RiskControl, MandatoryConfirmation, RiskReward and Chase statuses all pass. This is not an order or auto-trade instruction.
 - All four outputs are independent copies. None is assigned back to the scanner's current/result candidate dataframe or used to change any gate.
-
 **Final EOD missing-data correction:**
 - Added a single prerequisite-data status check before the final WATCH decision. Missing CoreTechnical, Sector, Market Regime, Delivery, Accumulation/Distribution, News, Risk/Reward, Risk Control, Mandatory Confirmation, Chase, RVOL, V8Score, required values or high-RVOL VolumeReason now produce WAIT_FOR_DATA. An explicit CoreTechnical REJECT remains SKIP; valid failed gates remain SKIP. Missing fundamental fields remain informational and do not block this interim EOD review.
 - Corrected the misleading code comment: current fundamental collection is after Liquidity for the liquidity-qualified cohort; the all-Delivery-A/B boundary remains unresolved.
@@ -659,3 +658,78 @@ The production scanner must follow this exact sequence:
 - Corrected CI run [43176941834](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941834) SUCCESS: 496 pytest passed, compilation and V8 regression checks passed; one unrelated Pandas deprecation warning. Parser/news workflow [43176941753](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941753) SUCCESS.
 - EOD run [43175975998](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43175975998) is the integration run for this code and remains pending final scanner plus Delivery-cache persistence verification at the time of this entry.
 - Master Specification remains immutable.
+
+## 14. Stock-selection rejection gates and EMA44 entry architecture — discussion decision (17-Nov-2026)
+
+**Purpose:** Record the agreed design direction so future sessions do not repeat or misstate the discussion. This section is a strategy-design record; it does not by itself authorize production code changes or silently alter existing live gates.
+
+### A. Keep the existing production selection gates unchanged
+
+The existing production flow remains authoritative:
+1. Eligible NSE Mainboard universe.
+2. Official data/session validation; missing, stale, duplicate or invalid required data remains `WAIT_FOR_DATA` (fail-closed).
+3. Existing Delivery Category A/B logic; A OR B eligibility, 60.00% inclusive threshold, minimum five valid distinct reports and current freshness rules.
+4. RVOL calculated only on the A/B union and retained as HIGH/LOW/WAIT classification; **RVOL is not a rejection gate**.
+5. Existing Liquidity hard minimum: 20-session average traded value >=₹1.5 crore.
+6. Fundamental enrichment for every Liquidity-qualified candidate; missing fundamental values remain visible and are not an early rejection gate.
+7. RSI remains informational only.
+
+Do not introduce a Top-N cap. Do not change Delivery A/B, RVOL order/classification, Liquidity threshold, fundamental collection boundary, data-validation rules, the immutable Master Specification, or existing risk/confirmation controls as part of this design note.
+
+### B. Separate stock selection from trade-entry timing
+
+- **Stock selection** identifies and retains eligible, liquid candidates for research/watchlists.
+- **Trade entry** is a later decision requiring a valid technical setup and entry/risk confirmation.
+- A candidate must not be permanently rejected merely because a breakout has not happened yet. Use stage-specific WAIT/watch statuses where the stock remains eligible but the setup is not ready.
+- A true mandatory rejection is reserved for an explicit, approved hard gate (e.g. universe ineligibility, failed Delivery A/B, failed Liquidity, or invalid/unavailable required data according to the relevant fail-closed rule).
+
+### C. EMA44 is the selected trend/entry reference (not EMA50)
+
+The user corrected the proposed EMA50 reference: **EMA44 is the intended moving-average reference for this entry architecture.**
+- EMA44 is the primary trend/pullback reference for the proposed technical setup.
+- Observe whether EOD Close is above EMA44 and whether EMA44 is rising. The exact slope lookback/threshold is not yet approved.
+- A close below EMA44 should not automatically erase an otherwise eligible stock from the research universe. It may be classified `WAIT_FOR_TREND` / not entry-ready, subject to final rule approval.
+- EMA50 may remain an existing informational observation; it must not replace EMA44 as the chosen reference in this design.
+- EMA200 remains longer-term context only unless a future explicit decision approves a hard gate.
+
+### D. Two separate entry setup types are to be researched and backtested
+
+**Type A — EMA44 Pullback Entry**
+- Candidate remains eligible from the upstream selection gates.
+- Observe price approaching EMA44 and whether it holds/reclaims the EMA44 area with valid price/volume evidence.
+- A touch of EMA44 alone is not an entry signal.
+- Require a separately defined bullish/reclaim confirmation, structural stop and all existing V8 confirmation/risk controls before an entry can be confirmed.
+- Exact pullback tolerance, candle confirmation and volume conditions remain pending definition/backtest.
+
+**Type B — Base/Pivot Breakout Entry**
+- Detect a valid consolidation/base and persist its objectively detected boundaries.
+- Define and persist the pivot/resistance before testing breakout.
+- Require EOD close confirmation above the pivot plus approved volume confirmation.
+- Apply false-breakout/chase checks, structural stop, target from real overhead levels and existing V8 confirmation/risk controls.
+- Fixed-range base boundaries, breakout buffer, volume multiple/lookback and retest window remain pending definition/backtest.
+
+Both types should be evaluated independently and reported separately. A stock may qualify for either or both; deduplicate the stock in the combined view while preserving its setup-type labels. Neither type becomes a live BUY signal until its exact rules and full risk/confirmation path are implemented and validated.
+
+### E. Proposed output lifecycle (design; status semantics to be validated)
+
+- `REJECTED`: failed an approved mandatory selection gate.
+- `WAIT_FOR_DATA`: required source/session/field data is incomplete, stale, invalid or unavailable.
+- `QUALIFIED_WATCHLIST`: upstream Delivery A/B and Liquidity gates passed.
+- `WAIT_FOR_TREND`: candidate remains eligible, but EMA44 trend condition is not currently met.
+- `SETUP_FORMING`: pullback/base evidence is developing; not an entry.
+- `READY_FOR_BREAKOUT`: base/pivot setup is defined and approaching confirmation; not an entry.
+- `ENTRY_CONFIRMED`: one of the independently validated Type A/Type B entry paths has passed all required price/volume, existing V8 confirmations and risk controls.
+- `WAIT_FOR_SETUP`: no valid entry trigger yet; retain in the appropriate earlier-stage watchlist.
+
+These are proposed consolidated lifecycle labels. Before implementation, map them to the existing production statuses and avoid replacing or breaking current reason codes/reports.
+
+### F. Required implementation and validation sequence
+
+1. Audit the current EMA44, Bottom Detection, Support/Resistance, Pivot, Breakout/Pullback, fixed-range base, VCP, 3+1 confirmation and risk-control code paths. Reuse valid existing calculations; do not create duplicate or conflicting indicators.
+2. Specify Type A and Type B rules independently, including exact lookbacks, tolerances, candle/volume confirmation and structural-stop definitions. Do not invent thresholds.
+3. Build point-in-time historical datasets with official NSE sessions and strict OHLCV validation.
+4. Backtest Type A and Type B separately, then combined, with realistic brokerage, taxes, slippage, gaps, stop execution assumptions, MFE/MAE, win rate, expectancy in R, drawdown and sample counts.
+5. Test across market regimes and Large/Mid/Small Mainboard stocks; report survivorship and point-in-time data limitations.
+6. Only after user review/approval, implement behind isolated NSE V8 branch/PR, add regression tests and compare old/new scanner outputs. Do not merge without explicit approval.
+
+**Current status (17-Nov-2026):** Architecture direction documented. EMA44 selected over EMA50 for this entry design; Type A EMA44 Pullback and Type B Base/Pivot Breakout both selected for separate research/backtesting. Exact thresholds, final hard-gate status and production implementation remain pending. No scanner code, workflow, cache, production selection rule or original Master Specification was changed by this documentation decision.
