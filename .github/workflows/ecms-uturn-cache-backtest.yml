@@ -46,7 +46,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas
       - name: Compile and test research backtest contract
         run: |
-          python -m py_compile research/ecms_uturn/run_uturn_cache_backtest.py research/ecms_uturn/replay_gemini_cases_from_cache.py research/ecms_uturn/uturn_research_engine.py
+          python -m py_compile research/ecms_uturn/run_uturn_cache_backtest.py research/ecms_uturn/replay_gemini_cases_from_cache.py research/ecms_uturn/uturn_research_engine.py research/ecms_uturn/audit_v8_cache_samples.py research/ecms_uturn/cache_date_utils.py
           python -m unittest discover -s tests -p 'test_ecms_uturn_cache_backtest_contract.py'
           python -m unittest discover -s tests -p 'test_uturn_research_engine.py'
       - name: Strictly audit the 20-session NSE windows from this same restored cache
