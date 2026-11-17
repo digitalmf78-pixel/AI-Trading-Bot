@@ -1639,7 +1639,7 @@ def _write_execution_status(mode, status, reason="", **details):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     status_path = OUTPUT_DIR / "ecms_execution_status.json"
     temporary = status_path.with_name(status_path.name + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\\n", encoding="utf-8")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     temporary.replace(status_path)
     print("ECMS_EXECUTION_STATUS=" + json.dumps(payload, sort_keys=True))
     return payload
