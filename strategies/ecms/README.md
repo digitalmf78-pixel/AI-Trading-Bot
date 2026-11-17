@@ -278,3 +278,13 @@ The CSV preserves every returned page row, including rows outside the official M
 - EPS cache/XBRL matches are emitted as discovery-only evidence. An ordinary EPS column or keyword match is not annual diluted EPS verification. The official annual diluted-EPS and corporate-action gates remain pending until the actual filing facts, FY, consolidated basis and INR/share unit are reconciled.
 - Outputs are `v8_cache_audit/cached_ohlc_verified_rows.csv`, `cached_ohlc_window_summary.csv`, `cached_post_result_close.csv`, `cached_delivery_coverage.csv`, `diluted_eps_discovery_only.csv` and `symbol_audit_summary.json`.
 - A successful workflow only proves that the audit completed; each issuer's row-level status controls readiness. No U-Turn target is calculated, and no production integration is permitted.
+
+#### Complete-fundamentals-only two-sided observations — 17-Nov-2026
+
+- `research/ecms_uturn/audit_complete_fundamentals_twosided.py` screens the full restored `data/inputs/fundamental_metrics.csv` universe, not only the three EPS research examples.
+- Eligibility requires exactly one row per symbol, all seven numeric core metrics (`RevenueGrowthPct`, `ProfitGrowthPct`, `ROEPercent`, `ROCEPercent`, `DebtToEquity`, `InterestCoverage`, `OperatingCashFlowINR`), per-metric source/URL/period/calculation-basis/currency provenance, verified period alignment and publication date, and one exact official NSE filing-register match.
+- A complete cache row is **not** automatically an official metric-value verification. Output explicitly says that XBRL fact-level value verification remains separate; third-party provider values are not promoted to `OFFICIAL_XBRL_VERIFIED` by URL or populated fields alone.
+- Only symbols passing this completeness/provenance gate are sent to `assess_two_sided_price_context` using validated cached NSE UDiFF CM/STK/EQ OHLCV sessions. All others receive `WAIT_FOR_DATA`.
+- Because an independently verified annual diluted-EPS valuation zone and corporate-action-adjusted pre-result peak are not yet supplied for this broad universe, the bottom-side valuation-zone condition is deliberately inactive. This run can report technical bottom-side/overextension context only where the module supports it, but does not claim a valuation reset or confirmed bottom.
+- Outputs: `v8_cache_audit/fundamental_completeness_all_symbols.csv`, `two_sided_complete_fundamentals_only.csv`, `bhavcopy_file_validation_errors.csv`, and `complete_fundamentals_two_sided_summary.json`.
+- Research-only, shared V8 cache restore-only, no cache save, no production integration, no trading signals/orders.
