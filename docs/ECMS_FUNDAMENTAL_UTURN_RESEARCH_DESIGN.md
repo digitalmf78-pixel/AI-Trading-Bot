@@ -170,3 +170,12 @@ No implementation or production behavior is approved by this design document.
 Three NSE Main Board issuers have been selected for a source-verification sample: INFY, ACI and AARTIIND. FY2025/FY2026 consolidated diluted EPS and result approval date/time have been checked against NSE iXBRL and NSE annual-report documents. The sample deliberately includes one EPS-decline case (ACI) and two no-decline cases (INFY, AARTIIND). See `research/ecms_uturn/SAMPLE_UNIVERSE_FY2026.md` and `research/ecms_uturn/sample_universe_fy2026.csv`.
 
 The 20-session peak High, post-result close, corporate-action adjustment and full OHLC provenance are not yet populated. The sample is therefore not eligible for U-Turn target calculation until those fields are independently verified.
+
+
+## 12. Official NSE OHLC intake
+
+The research-only parser `strategies/ecms/uturn_nse_ohlc.py` consumes caller-supplied daily NSE CM UDiFF bhavcopy tables. It validates the official archive host, date encoded in the source URL, `TradDt`, `Sgmt=CM`, `FinInstrmTp=STK`, `SctySrs=EQ`, ticker, positive High/Close, Indian equity ISIN and a stable ISIN across all 20 sessions. It requires the caller to provide exactly 20 verified NSE trading dates; it does not infer holidays or fetch network data. The peak selector returns the source URL corresponding to the selected maximum High.
+
+NSE's official archive pages list security-wise price/volume archives and daily bhavcopy reports. The UDiFF cash-market bhavcopy uses fields including `TradDt`, `TckrSymb`, `SctySrs`, `HghPric` and `ClsPric`. Reference: [NSE Historical Reports](https://www.nseindia.in/static/resources/historical-reports-capital-market-daily-monthly-archives), [NSE All Reports](https://www.nseindia.com/all-reports/).
+
+No actual 20-session files have yet been downloaded or reconciled for INFY, ACI or AARTIIND. The parser's fixture tests validate logic only; they do not substitute for issuer-specific source-file verification.
