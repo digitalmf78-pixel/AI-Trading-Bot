@@ -1110,3 +1110,22 @@ def test_nse_page_download_preserves_all_rows_and_marks_mainboard_eligibility():
         "PASS_MAIN_BOARD_EQUITY",
     ]
     assert result["ScanMode"].eq("MORNING").all()
+
+
+def test_main_persists_explicit_skipped_execution_status(tmp_path, monkeypatch):
+    import json
+    import strategies.ecms.volume_gainers as scanner
+
+    monkeypatch.setattr(scanner, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("GITHUB_RUN_ID", "test-run-42")
+    payload = scanner._write_execution_status(
+        "morning", "SKIPPED", "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
+        expected_time_ist="09:20", actual_time_ist="10:05",
+    )
+
+    saved = json.loads((tmp_path / "ecms_execution_status.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "SKIPPED"
+    assert saved["reason"] == "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT"
+    assert saved["mode"] == "MORNING"
+    assert saved["github_run_id"] == "test-run-42"
+    assert saved["expected_time_ist"] == "09:20"
