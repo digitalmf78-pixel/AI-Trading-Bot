@@ -13,7 +13,9 @@ on:
   pull_request:
     paths:
       - "strategies/ecms/fundamental_uturn.py"
+      - "strategies/ecms/uturn_nse_ohlc.py"
       - "tests/test_ecms_fundamental_uturn.py"
+      - "tests/test_ecms_uturn_nse_ohlc.py"
       - ".github/workflows/ecms-uturn-research-tests.yml"
 
 permissions:
