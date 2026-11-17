@@ -1624,6 +1624,27 @@ def run_morning():
     summary["previous_eod_reference_consumed"] = _consume_previous_eod_snapshot(expected_eod)
     (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
+def _write_execution_status(mode, status, reason="", **details):
+    """Persist an explicit run outcome so skipped scans cannot be mistaken for completed scans."""
+    payload = {
+        "status": str(status).upper(),
+        "mode": str(mode).upper(),
+        "reason": str(reason),
+        "date_ist": datetime.now(IST).date().isoformat(),
+        "recorded_at_ist": datetime.now(IST).isoformat(),
+        "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
+        "github_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+        **details,
+    }
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    status_path = OUTPUT_DIR / "ecms_execution_status.json"
+    temporary = status_path.with_name(status_path.name + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\\n", encoding="utf-8")
+    temporary.replace(status_path)
+    print("ECMS_EXECUTION_STATUS=" + json.dumps(payload, sort_keys=True))
+    return payload
+
+
 def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
     parser.add_argument("--mode",choices=("eod","morning"),required=True)
@@ -1636,21 +1657,10 @@ def main():
     try:
         trading_session = is_trading_session(today)
     except CalendarCoverageError as exc:
-        print(json.dumps({
-            "status": "SKIPPED",
-            "reason": "OFFICIAL_NSE_CALENDAR_UNAVAILABLE",
-            "date_ist": today.isoformat(),
-            "mode": args.mode.upper(),
-            "detail": str(exc),
-        }, indent=2))
+        _write_execution_status(args.mode, "SKIPPED", "OFFICIAL_NSE_CALENDAR_UNAVAILABLE", detail=str(exc))
         return
     if not trading_session:
-        print(json.dumps({
-            "status": "SKIPPED",
-            "reason": "OFFICIAL_NSE_NON_TRADING_DAY",
-            "date_ist": today.isoformat(),
-            "mode": args.mode.upper(),
-        }, indent=2))
+        _write_execution_status(args.mode, "SKIPPED", "OFFICIAL_NSE_NON_TRADING_DAY")
         return
     # Scheduled runs must match the calendar's session-specific scan slot.
     # Manual dispatch is intentionally allowed at any time on a trading date.
@@ -1663,26 +1673,18 @@ def main():
         else:
             schedule_detail = ""
         if not expected_time:
-            print(json.dumps({
-                "status": "SKIPPED",
-                "reason": "OFFICIAL_NSE_SPECIAL_SESSION_SCAN_TIME_NOT_CONFIGURED",
-                "date_ist": today.isoformat(),
-                "mode": args.mode.upper(),
-                "detail": schedule_detail,
-            }, indent=2))
+            _write_execution_status(args.mode, "SKIPPED", "OFFICIAL_NSE_SPECIAL_SESSION_SCAN_TIME_NOT_CONFIGURED", detail=schedule_detail)
             return
         expected_hour, expected_minute = (int(part) for part in expected_time.split(":"))
         now = datetime.now(IST)
         difference = abs((now.hour * 60 + now.minute) - (expected_hour * 60 + expected_minute))
         if difference > 15:
-            print(json.dumps({
-                "status": "SKIPPED",
-                "reason": "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
-                "date_ist": today.isoformat(),
-                "mode": args.mode.upper(),
-                "expected_time_ist": expected_time,
-                "actual_time_ist": now.strftime("%H:%M"),
-            }, indent=2))
+            _write_execution_status(
+                args.mode, "SKIPPED", "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
+                expected_time_ist=expected_time, actual_time_ist=now.strftime("%H:%M"),
+            )
             return
-    run_eod() if args.mode=="eod" else run_morning()
+    result = run_eod() if args.mode=="eod" else run_morning()
+    _write_execution_status(args.mode, "SUCCESS", "SCAN_COMPLETED")
+    return result
 if __name__=="__main__": main()
