@@ -1,9 +1,30 @@
 import unittest
+import pandas as pd
+from research.ecms_uturn.cache_date_utils import normalize_session_dates
 from research.ecms_uturn.uturn_research_engine import (
     calculate_uturn, relative_volume, technical_confirmation, zone_touched
 )
 
 class UTurnResearchEngineTests(unittest.TestCase):
+    def test_nse_cache_dates_preserve_iso_and_parse_legacy_day_first(self):
+        values = pd.Series([
+            "2026-04-01",
+            "01/04/2026",
+            "04/01/2026",
+            "20260401",
+            "01042026",
+            "not-a-date",
+        ])
+        normalized = normalize_session_dates(values).tolist()
+        self.assertEqual(normalized[:5], [
+            "2026-04-01",
+            "2026-04-01",
+            "2026-01-04",
+            "2026-04-01",
+            "2026-04-01",
+        ])
+        self.assertTrue(pd.isna(normalized[5]))
+
     def test_formula_and_two_percent_zone(self):
         x=calculate_uturn(1000,20,18,"FY25","FY26","CONSOLIDATED","CONSOLIDATED")
         self.assertEqual(x.status,"PROVISIONAL_TARGET")
