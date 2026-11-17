@@ -46,9 +46,10 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas
       - name: Compile and test research backtest contract
         run: |
-          python -m py_compile research/ecms_uturn/run_uturn_cache_backtest.py research/ecms_uturn/replay_gemini_cases_from_cache.py research/ecms_uturn/uturn_research_engine.py research/ecms_uturn/audit_v8_cache_samples.py research/ecms_uturn/cache_date_utils.py
+          python -m py_compile research/ecms_uturn/run_uturn_cache_backtest.py research/ecms_uturn/replay_gemini_cases_from_cache.py research/ecms_uturn/uturn_research_engine.py research/ecms_uturn/audit_v8_cache_samples.py research/ecms_uturn/cache_date_utils.py research/ecms_uturn/official_calendar_audit.py
           python -m unittest discover -s tests -p 'test_ecms_uturn_cache_backtest_contract.py'
           python -m unittest discover -s tests -p 'test_uturn_research_engine.py'
+          python -m unittest discover -s tests -p 'test_uturn_official_calendar_audit.py'
       - name: Strictly audit the 20-session NSE windows from this same restored cache
         run: python research/ecms_uturn/audit_v8_cache_samples.py
         env:
@@ -57,6 +58,10 @@ jobs:
         run: python research/ecms_uturn/run_uturn_cache_backtest.py
       - name: Fail closed unless both parsers agree on every pre-result peak
         run: python research/ecms_uturn/validate_event_study_cache_consistency.py
+      - name: Verify official NSE calendar, event timing and corporate actions
+        run: python research/ecms_uturn/official_calendar_audit.py
+        env:
+          PYTHONPATH: .
       - name: Replay Gemini reference cases against cached OHLCV and delivery
         run: python research/ecms_uturn/replay_gemini_cases_from_cache.py
       - name: Upload backtest evidence
@@ -65,6 +70,7 @@ jobs:
           name: ecms-uturn-cache-backtest-${{ github.run_id }}
           path: |
             uturn_cache_backtest/
+            v8_cache_audit/
             cache_restore.txt
           if-no-files-found: error
           retention-days: 14
