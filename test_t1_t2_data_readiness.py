@@ -42,7 +42,7 @@ class ReadinessTests(unittest.TestCase):
     def test_invalid_ohlc_file_is_rejected_not_loaded(self):
         with TemporaryDirectory() as temp:
             path = Path(temp) / "bhavcopy_20261109.csv"
-            pd.DataFrame([{"SYMBOL":"TEST","SERIES":"EQ","OPEN":10,"HIGH":8,"LOW":9,"CLOSE":11}]).to_csv(path,index=False)
+            pd.DataFrame([{"BizDt":"2026-11-09","SYMBOL":"TEST","SERIES":"EQ","OPEN":10,"HIGH":8,"LOW":9,"CLOSE":11}]).to_csv(path,index=False)
             records, errors = load_price_cache(Path(temp))
             self.assertEqual(records, {})
             self.assertTrue(any(item.startswith("INVALID_OHLC:") for item in errors))
