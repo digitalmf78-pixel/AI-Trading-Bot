@@ -152,16 +152,11 @@ def audit_signal_frame(frame, prices, source_name):
         entry_raw, entry_field = first_present(row, ENTRY_COLUMNS)
         stop_raw, stop_field = first_present(row, STOP_COLUMNS)
         entry, stop = number(entry_raw), number(stop_raw)
-        levels = resistance_levels(row, entry)
-        t1 = levels[0] if len(levels) > 0 else (float("nan"), "WAIT_FOR_DATA")
-        t2 = levels[1] if len(levels) > 1 else (float("nan"), "WAIT_FOR_DATA")
         reasons = []
         if not symbol: reasons.append("SYMBOL_MISSING")
         if day is None: reasons.append("SIGNAL_DATE_MISSING")
         if not math.isfinite(entry) or entry <= 0: reasons.append("ENTRY_MISSING_OR_INVALID")
-        if not math.isfinite(stop) or stop <= 0 or (math.isfinite(entry) and stop >= entry): reasons.append("STOP_MISSING_OR_INVALID")
-        if not math.isfinite(t1[0]): reasons.append("T1_VERIFIED_RESISTANCE_MISSING")
-        if not math.isfinite(t2[0]): reasons.append("T2_DISTINCT_VERIFIED_RESISTANCE_MISSING")
+        if not math.isfinite(stop) or stop <= 0: reasons.append("STOP_MISSING_OR_INVALID")
         next_session, forward_dates, coverage = None, [], "WAIT_FOR_DATA"
         horizon_coverage = {}
         if day is not None:
@@ -185,11 +180,23 @@ def audit_signal_frame(frame, prices, source_name):
         next_open = prices.get((symbol, next_session), {}).get("OPEN") if next_session else None
         next_open_value = number(next_open)
         entry_fill_valid = math.isfinite(next_open_value) and next_open_value > 0
+        if not entry_fill_valid:
+            reasons.append("NEXT_SESSION_OPEN_MISSING_OR_INVALID")
+        if entry_fill_valid and math.isfinite(stop) and stop > 0 and next_open_value <= stop:
+            entry_fill_valid = False
+            reasons.append("NEXT_SESSION_OPEN_AT_OR_BELOW_STOP")
         common_plan_valid = bool(
             symbol and day is not None and math.isfinite(entry) and entry > 0
-            and math.isfinite(stop) and stop > 0 and stop < entry
-            and entry_fill_valid
+            and math.isfinite(stop) and stop > 0 and entry_fill_valid
         )
+        # Structural targets must remain overhead resistance above the actual
+        # assumed fill, not merely above the earlier planned entry-zone price.
+        resistance_basis = next_open_value if entry_fill_valid else entry
+        levels = resistance_levels(row, resistance_basis)
+        t1 = levels[0] if len(levels) > 0 else (float("nan"), "WAIT_FOR_DATA")
+        t2 = levels[1] if len(levels) > 1 else (float("nan"), "WAIT_FOR_DATA")
+        if not math.isfinite(t1[0]): reasons.append("T1_VERIFIED_RESISTANCE_MISSING_ABOVE_ENTRY_FILL")
+        if not math.isfinite(t2[0]): reasons.append("T2_DISTINCT_VERIFIED_RESISTANCE_MISSING_ABOVE_ENTRY_FILL")
         t1_valid, t2_valid = math.isfinite(t1[0]), math.isfinite(t2[0])
         horizon_ready = {}
         for horizon in (5, 10, 20):
