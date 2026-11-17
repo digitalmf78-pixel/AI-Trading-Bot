@@ -19,12 +19,14 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
 from strategies.ecms.uturn_nse_ohlc import (
     build_nse_symbol_ohlc_window,
     extract_nse_eq_ohlc_row,
 )
 
-ROOT = Path(__file__).resolve().parents[2]
 RESEARCH = ROOT / "research" / "ecms_uturn"
 OUTPUT = Path(os.environ.get("UTURN_OUTPUT_DIR", "uturn_nse_audit_output"))
 USER_AGENT = "Mozilla/5.0 (compatible; ECMS-U-Turn-Research/1.0; +https://github.com/digitalmf78-pixel/AI-Trading-Bot)"
