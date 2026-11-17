@@ -50,17 +50,19 @@ jobs:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
           elif event == "workflow_dispatch":
               current = now.time().replace(tzinfo=None)
-              if current >= time(15, 30) or current < time(8, 0):
+              if current >= time(15, 30):
                   mode, reason = "eod", "MANUAL_TIME_ROUTED_EOD"
+              elif current < time(8, 0):
+                  mode, reason = "eod-reuse", "MANUAL_EOD_SNAPSHOT_REUSE"
               elif time(9, 15) <= current < time(12, 0):
                   mode, reason = "morning", "MANUAL_TIME_ROUTED_MORNING"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"mode={mode}\\nreason={reason}\\n")
+              output.write(f"mode={mode}\nreason={reason}\n")
           summary = (
-              f"## ECMS automatic scan routing\\n"
-              f"- Current IST: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\\n"
-              f"- Selected mode: **{mode.upper()}**\\n"
-              f"- Reason: {reason}\\n"
+              f"## ECMS automatic scan routing\n"
+              f"- Current IST: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+              f"- Selected mode: **{mode.upper()}**\n"
+              f"- Reason: {reason}\n"
           )
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write(summary)
@@ -68,7 +70,7 @@ jobs:
           if mode == "skip":
               token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
               if token and chat_id:
-                  payload = urlencode({"chat_id": chat_id, "text": f"⏭ ECMS scan SKIPPED\\nIST: {now.strftime('%Y-%m-%d %H:%M')}\\nReason: {reason}\\nRun: {os.getenv('RUN_URL','')}"}).encode()
+                  payload = urlencode({"chat_id": chat_id, "text": f"⏭ ECMS scan SKIPPED\nIST: {now.strftime('%Y-%m-%d %H:%M')}\nReason: {reason}\nRun: {os.getenv('RUN_URL','')}"}).encode()
                   request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=payload)
                   with urlopen(request, timeout=20) as response:
                       print(f"ECMS skip Telegram HTTP {response.status}")
@@ -96,7 +98,7 @@ jobs:
 
   eod:
     needs: route
-    if: needs.route.outputs.mode == 'eod'
+    if: needs.route.outputs.mode == 'eod' || needs.route.outputs.mode == 'eod-reuse'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -209,7 +211,7 @@ jobs:
           FREE_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
-        run: python -m strategies.ecms.volume_gainers --mode eod
+        run: python -m strategies.ecms.volume_gainers --mode ${{ needs.route.outputs.mode == 'eod-reuse' && 'eod-reuse' || 'eod' }}
       - name: Validate current-run EOD snapshot before saving cache
         id: eod-snapshot-check
         if: always()
