@@ -1,0 +1,61 @@
+name: ECMS U-Turn isolated cache event-study backtest
+
+on:
+  push:
+    branches:
+      - research/bharat-sm-data-fundamental-audit-2026-11-17
+
+permissions:
+  contents: read
+
+jobs:
+  event-study:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout isolated research branch
+        uses: actions/checkout@v5
+      - name: Restore shared NSE V8 cache read-only
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: ecms-uturn-backtest-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            nse-bhavcopy-${{ runner.os }}-main-
+      - name: Record cache restore provenance
+        run: |
+          echo "CACHE_HIT=${{ steps.cache.outputs.cache-hit }}" | tee cache_restore.txt
+          echo "CACHE_MATCHED_KEY=${{ steps.cache.outputs.cache-matched-key }}" | tee -a cache_restore.txt
+      - name: Install isolated research dependency
+        run: python -m pip install --disable-pip-version-check pandas
+      - name: Compile and test research backtest contract
+        run: |
+          python -m py_compile research/ecms_uturn/run_uturn_cache_backtest.py
+          python -m unittest discover -s tests -p 'test_ecms_uturn_cache_backtest_contract.py'
+      - name: Run historical event-study using cached NSE UDiFF data
+        run: python research/ecms_uturn/run_uturn_cache_backtest.py
+      - name: Upload backtest evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-uturn-cache-backtest-${{ github.run_id }}
+          path: |
+            uturn_cache_backtest/
+            cache_restore.txt
+          if-no-files-found: error
+          retention-days: 14
