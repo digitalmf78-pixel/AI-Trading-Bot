@@ -1666,9 +1666,14 @@ def _reuse_previous_eod_snapshot():
         return None
     expected_date = expected_latest_completed_session()
     dates = set(snapshot["EODDate"].dropna().astype(str))
+    if dates != {expected_date.isoformat()}:
+        _write_execution_status(
+            "eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_DATE_MISMATCH_FOR_REUSE",
+            expected_eod_date=expected_date.isoformat(), snapshot_dates=sorted(dates),
+        )
+        return None
     valid = (
-        dates == {expected_date.isoformat()}
-        and "SnapshotType" in snapshot
+        "SnapshotType" in snapshot
         and snapshot["SnapshotType"].astype(str).eq("EOD").all()
         and "SnapshotStatus" in snapshot
         and snapshot["SnapshotStatus"].astype(str).eq("VALID").all()
