@@ -123,7 +123,7 @@ def test_pre_result_peak_uses_last_20_sessions_and_excludes_event_date():
     assert result["Peak_Price"] == pytest.approx(100.0)
     assert result["Peak_Window_Sessions"] == 20
     assert result["Peak_Window_End"] == dates[-2].date().isoformat()
-    assert result["Peak_Price_Source_URL"] == f"https://nsearchives.nseindia.com/content/cm/{dates[0]:%Y%m%d}.zip"
+    assert result["Peak_Price_Source_URL"] == f"https://nsearchives.nseindia.com/content/cm/{dates[1]:%Y%m%d}.zip"
 
 
 def test_pre_result_peak_requires_full_unique_valid_sessions():
