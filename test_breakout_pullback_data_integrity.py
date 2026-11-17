@@ -155,3 +155,43 @@ def test_invalid_historical_ohlc_invalidates_atr_observation():
     history.loc[history.index[-5], "HghPric"] = 1
     row = calculate_breakout_pullback(_candidate(), [history]).iloc[0]
     assert pd.isna(row["ATR14"])
+
+def test_ema20_proximity_alone_does_not_qualify_type_a_pullback():
+    # EMA20 is close, but EMA44 is more than 3% away: no pullback qualification.
+    row = calculate_breakout_pullback(
+        _candidate(EMA20=100.0, EMA44=90.0, LowVolumeDays5D=3),
+        [_history(
+            rows=51, current_close=101, current_open=100,
+            current_high=102, current_low=98, current_volume=1000,
+            prior_high=110, prior_low=90,
+        )],
+    ).iloc[0]
+    assert row["PullbackStatus"] == "No Pullback"
+    assert row["SetupType"] == "No Clear Setup"
+
+
+def test_ema44_proximity_qualifies_type_a_even_when_ema20_is_far():
+    # EMA44 is close; EMA20 is deliberately far and cannot veto the EMA44 setup.
+    row = calculate_breakout_pullback(
+        _candidate(EMA20=90.0, EMA44=100.0, LowVolumeDays5D=3),
+        [_history(
+            rows=51, current_close=101, current_open=100,
+            current_high=102, current_low=98, current_volume=1000,
+            prior_high=110, prior_low=90,
+        )],
+    ).iloc[0]
+    assert row["PullbackStatus"] == "Strong Pullback"
+    assert row["SetupType"] == "Pullback"
+
+
+def test_missing_ema44_does_not_fall_back_to_ema20_for_pullback():
+    row = calculate_breakout_pullback(
+        _candidate(EMA20=100.0, EMA44=float("nan"), LowVolumeDays5D=3),
+        [_history(
+            rows=51, current_close=101, current_open=100,
+            current_high=102, current_low=98, current_volume=1000,
+            prior_high=110, prior_low=90,
+        )],
+    ).iloc[0]
+    assert row["PullbackStatus"] == "WAIT_FOR_DATA"
+    assert row["PullbackDataStatus"] == "WAIT_FOR_DATA"
