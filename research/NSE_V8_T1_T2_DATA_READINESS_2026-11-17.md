@@ -122,3 +122,13 @@ Validation on updated branch:
 - 49 sector/news/official-index unit tests passed.
 - Research data-readiness workflow run 44075612379: success.
 - Full NSE V8 PR checks run 44075612402: success.
+
+## Approved research stop-loss execution rule
+
+The user approved this stop-only rule:
+- Trigger when validated session Low is less than or equal to StopLossPlan.
+- If session Open is below StopLossPlan, assume gap-through exit at Open.
+- Otherwise assume exit at StopLossPlan.
+- If the same daily bar reaches stop and target, resolve unknown intraday ordering conservatively as stop-first.
+
+The audit reports first stop status/date/exit price/reason independently for 5D, 10D and 20D horizons. It does not calculate target exits, returns, P&L, win rate or expectancy. Target-touch and target-gap execution remain unapproved.
