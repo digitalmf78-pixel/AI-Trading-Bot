@@ -1,0 +1,39 @@
+name: ECMS U-Turn NSE Sample Data Audit
+
+on:
+  push:
+    branches:
+      - research/bharat-sm-data-fundamental-audit-2026-11-17
+    paths:
+      - "research/ecms_uturn/nse_ohlc_download_manifest.csv"
+      - "research/ecms_uturn/post_result_close_manifest.csv"
+      - "research/ecms_uturn/download_verify_nse_bhavcopy.py"
+      - "strategies/ecms/uturn_nse_ohlc.py"
+      - ".github/workflows/ecms-uturn-nse-sample-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-official-nse-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout isolated ECMS research branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install research-only dependencies
+        run: python -m pip install --upgrade pandas requests
+      - name: Fetch and verify official NSE UDiFF sample archives
+        run: python research/ecms_uturn/download_verify_nse_bhavcopy.py
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-uturn-official-nse-sample-audit
+          path: uturn_nse_audit_output/
+          if-no-files-found: warn
+          retention-days: 14
