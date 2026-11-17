@@ -159,6 +159,39 @@ def evaluate_daily_stop_bar(bar, stop):
         return {"status": "STOP_HIT", "exit_price": stop_value, "reason": "INTRADAY_STOP_AT_STOP_PRICE"}
     return {"status": "NO_STOP_HIT", "exit_price": float("nan"), "reason": ""}
 
+def evaluate_daily_target_bar(bar, stop, target):
+    """Resolve a daily bar with stop-first priority, then target/gap execution."""
+    opening, high, low, close = (number(bar.get(k)) for k in ("OPEN", "HIGH", "LOW", "CLOSE"))
+    stop_value, target_value = number(stop), number(target)
+    vals = (opening, high, low, close, stop_value, target_value)
+    if (not all(math.isfinite(v) for v in vals) or stop_value <= 0 or target_value <= 0
+            or target_value <= stop_value or low <= 0 or low > opening or low > close
+            or high < opening or high < close or high < low):
+        return {"status": "WAIT_FOR_DATA", "exit_price": float("nan"), "reason": "INVALID_OHLC_OR_LEVELS"}
+    # Conservative daily-bar ambiguity policy: stop wins if both levels are touched.
+    if low <= stop_value:
+        if opening < stop_value:
+            return {"status": "STOP_HIT", "exit_price": opening, "reason": "GAP_THROUGH_STOP_AT_OPEN"}
+        return {"status": "STOP_HIT", "exit_price": stop_value, "reason": "STOP_FIRST_SAME_DAY_COLLISION" if high >= target_value else "INTRADAY_STOP_AT_STOP_PRICE"}
+    if high >= target_value:
+        if opening >= target_value:
+            return {"status": "TARGET_HIT", "exit_price": opening, "reason": "GAP_THROUGH_TARGET_AT_OPEN"}
+        return {"status": "TARGET_HIT", "exit_price": target_value, "reason": "INTRADAY_TARGET_AT_TARGET_PRICE"}
+    return {"status": "NO_LEVEL_HIT", "exit_price": float("nan"), "reason": ""}
+
+def first_target_exit(prices, symbol, sessions, stop, target):
+    """Find first stop-or-target event, conservatively prioritizing stop on collision."""
+    for day in sessions:
+        bar = prices.get((symbol, day))
+        if bar is None:
+            return {"status": "WAIT_FOR_DATA", "date": "", "exit_price": float("nan"), "reason": "SESSION_OHLC_MISSING"}
+        result = evaluate_daily_target_bar(bar, stop, target)
+        if result["status"] == "WAIT_FOR_DATA":
+            return {"status": "WAIT_FOR_DATA", "date": day.isoformat(), "exit_price": float("nan"), "reason": result["reason"]}
+        if result["status"] in ("STOP_HIT", "TARGET_HIT"):
+            return {"status": result["status"], "date": day.isoformat(), "exit_price": result["exit_price"], "reason": result["reason"]}
+    return {"status": "NO_EXIT_IN_HORIZON", "date": "", "exit_price": float("nan"), "reason": ""}
+
 def first_stop_exit(prices, symbol, sessions, stop):
     """Find first stop event; daily stop/target collision resolves stop-first."""
     for day in sessions:
@@ -227,6 +260,7 @@ def audit_signal_frame(frame, prices, source_name):
         t1_valid, t2_valid = math.isfinite(t1[0]), math.isfinite(t2[0])
         horizon_ready = {}
         stop_results = {}
+        target_results = {}
         for horizon in (5, 10, 20):
             complete = horizon_coverage.get(horizon, "").startswith("COMPLETE_")
             horizon_ready[f"T1DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t1_valid and complete else "WAIT_FOR_DATA"
@@ -236,6 +270,12 @@ def audit_signal_frame(frame, prices, source_name):
                 if common_plan_valid and complete else
                 {"status": "WAIT_FOR_DATA", "date": "", "exit_price": float("nan"), "reason": "ENTRY_OR_HORIZON_DATA_INCOMPLETE"}
             )
+            for label, target_level in (("T1", t1[0]), ("T2", t2[0])):
+                target_results[(label, horizon)] = (
+                    first_target_exit(prices, symbol, forward_dates[:horizon], stop, target_level)
+                    if common_plan_valid and complete and math.isfinite(target_level) else
+                    {"status": "WAIT_FOR_DATA", "date": "", "exit_price": float("nan"), "reason": "ENTRY_TARGET_OR_HORIZON_DATA_INCOMPLETE"}
+                )
         any_horizon_ready = any(value == "DATA_READY" for value in horizon_ready.values())
         output.append({
             "SourceFile": source_name, "SourceRow": int(idx)+1,
@@ -257,6 +297,10 @@ def audit_signal_frame(frame, prices, source_name):
             **{f"StopDate{h}D": stop_results[h]["date"] for h in (5, 10, 20)},
             **{f"StopExitPrice{h}D": stop_results[h]["exit_price"] if math.isfinite(stop_results[h]["exit_price"]) else "" for h in (5, 10, 20)},
             **{f"StopExitReason{h}D": stop_results[h]["reason"] for h in (5, 10, 20)},
+            **{f"{label}ExitStatus{h}D": target_results[(label, h)]["status"] for label in ("T1", "T2") for h in (5, 10, 20)},
+            **{f"{label}ExitDate{h}D": target_results[(label, h)]["date"] for label in ("T1", "T2") for h in (5, 10, 20)},
+            **{f"{label}ExitPrice{h}D": target_results[(label, h)]["exit_price"] if math.isfinite(target_results[(label, h)]["exit_price"]) else "" for label in ("T1", "T2") for h in (5, 10, 20)},
+            **{f"{label}ExitReason{h}D": target_results[(label, h)]["reason"] for label in ("T1", "T2") for h in (5, 10, 20)},
             "ResistanceCandidateCount": len(levels),
             "ReadinessStatus": "PARTIAL_DATA_READY" if any_horizon_ready else "WAIT_FOR_DATA",
             "ReadinessReasons": ";".join(reasons),
