@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv, json, re
 from pathlib import Path
 import pandas as pd
+from functools import lru_cache
 from research.ecms_uturn.cache_date_utils import normalize_session_dates
 from strategies.ecms.uturn_nse_ohlc import extract_nse_eq_ohlc_row, build_nse_symbol_ohlc_window
 
@@ -34,6 +35,7 @@ def date_tokens(path):
                 continue
     return found
 
+@lru_cache(maxsize=32)
 def load_table(path):
     if path.suffix.lower()==".zip":
         import zipfile
