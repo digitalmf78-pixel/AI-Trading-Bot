@@ -73,7 +73,12 @@ One row per NSE symbol and result event. Never merge observations solely on comp
 | `CompanyName` | Issuer name from exchange master / official filing |
 | `Previous_FY`, `Current_FY` | Explicit financial-year identifiers; consecutive completed FYs |
 | `Previous_EPS`, `Current_EPS` | INR/share, audited annual EPS |
-| `EPS_Basis` | `DILUTED` or `BASIC`; must match |
+| `Previous_EPS_Basis`, `Current_EPS_Basis` | Both must be `DILUTED`; no fallback |
+| `Previous_Reporting_Basis`, `Current_Reporting_Basis` | Both must be identical: `CONSOLIDATED` or `STANDALONE` |
+| `Previous_EPS_Unit`, `Current_EPS_Unit` | Both must be `INR/SHARE` |
+| `Previous_EPS_Source_URL`, `Current_EPS_Source_URL` | Exact official filing/XBRL URLs, HTTPS |
+| `Result_Announcement_Source_URL` | Exact official NSE/BSE announcement URL |
+| `Peak_Price_Source_URL`, `Latest_Post_Result_Source_URL` | Exact exchange OHLC provenance URLs, HTTPS |
 | `EPS_Source_URL` | Exact official filing / XBRL source for each FY |
 | `EPS_Publication_Date` | Publication date for each annual result |
 | `Result_Announcement_DateTime` | Official exchange announcement timestamp |
@@ -85,7 +90,7 @@ One row per NSE symbol and result event. Never merge observations solely on comp
 | `Latest_Post_Result_Session` | Date of that close |
 | `TolerancePct` | Configured proximity tolerance (initially 3%) |
 
-The module must also retain units, consolidated/standalone basis, source retrieval timestamp, filing period end, raw source labels, corporate-action adjustment status and validation reasons. EPS comparisons must use the same reporting basis. If official consolidated EPS is unavailable for either year, do not pair it with standalone EPS.
+The module requires separate previous/current diluted-EPS basis, reporting-basis and unit fields, plus official source URLs for each EPS year, the result announcement, pre-result peak OHLC and latest post-result OHLC. The caller's input/output row must retain source retrieval timestamps, filing period ends, raw source labels and corporate-action adjustment evidence alongside these URLs. EPS comparisons must use the same reporting basis. If official consolidated EPS is unavailable for either year, do not pair it with standalone EPS.
 
 ## 5. Result event and price peak selection
 
