@@ -93,10 +93,22 @@ def test_missing_or_extra_session_fails_closed():
 def test_requires_same_isin_and_valid_prices_across_window():
     sessions = list(pd.bdate_range("2026-04-13", periods=20))
     records = _records(sessions)
-    records[5]["bhavcopy"] = _bhavcopy(sessions[5], ISIN="INF009A01021")
+    records[5]["bhavcopy"] = _bhavcopy(sessions[5], ISIN="INE009A01021")
     result = build_nse_symbol_ohlc_window(
         records, symbol="ACI", expected_sessions=sessions,
         announcement_date="2026-05-12", window_sessions=20,
     )
     assert result["status"] == "UNVERIFIED"
     assert "ISIN changed" in result["reason"]
+
+
+def test_source_url_must_match_exact_expected_session():
+    sessions = list(pd.bdate_range("2026-04-13", periods=20))
+    records = _records(sessions)
+    records[3]["source_url"] = "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_20260501_F_0000.csv.zip"
+    result = build_nse_symbol_ohlc_window(
+        records, symbol="ACI", expected_sessions=sessions,
+        announcement_date="2026-05-12", window_sessions=20,
+    )
+    assert result["status"] == "UNVERIFIED"
+    assert "source URL does not identify" in result["reason"]
