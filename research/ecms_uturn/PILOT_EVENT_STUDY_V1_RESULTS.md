@@ -1,5 +1,7 @@
 # ECMS U-Turn Pilot Event Study — V1 Results
 
+> **RECONCILIATION WARNING (2026-11-17):** This report's price-window results are provisional and are not yet accepted as validated evidence. A separate read-only audit reported only 13/20, 14/20 and 13/20 verified pre-result sessions for INFY, ACI and AARTIIND, while this run reported 20/20. A parser inconsistency was found and a same-run fail-closed comparison has been added. Treat all horizon returns, zone touches and target observations below as provisional until that gate passes. See [PILOT_CACHE_RECONCILIATION_AND_RANDOM_SAMPLE_V1.md](PILOT_CACHE_RECONCILIATION_AND_RANDOM_SAMPLE_V1.md).
+
 **Run basis:** read-only NSE V8 cache, 2026-11-17 research branch.  
 **Status:** research pilot; all price outcomes remain provisional pending corporate-action reconciliation and independent exchange-calendar verification.  
 **No production changes, Volume Gainers dependency, orders, entry/exit simulation, or P&L.**
