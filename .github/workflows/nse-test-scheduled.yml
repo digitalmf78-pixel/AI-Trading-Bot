@@ -67,6 +67,8 @@ jobs:
 
       - name: Record NSE workflow trigger diagnostics
         if: always()
+        env:
+          NSE_EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           python - <<'PY'
           from datetime import datetime, timezone
@@ -76,7 +78,7 @@ jobs:
           now_utc = datetime.now(timezone.utc)
           now_ist = now_utc.astimezone(ZoneInfo("Asia/Kolkata"))
           event = os.getenv("GITHUB_EVENT_NAME", "unknown")
-          schedule = os.getenv("GITHUB_EVENT_SCHEDULE", "") or "NONE"
+          schedule = os.getenv("NSE_EVENT_SCHEDULE", "") or "NONE"
           if schedule == "30 2 * * 1-5":
               expected_mode = "PREMARKET (08:00 IST)"
           elif schedule == "40 16 * * 1-5":
