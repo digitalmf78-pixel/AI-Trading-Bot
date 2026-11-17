@@ -47,6 +47,38 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Resolve official NSE session dates for ECMS cache
+        id: ecms-session
+        shell: bash
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta, time
+          from zoneinfo import ZoneInfo
+          import os
+          from nse_trading_calendar import is_trading_session
+
+          now = datetime.now(ZoneInfo("Asia/Kolkata"))
+          today = now.date()
+          today_session = today if is_trading_session(today) else None
+          completed = today
+          if today_session and now.time().replace(tzinfo=None) < time(16, 30):
+              completed -= timedelta(days=1)
+          while not is_trading_session(completed):
+              completed -= timedelta(days=1)
+          previous = completed - timedelta(days=1)
+          while not is_trading_session(previous):
+              previous -= timedelta(days=1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"scan_session_date={today_session.isoformat() if today_session else ''}\n")
+              output.write(f"completed_session_date={completed.isoformat()}\n")
+              output.write(f"previous_completed_session_date={previous.isoformat()}\n")
+          print(f"ECMS_CACHE_SCAN_SESSION={today_session}")
+          print(f"ECMS_CACHE_COMPLETED_SESSION={completed}")
+          print(f"ECMS_CACHE_PREVIOUS_SESSION={previous}")
+          PY
       - name: Restore shared NSE cache read-only (same cache contract as production)
         id: shared-cache
         uses: actions/cache/restore@v5
@@ -88,9 +120,11 @@ jobs:
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
-          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+          key: ecms-vg-state-v2-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            ecms-vg-state-${{ github.ref_name }}-
+            ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.scan_session_date }}-
+            ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.completed_session_date }}-
+            ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.previous_completed_session_date }}-
       - name: Restore independent ECMS Volume Gainer fundamental cache
         id: fundamental-cache-restore
         uses: actions/cache/restore@v4
@@ -157,7 +191,7 @@ jobs:
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
-          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+          key: ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.scan_session_date }}-${{ github.run_id }}
       - name: Save independent ECMS fundamental cache
         if: always()
         uses: actions/cache/save@v4
@@ -315,6 +349,38 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Resolve official NSE session dates for ECMS cache
+        id: ecms-session
+        shell: bash
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta, time
+          from zoneinfo import ZoneInfo
+          import os
+          from nse_trading_calendar import is_trading_session
+
+          now = datetime.now(ZoneInfo("Asia/Kolkata"))
+          today = now.date()
+          today_session = today if is_trading_session(today) else None
+          completed = today
+          if today_session and now.time().replace(tzinfo=None) < time(16, 30):
+              completed -= timedelta(days=1)
+          while not is_trading_session(completed):
+              completed -= timedelta(days=1)
+          previous = completed - timedelta(days=1)
+          while not is_trading_session(previous):
+              previous -= timedelta(days=1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"scan_session_date={today_session.isoformat() if today_session else ''}\n")
+              output.write(f"completed_session_date={completed.isoformat()}\n")
+              output.write(f"previous_completed_session_date={previous.isoformat()}\n")
+          print(f"ECMS_CACHE_SCAN_SESSION={today_session}")
+          print(f"ECMS_CACHE_COMPLETED_SESSION={completed}")
+          print(f"ECMS_CACHE_PREVIOUS_SESSION={previous}")
+          PY
       - name: Restore previous EOD page universe and ECMS fundamental cache
         uses: actions/cache/restore@v4
         with:
@@ -325,9 +391,9 @@ jobs:
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
-          key: ecms-vg-state-${{ github.ref_name }}-${{ github.run_id }}
+          key: ecms-vg-state-v2-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            ecms-vg-state-${{ github.ref_name }}-
+            ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.completed_session_date }}-
       - name: Restore independent ECMS Volume Gainer fundamental cache
         id: fundamental-cache-restore
         uses: actions/cache/restore@v4
@@ -415,7 +481,7 @@ jobs:
             data/cache/ecms/news/
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
-          key: ecms-vg-state-${{ github.ref_name }}-morning-${{ github.run_id }}
+          key: ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.scan_session_date }}-${{ github.run_id }}
       - name: Save independent ECMS fundamental cache
         if: always()
         uses: actions/cache/save@v4
