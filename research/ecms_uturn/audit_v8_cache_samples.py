@@ -35,7 +35,7 @@ def date_tokens(path):
                 continue
     return found
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=64)
 def load_table(path):
     if path.suffix.lower()==".zip":
         import zipfile
@@ -54,6 +54,8 @@ def index_files(root, date_columns, expected_dates):
             if not p.is_file() or p.suffix.lower() not in {".csv",".zip"}:
                 continue
             tokens=date_tokens(p)
+            if not tokens and root == bhav_root and ("nifty" in p.name.lower() or "index" in p.name.lower()):
+                continue
             if tokens:
                 for day in tokens & wanted:
                     idx.setdefault(day,[]).append(p)
