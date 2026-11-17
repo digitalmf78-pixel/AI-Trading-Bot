@@ -288,3 +288,13 @@ The CSV preserves every returned page row, including rows outside the official M
 - Because an independently verified annual diluted-EPS valuation zone and corporate-action-adjusted pre-result peak are not yet supplied for this broad universe, the bottom-side valuation-zone condition is deliberately inactive. This run can report technical bottom-side/overextension context only where the module supports it, but does not claim a valuation reset or confirmed bottom.
 - Outputs: `v8_cache_audit/fundamental_completeness_all_symbols.csv`, `two_sided_complete_fundamentals_only.csv`, `bhavcopy_file_validation_errors.csv`, and `complete_fundamentals_two_sided_summary.json`.
 - Research-only, shared V8 cache restore-only, no cache save, no production integration, no trading signals/orders.
+
+#### First complete-fundamentals-only V8 cache run — 17-Nov-2026
+
+- Audit run #13: [GitHub Actions run](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44051940288), commit `c0c538c46f846c1c8f7502103754781917add1de`; successful. Cache restore matched `nse-bhavcopy-Linux-main-43988025626`; 202 dated Bhavcopy sessions restored and validated, with zero file/schema/session-date errors.
+- Universe checked: 906 symbols from the cached fundamental metrics file.
+- Complete-field/provenance gate: 237 symbols passed; 669 were held at `WAIT_FOR_DATA`. The gate requires all seven numeric metrics, per-metric source/URL/period/currency, explicit accepted calculation basis, verified period alignment/publication date, and one exact official NSE XBRL filing-register match. Where metric-level basis JSON is absent, an explicit non-legacy row-level basis is used.
+- Two-sided technical observations on the 237 passing symbols: `NEUTRAL=180`, `MOMENTUM_STRONG=22`, `STRETCHED=19`, `WEAKENING=13`, `OVEREXTENDED=3`.
+- The three `OVEREXTENDED` observations were NAVKARURB, NDGL and SPECTRUM. These are technical research flags only, not sell/avoid calls or recommendations.
+- This pass does not certify every metric value as `OFFICIAL_XBRL_VERIFIED`; source/provenance completeness is distinct from metric-level XBRL fact verification. The bottom-side valuation zone was not run because annual diluted EPS and corporate-action-adjusted pre-result peaks were not independently verified for this broad symbol set. No `BOTTOM_WATCH` or valuation reset is claimed.
+- Artifact: `ecms-v8-cache-readonly-audit-44051940288` (12 output files; includes full 906-symbol eligibility/rejection table and 237-symbol technical output). Shared cache remains restore-only; no V8 production files or workflows were changed.
