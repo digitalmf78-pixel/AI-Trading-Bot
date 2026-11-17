@@ -19,6 +19,35 @@ class ResistanceTests(unittest.TestCase):
         self.assertEqual(len(resistance_levels(row,100.0)),1)
 
 class ReadinessTests(unittest.TestCase):
+    def test_stop_intraday_touch_exits_at_stop(self):
+        from t1_t2_data_readiness import evaluate_daily_stop_bar
+        result = evaluate_daily_stop_bar({"OPEN":100,"HIGH":105,"LOW":89,"CLOSE":95},90)
+        self.assertEqual(result["status"],"STOP_HIT")
+        self.assertEqual(result["exit_price"],90)
+        self.assertEqual(result["reason"],"INTRADAY_STOP_AT_STOP_PRICE")
+
+    def test_gap_below_stop_exits_at_open(self):
+        from t1_t2_data_readiness import evaluate_daily_stop_bar
+        result = evaluate_daily_stop_bar({"OPEN":85,"HIGH":95,"LOW":80,"CLOSE":90},90)
+        self.assertEqual(result["status"],"STOP_HIT")
+        self.assertEqual(result["exit_price"],85)
+        self.assertEqual(result["reason"],"GAP_THROUGH_STOP_AT_OPEN")
+
+    def test_open_equal_stop_exits_at_stop(self):
+        from t1_t2_data_readiness import evaluate_daily_stop_bar
+        result = evaluate_daily_stop_bar({"OPEN":90,"HIGH":95,"LOW":88,"CLOSE":92},90)
+        self.assertEqual(result["exit_price"],90)
+
+    def test_no_stop_touch(self):
+        from t1_t2_data_readiness import evaluate_daily_stop_bar
+        result = evaluate_daily_stop_bar({"OPEN":100,"HIGH":105,"LOW":91,"CLOSE":102},90)
+        self.assertEqual(result["status"],"NO_STOP_HIT")
+
+    def test_stop_first_when_same_day_high_also_reaches_target(self):
+        from t1_t2_data_readiness import evaluate_daily_stop_bar
+        result = evaluate_daily_stop_bar({"OPEN":100,"HIGH":125,"LOW":89,"CLOSE":110},90)
+        self.assertEqual(result["status"],"STOP_HIT")
+        self.assertEqual(result["exit_price"],90)
     def test_missing_stop_and_t2_fail_closed(self):
         frame = pd.DataFrame([{"EODDate":"2026-11-10","Symbol":"TEST","EntryPricePlan":100.0,
                                "TargetPricePlan":120.0,"TargetSource":"SR_RESISTANCE"}])
