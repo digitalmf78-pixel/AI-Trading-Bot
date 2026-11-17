@@ -196,3 +196,14 @@ The CSV preserves every returned page row, including rows outside the official M
 - User-confirmed basis: consecutive completed annual EPS values; pre-result price peak.
 - The research design uses a proposed configurable 20-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone. The 20-session window remains a proposal pending confirmation.
 - The module is isolated research only. It must not change P0–P8, EOD/Morning behavior, fundamental gating, production caches, Telegram decision messages or NSE V8. No backtesting, basketting, order or buy/sell signal.
+
+
+## Fundamental U-Turn research implementation — 17-Nov-2026
+
+- User-confirmed research settings: annual diluted EPS only; pre-result peak is the maximum daily High from the 20 completed NSE sessions strictly before the result announcement calendar date; initial validation universe is 3–5 NSE Main Board issuers.
+- Research-only calculator: `strategies/ecms/fundamental_uturn.py`; unit tests: `tests/test_ecms_fundamental_uturn.py`.
+- The module requires verified EPS and OHLC flags, consecutive FYs, matching explicit reporting basis, positive EPS, post-result completed Close and corporate-action comparability. Missing or mismatched data fails closed.
+- It computes a valuation reset estimate and ±3% proximity zone; this is not confirmed support, a reversal signal, entry trigger, Buy/Sell recommendation or guaranteed price.
+- No provider fetching, workflow/schedule, Telegram, cache, EOD/Morning or NSE V8 integration. Do not merge to main or enable in ECMS runtime until tests pass and 3–5 issuer-level official filing/OHLC reconciliations are reviewed.
+- Official filing discovery reference: [NSE Corporate Filings — Financial Results](https://www.nseindia.com/companies-listing/corporate-filings-financial-results). NSE's filing records distinguish audited status, cumulative/non-cumulative, consolidated/non-consolidated basis and reporting period; these fields must be retained during issuer validation. See also [NSE integrated filing XBRL example](https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_210520_05112026183448_iXBRL_WEB.html).
+- Full design and remaining gates: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
