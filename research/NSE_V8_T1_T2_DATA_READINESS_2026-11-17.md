@@ -63,3 +63,24 @@ The 54 archived EOD rows were matched to the restored price history:
 - T2 plan plus complete 10-session OHLC: 10 rows.
 
 These are data-coverage counts only. No stop/target touch outcomes or returns have been computed. The research tool now reports separate T1/T2 data-readiness flags for each 5D/10D/20D horizon so an incomplete 20D horizon does not hide already-complete 5D/10D data.
+
+
+### Per-scenario readiness (workflow run 44074326424)
+
+The corrected report separates target scenarios and measurement horizons:
+
+| Data readiness | Rows |
+|---|---:|
+| T1 + 5D OHLC | 44 |
+| T2 + 5D OHLC | 35 |
+| T1 + 10D OHLC | 14 |
+| T2 + 10D OHLC | 10 |
+| T1 + 20D OHLC | 0 |
+| T2 + 20D OHLC | 0 |
+
+Overall, 44/54 rows have at least one scenario/horizon with complete data. Ten rows remain WAIT_FOR_DATA for all current horizons. The 20D horizon is incomplete for all 54 rows; this is expected from the available as-of dates and does not mean the underlying price history is invalid.
+
+Validation:
+- New focused research tests: 8 passed.
+- Full NSE V8 CI: success, including compile, unit/data-audit tests, V8 regression script and sector/news/official-index tests.
+- No production files, Master Specification, Bhavcopy cache, Delivery cache, or scheduled production workflow changed.
