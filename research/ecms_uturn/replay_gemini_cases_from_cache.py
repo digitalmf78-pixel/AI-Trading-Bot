@@ -118,6 +118,7 @@ data=prices.merge(delivery,on=["Symbol","Date"],how="left",validate="one_to_one"
 all_signals=[]
 all_trades=[]
 summaries=[]
+post_daily_rows=[]
 for case in CASES:
     symbol=case["Symbol"]
     s=data[data["Symbol"].eq(symbol)].sort_values("Date").reset_index(drop=True).copy()
@@ -153,6 +154,19 @@ for case in CASES:
     post_result=s[s["Date"]>case.get("ResultDate","0000-00-00")] if case.get("DynamicAnnualEPSZone") else pd.DataFrame()
     post_low_row=post_result.loc[post_result["Low"].idxmin()] if not post_result.empty else None
     post_latest=post_result.iloc[-1] if not post_result.empty else None
+    if case.get("DynamicAnnualEPSZone"):
+        for _, bar in post_result.iterrows():
+            rng=float(bar["High"])-float(bar["Low"])
+            post_daily_rows.append({
+                "Symbol":symbol,"Date":bar["Date"],"Open":bar["Open"],"High":bar["High"],"Low":bar["Low"],"Close":bar["Close"],
+                "Volume":bar["Volume"],"DeliveryPct":bar["DeliveryPct"],"RVOL":bar["RVOL"],
+                "IntradayTargetZoneTouch":bool(float(bar["High"])>=case["ZoneLow"] and float(bar["Low"])<=case["ZoneHigh"]),
+                "CloseInsideTargetZone":bool(case["ZoneLow"]<=float(bar["Close"])<=case["ZoneHigh"]),
+                "DeliveryAtLeast60":bool(pd.notna(bar["DeliveryPct"]) and float(bar["DeliveryPct"])>=60),
+                "RVOLAtLeast1_5":bool(pd.notna(bar["RVOL"]) and float(bar["RVOL"])>=1.5),
+                "CloseLocationInDailyRange":round((float(bar["Close"])-float(bar["Low"]))/rng,3) if rng>0 else None,
+                "GreenCandle":bool(float(bar["Close"])>float(bar["Open"])),
+            })
     zone_mask=s["Close"].between(case["ZoneLow"],case["ZoneHigh"])
     delivery_mask=s["DeliveryPct"]>=case["DeliveryMin"]
     rvol_mask=s["RVOL"]>=case["RvolMin"]
@@ -241,6 +255,7 @@ for case in CASES:
         "ReboundFromPostResultLowPct":round((float(post_latest["Close"])/float(post_low_row["Low"])-1)*100,2) if post_low_row is not None and post_latest is not None else "",
     })
 
+pd.DataFrame(post_daily_rows).to_csv(OUT/"uturn_post_result_daily_observations.csv",index=False)
 pd.DataFrame(all_signals).to_csv(OUT/"gemini_case_signal_sessions.csv",index=False)
 pd.DataFrame(all_trades).to_csv(OUT/"gemini_case_trade_replay.csv",index=False)
 pd.DataFrame(file_errors).to_csv(OUT/"gemini_case_cache_errors.csv",index=False)
