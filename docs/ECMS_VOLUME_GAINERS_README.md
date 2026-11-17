@@ -285,3 +285,20 @@ The code changes remain ECMS-only; the V8 production workflow and its default co
 - Artifact `ecms-volume-gainers-eod-43866492965` (ID 14226655517) was inspected: `volume_gainers_eod_nse_page.csv` contains 25 rows, 22 official Main Board eligible; every row has `ScanMode=EOD` and `ScanDateIST=2026-11-16`. Summary dates are ScanDate 16-Nov, DataAsOfDate 16-Nov and EOD date 16-Nov.
 - The following Morning run #433 (run ID 44018285950) failed closed because cache restore selected a later 17-Nov snapshot instead of the required 16-Nov EOD reference. A later cancelled pre-close manual EOD run #427 had also written a same-prefix state cache, illustrating why date-unscoped restore keys were unsafe.
 - The 17-Nov fix therefore introduces a new `ecms-vg-state-v2` namespace, saves state by NSE scan-session date plus run ID, and restores Morning state only from the exact latest completed NSE session date. Legacy unscoped state caches are not eligible for v2 restores.
+
+
+## One-click ECMS scan routing (IST)
+
+ECMS has one workflow-dispatch button and no user-selected EOD/Morning input. A small routing job selects the internal scan job from the current IST time for manual dispatches; scheduled events are routed by their configured cron slot. The scanner jobs remain internally separated so their snapshot/cache validation and Telegram reports stay mode-specific.
+
+| IST window | Manual dispatch route | Behaviour |
+|---|---|---|
+| 15:30–23:59 | EOD | Run the completed regular-session EOD scan |
+| 00:00–07:59 | EOD | Run EOD against the latest completed-session context |
+| 08:00–09:14 | SKIP | EOD reference is locked; no fresh EOD or Morning scan |
+| 09:15–11:59 | Morning | Double-confirm latest EOD candidates and observe new stocks |
+| 12:00–15:29 | SKIP | Avoid incomplete intraday data |
+
+Scheduled routing remains at 17:01 IST for EOD and 09:21 IST for Morning. The official NSE trading calendar and each mode's existing data-date checks remain authoritative; a weekday schedule on a holiday must not create a scan. A skipped manual dispatch writes its routing decision to the Actions step summary and sends a short Telegram notice when Telegram secrets are configured.
+
+EOD is the primary selection and entry-trigger engine. Morning is confirmation/observation only: it must not overwrite the EOD entry trigger or convert a new observation into an EOD entry signal. The 08:00 IST lock is a reuse/hold boundary, not a second EOD data refresh.
