@@ -80,7 +80,7 @@ U_Turn_Estimate = Pre_Result_Peak_High - Expected_Correction
 - U-Turn output is attached to each eligible stock as a separate research observation. It **must not** reject or promote a candidate, alter the seven-metric fundamental gate, override volume-origin/trap evidence, change EOD entry trigger or Morning confirmation, or affect cache/Telegram decisions.
 - No backtesting, basketting, broker/order action, auto-buy/sell or NSE V8 changes. Keep the module and its data in the isolated ECMS research scope until issuer-level evidence and P8 shadow review are complete.
 
-Implementation/design references: [U-Turn research design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md), [calculator](fundamental_uturn.py), [NSE UDiFF OHLC parser](uturn_nse_ohlc.py).
+Implementation/design references: [U-Turn research design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md), [downside EPS calculator](fundamental_uturn.py), [NSE UDiFF OHLC parser](uturn_nse_ohlc.py), [two-sided price-context module](uturn_two_sided.py).
 
 ### Execution discipline
 
