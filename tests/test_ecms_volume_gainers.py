@@ -1180,7 +1180,7 @@ def test_manual_auto_mode_before_market_close_is_skipped(monkeypatch):
     scanner.main()
 
     assert calls == []
-    assert statuses == [("eod", "SKIPPED", "MANUAL_RUN_BEFORE_NSE_CLOSE")]
+    assert statuses == [("auto", "SKIPPED", "OUTSIDE_ECMS_SCAN_WINDOW")]
 
 
 
