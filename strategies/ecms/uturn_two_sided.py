@@ -71,7 +71,6 @@ def assess_two_sided_price_context(
         return {"status": "WAIT_FOR_DATA", "reason": "Missing or invalid session date"}
     if frame["_date"].duplicated().any():
         return {"status": "WAIT_FOR_DATA", "reason": "Duplicate session date"}
-    frame = frame.sort_values("_date")
     if list(frame["_date"]) != sorted(frame["_date"]):
         return {"status": "WAIT_FOR_DATA", "reason": "Sessions are not chronological"}
     for col in ("High", "Low", "Close", "Volume"):
@@ -136,6 +135,7 @@ def assess_two_sided_price_context(
         "status": status,
         "reason": reason,
         "session_date": last["_date"].isoformat(),
+        "source_url": str(last["SourceURL"]) if "SourceURL" in frame.columns else "",
         "close": latest_close,
         "rsi": rsi,
         "previous_rsi": float(previous["_rsi"]),
