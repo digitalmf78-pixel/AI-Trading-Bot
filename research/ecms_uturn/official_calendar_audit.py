@@ -52,6 +52,7 @@ def run_audit(root: Path = Path(".")) -> dict:
     strict_rows = _read_csv(output / "cached_ohlc_session_audit.csv")
     strict_summary = _read_csv(output / "cached_ohlc_window_summary.csv")
     post_closes = _read_csv(output / "cached_post_result_close.csv")
+    delivery_rows = _read_csv(output / "cached_delivery_coverage.csv")
     event_results_path = root / "uturn_cache_backtest/event_study_results.csv"
     event_results = _read_csv(event_results_path)
 
@@ -83,6 +84,10 @@ def run_audit(root: Path = Path(".")) -> dict:
         if len(strict) != 20 or ready_dates != actual:
             errors.append(f"{symbol}: strict cache evidence is not 20/20 READY")
 
+        delivery = [row for row in delivery_rows if row["Symbol"] == symbol]
+        delivery_dates = sorted(row["Date"] for row in delivery if row["Status"] == "READY")
+        if len(delivery) != 20 or delivery_dates != actual:
+            errors.append(f"{symbol}: delivery cache coverage is not 20/20 READY")
         strict_window = next((row for row in strict_summary if row["Symbol"] == symbol), None)
         event_result = next((row for row in event_results if row["Symbol"] == symbol), None)
         if not strict_window or strict_window["Status"] != "READY":
@@ -200,6 +205,8 @@ def run_audit(root: Path = Path(".")) -> dict:
         "calendar_results": calendar_results,
         "event_announcement_results": event_results_audit,
         "latest_post_result_close_ready_symbols": sorted(close_ready),
+        "delivery_window_rows_ready": sum(1 for row in delivery_rows if row["Status"] == "READY"),
+        "delivery_window_rows_expected": 20 * len(symbols),
         "stock_action_review": "No bonus/split/rights/demerger found in reviewed event-window sources; explicit evidence links are in corporate_action_audit.csv",
         "cash_dividends": dividends,
         "dividend_inclusive_simple_horizon_returns": dividend_return_rows,
