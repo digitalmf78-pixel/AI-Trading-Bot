@@ -2123,7 +2123,7 @@ def calculate_breakout_pullback(result, historical):
             # Preserve the existing 3-of-5 low-volume and bullish-candle rule.
             if pullback_structure and int(low_volume_days) >= 3 and bullish_reversal_candle:
                 pullback_status = "Strong Pullback"
-            elif controlled_pullback and (near_ema20 or near_ema44):
+            elif controlled_pullback and near_ema44:
                 pullback_status = "Possible Pullback"
             else:
                 pullback_status = "No Pullback"
