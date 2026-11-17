@@ -1657,7 +1657,7 @@ def _resolve_manual_scan_mode(now):
 
 def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
-    parser.add_argument("--mode",choices=("auto","eod","morning"),required=True)
+    parser.add_argument("--mode",choices=("auto","eod","eod-reuse","morning"),required=True)
     args=parser.parse_args()
     now = datetime.now(IST)
     if args.mode == "auto" and os.getenv("GITHUB_EVENT_NAME", "").lower() == "workflow_dispatch":
@@ -1675,7 +1675,7 @@ def main():
                 actual_time_ist=now.strftime("%H:%M"),
             )
             return
-        print(f"ECMS_MANUAL_MODE_RESOLVED=EOD at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print(f"ECMS_MANUAL_MODE_RESOLVED={args.mode.upper()} at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     # GitHub Actions cron also fires on weekday NSE holidays. Never treat the
     # last available page/session as a fresh scan for a non-trading date.
     today = datetime.now(IST).date()
@@ -1689,6 +1689,8 @@ def main():
     if not trading_session:
         _write_execution_status(args.mode, "SKIPPED", "OFFICIAL_NSE_NON_TRADING_DAY")
         return
+    if args.mode == "eod-reuse":
+        return _reuse_previous_eod_snapshot()
     # Scheduled runs must match the calendar's session-specific scan slot.
     # Manual dispatch is intentionally allowed at any time on a trading date.
     if os.getenv("GITHUB_EVENT_NAME", "").lower() == "schedule":
