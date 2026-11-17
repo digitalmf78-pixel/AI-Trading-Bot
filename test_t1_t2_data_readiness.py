@@ -34,7 +34,7 @@ class ReadinessTests(unittest.TestCase):
     def test_canonical_bhavcopy_filename_and_ohlc_are_loaded(self):
         with TemporaryDirectory() as temp:
             path = Path(temp) / "bhavcopy_20261109.csv"
-            pd.DataFrame([{"SYMBOL":"TEST","SERIES":"EQ","OPEN":10,"HIGH":12,"LOW":9,"CLOSE":11}]).to_csv(path,index=False)
+            pd.DataFrame([{"BizDt":"2026-11-09","SYMBOL":"TEST","SERIES":"EQ","OPEN":10,"HIGH":12,"LOW":9,"CLOSE":11}]).to_csv(path,index=False)
             records, errors = load_price_cache(Path(temp))
             self.assertEqual(errors, [])
             self.assertEqual(records[("TEST", pd.Timestamp("2026-11-09").date())]["CLOSE"], 11)
