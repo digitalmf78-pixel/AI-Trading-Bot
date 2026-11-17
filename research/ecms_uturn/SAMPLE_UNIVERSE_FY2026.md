@@ -39,3 +39,10 @@ These are expected calendar sessions, not proof that each archive file was downl
 ## Latest post-result close as-of snapshot
 
 As of 17-Nov-2026 before the current session has completed, the latest completed session for all three issuers is expected to be 16-Nov-2026. The exact NSE UDiFF source URLs are recorded in `research/ecms_uturn/post_result_close_manifest.csv`. The close values are intentionally blank until each official daily bhavcopy is retrieved and its symbol/series/ISIN/close is checked. Do not use an intraday 17-Nov price.
+
+
+## Official archive retrieval automation
+
+A research-only fetch/verification utility is now available at [download_verify_nse_bhavcopy.py](download_verify_nse_bhavcopy.py). It downloads each unique URL in the 60-row pre-result manifest plus the 16-Nov-2026 post-result close archive, validates the NSE UDiFF schema and exact CM/STK/EQ symbol/date row, records SHA-256 hashes, and emits a CSV plus JSON audit summary. It deliberately leaves corporate-action review pending and does not calculate a U-Turn target.
+
+The isolated [ECMS U-Turn NSE Sample Data Audit workflow](../../.github/workflows/ecms-uturn-nse-sample-audit.yml) runs only for changes to these research manifests/parser/fetcher on the research branch. Its artifact is evidence only; a green fetch does not itself verify corporate-action comparability or complete the U-Turn model.
