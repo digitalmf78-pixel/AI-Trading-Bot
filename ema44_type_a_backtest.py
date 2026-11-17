@@ -15,7 +15,8 @@ import os
 import pandas as pd
 import numpy as np
 
-from rsi_retest_existing_cache import _read_price_cache, _read_delivery_cache
+from rsi_retest_existing_cache import _read_price_cache, _norm_columns
+from delivery_filter import validate_delivery_report_date
 from rvol_strategy_backtest import (
     classify_delivery, delivery_window_dates, official_market_session_dates,
     forward_session_dates,
@@ -44,6 +45,41 @@ def _summary(values: pd.Series, prefix: str) -> dict:
         f"{prefix}MedianNetReturnPct": round(float(vals.median()), 3) if len(vals) else np.nan,
         f"{prefix}ProfitFactor": round(float(pf), 3) if math.isfinite(pf) else pf,
     }
+
+
+
+def _read_delivery_cache_strict(delivery_dir: Path) -> tuple[dict[pd.Timestamp, pd.DataFrame], list[str]]:
+    """Read cached Delivery reports only after validating filename and internal DATE1."""
+    by_date: dict[pd.Timestamp, pd.DataFrame] = {}
+    rejected: list[str] = []
+    files = sorted(delivery_dir.glob("sec_bhavdata_full_????????.csv")) if delivery_dir.exists() else []
+    for path in files:
+        import re
+        match = re.fullmatch(r"sec_bhavdata_full_(\\d{8})\\.csv", path.name)
+        if not match:
+            continue
+        report_date = pd.to_datetime(match.group(1), format="%d%m%Y", errors="coerce")
+        if pd.isna(report_date):
+            rejected.append(f"{path.name}: invalid filename date")
+            continue
+        try:
+            frame = _norm_columns(pd.read_csv(path, low_memory=False))
+            required = {"SYMBOL", "SERIES", "DELIV_PER", "DATE1"}
+            if not required.issubset(frame.columns):
+                raise ValueError(f"missing columns: {sorted(required - set(frame.columns))}")
+            validate_delivery_report_date(frame, report_date.date(), source=f"Cache {path.name}")
+            frame = frame[["SYMBOL", "SERIES", "DELIV_PER"]].copy()
+            frame["SYMBOL"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
+            frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
+            frame["DELIV_PER"] = pd.to_numeric(frame["DELIV_PER"], errors="coerce")
+            frame = frame[(frame["SERIES"] == "EQ") & frame["DELIV_PER"].between(0, 100)]
+            frame = frame.drop_duplicates(["SYMBOL", "SERIES"], keep="last")
+            if frame.empty:
+                raise ValueError("no valid EQ delivery rows")
+            by_date[report_date.normalize()] = frame
+        except Exception as exc:
+            rejected.append(f"{path.name}: {exc}")
+    return by_date, rejected
 
 
 def _delivery_map(delivery_by_date: dict) -> tuple[dict, list]:
@@ -75,7 +111,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                  output_dir: Path = OUTPUT_DIR) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     prices, price_issues = _read_price_cache(price_dir)
-    delivery_by_date, delivery_file_issues = _read_delivery_cache(delivery_dir)
+    delivery_by_date, delivery_file_issues = _read_delivery_cache_strict(delivery_dir)
     delivery_lookup, delivery_row_issues = _delivery_map(delivery_by_date)
     price_files = list(price_dir.glob("bhavcopy_????????.csv")) if price_dir.exists() else []
     delivery_files = list(delivery_dir.glob("sec_bhavdata_full_????????.csv")) if delivery_dir.exists() else []
@@ -116,13 +152,15 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
     prices["DATE"] = pd.to_datetime(prices["DATE"]).dt.normalize()
     market_dates = official_market_session_dates(prices["DATE"].min(), prices["DATE"].max())
     date_pos = {day: i for i, day in enumerate(market_dates)}
-    delivery_dates = sorted(delivery_lookup)
+    official_date_set = set(market_dates)
+    delivery_dates = sorted(d for d in delivery_lookup if d in official_date_set)
     records = []
     rejected = {
         "insufficient_44_session_history": 0,
         "missing_exact_prior_20_sessions": 0,
         "invalid_ohlcv_or_traded_value": 0,
         "delivery_wait_or_reject": 0,
+        "delivery_stale_report": 0,
         "liquidity_below_1_5cr": 0,
         "type_a_conditions_not_met": 0,
         "missing_next_session_entry": 0,
@@ -179,6 +217,9 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
 
             start = day - pd.Timedelta(days=29)
             candidate_days = [d for d in delivery_dates if start <= d <= day]
+            if not candidate_days or (day - candidate_days[-1]).days > 7:
+                rejected["delivery_stale_report"] += 1
+                continue
             dvalues = [delivery_lookup[d][symbol] for d in candidate_days if symbol in delivery_lookup[d]]
             if len(dvalues) < 5:
                 rejected["delivery_wait_or_reject"] += 1
