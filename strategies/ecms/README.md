@@ -226,7 +226,7 @@ The CSV preserves every returned page row, including rows outside the official M
 
 ## P7 research proposal — Historical PE lower-band valuation observation (separate from U-Turn)
 
-**Status: DOCUMENTED FOR RESEARCH ONLY — NOT IMPLEMENTED, NOT TESTED, NOT AN ECMS GATE.**
+**Status: ISOLATED RESEARCH PROTOTYPE IMPLEMENTED — SYNTHETIC UNIT TESTS ONLY; NOT A PRODUCTION ECMS GATE.**
 
 ### Objective
 
@@ -267,7 +267,7 @@ High volume or high delivery alone does not prove institutional accumulation. A 
 - Existing U-Turn remains its own two-sided explanatory research layer: downside EPS-reset/bottom-watch and upside overextension/momentum observations.
 - Historical PE lower-band output is a third, independent observation. Technical confirmation is a separate layer that may be evaluated for either valuation observation, without converting either into a trade signal.
 - No change to the seven-metric fundamental gate, Volume Gainers universe, scan schedule, Morning/EOD lifecycle, cache, Telegram, NSE V8 or production selection logic.
-- Historical testing is permitted only as isolated research after the required point-in-time price/EPS data is verified; no backtest may use current provider snapshots as historical observations.
+- A point-in-time historical valuation-data study is permitted only as isolated research after the required price/EPS provenance is verified. This is not a trading-strategy backtest; current provider snapshots must never be treated as historical observations.
 - No production ECMS integration, basket construction, broker/order integration, auto-buy or auto-sell is authorized by this proposal. Keep all research on the isolated branch.
 
 ### Research/testing checklist (to be completed later)
@@ -293,14 +293,14 @@ High volume or high delivery alone does not prove institutional accumulation. A 
 - The prototype uses a configurable lower PE percentile (default 20th; 25th remains a research comparison), reports median and 75th percentile for context, and multiplies the lower-band PE by a provenance-tagged current EPS.
 - It requires positive finite EPS/PE, matching declared EPS basis, metric-level source/period provenance, unique historical price dates, no future observations and a configurable minimum sample count (default 20).
 - Invalid/incomplete inputs return `WAIT_FOR_DATA`. The output explicitly says it is not support, not a floor and not a trading signal; technical status remains `NOT_ASSESSED`.
-- Initial local synthetic-fixture unit tests: **10 passed**. These test arithmetic and data guards only; they are not real-stock validation, not historical performance evidence, and not proof of a high-probability edge.
+- The prototype currently has **13 synthetic-fixture test functions** covering arithmetic and fail-closed guards. The PR validation workflow has now been updated to compile this module and run this test file; the updated CI result is pending. These tests are not real-stock validation, not historical performance evidence, and not proof of a high-probability edge.
 - Still pending: repository CI result for this draft PR, issuer-level historical PE/EPS source audit, lookback/window and percentile sensitivity review, and a separately specified technical-confirmation protocol.
 - No production ECMS integration, no scan/workflow/cache/Telegram changes, no NSE V8 changes and no backtesting.
 
 
 ### Historical data availability audit — 17-Nov-2026
 
-**Result: NO VALID REAL-STOCK HISTORICAL BACKTEST CAN BE RUN FROM THE CURRENT REPOSITORY CACHE.** This is a data-readiness finding, not a strategy-performance result.
+**Result: NO VALID REAL-STOCK HISTORICAL PE SERIES IS AVAILABLE IN THE CURRENT REPOSITORY CACHE.** This is a data-readiness finding, not a valuation or strategy-performance result.
 
 Audit scope:
 - Inspected all 14 committed daily fundamental-history snapshots from 2026-10-28 through 2026-11-16.
@@ -315,7 +315,7 @@ Decision:
 - The calculator now fails closed unless current EPS basis is exactly `TTM_DILUTED` and each historical observation explicitly carries `point_in_time_status=HISTORICAL_POINT_IN_TIME_VERIFIED`.
 - Rows labelled `CURRENT_PROVIDER_SNAPSHOT_NOT_HISTORICAL`, missing point-in-time status, or non-TTM-diluted EPS must return `WAIT_FOR_DATA`.
 - The 20-observation minimum remains a bare minimum input guard, not evidence that 20 observations span a representative business cycle. A longer multi-year point-in-time history is required for a meaningful lower-band study.
-- Synthetic unit tests validate arithmetic and fail-closed guards only. No real-stock backtest, historical performance claim, or technical-confirmation test has been completed.
+- Synthetic unit tests validate arithmetic and fail-closed guards only. No real-stock valuation reference, historical performance claim, trading-strategy backtest, or technical-confirmation test has been completed.
 
 Next data requirement:
 - Obtain a consistent multi-year daily price history and point-in-time TTM diluted EPS history, aligned to the actual publication/availability date of each financial result, with official filing/source URLs, consolidated/standalone basis, corporate-action adjustments and period metadata.
