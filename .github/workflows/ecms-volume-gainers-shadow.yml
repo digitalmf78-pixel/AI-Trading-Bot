@@ -13,9 +13,9 @@ on:
         default: eod
         options: [eod, morning]
   schedule:
-    - cron: "30 11 * * *" # 17:00 IST regular-session EOD
-    - cron: "50 3 * * *"  # 09:20 IST regular-session Morning
-    - cron: "55 8 * * *"  # 14:25 IST configured special-session Morning slot
+    - cron: "31 11 * * *" # 17:00 IST regular-session EOD
+    - cron: "51 3 * * *"  # 09:20 IST regular-session Morning
+    - cron: "56 8 * * *"  # 14:25 IST configured special-session Morning slot
 permissions:
   contents: read
 concurrency:
@@ -46,7 +46,7 @@ jobs:
   eod:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'eod') ||
-      (github.event_name == 'schedule' && (github.event.schedule == '30 11 * * *'))
+      (github.event_name == 'schedule' && (github.event.schedule == '31 11 * * *'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -320,7 +320,7 @@ jobs:
   morning:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'morning') ||
-      (github.event_name == 'schedule' && (github.event.schedule == '50 3 * * *' || github.event.schedule == '55 8 * * *'))
+      (github.event_name == 'schedule' && (github.event.schedule == '51 3 * * *' || github.event.schedule == '56 8 * * *'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
