@@ -7,8 +7,10 @@ on:
     paths:
       - "strategies/ecms/fundamental_uturn.py"
       - "strategies/ecms/uturn_nse_ohlc.py"
+      - "strategies/ecms/uturn_two_sided.py"
       - "tests/test_ecms_fundamental_uturn.py"
       - "tests/test_ecms_uturn_nse_ohlc.py"
+      - "tests/test_ecms_uturn_two_sided.py"
       - ".github/workflows/ecms-uturn-research-tests.yml"
   pull_request:
     paths:
@@ -40,7 +42,7 @@ jobs:
         run: python -m pip install --upgrade pip pandas pytest
 
       - name: Compile research module
-        run: python -m py_compile strategies/ecms/fundamental_uturn.py
+        run: python -m py_compile strategies/ecms/fundamental_uturn.py strategies/ecms/uturn_two_sided.py
 
       - name: Run U-Turn research unit tests only
-        run: python -m pytest -q tests/test_ecms_fundamental_uturn.py tests/test_ecms_uturn_nse_ohlc.py
+        run: python -m pytest -q tests/test_ecms_fundamental_uturn.py tests/test_ecms_uturn_nse_ohlc.py tests/test_ecms_uturn_two_sided.py
