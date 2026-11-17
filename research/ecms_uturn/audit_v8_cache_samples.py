@@ -171,9 +171,9 @@ for row in CLOSE:
         reason=(f"No candidate contained one verified EQ row; {' | '.join(failures[:5])}" if not ready else f"Ambiguous: {len(ready)} candidate files each contain a valid row")
         post_rows.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":reason,"CachePaths":";".join(map(str,cand))})
 
-# EPS search is deliberately discovery-only: provider EPS columns are not proof of annual diluted EPS.
+# EPS search is deliberately bounded to two summary CSVs; detailed XBRL cache scans are a separate audit and are not needed for the price-window gate.
 eps_hits=[]
-search_roots=[ROOT/"data/inputs/fundamental_metrics.csv",ROOT/"data/cache/fundamental_history",ROOT/"data/cache/xbrl_samples",ROOT/"data/cache/xbrl_period_pairs",ROOT/"outputs/v8_official_financial_results_filings.csv"]
+search_roots=[ROOT/"data/inputs/fundamental_metrics.csv",ROOT/"outputs/v8_official_financial_results_filings.csv"]
 for base in search_roots:
     files=[base] if base.is_file() else list(base.rglob("*")) if base.exists() else []
     for p in files:
