@@ -55,7 +55,7 @@ Use transparent classifications such as POSITIVE_EVIDENCE, NEGATIVE_EVIDENCE, EV
 | **P5 — Trap/surveillance** | Official surveillance lists and multi-signal suspicious/distribution risk assessment. | Evidence-backed risk reasons and separate exclusion ledger; missing data never treated as clean or guilty. |
 | **P6 — Market/technical context** | Nifty/sector relative strength, simple trend, breakout/retest/closing-strength and liquidity/exit-readiness observations. | Reproducible, data-complete context fields; no guessed thresholds. |
 | **P7 — Balanced decision** | Combine fundamental status, volume origin, company/institutional evidence, catalyst, sector/technical context and trap risk. Add optional two-sided ECMS U-Turn research after P1/P2/P4 inputs and P6 technical context are validated. | Transparent individual-stock classification; separate downside reset/bottom-watch and upside overextension/momentum observations, never a gate or trading signal; no basket or opaque forced score. |
-| **P8 — Live shadow validation** | Run the existing Morning/EOD workflow, inspect real reports/logs/cache/Telegram, correct defects and confirm operational consistency. | Live run evidence, coverage/runtime/report checks and user review. **No historical backtesting.** |
+| **P8 — Live shadow validation** | Run the existing Morning/EOD workflow, inspect real reports/logs/cache/Telegram, correct defects and confirm operational consistency. | Live run evidence, coverage/runtime/report checks and user review. **No historical backtesting of the ECMS Volume Gainers scanner;** the separately approved U-Turn research event-study runs only on the isolated research branch. |
 
 
 ### P7 sub-layer — Fundamental U-Turn research (ECMS only)
@@ -78,7 +78,7 @@ U_Turn_Estimate = Pre_Result_Peak_High - Expected_Correction
 - If current diluted EPS is equal to or above prior-year EPS, return `NO_EPS_DECLINE` and no reset estimate. Missing/unverified EPS, mismatched FY/basis/unit, missing official result timestamp, incomplete OHLC window, unadjusted corporate action or missing post-result Close must return an explicit `WAIT_FOR_DATA`, `UNVERIFIED` or review status; never invent a value.
 - Loss/profit sign transitions are `NOT_COMPARABLE_FOR_THIS_FORMULA`. The proximity zone is not confirmed support and does not assert accumulation or a reversal.
 - U-Turn output is attached to each eligible stock as a separate research observation. It **must not** reject or promote a candidate, alter the seven-metric fundamental gate, override volume-origin/trap evidence, change EOD entry trigger or Morning confirmation, or affect cache/Telegram decisions.
-- No backtesting, basketting, broker/order action, auto-buy/sell or NSE V8 changes. Keep the module and its data in the isolated ECMS research scope until issuer-level evidence and P8 shadow review are complete.
+- No production ECMS scanner backtesting, basketting, broker/order action, auto-buy/sell or NSE V8 changes. The approved U-Turn event-study is limited to the existing read-only cache and remains isolated until issuer-level evidence is reviewed.
 
 **Two-sided U-Turn — bottom and overextension context (research only):**
 
@@ -95,7 +95,7 @@ Implementation/design references: [U-Turn research design](../../docs/ECMS_FUNDA
 - Before editing, inspect the current main-branch code, workflow, tests and latest relevant run/artifacts. Make small ECMS-only changes and run relevant tests.
 - Never claim a workflow ran, a cache hit occurred, a provider was skipped or a phase completed without logs/artifact evidence.
 - If data volume, provider limits or runtime threaten the two-scan workflow, prefer bounded batch retrieval, persistent cache and source coverage reporting over more serial per-stock calls.
-- Do not add backtesting, basket construction, paid sources or new schedules unless the user explicitly changes these decisions.
+- Do not expand the approved U-Turn event-study beyond the existing cache, add production scanner backtesting, basket construction, paid sources or new schedules unless the user explicitly changes these decisions.
 
 ---
 
@@ -227,7 +227,7 @@ The CSV preserves every returned page row, including rows outside the official M
 - Design document: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
 - User-confirmed basis: consecutive completed annual EPS values; pre-result price peak.
 - The downside research design uses the user-confirmed 20 completed NSE-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone. A separate upside/overextension context checks RSI14, SMA20/SMA50, extension versus SMA20 and volume versus the prior 20-session average.
-- The module is isolated research only and is mapped as an optional P7 explanatory sub-layer, using inputs prepared in P1/P2/P4 and reviewed in P8. It does not change phase order, EOD/Morning behavior, fundamental gating, production caches, Telegram decision messages or NSE V8. No backtesting, basketting, order or buy/sell signal.
+- The module is isolated research only and is mapped as an optional P7 explanatory sub-layer, using inputs prepared in P1/P2/P4 and reviewed in P8. It does not change phase order, EOD/Morning behavior, fundamental gating, production caches, Telegram decision messages or NSE V8. No production scanner backtesting, basketting, order or buy/sell signal; the isolated research event-study is not a trading P&L backtest.
 
 
 ## Fundamental U-Turn research implementation — 17-Nov-2026
