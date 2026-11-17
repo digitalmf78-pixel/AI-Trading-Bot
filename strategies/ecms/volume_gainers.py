@@ -1645,11 +1645,81 @@ def _write_execution_status(mode, status, reason="", **details):
     return payload
 
 
+def _reuse_previous_eod_snapshot():
+    """Publish the verified latest EOD snapshot without refreshing live NSE data."""
+    import json
+    marker_path = STATE_DIR / "eod_snapshot_run_marker.json"
+    if not STATE_FILE.is_file() or not marker_path.is_file():
+        _write_execution_status("eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_NOT_FOUND_FOR_REUSE")
+        return None
+    try:
+        snapshot = pd.read_csv(STATE_FILE, dtype={"TckrSymb": str})
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _write_execution_status(
+            "eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_UNREADABLE_FOR_REUSE",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        return None
+    if snapshot.empty or "EODDate" not in snapshot.columns:
+        _write_execution_status("eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_INVALID_FOR_REUSE")
+        return None
+    expected_date = expected_latest_completed_session()
+    dates = set(snapshot["EODDate"].dropna().astype(str))
+    valid = (
+        dates == {expected_date.isoformat()}
+        and "SnapshotType" in snapshot
+        and snapshot["SnapshotType"].astype(str).eq("EOD").all()
+        and "SnapshotStatus" in snapshot
+        and snapshot["SnapshotStatus"].astype(str).eq("VALID").all()
+        and marker.get("snapshot_type") == "EOD"
+        and marker.get("snapshot_status") == "VALID"
+        and marker.get("eod_date") == expected_date.isoformat()
+        and int(marker.get("symbol_count", -1)) == len(snapshot)
+    )
+    if not valid:
+        _write_execution_status(
+            "eod", "WAIT_FOR_DATA", "EOD_SNAPSHOT_VALIDATION_FAILED_FOR_REUSE",
+            expected_eod_date=expected_date.isoformat(), snapshot_dates=sorted(dates),
+        )
+        return None
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    report = snapshot.copy()
+    report["ScanMode"] = "EOD_REUSED"
+    report["ScanDateIST"] = expected_date.isoformat()
+    report["DataAsOfDateIST"] = expected_date.isoformat()
+    report["EODSnapshotReuse"] = True
+    report.to_csv(OUTPUT_DIR / "volume_gainers_eod_nse_page.csv", index=False)
+    summary = {
+        "status": "REUSED",
+        "scan_date_ist": expected_date.isoformat(),
+        "eod_date_ist": expected_date.isoformat(),
+        "data_as_of_date_ist": expected_date.isoformat(),
+        "snapshot_reused": True,
+        "snapshot_refresh_performed": False,
+        "eligible_mainboard_equities": int(len(report)),
+        "state_file": str(STATE_FILE),
+        "generated_at_ist": datetime.now(IST).isoformat(),
+    }
+    (OUTPUT_DIR / "volume_gainers_eod_summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+    )
+    _write_execution_status(
+        "eod", "REUSED", "PREVIOUS_EOD_SNAPSHOT_REUSED",
+        actual_time_ist=datetime.now(IST).strftime("%H:%M"),
+        data_as_of_date_ist=expected_date.isoformat(),
+    )
+    print("ECMS_EOD_SNAPSHOT_REUSED=" + json.dumps(summary, sort_keys=True))
+    return summary
+
+
 def _resolve_manual_scan_mode(now):
     """Resolve one-click manual scans using the ECMS IST operating windows."""
     current = now.time().replace(tzinfo=None)
-    if current >= time(15, 30) or current < time(8, 0):
+    if current >= time(15, 30):
         return "eod"
+    if current < time(8, 0):
+        return "eod-reuse"
     if time(9, 15) <= current < time(12, 0):
         return "morning"
     return None
