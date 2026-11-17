@@ -19,7 +19,7 @@ RESISTANCE_FIELDS = (
     ("High100D", "HIGH_100D"), ("SR200DHigh", "SR_200D_HIGH"),
     ("High200D", "HIGH_200D"),
 )
-PRICE_FILE_RE = re.compile(r"^(?:sec_bhavdata_full_|BhavCopy_NSE_CM_).*?(\\d{8})", re.I)
+PRICE_FILE_RE = re.compile(r"^bhavcopy_(\\d{8})\\.csv$", re.I)
 
 def first_present(row, names):
     for name in names:
@@ -74,7 +74,7 @@ def load_price_cache(price_dir):
         if not match:
             continue
         token = match.group(1)
-        fmt = "%d%m%Y" if path.name.lower().startswith("sec_bhavdata_full_") else "%Y%m%d"
+        fmt = "%Y%m%d"
         try:
             day = pd.to_datetime(token, format=fmt, errors="raise").date()
         except Exception:
