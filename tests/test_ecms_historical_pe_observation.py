@@ -40,7 +40,7 @@ def test_calculates_interpolated_lower_band_and_reference_price():
 
 
 def test_rejects_non_positive_or_non_finite_current_eps():
-    for eps in (0, -1, "nan", None):
+    for eps in (0, -1, "nan", None, True):
         assert calculate(current_eps=eps)["reason"] == "CURRENT_EPS_NOT_POSITIVE_FINITE"
 
 
@@ -52,6 +52,9 @@ def test_rejects_non_ttm_diluted_current_eps_basis():
 def test_rejects_non_positive_historical_pe():
     data = rows()
     data[0]["pe"] = 0
+    assert calculate(data)["reason"] == "HISTORICAL_PE_NOT_POSITIVE_FINITE"
+    data = rows()
+    data[0]["pe"] = True
     assert calculate(data)["reason"] == "HISTORICAL_PE_NOT_POSITIVE_FINITE"
 
 
@@ -102,3 +105,4 @@ def test_rejects_missing_current_eps_provenance():
 def test_rejects_invalid_percentile():
     assert calculate(lower_percentile=50)["reason"] == "LOWER_PERCENTILE_OUT_OF_RANGE"
     assert calculate(lower_percentile="bad")["reason"] == "LOWER_PERCENTILE_OUT_OF_RANGE"
+    assert calculate(lower_percentile=True)["reason"] == "LOWER_PERCENTILE_OUT_OF_RANGE"
