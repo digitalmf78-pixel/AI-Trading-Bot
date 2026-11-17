@@ -123,6 +123,10 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(result["EntryExecutionRule"], "NEXT_OFFICIAL_SESSION_OPEN")
         self.assertEqual(result["EntryExecutionPrice"], 100.0)
         self.assertEqual(result["EntryExecutionStatus"], "ENTRY_READY")
+        self.assertEqual(result["T1ExitStatus5D"], "TARGET_HIT")
+        self.assertEqual(result["T1ExitPrice5D"], 110.0)
+        self.assertEqual(result["T2ExitStatus5D"], "TARGET_HIT")
+        self.assertEqual(result["T2ExitPrice5D"], 120.0)
 
     def test_targets_are_above_actual_next_open_fill(self):
         signal_date = "2026-10-28"
