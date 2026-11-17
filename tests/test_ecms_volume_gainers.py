@@ -1225,10 +1225,9 @@ def test_reuse_previous_eod_snapshot_publishes_cached_data_without_live_fetch(tm
         "EODDate": "2026-11-16",
         "SnapshotType": "EOD",
         "SnapshotStatus": "VALID",
+        "SnapshotCapturedAtIST": "2026-11-16T17:01:00+05:30",
         "PageVolume": 1000,
     }]).to_csv(state, index=False)
-    marker = state.parent / "eod_snapshot_run_marker.json"
-    marker.write_text('{"snapshot_type":"EOD","snapshot_status":"VALID","eod_date":"2026-11-16","symbol_count":1}', encoding="utf-8")
     monkeypatch.setattr(scanner, "STATE_DIR", state.parent)
     monkeypatch.setattr(scanner, "STATE_FILE", state)
     monkeypatch.setattr(scanner, "OUTPUT_DIR", output)
@@ -1254,9 +1253,8 @@ def test_reuse_previous_eod_snapshot_rejects_wrong_date(tmp_path, monkeypatch):
         "EODDate": "2026-11-13",
         "SnapshotType": "EOD",
         "SnapshotStatus": "VALID",
+        "SnapshotCapturedAtIST": "2026-11-13T17:01:00+05:30",
     }]).to_csv(state, index=False)
-    marker = state.parent / "eod_snapshot_run_marker.json"
-    marker.write_text('{"snapshot_type":"EOD","snapshot_status":"VALID","eod_date":"2026-11-13","symbol_count":1}', encoding="utf-8")
     monkeypatch.setattr(scanner, "STATE_DIR", state.parent)
     monkeypatch.setattr(scanner, "STATE_FILE", state)
     monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 16))
