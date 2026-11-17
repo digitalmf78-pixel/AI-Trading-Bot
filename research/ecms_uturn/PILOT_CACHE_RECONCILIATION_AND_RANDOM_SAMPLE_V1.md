@@ -15,8 +15,8 @@ Earlier event-study and strict-audit workflows disagreed on 20-session coverage.
 
 ### Latest acceptance runs
 
-- U-Turn event-study / same-run consistency gate: [run #44075834518](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834518) — **SUCCESS**.
-- Read-only cache audit: [run #44075834526](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44075834526) — **SUCCESS**.
+- U-Turn event-study / same-run consistency gate: [run #44077735477](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44077735477) — **SUCCESS**.
+- Read-only cache audit: [run #44077339832](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44077339832) — **SUCCESS**.
 - The latest U-Turn artifact includes the strict audit, event-study, consistency gate, official calendar/corporate-action audit and read-only cache provenance.
 
 Verified outcomes:
