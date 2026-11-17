@@ -183,9 +183,12 @@ def audit_signal_frame(frame, prices, source_name):
             except Exception as exc:
                 reasons.append("SESSION_SEQUENCE_ERROR:" + type(exc).__name__)
         next_open = prices.get((symbol, next_session), {}).get("OPEN") if next_session else None
+        next_open_value = number(next_open)
+        entry_fill_valid = math.isfinite(next_open_value) and next_open_value > 0
         common_plan_valid = bool(
             symbol and day is not None and math.isfinite(entry) and entry > 0
             and math.isfinite(stop) and stop > 0 and stop < entry
+            and entry_fill_valid
         )
         t1_valid, t2_valid = math.isfinite(t1[0]), math.isfinite(t2[0])
         horizon_ready = {}
@@ -203,6 +206,9 @@ def audit_signal_frame(frame, prices, source_name):
             "Target2": t2[0] if math.isfinite(t2[0]) else "", "Target2Source": t2[1],
             "NextOfficialSession": next_session.isoformat() if next_session else "",
             "NextSessionOpen": next_open if next_open is not None else "",
+            "EntryExecutionRule": "NEXT_OFFICIAL_SESSION_OPEN",
+            "EntryExecutionPrice": next_open_value if entry_fill_valid else "",
+            "EntryExecutionStatus": "ENTRY_READY" if entry_fill_valid else "WAIT_FOR_DATA",
             "ForwardOHLC5Coverage": horizon_coverage.get(5, "WAIT_FOR_DATA"),
             "ForwardOHLC10Coverage": horizon_coverage.get(10, "WAIT_FOR_DATA"),
             "ForwardOHLC20Coverage": horizon_coverage.get(20, "WAIT_FOR_DATA"),
