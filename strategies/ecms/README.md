@@ -194,7 +194,7 @@ The CSV preserves every returned page row, including rows outside the official M
 
 - Design document: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
 - User-confirmed basis: consecutive completed annual EPS values; pre-result price peak.
-- The research design uses a proposed configurable 20-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone. The 20-session window remains a proposal pending confirmation.
+- The research design uses the user-confirmed 20 completed NSE-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone.
 - The module is isolated research only. It must not change P0–P8, EOD/Morning behavior, fundamental gating, production caches, Telegram decision messages or NSE V8. No backtesting, basketting, order or buy/sell signal.
 
 
@@ -204,7 +204,9 @@ The CSV preserves every returned page row, including rows outside the official M
 - Research-only calculator: `strategies/ecms/fundamental_uturn.py`; unit tests: `tests/test_ecms_fundamental_uturn.py`.
 - The module requires separate previous/current diluted-EPS and reporting-basis fields, INR/share units, HTTPS source URLs for both EPS years, result announcement and both price observations, verified EPS/OHLC flags, consecutive FYs, positive EPS, post-result completed Close and corporate-action comparability. Missing or mismatched data fails closed.
 - It computes a valuation reset estimate and ±3% proximity zone; this is not confirmed support, a reversal signal, entry trigger, Buy/Sell recommendation or guaranteed price.
-- A dedicated branch-scoped CI workflow runs only the U-Turn unit tests: `.github/workflows/ecms-uturn-research-tests.yml`. It performs no provider fetching or live scans. Test execution status is pending verification.
+- A dedicated branch-scoped CI workflow runs only the U-Turn unit tests: `.github/workflows/ecms-uturn-research-tests.yml`. First CI runs exposed one assertion-text mismatch (16 passed, 1 failed); the test expectation was corrected in commit `1a89516d4de86bca640daf09eebeb22b39b6f41d`. A post-fix CI run has not yet appeared in the Actions run list; do not mark CI green until verified.
 - No provider fetching, scheduled workflow, Telegram, cache, EOD/Morning or NSE V8 integration. Do not merge to main or enable in ECMS runtime until CI passes and 3–5 issuer-level official filing/OHLC reconciliations are reviewed.
 - Official filing discovery reference: [NSE Corporate Filings — Financial Results](https://www.nseindia.com/companies-listing/corporate-filings-financial-results). NSE's filing records distinguish audited status, cumulative/non-cumulative, consolidated/non-consolidated basis and reporting period; these fields must be retained during issuer validation. See also [NSE integrated filing XBRL example](https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_210520_05112026183448_iXBRL_WEB.html).
 - Full design and remaining gates: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
+
+- Sample intake template (5 blank issuer rows): [U-Turn sample universe intake CSV](../../research/ecms_uturn/sample_universe_intake_template.csv). No issuer data is prefilled or fabricated. Candidate admission requires NSE Main Board proof, audited annual diluted EPS for both consecutive FYs on the same reporting basis, official result-announcement date/time, 20 valid pre-result daily High observations, post-result completed Close and corporate-action reconciliation.
