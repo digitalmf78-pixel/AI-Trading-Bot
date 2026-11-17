@@ -183,8 +183,6 @@ jobs:
           restore-keys: |
             ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.scan_session_date }}-
             ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.completed_session_date }}-
-            # One-time migration: only the previously verified 16-Nov-2026 EOD cache; do not restore the broad legacy prefix.
-            ecms-vg-state-${{ github.ref_name }}-43866492965
             ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.previous_completed_session_date }}-
       - name: Restore independent ECMS Volume Gainer fundamental cache
         id: fundamental-cache-restore
@@ -455,6 +453,7 @@ jobs:
           key: ecms-vg-state-v2-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.completed_session_date }}-
+            ecms-vg-state-${{ github.ref_name }}-43866492965
       - name: Restore independent ECMS Volume Gainer fundamental cache
         id: fundamental-cache-restore
         uses: actions/cache/restore@v4
