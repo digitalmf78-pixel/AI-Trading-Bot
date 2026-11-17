@@ -65,7 +65,7 @@ def test_non_positive_eps_never_creates_target(previous, current):
 def test_basic_eps_is_rejected_without_fallback():
     result = calculate_uturn_targets(pd.DataFrame([_row(Current_EPS_Basis="BASIC")])).iloc[0]
     assert result["U_Turn_Status"] == "WAIT_FOR_DATA"
-    assert "Diluted EPS only" in result["U_Turn_Reason"]
+    assert "diluted EPS" in result["U_Turn_Reason"]
 
 
 def test_reporting_basis_must_match_and_be_explicit():
