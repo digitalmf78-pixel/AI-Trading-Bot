@@ -14,12 +14,21 @@ def _row(**overrides):
         "Current_FY": "FY2026",
         "Previous_EPS": 20.0,
         "Current_EPS": 16.0,
-        "EPS_Basis": "DILUTED",
-        "Reporting_Basis": "CONSOLIDATED",
+        "Previous_EPS_Basis": "DILUTED",
+        "Current_EPS_Basis": "DILUTED",
+        "Previous_Reporting_Basis": "CONSOLIDATED",
+        "Current_Reporting_Basis": "CONSOLIDATED",
+        "Previous_EPS_Unit": "INR/SHARE",
+        "Current_EPS_Unit": "INR/SHARE",
+        "Previous_EPS_Source_URL": "https://www.nseindia.com/filing/previous",
+        "Current_EPS_Source_URL": "https://www.nseindia.com/filing/current",
+        "Result_Announcement_Source_URL": "https://www.nseindia.com/announcement/result",
         "Result_Announcement_Date": "2026-05-20",
         "Peak_Price": 400.0,
+        "Peak_Price_Source_URL": "https://www.nseindia.com/ohlc/peak",
         "Latest_Post_Result_Close": 320.0,
         "Latest_Post_Result_Session": "2026-05-21",
+        "Latest_Post_Result_Source_URL": "https://www.nseindia.com/ohlc/latest",
         "EPS_Verified": True,
         "Peak_Price_Verified": True,
         "Corporate_Action_Adjusted": True,
@@ -54,14 +63,16 @@ def test_non_positive_eps_never_creates_target(previous, current):
 
 
 def test_basic_eps_is_rejected_without_fallback():
-    result = calculate_uturn_targets(pd.DataFrame([_row(EPS_Basis="BASIC")])).iloc[0]
+    result = calculate_uturn_targets(pd.DataFrame([_row(Current_EPS_Basis="BASIC")])).iloc[0]
     assert result["U_Turn_Status"] == "WAIT_FOR_DATA"
     assert "Diluted EPS only" in result["U_Turn_Reason"]
 
 
-def test_reporting_basis_must_be_explicit():
-    result = calculate_uturn_targets(pd.DataFrame([_row(Reporting_Basis="")])).iloc[0]
+def test_reporting_basis_must_match_and_be_explicit():
+    result = calculate_uturn_targets(pd.DataFrame([_row(Current_Reporting_Basis="")])).iloc[0]
     assert result["U_Turn_Status"] == "WAIT_FOR_DATA"
+    mismatch = calculate_uturn_targets(pd.DataFrame([_row(Current_Reporting_Basis="STANDALONE")])).iloc[0]
+    assert mismatch["U_Turn_Status"] == "WAIT_FOR_DATA"
 
 
 def test_unverified_eps_or_peak_fails_closed():
