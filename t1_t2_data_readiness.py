@@ -19,7 +19,7 @@ RESISTANCE_FIELDS = (
     ("High100D", "HIGH_100D"), ("SR200DHigh", "SR_200D_HIGH"),
     ("High200D", "HIGH_200D"),
 )
-PRICE_FILE_RE = re.compile(r"^bhavcopy_(\\d{8})\\.csv$", re.I)
+PRICE_FILE_RE = re.compile(r"^bhavcopy_(\d{8})\.csv$", re.I)
 
 def first_present(row, names):
     for name in names:
