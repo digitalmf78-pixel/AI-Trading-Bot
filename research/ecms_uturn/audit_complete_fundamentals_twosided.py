@@ -83,10 +83,14 @@ for sym, group in metrics.groupby("TckrSymb",sort=True):
   fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":filing_status}); continue
  # Require each metric's own source period and basis, and no mixed-period declaration.
  periods={clean(maps["period"].get(m)) for m in REQUIRED}
- if "" in periods or len(periods)>1:
-  # Growth may legitimately encode a two-FY comparison; all other metrics should
-  # align to the same fiscal period. Preserve strict fail-closed behavior here.
-  fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":"METRIC_SOURCE_PERIODS_MISSING_OR_MIXED"}); continue
+ def fiscal_year(period):
+  years=re.findall(r"20\\d{2}",period)
+  return years[-1] if years else ""
+ period_years={fiscal_year(p) for p in periods}
+ if "" in periods or "" in period_years or len(period_years)>1:
+  # Growth may legitimately encode a consecutive FY pair; compare its latest
+  # FY to the reporting FY of the ratio/cash-flow metrics.
+  fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":"METRIC_SOURCE_PERIODS_MISSING_OR_FISCAL_YEAR_MISMATCH"}); continue
  currencies={clean(maps["currency"].get(m)).upper() for m in REQUIRED}
  if "" in currencies:
   fund_rows.append({"Symbol":sym,"Status":"WAIT_FOR_DATA","Reason":"METRIC_SOURCE_CURRENCY_MISSING"}); continue
