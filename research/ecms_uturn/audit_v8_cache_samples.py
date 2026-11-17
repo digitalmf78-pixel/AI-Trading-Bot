@@ -25,16 +25,25 @@ def date_tokens(path):
         except Exception: pass
     return found
 
-def index_files(root):
+def index_files(root, date_columns):
+    """Index files by the session dates inside their tables, not filename guesses."""
     idx={}
     if root.exists():
         for p in root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in {".csv",".zip"}:
-                for d in date_tokens(p): idx.setdefault(d,[]).append(p)
+            if not p.is_file() or p.suffix.lower() not in {".csv",".zip"}:
+                continue
+            try:
+                frame=load_table(p)
+                norm={str(col).strip().lower():col for col in frame.columns}
+                datecol=next((norm[name.lower()] for name in date_columns if name.lower() in norm),None)
+                if not datecol:
+                    continue
+                dates=pd.to_datetime(frame[datecol],errors="coerce",dayfirst=False).dt.date.astype("string")
+                for day in sorted(set(dates.dropna().tolist())):
+                    idx.setdefault(day,[]).append(p)
+            except Exception:
+                continue
     return idx
-
-bhav_idx=index_files(bhav_root)
-delivery_idx=index_files(del_root)
 
 def load_table(path):
     if path.suffix.lower()==".zip":
@@ -50,6 +59,9 @@ def find_date_col(df, candidates):
     for c in candidates:
         if c.lower() in norm: return norm[c.lower()]
     return None
+
+bhav_idx=index_files(bhav_root,["TradDt","DATE1","Date"])
+delivery_idx=index_files(del_root,["DATE1","DATE"])
 
 def verify_bhav(symbol, session, path):
     df=load_table(path)
