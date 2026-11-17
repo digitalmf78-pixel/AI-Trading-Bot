@@ -219,14 +219,14 @@ The CSV preserves every returned page row, including rows outside the official M
 
 - Design document: [ECMS Fundamental U-Turn Research Design](../../docs/ECMS_FUNDAMENTAL_UTURN_RESEARCH_DESIGN.md).
 - User-confirmed basis: consecutive completed annual EPS values; pre-result price peak.
-- The research design uses the user-confirmed 20 completed NSE-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone.
+- The downside research design uses the user-confirmed 20 completed NSE-session pre-announcement peak window, maximum daily High, a pre-result reference P/E and an initial ±3% proximity zone. A separate upside/overextension context checks RSI14, SMA20/SMA50, extension versus SMA20 and volume versus the prior 20-session average.
 - The module is isolated research only and is mapped as an optional P7 explanatory sub-layer, using inputs prepared in P1/P2/P4 and reviewed in P8. It does not change phase order, EOD/Morning behavior, fundamental gating, production caches, Telegram decision messages or NSE V8. No backtesting, basketting, order or buy/sell signal.
 
 
 ## Fundamental U-Turn research implementation — 17-Nov-2026
 
 - User-confirmed research settings: annual diluted EPS only; pre-result peak is the maximum daily High from the 20 completed NSE sessions strictly before the result announcement calendar date; initial validation universe is 3–5 NSE Main Board issuers.
-- Research-only calculator: `strategies/ecms/fundamental_uturn.py`; official NSE UDiFF parser: `strategies/ecms/uturn_nse_ohlc.py`; tests: `tests/test_ecms_fundamental_uturn.py` and `tests/test_ecms_uturn_nse_ohlc.py`.
+- Research-only downside calculator: `strategies/ecms/fundamental_uturn.py`; official NSE UDiFF parser: `strategies/ecms/uturn_nse_ohlc.py`; two-sided price-context module: `strategies/ecms/uturn_two_sided.py`; tests: `tests/test_ecms_fundamental_uturn.py`, `tests/test_ecms_uturn_nse_ohlc.py` and `tests/test_ecms_uturn_two_sided.py`.
 - The module requires separate previous/current diluted-EPS and reporting-basis fields, INR/share units, HTTPS source URLs for both EPS years, result announcement and both price observations, verified EPS/OHLC flags, consecutive FYs, positive EPS, post-result completed Close and corporate-action comparability. Missing or mismatched data fails closed.
 - It computes a valuation reset estimate and ±3% proximity zone; this is not confirmed support, a reversal signal, entry trigger, Buy/Sell recommendation or guaranteed price.
 - A dedicated branch-scoped CI workflow runs only the U-Turn unit tests: `.github/workflows/ecms-uturn-research-tests.yml`. First CI runs exposed one assertion-text mismatch (16 passed, 1 failed); the test expectation was corrected in commit `1a89516d4de86bca640daf09eebeb22b39b6f41d`. Initial calculator CI passed in [Run #7](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44026004284) with 17 tests. Expanded CI passed in [Run #13](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44026400503) and was reconfirmed in [Run #14](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/44026505041): Python compile succeeded and all 23 calculator + NSE UDiFF parser tests passed. This is fixture/unit-test validation only, not issuer-level price-data or live workflow validation.
