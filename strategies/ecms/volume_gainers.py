@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse, json, os, re, shutil
 from email.utils import parsedate_to_datetime
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -1646,8 +1646,13 @@ def _write_execution_status(mode, status, reason="", **details):
 
 
 def _resolve_manual_scan_mode(now):
-    """Manual dispatch is an EOD action only after the regular NSE close."""
-    return "eod" if (now.hour, now.minute) >= (15, 30) else None
+    """Resolve one-click manual scans using the ECMS IST operating windows."""
+    current = now.time().replace(tzinfo=None)
+    if current >= time(15, 30) or current < time(8, 0):
+        return "eod"
+    if time(9, 15) <= current < time(12, 0):
+        return "morning"
+    return None
 
 
 def main():
@@ -1658,9 +1663,15 @@ def main():
     if args.mode == "auto" and os.getenv("GITHUB_EVENT_NAME", "").lower() == "workflow_dispatch":
         args.mode = _resolve_manual_scan_mode(now)
         if args.mode is None:
-            print(f"ECMS_MANUAL_EOD_BLOCKED_BEFORE_CLOSE at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            current = now.time().replace(tzinfo=None)
+            reason = (
+                "EOD_SNAPSHOT_LOCKED_AFTER_0800"
+                if time(8, 0) <= current < time(9, 15)
+                else "OUTSIDE_ECMS_SCAN_WINDOW"
+            )
+            print(f"ECMS_MANUAL_SCAN_SKIPPED reason={reason} at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             _write_execution_status(
-                "eod", "SKIPPED", "MANUAL_RUN_BEFORE_NSE_CLOSE",
+                "auto", "SKIPPED", reason,
                 actual_time_ist=now.strftime("%H:%M"),
             )
             return
