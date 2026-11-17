@@ -1,7 +1,7 @@
 # ECMS Fundamental U-Turn Module — Research Design
 
 **Design date:** 2026-11-17  
-**Status:** Research design only; not production-approved.  
+**Status:** Research implementation v1 added on the isolated research branch; not production-approved. Unit-test execution and issuer-level live-data validation remain pending.  
 **Scope:** ECMS only, on branch `research/bharat-sm-data-fundamental-audit-2026-11-17`.  
 **User-confirmed inputs:** annual EPS comparison; peak price means the price peak before the result announcement.  
 **No backtesting, basketting, trading order or buy/sell signal is included.**
@@ -16,10 +16,10 @@ Estimate the valuation impact of a decline in annual EPS using the valuation mul
 |---|---|
 | Previous EPS | Audited EPS for the immediately preceding completed financial year |
 | Current EPS | Audited EPS for the latest completed financial year, after its result is officially published |
-| EPS basis | Use diluted EPS consistently where both years are available; do not silently mix diluted and basic EPS. If only basic EPS exists for either year, mark basis mismatch / WAIT_FOR_DATA until explicitly resolved. |
+| EPS basis | Diluted EPS only for both years. If diluted EPS is missing for either year, mark `WAIT_FOR_DATA`; no Basic EPS fallback. |
 | EPS units | INR per share, same share class and comparable corporate-action basis |
 | Peak event date | Official NSE/BSE result announcement publication date/time for the latest completed FY |
-| Pre-result price window | Proposed configurable default: 20 completed NSE trading sessions ending strictly before the announcement calendar date. This lookback is a research default, not a user-confirmed investment rule. |
+| Pre-result price window | User-confirmed: 20 completed NSE trading sessions ending strictly before the announcement calendar date. |
 | Peak price | Maximum daily High in that pre-result window, sourced from validated exchange OHLC data |
 | Tolerance | Initial default ±3%, retained from the user's supplied code; configurable for research, not a trading threshold |
 | Price comparison | Latest valid post-announcement completed-session Close, with session date and source retained |
@@ -120,7 +120,18 @@ Output columns should include the full input contract plus:
 - Keep the raw source observations and calculation output separately auditable.
 - No production workflow invocation or automatic scheduled job until the design is implemented, unit-tested and manually reviewed.
 
-## 8. Minimum tests before any live shadow use
+## 8. Research implementation v1
+
+Implemented in `strategies/ecms/fundamental_uturn.py` with tests in `tests/test_ecms_fundamental_uturn.py`.
+
+- `select_pre_result_peak()` selects the maximum High from the latest 20 supplied pre-announcement sessions, excluding the entire result announcement date. The caller must supply validated NSE trading-session OHLC rows; this function does not fetch or infer the NSE calendar.
+- `calculate_uturn_targets()` enforces consecutive annual FYs, diluted EPS only, positive EPS, explicit consolidated/standalone basis, official-verification flags, corporate-action adjustment flag, and a completed post-result close strictly after the announcement date.
+- It calculates the two equivalent target formulas and fails closed on a mismatch. Default proximity tolerance is ±3%.
+- Outputs are research observations only; `Near_U_Turn_Support` remains for legacy compatibility, while the user-facing interpretation must be “proximity zone”, not confirmed support.
+- No provider, NSE price feed, result-announcement scraper, workflow, Telegram, cache, EOD/Morning, P0–P8 or NSE V8 integration was added.
+- The first 3–5 issuer sample has not been populated: issuer selection is blocked until official FY EPS, exact announcement timestamp, 20-session exchange OHLC and corporate-action comparability are evidenced. No symbols or values are fabricated.
+
+## 9. Minimum tests before any live shadow use
 
 1. Example: prior EPS 20, current EPS 16, peak High 400 gives reference P/E 20, correction 80 and target 320.
 2. Equivalent target formula returns same value.
@@ -138,10 +149,12 @@ Output columns should include the full input contract plus:
 14. All outputs preserve source URLs, dates, units, basis and calculation version.
 15. Research module failure does not interrupt or modify the existing ECMS scan.
 
-## 9. Open decisions before coding
+## 10. Remaining research gates
 
-- Confirm whether the proposed 20-session pre-result peak window is acceptable, or specify another number.
-- Confirm whether the first research release should require diluted EPS only (recommended), or permit basic EPS when diluted EPS is absent.
-- Confirm whether the first test universe should be 3–5 liquid NSE Main Board issuers with recent official annual results.
+1. Run the unit tests in GitHub Actions and fix any failures.
+2. Select 3–5 NSE Main Board issuers only after official source and price-history coverage is checked; record exclusions and missing evidence.
+3. Validate annual diluted EPS against issuer-matched NSE/BSE official filings/XBRL, with identical consolidated/standalone basis and FY period.
+4. Validate 20-session OHLC and event timestamps; check splits, bonuses, rights and other corporate actions.
+5. Produce a manually reviewed research CSV with source URLs and per-field provenance.
 
 No implementation or production behavior is approved by this design document.
