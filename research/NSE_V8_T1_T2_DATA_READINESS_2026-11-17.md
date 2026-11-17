@@ -22,4 +22,4 @@ Outputs:
 This is a data-readiness audit only, not a trading backtest. Entry fill timing, stop/target trigger and gap execution, fees/slippage, trailing stop, and time exit remain separate policy decisions. Same-day stop/target collision is stop-first per user-approved research rule. No production behavior changes.
 
 ## Validation
-python -m unittest tests.test_t1_t2_data_readiness -v
+python -m unittest -v test_t1_t2_data_readiness
