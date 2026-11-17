@@ -284,3 +284,15 @@ High volume or high delivery alone does not prove institutional accumulation. A 
 - [ ] Produce per-stock input/provenance/output audit records and review them before any implementation decision.
 
 **Acceptance rule:** until every relevant research check is documented and reviewed, this remains an observation proposal only. A calculated reference price must never be described as a guaranteed floor or strong support.
+
+
+### Prototype test status — 17-Nov-2026
+
+- Added isolated calculator: `strategies/ecms/historical_pe_observation.py`.
+- Added unit tests: `tests/test_ecms_historical_pe_observation.py`.
+- The prototype uses a configurable lower PE percentile (default 20th; 25th remains a research comparison), reports median and 75th percentile for context, and multiplies the lower-band PE by a provenance-tagged current EPS.
+- It requires positive finite EPS/PE, matching declared EPS basis, metric-level source/period provenance, unique historical price dates, no future observations and a configurable minimum sample count (default 20).
+- Invalid/incomplete inputs return `WAIT_FOR_DATA`. The output explicitly says it is not support, not a floor and not a trading signal; technical status remains `NOT_ASSESSED`.
+- Initial local synthetic-fixture unit tests: **10 passed**. These test arithmetic and data guards only; they are not real-stock validation, not historical performance evidence, and not proof of a high-probability edge.
+- Still pending: repository CI result for this draft PR, issuer-level historical PE/EPS source audit, lookback/window and percentile sensitivity review, and a separately specified technical-confirmation protocol.
+- No production ECMS integration, no scan/workflow/cache/Telegram changes, no NSE V8 changes and no backtesting.
