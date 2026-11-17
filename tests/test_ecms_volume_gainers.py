@@ -1210,3 +1210,51 @@ def test_manual_auto_mode_skips_locked_and_intraday_windows():
     assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 12, 0)) is None
     assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 15, 29)) is None
     assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 15, 30)) == "eod"
+
+
+
+def test_reuse_previous_eod_snapshot_publishes_cached_data_without_live_fetch(tmp_path, monkeypatch):
+    import pandas as pd
+    import strategies.ecms.volume_gainers as scanner
+    from datetime import date
+
+    state = tmp_path / "state.csv"
+    output = tmp_path / "out"
+    pd.DataFrame([{
+        "TckrSymb": "AAA",
+        "EODDate": "2026-11-16",
+        "SnapshotType": "EOD",
+        "SnapshotStatus": "VALID",
+        "PageVolume": 1000,
+    }]).to_csv(state, index=False)
+    monkeypatch.setattr(scanner, "STATE_FILE", state)
+    monkeypatch.setattr(scanner, "OUTPUT_DIR", output)
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 16))
+    statuses = []
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
+    result = scanner._reuse_previous_eod_snapshot()
+    assert result["snapshot_refresh_performed"] is False
+    assert result["eligible_mainboard_equities"] == 1
+    saved = pd.read_csv(output / "volume_gainers_eod_nse_page.csv")
+    assert saved.loc[0, "ScanMode"] == "EOD_REUSED"
+    assert statuses == [("eod", "REUSED", "PREVIOUS_EOD_SNAPSHOT_REUSED")]
+
+
+def test_reuse_previous_eod_snapshot_rejects_wrong_date(tmp_path, monkeypatch):
+    import pandas as pd
+    import strategies.ecms.volume_gainers as scanner
+    from datetime import date
+
+    state = tmp_path / "state.csv"
+    pd.DataFrame([{
+        "TckrSymb": "AAA",
+        "EODDate": "2026-11-13",
+        "SnapshotType": "EOD",
+        "SnapshotStatus": "VALID",
+    }]).to_csv(state, index=False)
+    monkeypatch.setattr(scanner, "STATE_FILE", state)
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 16))
+    statuses = []
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
+    assert scanner._reuse_previous_eod_snapshot() is None
+    assert statuses[0][1:] == ("WAIT_FOR_DATA", "EOD_SNAPSHOT_DATE_MISMATCH_FOR_REUSE")
