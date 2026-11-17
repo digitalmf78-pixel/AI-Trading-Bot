@@ -1156,7 +1156,7 @@ def test_manual_auto_mode_after_market_close_runs_eod(monkeypatch):
     assert calls == ["eod"]
 
 
-def test_manual_auto_mode_before_market_close_runs_morning(monkeypatch):
+def test_manual_auto_mode_before_market_close_is_skipped(monkeypatch):
     import sys
     from datetime import datetime as real_datetime
     import strategies.ecms.volume_gainers as scanner
@@ -1167,15 +1167,17 @@ def test_manual_auto_mode_before_market_close_runs_morning(monkeypatch):
             return real_datetime(2026, 11, 17, 15, 29, tzinfo=tz)
 
     calls = []
+    statuses = []
     monkeypatch.setattr(scanner, "datetime", FixedDateTime)
     monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
     monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda _day: [])
     monkeypatch.setattr(scanner, "run_eod", lambda: calls.append("eod") or {})
     monkeypatch.setattr(scanner, "run_morning", lambda: calls.append("morning") or {})
-    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: {"mode": mode})
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
     monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
     monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "auto"])
 
     scanner.main()
 
-    assert calls == ["morning"]
+    assert calls == []
+    assert statuses == [("eod", "SKIPPED", "MANUAL_RUN_BEFORE_NSE_CLOSE")]
