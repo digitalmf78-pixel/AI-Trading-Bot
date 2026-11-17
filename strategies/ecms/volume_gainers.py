@@ -1645,10 +1645,19 @@ def _write_execution_status(mode, status, reason="", **details):
     return payload
 
 
+def _resolve_manual_scan_mode(now):
+    """Before the regular NSE close, manual runs are Morning; after close, EOD."""
+    return "eod" if (now.hour, now.minute) >= (15, 30) else "morning"
+
+
 def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
-    parser.add_argument("--mode",choices=("eod","morning"),required=True)
+    parser.add_argument("--mode",choices=("auto","eod","morning"),required=True)
     args=parser.parse_args()
+    now = datetime.now(IST)
+    if args.mode == "auto" and os.getenv("GITHUB_EVENT_NAME", "").lower() == "workflow_dispatch":
+        args.mode = _resolve_manual_scan_mode(now)
+        print(f"ECMS_MANUAL_MODE_RESOLVED={args.mode.upper()} at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     # GitHub Actions cron also fires on weekday NSE holidays. Never treat the
     # last available page/session as a fresh scan for a non-trading date.
     today = datetime.now(IST).date()
