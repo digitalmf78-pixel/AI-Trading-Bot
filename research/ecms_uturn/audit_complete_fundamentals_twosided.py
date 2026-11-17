@@ -84,7 +84,7 @@ for sym, group in metrics.groupby("TckrSymb",sort=True):
  # Require each metric's own source period and basis, and no mixed-period declaration.
  periods={clean(maps["period"].get(m)) for m in REQUIRED}
  def fiscal_year(period):
-  years=re.findall(r"20\\d{2}",period)
+  years=re.findall(r"20[0-9]{2}",period)
   return years[-1] if years else ""
  period_years={fiscal_year(p) for p in periods}
  if "" in periods or "" in period_years or len(period_years)>1:
