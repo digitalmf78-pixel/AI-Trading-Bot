@@ -7,9 +7,6 @@ OHLC data by the caller.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import Iterable
-
 import pandas as pd
 
 CALCULATION_VERSION = "ecms-uturn-v1"
