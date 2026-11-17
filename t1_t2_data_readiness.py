@@ -183,6 +183,17 @@ def audit_signal_frame(frame, prices, source_name):
             except Exception as exc:
                 reasons.append("SESSION_SEQUENCE_ERROR:" + type(exc).__name__)
         next_open = prices.get((symbol, next_session), {}).get("OPEN") if next_session else None
+        common_plan_valid = bool(
+            symbol and day is not None and math.isfinite(entry) and entry > 0
+            and math.isfinite(stop) and stop > 0 and stop < entry
+        )
+        t1_valid, t2_valid = math.isfinite(t1[0]), math.isfinite(t2[0])
+        horizon_ready = {}
+        for horizon in (5, 10, 20):
+            complete = horizon_coverage.get(horizon, "").startswith("COMPLETE_")
+            horizon_ready[f"T1DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t1_valid and complete else "WAIT_FOR_DATA"
+            horizon_ready[f"T2DataReady{horizon}D"] = "DATA_READY" if common_plan_valid and t2_valid and complete else "WAIT_FOR_DATA"
+        any_horizon_ready = any(value == "DATA_READY" for value in horizon_ready.values())
         output.append({
             "SourceFile": source_name, "SourceRow": int(idx)+1,
             "EODDate": day.isoformat() if day else "", "Symbol": symbol,
@@ -195,8 +206,9 @@ def audit_signal_frame(frame, prices, source_name):
             "ForwardOHLC5Coverage": horizon_coverage.get(5, "WAIT_FOR_DATA"),
             "ForwardOHLC10Coverage": horizon_coverage.get(10, "WAIT_FOR_DATA"),
             "ForwardOHLC20Coverage": horizon_coverage.get(20, "WAIT_FOR_DATA"),
+            **horizon_ready,
             "ResistanceCandidateCount": len(levels),
-            "ReadinessStatus": "READY_FOR_POLICY_SIMULATION" if not reasons else "WAIT_FOR_DATA",
+            "ReadinessStatus": "PARTIAL_DATA_READY" if any_horizon_ready else "WAIT_FOR_DATA",
             "ReadinessReasons": ";".join(reasons),
         })
     return pd.DataFrame(output)
