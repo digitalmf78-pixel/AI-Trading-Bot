@@ -294,11 +294,11 @@ ECMS has one workflow-dispatch button and no user-selected EOD/Morning input. A 
 | IST window | Manual dispatch route | Behaviour |
 |---|---|---|
 | 15:30–23:59 | EOD | Run the completed regular-session EOD scan |
-| 00:00–07:59 | EOD | Run EOD against the latest completed-session context |
+| 00:00–07:59 | EOD REUSE | Reuse the latest validated EOD snapshot; do not fetch/refresh live NSE data |
 | 08:00–09:14 | SKIP | EOD reference is locked; no fresh EOD or Morning scan |
 | 09:15–11:59 | Morning | Double-confirm latest EOD candidates and observe new stocks |
 | 12:00–15:29 | SKIP | Avoid incomplete intraday data |
 
 Scheduled routing remains at 17:01 IST for EOD and 09:21 IST for Morning. The official NSE trading calendar and each mode's existing data-date checks remain authoritative; a weekday schedule on a holiday must not create a scan. A skipped manual dispatch writes its routing decision to the Actions step summary and sends a short Telegram notice when Telegram secrets are configured.
 
-EOD is the primary selection and entry-trigger engine. Morning is confirmation/observation only: it must not overwrite the EOD entry trigger or convert a new observation into an EOD entry signal. The 08:00 IST lock is a reuse/hold boundary, not a second EOD data refresh.
+EOD is the primary selection and entry-trigger engine. Morning is confirmation/observation only: it must not overwrite the EOD entry trigger or convert a new observation into an EOD entry signal. The 00:00–07:59 IST window is snapshot reuse only; it must not refresh live NSE data. The 08:00 IST lock closes EOD reuse until Morning opens at 09:15.
