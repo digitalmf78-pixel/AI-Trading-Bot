@@ -1,7 +1,7 @@
 # ECMS Fundamental U-Turn Module — Research Design
 
 **Design date:** 2026-11-17  
-**Status:** Research implementation v1 added on the isolated research branch; not production-approved. Unit-test execution and issuer-level live-data validation remain pending.  
+**Status:** Research implementation v1 added on the isolated research branch; dedicated CI passed 17 unit tests on 17-Nov-2026. Issuer-level OHLC/corporate-action reconciliation remains pending; not production-approved.  
 **Scope:** ECMS only, on branch `research/bharat-sm-data-fundamental-audit-2026-11-17`.  
 **User-confirmed inputs:** annual EPS comparison; peak price means the price peak before the result announcement.  
 **No backtesting, basketting, trading order or buy/sell signal is included.**
@@ -163,3 +163,10 @@ Implemented in `strategies/ecms/fundamental_uturn.py` with tests in `tests/test_
 5. Produce a manually reviewed research CSV with source URLs and per-field provenance.
 
 No implementation or production behavior is approved by this design document.
+
+
+## 11. Initial FY2026 issuer sample
+
+Three NSE Main Board issuers have been selected for a source-verification sample: INFY, ACI and AARTIIND. FY2025/FY2026 consolidated diluted EPS and result approval date/time have been checked against NSE iXBRL and NSE annual-report documents. The sample deliberately includes one EPS-decline case (ACI) and two no-decline cases (INFY, AARTIIND). See `research/ecms_uturn/SAMPLE_UNIVERSE_FY2026.md` and `research/ecms_uturn/sample_universe_fy2026.csv`.
+
+The 20-session peak High, post-result close, corporate-action adjustment and full OHLC provenance are not yet populated. The sample is therefore not eligible for U-Turn target calculation until those fields are independently verified.
