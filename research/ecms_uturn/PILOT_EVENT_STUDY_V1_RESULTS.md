@@ -11,7 +11,7 @@
 - 202 delivery files were discovered; 600 delivery rows matched symbol/session rows.
 - Post-result windows had delivery rows for the observed sessions.
 - Each event had 20 pre-result cache sessions matching its manifest list. The manifest calendar dates have not yet been independently checked against NSE's official calendar.
-- The 3-symbol pilot was not randomly selected. It is descriptive only and not statistically representative.
+- The 3-symbol pilot was not randomly selected. It is descriptive only and not statistically representative. Cash dividends are excluded from the price-only horizon returns; see [PILOT_SAMPLE_DIVIDEND_CORPORATE_ACTION_REVIEW.md](PILOT_SAMPLE_DIVIDEND_CORPORATE_ACTION_REVIEW.md).
 
 ## EPS inputs and event-study observations
 
