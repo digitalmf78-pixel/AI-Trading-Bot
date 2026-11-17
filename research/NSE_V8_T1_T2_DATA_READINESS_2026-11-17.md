@@ -94,3 +94,8 @@ The user approved the research entry timing: **enter at the Open of the next off
 - EntryExecutionStatus = ENTRY_READY only when that next-session Open exists and is valid; otherwise WAIT_FOR_DATA.
 
 This is an explicit research assumption only. It does not change production EntryPricePlan, production scanner behavior, or place orders. All T1/T2 horizon readiness flags now require a valid next-session Open as well as valid point-in-time Entry/Stop and the relevant forward OHLC coverage.
+
+
+### Entry-gap integrity
+
+The research audit validates the next-session Open against the stored initial stop. If the next-session Open is at or below the initial stop, it does not create an entry and marks the row WAIT_FOR_DATA for execution analysis. T1/T2 are recalculated as the nearest two distinct verified structural levels strictly above the actual next-session Open. A gap above the prior planned T1 therefore does not count an already-underneath resistance as a valid target; the next verified overhead levels are used instead. No synthetic targets are created.
