@@ -69,17 +69,28 @@ for sym in symbols:
     records=[]; symbol_results=[]
     for day in expected:
         candidates=bhav_idx.get(day,[])
-        if len(candidates)!=1:
-            symbol_results.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":f"Expected one cached bhavcopy file; found {len(candidates)}","CachePaths":";".join(map(str,candidates))})
+        if not candidates:
+            symbol_results.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":"No cached bhavcopy file for expected session"})
             continue
-        try:
-            res=verify_bhav(sym,day,candidates[0])
-            symbol_results.append({"Symbol":sym,"Date":day,"Status":res.get("status"),"Reason":res.get("reason",""),"High":res.get("High"),"Close":res.get("Close"),"ISIN":res.get("ISIN"),"CachePath":str(candidates[0])})
-            if res.get("status")=="READY":
-                ohlc_rows.append(res)
-                records.append({"session_date":day,"source_url":f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{day.replace('-','')}_F_0000.csv.zip","bhavcopy":load_table(candidates[0])})
-        except Exception as e:
-            symbol_results.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":f"{type(e).__name__}: {e}","CachePath":str(candidates[0])})
+        ready=[]
+        failures=[]
+        for candidate in candidates:
+            try:
+                res=verify_bhav(sym,day,candidate)
+                if res.get("status")=="READY":
+                    ready.append((candidate,res))
+                else:
+                    failures.append(f"{candidate}:{res.get('status')}:{res.get('reason','')}")
+            except Exception as e:
+                failures.append(f"{candidate}:{type(e).__name__}:{e}")
+        if len(ready)!=1:
+            reason=("No candidate file contained one verified EQ row; "+" | ".join(failures[:5])) if not ready else f"Ambiguous: {len(ready)} candidate files each contain a valid row"
+            symbol_results.append({"Symbol":sym,"Date":day,"Status":"WAIT_FOR_DATA","Reason":reason,"CachePaths":";".join(map(str,candidates))})
+            continue
+        chosen_path,res=ready[0]
+        symbol_results.append({"Symbol":sym,"Date":day,"Status":"READY","Reason":"","High":res.get("High"),"Close":res.get("Close"),"ISIN":res.get("ISIN"),"CachePath":str(chosen_path)})
+        ohlc_rows.append(res)
+        records.append({"session_date":day,"source_url":f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{day.replace('-','')}_F_0000.csv.zip","bhavcopy":load_table(chosen_path)})
     # The parser requires complete 20-row coverage; feed only successful dated records.
     result=build_nse_symbol_ohlc_window(records,symbol=sym,expected_sessions=expected,announcement_date=next(r["Result_Announcement_Date"] for r in PEAK if r["Symbol"]==sym),window_sessions=20)
     windows.append({"Symbol":sym,"ExpectedSessions":20,"VerifiedSessions":len(records),"Status":result["status"],"Reason":result["reason"],"WindowStart":result.get("window_start",""),"WindowEnd":result.get("window_end",""),"ISIN":result.get("ISIN","")})
