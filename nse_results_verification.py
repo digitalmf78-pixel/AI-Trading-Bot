@@ -163,3 +163,96 @@ def write_results_verification_report(
         "selection_gate=UNCHANGED"
     )
     return report
+
+
+
+def refresh_official_results_filings(as_of_date: date, filings_path="outputs/v8_official_financial_results_filings.csv"):
+    """Fetch a fresh NSE Integrated Filing snapshot; never trust a stale cache."""
+    from fundamental_official_filings import fetch_nse_financial_results
+
+    fresh = fetch_nse_financial_results(as_of_date, lookback_days=730)
+    required = {"TckrSymb", "FinancialPeriodEnd", "PublicationDate", "PublicationDateStatus"}
+    if fresh is None or fresh.empty or not required.issubset(fresh.columns):
+        raise RuntimeError("NSE Integrated Filing refresh returned an empty or invalid snapshot")
+    fresh = fresh.copy()
+    fresh["TckrSymb"] = fresh["TckrSymb"].astype(str).str.strip().str.upper()
+    fresh["_period"] = fresh["FinancialPeriodEnd"].map(_as_date)
+    fresh["_publication"] = fresh["PublicationDate"].map(_as_date)
+    fresh = fresh[
+        fresh["TckrSymb"].ne("")
+        & fresh["_period"].notna()
+        & fresh["_publication"].notna()
+        & fresh["_publication"].le(as_of_date)
+        & fresh["PublicationDateStatus"].astype(str).str.upper().eq("VERIFIED")
+    ].copy()
+    if fresh.empty:
+        raise RuntimeError("NSE Integrated Filing refresh contained no valid VERIFIED filing rows")
+    fresh = fresh.drop(columns=["_period", "_publication"])
+    path = Path(filings_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    fresh.to_csv(temp_path, index=False)
+    temp_path.replace(path)
+    print(f"[RESULTS VERIFICATION] Fresh NSE filing snapshot: rows={len(fresh)} path={path}")
+    return fresh
+
+
+def apply_past_month_results_filing_gate(candidates: pd.DataFrame, results_audit: pd.DataFrame,
+                                         as_of_date: date, filings_path="outputs/v8_official_financial_results_filings.csv"):
+    """Require an exact-period VERIFIED NSE filing for previous-calendar-month events."""
+    if candidates is None or candidates.empty:
+        return candidates.copy() if isinstance(candidates, pd.DataFrame) else pd.DataFrame(), results_audit
+    audit = results_audit.copy() if isinstance(results_audit, pd.DataFrame) else pd.DataFrame()
+    last_year, last_month = (as_of_date.year - 1, 12) if as_of_date.month == 1 else (as_of_date.year, as_of_date.month - 1)
+    last_start = date(last_year, last_month, 1)
+    last_end = as_of_date - pd.Timedelta(days=as_of_date.day)
+    event_dates = audit.get("OfficialResultsDate", pd.Series("", index=audit.index)).map(_as_date)
+    past_mask = event_dates.map(lambda value: value is not None and last_start <= value <= last_end)
+    past_symbols = set(audit.loc[past_mask, "TckrSymb"].astype(str).str.strip().str.upper())
+    if not past_symbols:
+        audit["ResultsFilingGateStatus"] = "NOT_REQUIRED_UPCOMING_EVENT"
+        return candidates.copy(), audit
+
+    try:
+        filings = refresh_official_results_filings(as_of_date, filings_path=filings_path)
+        filing_frame = filings.copy()
+        filing_frame["_period"] = filing_frame["FinancialPeriodEnd"].map(_as_date)
+        filing_frame["_publication"] = filing_frame["PublicationDate"].map(_as_date)
+        verified_rows = filing_frame[
+            filing_frame["PublicationDateStatus"].astype(str).str.upper().eq("VERIFIED")
+            & filing_frame["_period"].notna()
+            & filing_frame["_publication"].notna()
+            & filing_frame["_publication"].le(as_of_date)
+        ]
+        refresh_error = ""
+    except Exception as exc:
+        verified_rows = pd.DataFrame()
+        refresh_error = f"{type(exc).__name__}: {exc}"
+
+    statuses = {}
+    for _, event in audit.loc[past_mask].iterrows():
+        symbol = str(event.get("TckrSymb", "")).strip().upper()
+        expected = _expected_period_end(str(event.get("ResultsPurpose", "")), str(event.get("ResultsDetails", "")))
+        if refresh_error:
+            status = "WAIT_FOR_DATA_FILING_REFRESH_FAILED"
+        elif expected is None:
+            status = "WAIT_FOR_DATA_EVENT_PERIOD_NOT_EXPLICIT"
+        else:
+            exact = verified_rows[
+                verified_rows["TckrSymb"].astype(str).str.strip().str.upper().eq(symbol)
+                & verified_rows["_period"].eq(expected)
+            ]
+            status = "PASS_EXACT_PERIOD_NSE_FILING_VERIFIED" if not exact.empty else "WAIT_FOR_DATA_NO_EXACT_PERIOD_NSE_FILING"
+        statuses[symbol] = status
+
+    if "TckrSymb" in audit.columns:
+        audit["ResultsFilingGateStatus"] = [
+            statuses.get(str(symbol).strip().upper(), "NOT_REQUIRED_UPCOMING_EVENT")
+            for symbol in audit["TckrSymb"]
+        ]
+    allowed = {symbol for symbol, status in statuses.items() if status == "PASS_EXACT_PERIOD_NSE_FILING_VERIFIED"}
+    keep_symbols = (set(candidates["TckrSymb"].astype(str).str.strip().str.upper()) - past_symbols) | allowed
+    gated = candidates[candidates["TckrSymb"].astype(str).str.strip().str.upper().isin(keep_symbols)].copy()
+    print(f"[RESULTS FILING GATE] past_month={len(past_symbols)} verified={len(allowed)} wait={len(past_symbols)-len(allowed)} refresh_error={bool(refresh_error)}")
+    return gated, audit
+

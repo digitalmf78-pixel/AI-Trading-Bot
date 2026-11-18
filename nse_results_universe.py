@@ -159,16 +159,19 @@ def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date
     p1_end = _add_months(as_of_date, 1)
     p2_end = _add_months(as_of_date, 2)
     p3_end = _add_months(as_of_date, int(lookahead_months))
-    in_window = event_dates.between(as_of_date, p3_end)
+    # Include the immediately preceding calendar month for post-announcement verification.
+    # Those rows are not eligible until the exact financial period is confirmed by NSE filing.
+    in_window = event_dates.between(last_start, p3_end)
     future_calendar = calendar.loc[in_window].copy()
     future_dates = pd.to_datetime(future_calendar["OfficialResultsDate"], errors="coerce").dt.date
     future_calendar["ResultsPriority"] = [
+        "P0_LAST_MONTH_REQUIRES_VERIFIED_FILING" if d < as_of_date else
         "P1_WITHIN_1_MONTH" if d <= p1_end else
         "P2_WITHIN_2_MONTHS" if d <= p2_end else
         "P3_WITHIN_3_MONTHS"
         for d in future_dates
     ]
-    priority_rank = {"P1_WITHIN_1_MONTH": 1, "P2_WITHIN_2_MONTHS": 2, "P3_WITHIN_3_MONTHS": 3}
+    priority_rank = {"P0_LAST_MONTH_REQUIRES_VERIFIED_FILING": 0, "P1_WITHIN_1_MONTH": 1, "P2_WITHIN_2_MONTHS": 2, "P3_WITHIN_3_MONTHS": 3}
     future_calendar["ResultsPriorityRank"] = future_calendar["ResultsPriority"].map(priority_rank)
     summary.update({
         "priority_p1_window_end": p1_end.isoformat(),
@@ -178,6 +181,7 @@ def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date
         "priority_p3_window_end": p3_end.isoformat(),
         "priority_p3_companies": int(future_calendar.loc[future_calendar["ResultsPriority"].eq("P3_WITHIN_3_MONTHS"), "TckrSymb"].nunique()),
         "results_universe_companies_3m": int(future_calendar["TckrSymb"].nunique()),
+        "last_month_results_candidates_requiring_filing": int(future_calendar.loc[future_calendar["ResultsPriority"].eq("P0_LAST_MONTH_REQUIRES_VERIFIED_FILING"), "TckrSymb"].nunique()),
     })
     eligible = set(future_calendar["TckrSymb"])
     filtered = frame.loc[symbols.isin(eligible)].copy()

@@ -56,7 +56,7 @@ jobs:
           test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_audit_risk_fixes.py
           test_risk_config_consistency.py test_volume_gainer_entrypoint_order.py
           test_selection_pipeline_order.py test_nse_results_universe.py test_nifty_history_stale_cache_fallback.py test_nifty50_archive_history.py test_fundamental_cache_persistence_workflow.py
-          test_fundamental_metric_verification.py test_fii_dii_activity.py test_nse_results_verification.py test_nse_xbrl_fetch.py
+          test_fundamental_metric_verification.py test_fii_dii_activity.py test_nse_results_verification.py tests/test_past_month_results_filing_gate.py test_nse_xbrl_fetch.py
           test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py
           test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py
           test_track2_full_mainboard.py test_track2_data_quality_diagnostics.py test_sanitize_public_artifacts.py test_rvol_strategy_backtest.py test_t1_t2_data_readiness.py test_signal_log.py test_signal_shadow_store.py test_signal_cohort_assembly.py test_signal_history_persistence.py test_signal_outcome_tracker.py test_signal_shadow_run.py test_experimental_observation_labels.py test_rsi_informational_only.py
