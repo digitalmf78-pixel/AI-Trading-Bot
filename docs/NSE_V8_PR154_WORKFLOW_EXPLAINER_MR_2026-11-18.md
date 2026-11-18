@@ -1,6 +1,6 @@
 # NSE Swing Trading V8 — PR #154 Workflow Update (Marathi)
 **दिनांक:** 18-11-2026  
-**स्थिती:** PR #154 वर CI PASS; Live NSE Calendar audit बाकी; PR अजून Draft/Open आहे.  
+**स्थिती:** PR #154 वर code CI PASS (पूर्वीच्या code head वर); NSE public calendar page वर live entries दिसतात; API JSON/schema आणि matching runtime audit बाकी; PR अजून Draft/Open आहे.  
 **Branch:** `fix/nse-v8-official-nifty-history-2026-11-18`
 
 > हा दस्तऐवज PR #154 मधील बदल समजावण्यासाठी स्वतंत्र workflow note आहे. **Master Specification बदललेली नाही आणि immutable राहील.**
@@ -20,7 +20,7 @@
 7. **Liquidity:** विद्यमान Liquidity filter लागू होतो (सध्याचा threshold ₹1.5 Cr). Reject/WAIT rows साठी पुढील Fundamental data fetch केला जात नाही.
 8. **Fundamentals आणि पुढील विद्यमान analysis:** Liquidity नंतर विद्यमान fundamental enrichment/ranking, technical layers, news catalyst, sector/market context, risk checks, watchlists आणि signal-history/outcome tracking चालू राहतात. या PR मुळे त्यांचे thresholds किंवा निर्णय नियम बदललेले नाहीत.
 9. **Research-only observations:** Accumulation, VCP/base आणि breakout/pullback observations अहवाल/Telegram मध्ये दिसू शकतात. त्या स्वतः BUY/ENTRY signal नाहीत.
-10. **Reports:** Results universe audit आणि counts `outputs/` मध्ये लिहिले जातात. P1/P2/P3 आणि eligible next-3-month company counts console/report मध्ये दिसतात.
+10. **Reports:** Results universe audit आणि counts `outputs/` मध्ये लिहिले जातात. P1/P2/P3 आणि eligible next-3-month company counts console/report मध्ये दिसतात.\n11. **Track 2:** Full official Mainboard cohort चा snapshot Results gate च्या आधी घेतला जातो; Track 2 research observer Results eligibility मुळे कमी होत नाही. Track 1 मात्र Results-qualified cohort वरच पुढे जातो.
 
 ## 2. PR #154 मध्ये नेमके कोणते बदल केले?
 
@@ -62,12 +62,12 @@ Audit मध्ये Mainboard symbol, Results-universe status, official result
 
 - Latest PR head: `28fb14514e7cdd833b6127aa73c490ee1baacb86`.
 - Latest NSE V8 PR CI run: **44259914882 — SUCCESS** (compile, unit/data-audit, V8 regression आणि sector/news/official-index tests).
-- **Live official NSE Event Calendar API response आणि प्रत्यक्ष Mainboard symbol matching अजून स्वतंत्रपणे verify करायचे आहेत.** Mock/unit tests पास होणे म्हणजे live NSE source audit पूर्ण झाला असे नाही.
+- **NSE ची अधिकृत Event Calendar webpage live तपासली: Financial Results purpose असलेले entries आणि dates दिसतात.** मात्र code मधील `/api/event-calendar` endpoint चा exact live JSON payload/schema, pagination/date-window coverage आणि त्याच वेळच्या Mainboard symbol matching प्रत्यक्ष scanner runtime मध्ये अजून verify झालेले नाहीत. Webpage render दिसणे म्हणजे API integration पूर्णपणे प्रमाणित झाले असे नाही.
 - त्यामुळे PR Draft/Open ठेवायचा; Live audit पूर्ण होईपर्यंत Merge नाही.
-- Live audit मध्ये official response schema, date range, Financial Results purpose matching, cancellations, duplicate symbols आणि Mainboard intersection तपासणे आवश्यक.
+- Live audit मध्ये API response schema, date range, Financial Results purpose matching, cancellations, duplicate symbols आणि Mainboard intersection तपासणे आवश्यक. Track 2 snapshot placement साठी regression test जोडला.
 
 ## 7. Workflow flow — एका ओळीत
 
-**Bhavcopy → Official Mainboard → Official NSE Results (next 3 calendar months; P1/P2/P3 priority) → Delivery A/B → RVOL classification → Liquidity → Fundamentals → Technical/Risk → News/Sector context → Watchlists/Research reports → Signal history & outcomes.**
+**Bhavcopy → Official Mainboard → (Track 2 full-Mainboard snapshot) → Track 1: Official NSE Results (next 3 calendar months; P1/P2/P3 priority) → Delivery A/B → RVOL classification → Liquidity → Fundamentals → Technical/Risk → News/Sector context → Watchlists/Research reports → Signal history & outcomes.**
 
-**टीप:** Track 2 / full-universe research report चा input सध्याच्या code मध्ये Results filter नंतर तयार होतो; त्यामुळे तो Results-qualified Mainboard cohort वर चालतो. हा परिणाम अपेक्षित आहे का, हे Live audit/mergeपूर्वी स्वतंत्रपणे तपासायचे आहे.
+**टीप:** Track 2 चा input आता Results filter च्या आधी snapshot होतो; त्यामुळे तो full official Mainboard cohort वर चालतो. Results gate फक्त Track 1 scanner input कमी करतो.
