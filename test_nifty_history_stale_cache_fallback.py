@@ -100,7 +100,7 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"side_effect": AssertionError("Yahoo must not be called when official NSE data is valid")}
             )
-            with p1, p2, p3, patch.object(
+            with p1, p2, p3, p4, patch.object(
                 vg.sector_data, "load_nifty50_index_history_from_archive", return_value=official
             ):
                 result = vg.load_nifty_index_history(target)
@@ -108,7 +108,7 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
             cache = root / "market_index" / "nifty50_index_history.csv"
             self.assertTrue(cache.exists())
-            self.assertFalse((root / "market_index" / "nifty50_index_history.csv").exists())
+            self.assertFalse((root / "nifty50_index_history.csv").exists())
 
 
 if __name__ == "__main__":
