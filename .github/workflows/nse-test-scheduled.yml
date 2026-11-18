@@ -218,7 +218,8 @@ jobs:
             test_news_official_feed_diagnostics \
             test_news_catalyst_matching \
             test_news_issuer_matching \
-            test_nse_official_index_api
+            test_nse_official_index_api \
+            test_nifty50_archive_history
 
           echo "===== PYTEST PARSER TESTS ====="
           python -m pytest -q test_news_catalyst_parser.py
