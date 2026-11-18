@@ -55,7 +55,7 @@ from v8_layers_14_41 import (
 import sector_data
 from main_board_filter import apply_official_main_board_filter
 from nse_results_universe import apply_official_results_universe_filter, write_results_universe_reports
-from nse_results_verification import write_results_verification_report
+from nse_results_verification import write_results_verification_report, apply_past_month_results_filing_gate
 from bottom_detection import write_bottom_detection_report
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
@@ -3484,6 +3484,10 @@ def main():
                 current, eod_date, session=session, lookahead_months=3
             )
             write_results_universe_reports(results_universe_audit, results_summary, eod_date)
+            # Previous-month events enter Track 1 only after exact-period NSE filing verification.
+            current, results_universe_audit = apply_past_month_results_filing_gate(
+                current, results_universe_audit, eod_date
+            )
             # Independent filing/calendar reconciliation is diagnostic-only. It
             # must never change the Results Universe or downstream candidate set.
             try:
