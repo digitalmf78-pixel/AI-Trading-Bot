@@ -117,11 +117,15 @@ def collect_official_results_calendar(as_of_date: date, session=None,
         ) from exc
 
     rows = []
+    schema_rows = 0
     for item in raw_rows:
         symbol = _pick(item, "symbol", "tradingSymbol", "SYMBOL", "BD_SYMBOL").upper()
-        event_date = _parse_date(_pick(item, "date", "eventDate", "event_date", "meetingDate", "meeting_date"))
+        event_date_raw = _pick(item, "date", "eventDate", "event_date", "meetingDate", "meeting_date")
         purpose = _pick(item, "purpose", "eventType", "category")
         details = _pick(item, "details", "description", "subject")
+        if symbol and event_date_raw and purpose:
+            schema_rows += 1
+        event_date = _parse_date(event_date_raw)
         combined = f"{purpose} {details}".strip()
         if not symbol or event_date is None or not (window_start <= event_date <= window_end):
             continue
@@ -137,6 +141,12 @@ def collect_official_results_calendar(as_of_date: date, session=None,
             "ResultsSourceURL": NSE_EVENT_PAGE,
             "ResultsCalendarAsOf": as_of_date.isoformat(),
         })
+
+    if raw_rows and schema_rows == 0:
+        raise ResultsCalendarUnavailable(
+            "WAIT_FOR_DATA: NSE event calendar payload schema changed; "
+            "no rows exposed recognized symbol/date/purpose fields"
+        )
 
     frame = pd.DataFrame(rows, columns=[
         "TckrSymb", "OfficialResultsDate", "ResultsPurpose", "ResultsDetails",
