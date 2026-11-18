@@ -34,8 +34,8 @@ def test_results_universe_uses_only_official_financial_results_and_assigns_three
     rows = [
         {"symbol": "OLD", "date": "20-Oct-2026", "purpose": "Financial Results", "details": "Q2"},
         {"symbol": "NOW", "date": "25-Nov-2026", "purpose": "Financial Results", "details": "Q2"},
-        {"symbol": "NEXT", "date": "15-Dec-2026", "purpose": "Financial Results/Other business matters", "details": "Q2"},
-        {"symbol": "FAR", "date": "15-Jan-2027", "purpose": "Financial Results", "details": "Q3"},
+        {"symbol": "NEXT", "date": "20-Dec-2026", "purpose": "Financial Results/Other business matters", "details": "Q2"},
+        {"symbol": "FAR", "date": "20-Jan-2027", "purpose": "Financial Results", "details": "Q3"},
         {"symbol": "OTHER", "date": "22-Nov-2026", "purpose": "Other business matters", "details": "No results"},
         {"symbol": "CANCEL", "date": "23-Nov-2026", "purpose": "Financial Results", "details": "Meeting cancelled"},
     ]
