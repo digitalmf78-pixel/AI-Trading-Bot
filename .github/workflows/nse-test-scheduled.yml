@@ -612,6 +612,29 @@ jobs:
             data/cache/xbrl_samples/
           if-no-files-found: warn
 
+      - name: Save NSE, delivery, and sector history caches before Telegram notification
+        if: success() && steps.nse_scan.outcome == 'success' && steps.artifact_redaction.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/market_index/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+
       - name: Send final Telegram report after required workflow processing
         if: success() && steps.nse_scan.outcome == 'success' && steps.artifact_redaction.outcome == 'success'
         env:
