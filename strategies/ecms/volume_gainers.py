@@ -1825,13 +1825,20 @@ def main():
         actual_minutes = now.hour * 60 + now.minute
         difference = abs(actual_minutes - expected_minutes)
         # Morning remains a narrow timing window. Scheduled EOD can run late
-        # (including the 17:45 backup cron) on the same NSE session day, but
-        # must never run before the official EOD slot.
+        # on the same NSE session day. GitHub may also deliver a delayed EOD
+        # event after midnight; allow that recovery only before the next
+        # Morning window. run_eod() independently verifies the NSE page date
+        # against the latest completed official session before saving anything.
+        overnight_late_eod_recovery = (
+            args.mode == "eod" and actual_minutes < (9 * 60 + 15)
+        )
         slot_ok = (
-            actual_minutes >= expected_minutes
+            actual_minutes >= expected_minutes or overnight_late_eod_recovery
             if args.mode == "eod"
             else difference <= 15
         )
+        if overnight_late_eod_recovery and actual_minutes < expected_minutes:
+            print("ECMS_SCHEDULED_EOD_OVERNIGHT_RECOVERY=ENABLED; NSE session-date validation remains mandatory")
         if not slot_ok:
             _write_execution_status(
                 args.mode, "SKIPPED", "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
