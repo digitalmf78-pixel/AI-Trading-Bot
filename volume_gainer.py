@@ -55,6 +55,7 @@ from v8_layers_14_41 import (
 import sector_data
 from main_board_filter import apply_official_main_board_filter
 from nse_results_universe import apply_official_results_universe_filter, write_results_universe_reports
+from nse_results_verification import write_results_verification_report
 from bottom_detection import write_bottom_detection_report
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
@@ -3483,6 +3484,15 @@ def main():
                 current, eod_date, session=session, lookahead_months=3
             )
             write_results_universe_reports(results_universe_audit, results_summary, eod_date)
+            # Independent filing/calendar reconciliation is diagnostic-only. It
+            # must never change the Results Universe or downstream candidate set.
+            try:
+                write_results_verification_report(results_universe_audit, eod_date)
+            except Exception as verification_exc:
+                print(
+                    "[RESULTS VERIFICATION] REPORT_ONLY_WARNING: "
+                    f"{type(verification_exc).__name__}: {verification_exc}; selection_gate=UNCHANGED"
+                )
         except Exception as results_exc:
             print(f"[RESULTS UNIVERSE] WAIT_FOR_DATA: official NSE results calendar not verified; scanner input set to empty: {type(results_exc).__name__}: {results_exc}")
             results_universe_audit = pd.DataFrame({
