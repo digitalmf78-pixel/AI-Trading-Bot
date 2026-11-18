@@ -1223,6 +1223,14 @@ def run_eod():
     page_session_date = _verified_nse_page_session_date(page, scan_date)
     bhavcopy_date = expected_latest_completed_session()
     eod_date = page_session_date
+    # A late EOD trigger may fetch the prior completed session's page. Permit
+    # this only when NSE's verified page date equals the completed Bhavcopy
+    # session; never save a stale or future page as the EOD reference.
+    if page_session_date != scan_date and page_session_date != bhavcopy_date:
+        raise RuntimeError(
+            f"WAIT_FOR_DATA: late EOD page session {page_session_date} does not match "
+            f"latest completed NSE session {bhavcopy_date}"
+        )
     if not is_trading_session(eod_date):
         raise RuntimeError(f"WAIT_FOR_DATA: resolved EOD date {eod_date} is not an official NSE equity trading session")
     eligible["EODDate"]=eod_date.isoformat()
@@ -1720,6 +1728,36 @@ def _reuse_previous_eod_snapshot():
     return summary
 
 
+def _is_valid_cached_eod_for_session(expected_date):
+    """True only for a complete, unconsumed ECMS EOD snapshot of the requested session."""
+    if not STATE_FILE.is_file():
+        return False
+    try:
+        snapshot = pd.read_csv(STATE_FILE, dtype={"TckrSymb": str})
+        dates = set(snapshot.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+        symbols = snapshot.get("TckrSymb", pd.Series(dtype=str)).astype(str).str.strip()
+        valid = (
+            not snapshot.empty
+            and dates == {expected_date.isoformat()}
+            and symbols.ne("").all()
+            and not symbols.str.upper().duplicated().any()
+            and "SnapshotType" in snapshot.columns
+            and snapshot["SnapshotType"].astype(str).eq("EOD").all()
+            and "SnapshotStatus" in snapshot.columns
+            and snapshot["SnapshotStatus"].astype(str).eq("VALID").all()
+        )
+        if not valid:
+            return False
+        if CONSUMED_EOD_MARKER_FILE.is_file():
+            marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
+            consumed = str(marker.get("consumed_eod_date", ""))
+            if consumed and consumed >= expected_date.isoformat():
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _resolve_manual_scan_mode(now):
     """Resolve one-click manual scans using the ECMS IST operating windows."""
     current = now.time().replace(tzinfo=None)
@@ -1783,13 +1821,37 @@ def main():
             return
         expected_hour, expected_minute = (int(part) for part in expected_time.split(":"))
         now = datetime.now(IST)
-        difference = abs((now.hour * 60 + now.minute) - (expected_hour * 60 + expected_minute))
-        if difference > 15:
+        expected_minutes = expected_hour * 60 + expected_minute
+        actual_minutes = now.hour * 60 + now.minute
+        difference = abs(actual_minutes - expected_minutes)
+        # Morning remains a narrow timing window. Scheduled EOD can run late
+        # (including the 17:45 backup cron) on the same NSE session day, but
+        # must never run before the official EOD slot.
+        slot_ok = (
+            actual_minutes >= expected_minutes
+            if args.mode == "eod"
+            else difference <= 15
+        )
+        if not slot_ok:
             _write_execution_status(
                 args.mode, "SKIPPED", "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT",
                 expected_time_ist=expected_time, actual_time_ist=now.strftime("%H:%M"),
             )
             return
+    # The weekday backup cron is a recovery path, not a second daily scan.
+    # If the primary EOD already saved a valid current-session cache, report a
+    # successful no-op and avoid repeating the costly fundamental research pass.
+    if (
+        args.mode == "eod"
+        and os.getenv("ECMS_EOD_BACKUP_TRIGGER", "").strip().lower() in {"1", "true", "yes"}
+        and _is_valid_cached_eod_for_session(expected_latest_completed_session())
+    ):
+        expected_cached_date = expected_latest_completed_session().isoformat()
+        _write_execution_status(
+            args.mode, "SUCCESS", "BACKUP_SKIPPED_EOD_ALREADY_CACHED",
+            eod_date_ist=expected_cached_date,
+        )
+        return {"status": "REUSED", "eod_date_ist": expected_cached_date}
     result = run_eod() if args.mode=="eod" else run_morning()
     _write_execution_status(args.mode, "SUCCESS", "SCAN_COMPLETED")
     return result

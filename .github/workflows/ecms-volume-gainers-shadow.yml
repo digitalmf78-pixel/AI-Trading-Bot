@@ -8,6 +8,7 @@ on:
   schedule:
     - cron: "31 11 * * *" # 17:01 IST regular-session EOD
     - cron: "51 3 * * *"  # 09:21 IST regular-session Morning
+    - cron: "15 12 * * 1-5" # 17:45 IST weekday EOD backup trigger
 permissions:
   contents: read
 concurrency:
@@ -46,6 +47,8 @@ jobs:
                   mode, reason = "eod", "SCHEDULED_EOD_1701_IST"
               elif schedule == "51 3 * * *":
                   mode, reason = "morning", "SCHEDULED_MORNING_0921_IST"
+              elif schedule == "15 12 * * 1-5":
+                  mode, reason = "eod", "SCHEDULED_EOD_BACKUP_1745_IST"
               else:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
           elif event == "workflow_dispatch":
@@ -204,6 +207,7 @@ jobs:
       - name: Run EOD page research
         id: eod-research
         env:
+          ECMS_EOD_BACKUP_TRIGGER: ${{ github.event.schedule == '15 12 * * 1-5' }}
           PYTHONUNBUFFERED: "1"
           V8_AUTO_FETCH_FUNDAMENTALS: "true"
           V8_FREE_FUNDAMENTAL_SOURCES: "true"
