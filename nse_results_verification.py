@@ -15,7 +15,7 @@ import pandas as pd
 def _as_date(value):
     if value is None or str(value).strip().lower() in {"", "nan", "none", "nat"}:
         return None
-    parsed = pd.to_datetime(value, errors="coerce", dayfirst=not bool(re.match(r"^\\d{4}-\\d{2}-\\d{2}$", str(value).strip())))
+    parsed = pd.to_datetime(value, errors="coerce", dayfirst=not bool(re.match(r"^\d{4}-\d{2}-\d{2}$", str(value).strip())))
     return None if pd.isna(parsed) else parsed.date()
 
 
@@ -86,11 +86,11 @@ def build_results_verification_report(
         details = str(event.get("ResultsDetails", "") or "")
         event_text = f"{purpose} {details}".strip()
         expected_period = _expected_period_end(purpose, details)
-        if re.search(r"\\bcancel(?:led|ed)\\b|withdrawn", event_text, re.I):
+        if re.search(r"\bcancel(?:led|ed)\b|withdrawn", event_text, re.I):
             meeting_status = "CANCELLED_EVIDENCE_IN_CALENDAR_TEXT"
-        elif re.search(r"\\bpostponed\\b", event_text, re.I):
+        elif re.search(r"\bpostponed\b", event_text, re.I):
             meeting_status = "POSTPONED_REVIEW"
-        elif re.search(r"\\brescheduled\\b|\\breschedule\\b", event_text, re.I):
+        elif re.search(r"\brescheduled\b|\breschedule\b", event_text, re.I):
             meeting_status = "RESCHEDULED_REVIEW"
         else:
             meeting_status = "SCHEDULED_AS_PER_NSE_CALENDAR"
