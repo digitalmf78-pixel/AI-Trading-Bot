@@ -1416,6 +1416,30 @@ def _morning_reference_file(manual_observation=False):
     return STATE_FILE
 
 
+def _load_manual_observation_reference(reference_file, expected_eod):
+    """Return only a date-matched, valid EOD baseline; otherwise run a fresh observation."""
+    empty = pd.DataFrame(columns=["TckrSymb"])
+    if not reference_file.is_file():
+        return empty, "NO_MATCHING_EOD_REFERENCE_FRESH_OBSERVATION_ONLY"
+    try:
+        previous = pd.read_csv(reference_file, dtype={"TckrSymb": str})
+    except Exception as exc:
+        return empty, f"INVALID_EOD_REFERENCE_FRESH_OBSERVATION_ONLY_{type(exc).__name__}"
+    if previous.empty or "TckrSymb" not in previous:
+        return empty, "EMPTY_OR_INVALID_EOD_REFERENCE_FRESH_OBSERVATION_ONLY"
+    previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
+    if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
+        return empty, "INVALID_SYMBOLS_EOD_REFERENCE_FRESH_OBSERVATION_ONLY"
+    if "SnapshotType" in previous and not previous["SnapshotType"].astype(str).eq("EOD").all():
+        return empty, "INVALID_SNAPSHOT_TYPE_FRESH_OBSERVATION_ONLY"
+    if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
+        return empty, "INVALID_SNAPSHOT_STATUS_FRESH_OBSERVATION_ONLY"
+    stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+    if stored_dates != {expected_eod}:
+        return empty, f"STALE_EOD_REFERENCE_{','.join(sorted(stored_dates)) or 'NO_DATE'}_FRESH_OBSERVATION_ONLY"
+    return previous, "MATCHED_PREVIOUS_EOD_REFERENCE"
+
+
 def run_morning():
     scan_slot = os.getenv('ECMS_SCAN_SLOT', 'MORNING').strip().upper()
     manual_observation = scan_slot == 'MANUAL_OBSERVATION'
@@ -1424,38 +1448,52 @@ def run_morning():
     if not is_trading_session(today):
         raise RuntimeError(f"WAIT_FOR_DATA: {today} is not an official NSE equity trading session")
     reference_file = _morning_reference_file(manual_observation)
-    if not reference_file.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
-    previous=pd.read_csv(reference_file,dtype={"TckrSymb":str})
-    if previous.empty or "TckrSymb" not in previous: raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
-    previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
-    if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
-        raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot has blank or duplicate symbols")
-    if "SnapshotType" in previous and not previous["SnapshotType"].astype(str).eq("EOD").all():
-        raise RuntimeError("WAIT_FOR_DATA: cached snapshot is not tagged as EOD")
-    if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
-        raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
     expected_eod_session = expected_latest_completed_session()
     if manual_observation and expected_eod_session == today:
         expected_eod_session = today - timedelta(days=1)
         while not is_trading_session(expected_eod_session):
             expected_eod_session -= timedelta(days=1)
     expected_eod = expected_eod_session.isoformat()
-    stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
-    if CONSUMED_EOD_MARKER_FILE.exists() and not manual_observation:
-        try:
-            consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
-            consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
-        except Exception as exc:
-            raise RuntimeError(
-                f"WAIT_FOR_DATA: consumed-EOD cache marker is unreadable: {type(exc).__name__}: {exc}"
-            ) from exc
-        if consumed_through and stored_dates and max(stored_dates) <= consumed_through:
-            raise RuntimeError(
-                f"WAIT_FOR_DATA: cached EOD reference {sorted(stored_dates)} was already consumed "
-                f"through {consumed_through}; refusing stale cache resurrection"
+    if manual_observation:
+        previous, manual_reference_status = _load_manual_observation_reference(
+            reference_file, expected_eod
+        )
+        if previous.empty:
+            print(
+                "[MANUAL_OBSERVATION] No date-matched EOD baseline; continuing with "
+                "the current NSE page and independent fundamental/information assessment. "
+                f"reference_status={manual_reference_status}"
             )
-    if stored_dates != {expected_eod}:
-        raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
+    else:
+        if not reference_file.exists():
+            raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
+        previous = pd.read_csv(reference_file, dtype={"TckrSymb": str})
+        if previous.empty or "TckrSymb" not in previous:
+            raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
+        previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
+        if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
+            raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot has blank or duplicate symbols")
+        if "SnapshotType" in previous and not previous["SnapshotType"].astype(str).eq("EOD").all():
+            raise RuntimeError("WAIT_FOR_DATA: cached snapshot is not tagged as EOD")
+        if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
+            raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
+        stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+        if CONSUMED_EOD_MARKER_FILE.exists():
+            try:
+                consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
+                consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"WAIT_FOR_DATA: consumed-EOD cache marker is unreadable: {type(exc).__name__}: {exc}"
+                ) from exc
+            if consumed_through and stored_dates and max(stored_dates) <= consumed_through:
+                raise RuntimeError(
+                    f"WAIT_FOR_DATA: cached EOD reference {sorted(stored_dates)} was already consumed "
+                    f"through {consumed_through}; refusing stale cache resurrection"
+                )
+        if stored_dates != {expected_eod}:
+            raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
+        manual_reference_status = "NOT_APPLICABLE"
     live_page=fetch_volume_gainers()
     mainboard,board_source=load_official_mainboard_symbols()
     morning_page_captured_at = datetime.now(IST).isoformat()
@@ -1617,7 +1655,7 @@ def run_morning():
       "morning_time_ist":datetime.now(IST).isoformat(),
       "morning_rvol_data_found":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
       "morning_rvol_data_missing":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").isna().sum()),
-      "previous_eod_symbols":len(previous_symbols),"current_page_eligible_symbols":len(live_symbols),
+      "previous_eod_symbols":len(previous_symbols),"previous_eod_reference_status":manual_reference_status,"current_page_eligible_symbols":len(live_symbols),
       "morning_page_volume_data_found":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("DATA_FOUND").sum()),
       "morning_page_volume_data_missing":int(morning_assessed.get("PageVolumeDataStatus", pd.Series("", index=morning_assessed.index)).eq("MISSING_FROM_NSE_RESPONSE").sum()),
       "morning_avg_volume_1w_data_found":int(pd.to_numeric(morning_assessed.get("AvgVolume1W", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
