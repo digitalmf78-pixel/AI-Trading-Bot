@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 import pandas as pd
 import requests
-from telegram_research_digest import build_telegram_research_sections, select_summary_stocks
+from telegram_research_digest import (build_telegram_research_sections, select_summary_stocks, research_watchlist_counts, select_research_watchlist_stocks)
 
 
 NEWS_COLUMNS = [
@@ -1658,8 +1658,31 @@ def _telegram_summary_lines(result, eod_date, observation_report, news, scan_mod
     max_stocks = _telegram_env_int("TELEGRAM_MAX_STOCKS", 10)
     selected = select_summary_stocks(rows, max_stocks=max_stocks if str(os.getenv("TELEGRAM_MODE", "SUMMARY")).upper() != "FULL" else None)
     names = _read_equity_master()
+    research_counts = research_watchlist_counts()
+    lines.append(
+        "Research stages: "
+        f"Accumulation {research_counts['accumulation']} | "
+        f"Base/VCP {research_counts['base_forming']} | "
+        f"Breakout {research_counts['breakout_confirmed']} | "
+        f"Pullback {research_counts['pullback_confirmed']} | "
+        f"Breakout/Pullback observations {research_counts['breakout_pullback_observation']}"
+    )
     if selected.empty:
-        lines.append("Top stocks: सध्या Final WATCH / ENTRY_CANDIDATE उपलब्ध नाही.")
+        research_selected = select_research_watchlist_stocks(
+            max_stocks=max_stocks if max_stocks is not None else 10
+        )
+        if research_selected.empty:
+            lines.append("Final ENTRY नाही; सध्या वैध research watchlist candidates देखील उपलब्ध नाहीत.")
+        else:
+            lines.append("Research-only candidates (NOT BUY / NOT ENTRY):")
+            for _, row in research_selected.iterrows():
+                symbol = str(row.get("TckrSymb", "")).strip().upper()
+                name = names.get(symbol, "NSE name not verified")
+                stage = str(row.get("ResearchStage", "RESEARCH")).upper()
+                status = str(row.get("ResearchStatus", "WAIT_FOR_DATA")).upper()
+                evidence = str(row.get("EvidenceStatus", "") or "").strip().upper()
+                suffix = f" | Evidence {evidence}" if evidence else ""
+                lines.append(f"• {name} ({symbol}) | {stage}: {status}{suffix}")
     else:
         news_frame = news.copy() if isinstance(news, pd.DataFrame) else pd.DataFrame()
         for _, row in selected.iterrows():
