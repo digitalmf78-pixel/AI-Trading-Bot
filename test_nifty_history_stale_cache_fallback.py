@@ -30,10 +30,10 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-08-01", periods=60)
             original = self._cache(root, dates)
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"side_effect": TimeoutError("provider down")}
             )
-            with p1, p2, p3:
+            with p1, p2, p3, p4:
                 result = vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
             self.assertEqual(len(result), 60)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), dates.max().normalize())
