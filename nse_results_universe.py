@@ -84,17 +84,23 @@ def _month_shift(year: int, month: int, delta: int) -> tuple[int, int]:
     return index // 12, index % 12 + 1
 
 
+def _add_months(day: date, months: int) -> date:
+    """Calendar-month arithmetic with end-of-month clamping."""
+    year, month = _month_shift(day.year, day.month, months)
+    return date(year, month, min(day.day, monthrange(year, month)[1]))
+
+
 def collect_official_results_calendar(as_of_date: date, session=None,
-                                      lookahead_days: int = 90) -> pd.DataFrame:
-    """Fetch NSE's official event calendar for previous month through +90 days.
+                                      lookahead_months: int = 3) -> pd.DataFrame:
+    """Fetch NSE's official event calendar from previous-month start through +3 calendar months.
 
     Only entries explicitly identified as Financial Results are accepted.
-    A source failure or empty/invalid payload is not converted into an empty
-    eligible universe: it raises WAIT_FOR_DATA to prevent a full-universe scan.
+    A source failure or invalid payload raises WAIT_FOR_DATA to prevent a
+    silent fallback to the full Mainboard universe.
     """
     start_year, start_month = _month_shift(as_of_date.year, as_of_date.month, -1)
     window_start = date(start_year, start_month, 1)
-    window_end = as_of_date + timedelta(days=int(lookahead_days))
+    window_end = _add_months(as_of_date, int(lookahead_months))
     client = session or requests.Session()
     client.headers.update(NSE_HEADERS)
     try:
@@ -160,7 +166,7 @@ def collect_official_results_calendar(as_of_date: date, session=None,
 
 
 def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date,
-                                           session=None, lookahead_days: int = 90):
+                                           session=None, lookahead_months: int = 3):
     """Intersect the current official Mainboard/Bhavcopy cohort with announced results.
 
     The returned candidate frame is the only changed input to the existing V8
@@ -174,7 +180,7 @@ def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date
         }
     if "TckrSymb" not in frame.columns:
         raise ValueError("Results universe filter requires TckrSymb")
-    calendar = collect_official_results_calendar(as_of_date, session=session, lookahead_days=lookahead_days)
+    calendar = collect_official_results_calendar(as_of_date, session=session, lookahead_months=lookahead_months)
     symbols = frame["TckrSymb"].astype(str).str.strip().str.upper()
     mainboard_symbols = set(symbols[symbols.ne("")])
     calendar = calendar[calendar["TckrSymb"].isin(mainboard_symbols)].copy()
@@ -187,34 +193,62 @@ def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date
     event_dates = pd.to_datetime(calendar["OfficialResultsDate"], errors="coerce").dt.date
     summary = {
         "as_of_date": as_of_date.isoformat(),
-        "results_window_end": (as_of_date + timedelta(days=int(lookahead_days))).isoformat(),
+        "results_window_end": _add_months(as_of_date, int(lookahead_months)).isoformat(),
         "last_month": f"{last_y:04d}-{last_m:02d}",
         "last_month_companies": int(calendar.loc[event_dates.between(last_start, last_end), "TckrSymb"].nunique()),
         "this_month": f"{as_of_date.year:04d}-{as_of_date.month:02d}",
         "this_month_companies": int(calendar.loc[event_dates.between(this_start, this_end), "TckrSymb"].nunique()),
         "next_month": f"{next_y:04d}-{next_m:02d}",
         "next_month_companies": int(calendar.loc[event_dates.between(next_start, next_end), "TckrSymb"].nunique()),
-        "results_universe_companies_90d": int(calendar.loc[
-            event_dates.between(as_of_date, as_of_date + timedelta(days=int(lookahead_days))),
-            "TckrSymb"
-        ].nunique()),
         "official_calendar_rows_matched_to_mainboard_bhavcopy": int(len(calendar)),
         "source": "NSE Official Event Calendar",
     }
-    eligible = set(calendar.loc[
-        event_dates.between(as_of_date, as_of_date + timedelta(days=int(lookahead_days))),
-        "TckrSymb"
-    ])
+    p1_end = _add_months(as_of_date, 1)
+    p2_end = _add_months(as_of_date, 2)
+    p3_end = _add_months(as_of_date, int(lookahead_months))
+    in_window = event_dates.between(as_of_date, p3_end)
+    future_calendar = calendar.loc[in_window].copy()
+    future_dates = pd.to_datetime(future_calendar["OfficialResultsDate"], errors="coerce").dt.date
+    future_calendar["ResultsPriority"] = [
+        "P1_WITHIN_1_MONTH" if d <= p1_end else
+        "P2_WITHIN_2_MONTHS" if d <= p2_end else
+        "P3_WITHIN_3_MONTHS"
+        for d in future_dates
+    ]
+    priority_rank = {"P1_WITHIN_1_MONTH": 1, "P2_WITHIN_2_MONTHS": 2, "P3_WITHIN_3_MONTHS": 3}
+    future_calendar["ResultsPriorityRank"] = future_calendar["ResultsPriority"].map(priority_rank)
+    summary.update({
+        "priority_p1_window_end": p1_end.isoformat(),
+        "priority_p1_companies": int(future_calendar.loc[future_calendar["ResultsPriority"].eq("P1_WITHIN_1_MONTH"), "TckrSymb"].nunique()),
+        "priority_p2_window_end": p2_end.isoformat(),
+        "priority_p2_companies": int(future_calendar.loc[future_calendar["ResultsPriority"].eq("P2_WITHIN_2_MONTHS"), "TckrSymb"].nunique()),
+        "priority_p3_window_end": p3_end.isoformat(),
+        "priority_p3_companies": int(future_calendar.loc[future_calendar["ResultsPriority"].eq("P3_WITHIN_3_MONTHS"), "TckrSymb"].nunique()),
+        "results_universe_companies_3m": int(future_calendar["TckrSymb"].nunique()),
+    })
+    eligible = set(future_calendar["TckrSymb"])
     filtered = frame.loc[symbols.isin(eligible)].copy()
     result_dates = (
-        calendar.sort_values("OfficialResultsDate")
+        future_calendar.sort_values(["OfficialResultsDate", "TckrSymb"])
         .drop_duplicates("TckrSymb")
         .set_index("TckrSymb")["OfficialResultsDate"].to_dict()
     )
+    result_priority = (
+        future_calendar.sort_values(["OfficialResultsDate", "TckrSymb"])
+        .drop_duplicates("TckrSymb")
+        .set_index("TckrSymb")["ResultsPriority"].to_dict()
+    )
+    result_priority_rank = {symbol: priority_rank[label] for symbol, label in result_priority.items()}
+    filtered["OfficialResultsDate"] = filtered["TckrSymb"].astype(str).str.strip().str.upper().map(result_dates)
+    filtered["ResultsPriority"] = filtered["TckrSymb"].astype(str).str.strip().str.upper().map(result_priority)
+    filtered["ResultsPriorityRank"] = filtered["TckrSymb"].astype(str).str.strip().str.upper().map(result_priority_rank)
+    filtered = filtered.sort_values(["ResultsPriorityRank", "OfficialResultsDate", "TckrSymb"], kind="stable").reset_index(drop=True)
     audit = pd.DataFrame({
         "TckrSymb": symbols,
-        "ResultsUniverseStatus": ["PASS_ANNOUNCED_WITHIN_90D" if s in eligible else "EXCLUDED_NO_CONFIRMED_RESULTS_WITHIN_90D" for s in symbols],
+        "ResultsUniverseStatus": ["PASS_ANNOUNCED_WITHIN_3M" if s in eligible else "EXCLUDED_NO_CONFIRMED_RESULTS_WITHIN_3M" for s in symbols],
         "OfficialResultsDate": [result_dates.get(s, "") for s in symbols],
+        "ResultsPriority": [result_priority.get(s, "") for s in symbols],
+        "ResultsPriorityRank": [result_priority_rank.get(s, "") for s in symbols],
         "ResultsCalendarSource": "NSE_OFFICIAL_EVENT_CALENDAR",
     }).drop_duplicates("TckrSymb", keep="first").reset_index(drop=True)
     return filtered, audit, summary
@@ -232,5 +266,8 @@ def write_results_universe_reports(audit: pd.DataFrame, summary: dict, eod_date:
         f"last_month={summary.get('last_month')}:{summary.get('last_month_companies', 0)} "
         f"this_month={summary.get('this_month')}:{summary.get('this_month_companies', 0)} "
         f"next_month={summary.get('next_month')}:{summary.get('next_month_companies', 0)} "
-        f"eligible_next_90d={summary.get('results_universe_companies_90d', 0)}"
+        f"P1_1m={summary.get('priority_p1_companies', 0)} "
+        f"P2_2m={summary.get('priority_p2_companies', 0)} "
+        f"P3_3m={summary.get('priority_p3_companies', 0)} "
+        f"eligible_next_3m={summary.get('results_universe_companies_3m', 0)}"
     )
