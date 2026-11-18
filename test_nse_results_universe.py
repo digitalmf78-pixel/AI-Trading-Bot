@@ -90,3 +90,9 @@ def test_date_parser_handles_iso_and_nse_day_first_formats():
     assert ru._parse_date("2026-11-18") == date(2026, 11, 18)
     assert ru._parse_date("18-Nov-2026") == date(2026, 11, 18)
     assert ru._parse_date("not-a-date") is None
+
+def test_nonempty_calendar_with_unknown_schema_fails_closed():
+    source = FakeSession([{"unexpected": "payload"}])
+    with pytest.raises(ru.ResultsCalendarUnavailable, match="schema changed"):
+        ru.collect_official_results_calendar(date(2026, 11, 18), session=source)
+
