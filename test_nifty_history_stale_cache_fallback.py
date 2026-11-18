@@ -53,7 +53,7 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             with p1, p2, p3, p4:
                 result = vg.load_nifty_index_history(target)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
-            cached = pd.read_csv(root / "nifty50_index_history.csv")
+            cached = pd.read_csv(root / "market_index" / "nifty50_index_history.csv")
             self.assertEqual(pd.to_datetime(cached["Date"]).max().normalize(), target.normalize())
 
     def test_insufficient_cache_and_provider_failure_still_fails_closed(self):
@@ -61,10 +61,10 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-10-01", periods=10)
             self._cache(root, dates)
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"side_effect": TimeoutError("provider down")}
             )
-            with p1, p2, p3:
+            with p1, p2, p3, p4:
                 with self.assertRaisesRegex(RuntimeError, "only 10 valid closes"):
                     vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
 
@@ -97,7 +97,7 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
                 "Date": dates,
                 "NiftyClose": [24000.0 + i for i in range(len(dates))],
             })
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"side_effect": AssertionError("Yahoo must not be called when official NSE data is valid")}
             )
             with p1, p2, p3, patch.object(
@@ -108,7 +108,7 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
             cache = root / "market_index" / "nifty50_index_history.csv"
             self.assertTrue(cache.exists())
-            self.assertFalse((root / "nifty50_index_history.csv").exists())
+            self.assertFalse((root / "market_index" / "nifty50_index_history.csv").exists())
 
 
 if __name__ == "__main__":
