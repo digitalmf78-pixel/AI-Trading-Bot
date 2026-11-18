@@ -27,6 +27,7 @@ NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
 STATE_FILE = STATE_DIR / "volume_gainers_previous_eod.csv"
+MANUAL_OBSERVATION_EOD_FILE = STATE_DIR / "volume_gainers_manual_observation_eod_reference.csv"
 CONSUMED_EOD_MARKER_FILE = STATE_DIR / "volume_gainers_previous_eod_consumed.json"
 MORNING_STATE_FILE = STATE_DIR / "volume_gainers_same_day_morning.csv"
 REQUEST_TIMEOUT = (8, 20)
@@ -1051,6 +1052,14 @@ def _save_eod_snapshot(frame, eod_date):
     temporary = STATE_FILE.with_name(STATE_FILE.name + ".tmp")
     state.to_csv(temporary, index=False)
     temporary.replace(STATE_FILE)
+    # Keep a separate read-only copy for midday Manual Observation. The normal
+    # Morning lifecycle consumes and deletes STATE_FILE; observation must still
+    # be able to read the same completed EOD reference without resurrecting it.
+    observation_temporary = MANUAL_OBSERVATION_EOD_FILE.with_name(
+        MANUAL_OBSERVATION_EOD_FILE.name + ".tmp"
+    )
+    state.to_csv(observation_temporary, index=False)
+    observation_temporary.replace(MANUAL_OBSERVATION_EOD_FILE)
     marker = {
         "snapshot_type": "EOD", "snapshot_status": "VALID",
         "eod_date": eod_date.isoformat(),
@@ -1401,6 +1410,13 @@ def _confirmation_status(eod_pass, present, morning_pass):
     return "NO_FUNDAMENTAL_PASS"
 
 
+def _morning_reference_file(manual_observation=False):
+    """Use the preserved EOD copy for observations after Morning consumes active state."""
+    if manual_observation and MANUAL_OBSERVATION_EOD_FILE.is_file():
+        return MANUAL_OBSERVATION_EOD_FILE
+    return STATE_FILE
+
+
 def run_morning():
     scan_slot = os.getenv('ECMS_SCAN_SLOT', 'MORNING').strip().upper()
     manual_observation = scan_slot == 'MANUAL_OBSERVATION'
@@ -1408,8 +1424,9 @@ def run_morning():
     today = datetime.now(IST).date()
     if not is_trading_session(today):
         raise RuntimeError(f"WAIT_FOR_DATA: {today} is not an official NSE equity trading session")
-    if not STATE_FILE.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
-    previous=pd.read_csv(STATE_FILE,dtype={"TckrSymb":str})
+    reference_file = _morning_reference_file(manual_observation)
+    if not reference_file.exists(): raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
+    previous=pd.read_csv(reference_file,dtype={"TckrSymb":str})
     if previous.empty or "TckrSymb" not in previous: raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
     previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
     if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
