@@ -730,10 +730,19 @@ def assess_page_fundamentals(candidates, eod_date):
                 "MetricSourceBasis": value_provenance["ValueBasis"],
                 "MetricUnit": value_provenance["ValueUnit"],
                 "MetricCurrency": value_provenance["ValueCurrency"],
+                # Explicit aliases make the value's provenance unambiguous in downstream exports.
+                "ValueSource": value_provenance["ValueSource"],
+                "ValueSourceURL": value_provenance["ValueSourceURL"],
+                "ValuePeriodEnd": value_provenance["ValuePeriodEnd"],
+                "ValueBasis": value_provenance["ValueBasis"],
+                "ValueUnit": value_provenance["ValueUnit"],
+                "ValueCurrency": value_provenance["ValueCurrency"],
                 "OfficialFilingSource": audit.get("Source", "NOT_FOUND"),
                 "OfficialFilingURL": audit.get("SourceURL", ""),
+                "OfficialVerificationStatus": verification_status,
+                "OfficialVerificationReason": audit.get("MismatchReason", audit.get("MetricValueVerificationReason", "")),
                 "VerificationStatus": verification_status,
-                "MismatchReason": audit.get("MismatchReason", ""),
+                "MismatchReason": audit.get("MismatchReason", audit.get("MetricValueVerificationReason", "")),
             })
         metric_summary_rows.append({
             "TckrSymb": symbol,
