@@ -54,6 +54,7 @@ from v8_layers_14_41 import (
 )
 import sector_data
 from main_board_filter import apply_official_main_board_filter
+from nse_results_universe import apply_official_results_universe_filter, write_results_universe_reports
 from bottom_detection import write_bottom_detection_report
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
@@ -3459,9 +3460,42 @@ def main():
             "outputs/v8_main_board_universe_audit.csv", index=False
         )
 
-    print(f"Current verified Main Board symbols: {len(current)}")
-    # Immutable Track 2 input: official Mainboard cohort before Delivery A/B.
-    # Track 2 writes isolated research artifacts and never mutates Track 1.
+    # --------------------------------------------------------
+    # STEP 1C: OFFICIAL NSE FINANCIAL-RESULTS UNIVERSE (NEXT 90 DAYS)
+    # --------------------------------------------------------
+    # This changes only the symbols entering the existing scanner pipeline.
+    # Bhavcopy, Delivery cache, universe cache, workflow schedule and all
+    # downstream eligibility thresholds/order remain untouched.
+    results_universe_audit = pd.DataFrame()
+    results_summary = {}
+    if current.empty:
+        results_universe_audit = pd.DataFrame(columns=[
+            "TckrSymb", "ResultsUniverseStatus", "OfficialResultsDate", "ResultsCalendarSource"
+        ])
+    else:
+        try:
+            current, results_universe_audit, results_summary = apply_official_results_universe_filter(
+                current, eod_date, session=session, lookahead_days=90
+            )
+            write_results_universe_reports(results_universe_audit, results_summary, eod_date)
+        except Exception as results_exc:
+            print(f"[RESULTS UNIVERSE] WAIT_FOR_DATA: official NSE results calendar not verified; scanner input set to empty: {type(results_exc).__name__}: {results_exc}")
+            results_universe_audit = pd.DataFrame({
+                "TckrSymb": current["TckrSymb"].astype(str).str.strip().str.upper(),
+                "ResultsUniverseStatus": "WAIT_FOR_DATA_OFFICIAL_NSE_CALENDAR_UNAVAILABLE",
+                "OfficialResultsDate": "",
+                "ResultsCalendarSource": "NSE_OFFICIAL_EVENT_CALENDAR",
+            })
+            os.makedirs("outputs", exist_ok=True)
+            results_universe_audit.to_csv(
+                f"outputs/v8_results_universe_audit_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv",
+                index=False,
+            )
+            current = current.iloc[0:0].copy()
+
+    print(f"[RESULTS UNIVERSE] Scanner input after official announced-results window: {len(current)}")
+    # Immutable Track 2 input: Mainboard symbols that passed the official
+    # announced-results universe; the existing Delivery A/B flow starts next.
     track2_mainboard_candidates = current.copy(deep=True)
 
     # --------------------------------------------------------
