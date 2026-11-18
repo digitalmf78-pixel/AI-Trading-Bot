@@ -50,11 +50,11 @@ jobs:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
           elif event == "workflow_dispatch":
               current = now.time().replace(tzinfo=None)
-              if current >= time(15, 30):
+              if time(17, 0) <= current < time(23, 59, 59) + timedelta(seconds=1):
                   mode, reason = "eod", "MANUAL_TIME_ROUTED_EOD"
               elif current < time(8, 0):
                   mode, reason = "eod-reuse", "MANUAL_EOD_SNAPSHOT_REUSE"
-              elif time(9, 15) <= current < time(12, 0):
+              elif time(9, 20) <= current < time(12, 0):
                   mode, reason = "morning", "MANUAL_TIME_ROUTED_MORNING"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"mode={mode}\nreason={reason}\n")
