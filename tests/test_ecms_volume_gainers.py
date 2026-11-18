@@ -336,6 +336,10 @@ def test_eod_snapshot_is_atomically_saved_with_current_run_marker(tmp_path, monk
     state = scanner._save_eod_snapshot(frame, date(2026, 11, 13))
 
     assert state_file.exists()
+    observation_file = state_dir / "volume_gainers_manual_observation_eod_reference.csv"
+    assert observation_file.exists()
+    observation_saved = pd.read_csv(observation_file, dtype={"TckrSymb": str})
+    assert observation_saved.loc[0, "EODDate"] == "2026-11-13"
     saved = pd.read_csv(state_file, dtype={"TckrSymb": str})
     assert saved.loc[0, "TckrSymb"] == "AAA"
     assert saved.loc[0, "EODDate"] == "2026-11-13"
@@ -346,6 +350,36 @@ def test_eod_snapshot_is_atomically_saved_with_current_run_marker(tmp_path, monk
     assert marker["github_run_id"] == "test-run-123"
     assert marker["symbol_count"] == 1
     assert marker["eod_date"] == "2026-11-13"
+
+
+
+def test_manual_observation_uses_preserved_eod_reference_after_morning_consumes_active_file(tmp_path, monkeypatch):
+    from datetime import date
+    import strategies.ecms.volume_gainers as scanner
+
+    state_dir = tmp_path / "state"
+    active = state_dir / "volume_gainers_previous_eod.csv"
+    observation = state_dir / "volume_gainers_manual_observation_eod_reference.csv"
+    consumed = state_dir / "volume_gainers_previous_eod_consumed.json"
+    state_dir.mkdir(parents=True)
+    snapshot = pd.DataFrame([{
+        "TckrSymb": "AAA", "EODDate": "2026-11-17",
+        "SnapshotType": "EOD", "SnapshotStatus": "VALID",
+    }])
+    snapshot.to_csv(active, index=False)
+    snapshot.to_csv(observation, index=False)
+    monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
+    monkeypatch.setattr(scanner, "STATE_FILE", active)
+    monkeypatch.setattr(scanner, "MANUAL_OBSERVATION_EOD_FILE", observation)
+    monkeypatch.setattr(scanner, "CONSUMED_EOD_MARKER_FILE", consumed)
+    monkeypatch.setattr(scanner, "MORNING_STATE_FILE", state_dir / "morning.csv")
+    monkeypatch.setenv("GITHUB_RUN_ID", "morning-test-run")
+
+    assert scanner._consume_previous_eod_snapshot("2026-11-17") is True
+    assert not active.exists()
+    assert observation.exists()
+    assert scanner._morning_reference_file(manual_observation=True) == observation
+    assert scanner._morning_reference_file(manual_observation=False) == active
 
 
 def test_ecms_free_source_evidence_preserves_historical_alternates_when_latest_attempt_empty():
