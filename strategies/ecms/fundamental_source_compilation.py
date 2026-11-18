@@ -144,7 +144,7 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
             "MetricName": "DebtToEquity",
             "MetricValue": _number(item.get("OfficialDebtToEquity")),
             "Source": "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT",
-            "SourceURL": str(item.get("EvidenceFilePath", "") or "").strip(),
+            "SourceURL": str(item.get("OfficialFilingURL", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
             "PublicationDate": "",
             "CalculationBasis": str(item.get("ReportingBasis", "") or "").strip(),
@@ -153,7 +153,7 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
             "VerificationStatus": status,
             "MismatchStatus": "MISMATCH" if "MISMATCH" in status else "NOT_ASSESSED",
             "MismatchReason": str(item.get("DebtToEquityAuditReason", "") or "").strip(),
-            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity audit; diagnostic status preserved",
+            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity audit; diagnostic status preserved. Local evidence path: " + str(item.get("EvidenceFilePath", "") or "").strip(),
         })
     return rows
 
