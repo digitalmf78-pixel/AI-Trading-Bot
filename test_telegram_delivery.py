@@ -209,6 +209,61 @@ def test_summary_message_is_short_and_reports_required_counts(monkeypatch):
     assert "AAA" in message and "BBB" in message and "CCC" not in message
 
 
+
+def test_summary_shows_research_stages_when_final_entry_list_is_empty(tmp_path, monkeypatch):
+    import pandas as pd
+
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "outputs"
+    out.mkdir()
+    pd.DataFrame([
+        {"TckrSymb": "BRK1", "WatchlistStatus": "BREAKOUT_OBSERVATION_CONFIRMED", "WatchlistReason": "Breakout event observed"},
+        {"TckrSymb": "PBK1", "WatchlistStatus": "PULLBACK_OBSERVATION_CONFIRMED", "WatchlistReason": "Pullback observation confirmed"},
+        {"TckrSymb": "OBS1", "WatchlistStatus": "BREAKOUT_PULLBACK_OBSERVATION", "WatchlistReason": "Setup observation only"},
+        {"TckrSymb": "CHASE1", "WatchlistStatus": "CHASED", "WatchlistReason": "Chase guard"},
+    ]).to_csv(out / "v8_hybrid_breakout_ready_watchlist.csv", index=False)
+    pd.DataFrame([
+        {"TckrSymb": "BASE1", "WatchlistStatus": "BASE_FORMING", "WatchlistReason": "Two contractions observed; NOT_VCP_CONFIRMED"},
+        {"TckrSymb": "WAITBASE", "WatchlistStatus": "WAIT_FOR_DATA"},
+    ]).to_csv(out / "v8_hybrid_base_vcp_watchlist.csv", index=False)
+    pd.DataFrame([
+        {"TckrSymb": "ACC1", "WatchlistStatus": "ACCUMULATION_WATCH", "EvidenceStatus": "OBSERVATIONS_AVAILABLE"},
+        {"TckrSymb": "ACCWAIT", "WatchlistStatus": "WAIT_FOR_DATA"},
+    ]).to_csv(out / "v8_hybrid_potential_accumulation_watchlist.csv", index=False)
+    pd.DataFrame([
+        {"TckrSymb": "WAITENTRY", "WatchlistStatus": "WAIT_FOR_DATA"},
+    ]).to_csv(out / "v8_hybrid_confirmed_entry_watchlist.csv", index=False)
+
+    report = pd.DataFrame([{
+        "TckrSymb": "SKIP1",
+        "DeliveryACount30DStatus": "PASS",
+        "DeliveryBCount30DStatus": "FAIL",
+        "CoreTechnicalScreenStatus": "REJECT",
+        "EODWatchlistStatus": "SKIP",
+    }])
+    monkeypatch.setattr(news_catalyst, "_telegram_observation_rows", lambda *args, **kwargs: report.copy())
+    monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {
+        "BRK1": "BREAKOUT ONE", "PBK1": "PULLBACK ONE", "OBS1": "OBSERVATION ONE",
+        "BASE1": "BASE ONE", "ACC1": "ACCUMULATION ONE",
+    })
+    monkeypatch.setenv("TELEGRAM_MAX_STOCKS", "10")
+    monkeypatch.setenv("TELEGRAM_MODE", "SUMMARY")
+
+    message = "\\n".join(news_catalyst._telegram_summary_lines(
+        pd.DataFrame(), "2026-11-17", report, pd.DataFrame(), "EOD"
+    ))
+
+    assert "Final WATCH: 0" in message and "ENTRY_CANDIDATE: 0" in message
+    assert "Research-only candidates (NOT BUY / NOT ENTRY)" in message
+    for symbol in ("BRK1", "PBK1", "OBS1", "BASE1", "ACC1"):
+        assert symbol in message
+    for excluded in ("CHASE1", "WAITBASE", "ACCWAIT", "WAITENTRY", "SKIP1"):
+        assert excluded not in message
+    assert "Accumulation 1" in message and "Base/VCP 1" in message
+    assert "Breakout 1" in message and "Pullback 1" in message
+
+
+
 def test_premarket_sends_only_new_catalysts_then_skips_unchanged(tmp_path, monkeypatch):
     import pandas as pd
     monkeypatch.chdir(tmp_path)
