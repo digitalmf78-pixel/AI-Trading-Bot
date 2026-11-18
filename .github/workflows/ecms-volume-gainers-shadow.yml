@@ -301,6 +301,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ECMS_MODE: EOD
           JOB_STATUS: ${{ job.status }}
+          ECMS_MODE: ${{ needs.route.outputs.mode == 'manual-observation' && 'MANUAL OBSERVATION' || 'MORNING' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SUMMARY_PATH: outputs/ecms/volume_gainers_eod_summary.json
           RESEARCH_PATH: outputs/ecms/volume_gainers_eod_research.csv
@@ -632,12 +633,13 @@ jobs:
             outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
-      - name: Send separate ECMS 09:20 morning Telegram report
+      - name: Send ECMS Morning or Manual Observation Telegram report
         if: always()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           JOB_STATUS: ${{ job.status }}
+          ECMS_MODE: ${{ needs.route.outputs.mode == 'manual-observation' && 'MANUAL OBSERVATION' || 'MORNING' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SUMMARY_PATH: ${{ needs.route.outputs.mode == 'manual-observation' && 'outputs/ecms/volume_gainers_manual_observation_summary.json' || 'outputs/ecms/volume_gainers_morning_summary.json' }}
           RESEARCH_PATH: ${{ needs.route.outputs.mode == 'manual-observation' && 'outputs/ecms/volume_gainers_manual_observation_recheck.csv' || 'outputs/ecms/volume_gainers_morning_recheck.csv' }}
@@ -652,7 +654,7 @@ jobs:
           if not token or not chat_id:
               print("ECMS Telegram skipped: Telegram secrets are not configured.")
               raise SystemExit(0)
-          lines = ["🌅 ECMS 09:20 MORNING FUNDAMENTAL RECHECK", f"Status: {os.getenv('JOB_STATUS','unknown').upper()}"]
+          lines = [f"🔎 ECMS {os.getenv('ECMS_MODE', 'MORNING')} FUNDAMENTAL + INFORMATION RECHECK", f"Status: {os.getenv('JOB_STATUS','unknown').upper()}"]
           status_path = Path(os.getenv("EXECUTION_STATUS_PATH", ""))
           if status_path.is_file():
               try:
