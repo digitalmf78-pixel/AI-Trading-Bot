@@ -196,12 +196,22 @@ def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date
     filtered["ResultsPriority"] = filtered["TckrSymb"].astype(str).str.strip().str.upper().map(result_priority)
     filtered["ResultsPriorityRank"] = filtered["TckrSymb"].astype(str).str.strip().str.upper().map(result_priority_rank)
     filtered = filtered.sort_values(["ResultsPriorityRank", "OfficialResultsDate", "TckrSymb"], kind="stable").reset_index(drop=True)
+    event_meta = (
+        future_calendar.sort_values(["OfficialResultsDate", "TckrSymb"])
+        .drop_duplicates("TckrSymb")
+        .set_index("TckrSymb")
+        .to_dict("index")
+    )
     audit = pd.DataFrame({
         "TckrSymb": symbols,
         "ResultsUniverseStatus": ["PASS_ANNOUNCED_WITHIN_3M" if s in eligible else "EXCLUDED_NO_CONFIRMED_RESULTS_WITHIN_3M" for s in symbols],
         "OfficialResultsDate": [result_dates.get(s, "") for s in symbols],
         "ResultsPriority": [result_priority.get(s, "") for s in symbols],
         "ResultsPriorityRank": [result_priority_rank.get(s, "") for s in symbols],
+        "ResultsPurpose": [event_meta.get(s, {}).get("ResultsPurpose", "") for s in symbols],
+        "ResultsDetails": [event_meta.get(s, {}).get("ResultsDetails", "") for s in symbols],
+        "ResultsSourceURL": [event_meta.get(s, {}).get("ResultsSourceURL", "") for s in symbols],
+        "ResultsCalendarAsOf": as_of_date.isoformat(),
         "ResultsCalendarSource": "NSE_OFFICIAL_EVENT_CALENDAR",
     }).drop_duplicates("TckrSymb", keep="first").reset_index(drop=True)
     return filtered, audit, summary
