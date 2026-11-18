@@ -72,6 +72,7 @@ jobs:
             data/bhavcopy/
             data/cache/delivery/
             data/cache/sector_index_daily/
+            data/cache/market_index/
             data/cache/sector_constituents/
             data/cache/sector_quote_classifications/
             data/cache/universe/
