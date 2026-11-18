@@ -208,3 +208,42 @@ Draft PR #151: https://github.com/digitalmf78-pixel/AI-Trading-Bot/pull/151
 The seven missing NSE metadata rows are lookup gaps, not proof that no exchange filing exists. A direct NSE Archives announcement search surfaced an Aryaman Financial Services consolidated/standalone results announcement for the quarter ended 30-Sep-2026, approved 14-Nov-2026: https://nsearchives.nseindia.com/corporate/DALALSTCOM_16112026141955_Announcement.pdf . However, that announcement is not yet reconciled to an exact Integrated Filing XBRL record in the captured metadata ledger. It must remain a discovery lead, not a verified XBRL metric source.
 
 No BSE fallback crawl for all seven unresolved symbols has been completed yet. The audit must not claim 23/23 official filing coverage until exact issuer identity, filing URL, period, audit label, basis and revision metadata are matched from NSE or BSE.
+
+## Addendum — Q2 FY27 official filing recovery (18-Nov-2026)
+
+This pass searched the last complete 23-stock cohort for newer results for the quarter ended **30-Sep-2026**. It is a filing-discovery and source-verification pass, not yet a complete seven-metric recomputation.
+
+### Primary-source documents / records recovered
+
+| Symbol | Primary evidence found | What is verified now | What is not yet verified |
+|---|---|---|---|
+| BELRISE | NSE Archives board outcome PDF, 13-Nov-2026 | Official unaudited standalone + consolidated Q2/H1 FY27 results; full statement includes revenue, expenses, finance costs, PBT/PAT and comparative periods. | Full seven-metric recomputation and balance-sheet/cash-flow component reconciliation. |
+| CLCIND | NSE Archives Integrated Filing Ind-AS XBRL page, approved 02-Nov-2026 | Q2 FY27, standalone, unaudited; period and issuer identity match CLC Industries. | The retrieved page is filing metadata, not the full seven-metric source-fact reconciliation. |
+| ORCHPHARMA | NSE Archives board outcome + Annexure-I PDF, 14-Nov-2026 | Official unaudited limited-reviewed standalone + consolidated Q2/H1 results. Revenue, finance costs, depreciation and PBT are visible in the statement. | Recompute all seven metrics; annual balance-sheet and cash-flow facts still need aligned official sources. |
+| PRICOLLTD | NSE Integrated Filing — Financials page | Original unaudited Q2 FY27 filings exist for consolidated and standalone, both broadcast 04-Nov-2026. | Download and reconcile the underlying XBRL/details; filing existence alone does not verify metric values. |
+| SONAL | NSE Archives newspaper-publication PDF, 14-Nov-2026 | Official announcement states Sonal Adhesives approved unaudited Q2/H1 results on 13-Nov-2026 and identifies its company investor-relations results page. | Actual results PDF/XBRL and all seven metrics still need retrieval. |
+| ARYAMAN | Search produced a BSE/third-party announcement lead dated 14-Nov-2026, but the NSE Archives PDF previously surfaced as a supposed Aryaman filing is actually a DSJ Keep Learning newspaper advertisement. | No primary Aryaman results PDF/XBRL was successfully matched in this pass. Treat the earlier NSE URL association as a false-positive search match and do not use it. | Obtain exact Aryaman BSE/NSE filing and reconcile issuer identity, results and source facts. |
+
+### Additional secondary-source leads — not accepted as verified metric evidence
+
+- HINDADH: a secondary company-filings page reports Q2/H1 unaudited standalone and consolidated results approved 14-Nov-2026.
+- KJMCFIN: a secondary BSE-announcement aggregator reports Q2/H1 unaudited standalone and consolidated results approved 11-Nov-2026.
+- PBMPOLY: a secondary BSE-announcement aggregator reports unaudited standalone and consolidated Q2/H1 results approved 14-Nov-2026.
+- SAPPL: a secondary BSE-announcement aggregator reports unaudited consolidated and standalone Q2/H1 results filed 14-Nov-2026.
+- These are discovery leads only. No provider/aggregator values have been promoted to OFFICIAL_XBRL_VERIFIED.
+
+### Primary-source references
+
+- BELRISE official NSE Archives board outcome: https://nsearchives.nseindia.com/corporate/BELRISE_13112026183818_BELRISE_Outcome_of_Board_Meeting_13112026_FINAL.pdf
+- CLCIND official NSE XBRL filing: https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_208350_02112026184450_iXBRL_WEB.html
+- ORCHPHARMA official NSE Archives results and limited review annexure: https://nsearchives.nseindia.com/corporate/ORCHPHARMA_14112026161414_Stx_Ltr_BM_Outcome.pdf
+- PRICOLLTD NSE Integrated Filing search: https://www.nseindia.in/companies-listing/corporate-integrated-filing?integratedType=Integrated+Filing-+Financials&symbol=PRICOLLTD&tabIndex=equity
+- SONAL official NSE Archives newspaper publication: https://nsearchives.nseindia.com/corporate/XTGLOBAL_14112026173102_merged__1_.pdf
+
+### Updated decision
+
+- New Q2 FY27 filing evidence exists for multiple cohort companies; the old annual-only coverage ledger is therefore stale as a complete description of latest filing availability.
+- **No strict fundamental PASS is granted from this pass.** Quarterly P&L results alone cannot verify ROE, ROCE, Debt/Equity, Interest Coverage and OCF without aligned balance-sheet/cash-flow facts, correct formulas and matching consolidated/standalone basis.
+- The 23-stock historical cohort remains the scope; it is not a newly generated current Top-25.
+- Continue fail-closed. Keep every stock at WAIT_FOR_DATA until all applicable metrics and provenance are reconciled.
+- Research only: no production code, workflows, cache, thresholds or NSE V8 files were changed.
