@@ -335,3 +335,12 @@ This pass searched the historical 23-symbol Run #335 cohort for Q2 FY27 (quarter
 
 ### Current safe decision
 This pass materially improves filing discovery, but it does **not** complete the seven-metric source reconciliation for 23/23 companies. Keep all 23 at WAIT_FOR_DATA; no strict fundamental PASS or FAIL is assigned. No production code, workflow, cache, threshold or NSE V8 file was changed.
+
+
+### Additional source-consistency control — PRICOLLTD
+The official NSE Integrated Filing XBRL page and the company's NSE-hosted newspaper extract/media release do not show the same Q2 revenue figure in the text captured:
+- XBRL Revenue from operations: ₹1,35,632 lakh (₹1,356.32 Cr).
+- Company media release: Q2 consolidated revenue from operations ₹1,334.02 Cr.
+- Newspaper extract reports consolidated total income ₹1,359.46 Cr, which is not the same line item as revenue from operations.
+
+These cannot be silently averaged or substituted. The PRICOLLTD revenue metric is now explicitly RECONCILIATION_REQUIRED pending inspection of the full detailed PDF/XBRL source and matching fact/context. The other XBRL facts (PAT, finance costs, depreciation, balance-sheet and H1 cash-flow) remain separately recorded with their own provenance.
