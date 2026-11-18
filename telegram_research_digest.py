@@ -98,6 +98,89 @@ def _build_watchlist(result, news, eod_date):
     return watch
 
 
+
+def research_watchlist_counts():
+    """Count separate non-entry research stages without changing candidate eligibility."""
+    specifications = {
+        "accumulation": ("v8_hybrid_potential_accumulation_watchlist.csv", {"ACCUMULATION_WATCH"}),
+        "base_forming": ("v8_hybrid_base_vcp_watchlist.csv", {"BASE_FORMING"}),
+        "breakout_confirmed": ("v8_hybrid_breakout_ready_watchlist.csv", {"BREAKOUT_OBSERVATION_CONFIRMED"}),
+        "pullback_confirmed": ("v8_hybrid_breakout_ready_watchlist.csv", {"PULLBACK_OBSERVATION_CONFIRMED"}),
+        "breakout_pullback_observation": ("v8_hybrid_breakout_ready_watchlist.csv", {"BREAKOUT_PULLBACK_OBSERVATION"}),
+        "entry_candidate": ("v8_hybrid_confirmed_entry_watchlist.csv", {"ENTRY_CANDIDATE"}),
+    }
+    counts = {}
+    for key, (filename, accepted) in specifications.items():
+        frame = _read(filename)
+        if frame.empty or "WatchlistStatus" not in frame.columns:
+            counts[key] = 0
+            continue
+        status = frame["WatchlistStatus"].fillna("").astype(str).str.strip().str.upper()
+        counts[key] = int(status.isin(accepted).sum())
+    return counts
+
+
+def select_research_watchlist_stocks(max_stocks=10):
+    """Select display-only examples from earlier stages when no final entry exists.
+
+    This is a Telegram presentation fallback only. It does not change scanner
+    membership, scores, filters, watchlist statuses, or order eligibility.
+    """
+    limit = 10 if max_stocks is None else max(0, int(max_stocks))
+    if limit == 0:
+        return pd.DataFrame()
+
+    specifications = [
+        (
+            "BREAKOUT / PULLBACK",
+            "v8_hybrid_breakout_ready_watchlist.csv",
+            {
+                "BREAKOUT_OBSERVATION_CONFIRMED": 0,
+                "PULLBACK_OBSERVATION_CONFIRMED": 1,
+                "BREAKOUT_PULLBACK_OBSERVATION": 2,
+            },
+            4,
+        ),
+        ("BASE / VCP", "v8_hybrid_base_vcp_watchlist.csv", {"BASE_FORMING": 0}, 3),
+        ("POTENTIAL ACCUMULATION", "v8_hybrid_potential_accumulation_watchlist.csv", {"ACCUMULATION_WATCH": 0}, 3),
+    ]
+    selected = []
+    seen_symbols = set()
+    for stage, filename, priorities, quota in specifications:
+        frame = _read(filename)
+        if frame.empty or not {"TckrSymb", "WatchlistStatus"}.issubset(frame.columns):
+            continue
+        frame = frame.copy()
+        frame["TckrSymb"] = frame["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
+        frame["WatchlistStatus"] = frame["WatchlistStatus"].fillna("").astype(str).str.strip().str.upper()
+        frame = frame[
+            frame["TckrSymb"].ne("")
+            & frame["WatchlistStatus"].isin(set(priorities))
+            & ~frame["TckrSymb"].isin(seen_symbols)
+        ].copy()
+        if frame.empty:
+            continue
+        frame["_stage_priority"] = frame["WatchlistStatus"].map(priorities)
+        frame = frame.sort_values(
+            ["_stage_priority", "TckrSymb"], ascending=[True, True], kind="stable"
+        )
+        remaining = max(0, limit - len(selected))
+        take = min(quota, remaining)
+        if take <= 0:
+            break
+        for _, row in frame.head(take).iterrows():
+            item = row.drop(labels=["_stage_priority"], errors="ignore").to_dict()
+            item["ResearchStage"] = stage
+            item["ResearchStatus"] = str(row.get("WatchlistStatus", ""))
+            item["ResearchReason"] = str(row.get("WatchlistReason", row.get("Reason", "")) or "")
+            selected.append(item)
+            seen_symbols.add(str(row["TckrSymb"]))
+        if len(selected) >= limit:
+            break
+    return pd.DataFrame(selected)
+
+
+
 def select_summary_stocks(rows, max_stocks=10):
     """Select only final WATCH/ENTRY_CANDIDATE rows; entry first, then V8Score."""
     if rows is None or rows.empty or "TckrSymb" not in rows.columns:
