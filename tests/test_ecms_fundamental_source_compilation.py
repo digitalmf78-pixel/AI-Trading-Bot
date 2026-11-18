@@ -77,12 +77,14 @@ def test_compilation_includes_exact_debt_equity_audit_as_its_own_source_row():
     debt_audit = pd.DataFrame([{
         "TckrSymb": "AAA", "DebtToEquityAuditStatus": "OFFICIAL_XBRL_VERIFIED",
         "OfficialDebtToEquity": 0.5, "FinancialPeriodEnd": "2026-03-31",
-        "ReportingBasis": "STANDALONE", "DebtToEquityAuditReason": "Exact same-context match",
+        "ReportingBasis": "STANDALONE", "OfficialFilingURL": "https://nsearchives.nseindia.com/example.xml", "EvidenceFilePath": "data/cache/ecms_debt_equity_xbrl/example.xml", "DebtToEquityAuditReason": "Exact same-context match",
     }])
     result = build_fundamental_source_compilation(metrics, debt_equity_audit=debt_audit)
     audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT"].iloc[0]
     assert audit["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
     assert audit["MetricValue"] == 0.5
+    assert audit["SourceURL"] == "https://nsearchives.nseindia.com/example.xml"
+    assert "data/cache/ecms_debt_equity_xbrl/example.xml" in audit["ObservationNotes"]
 
 
 def test_compilation_flags_mismatch_only_when_period_basis_and_unit_align():
