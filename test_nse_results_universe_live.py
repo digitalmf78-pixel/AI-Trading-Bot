@@ -19,7 +19,7 @@ def test_live_nse_results_calendar_payload_and_mainboard_symbol_matching():
     assert not calendar.empty, "Live NSE event calendar returned no Financial Results rows in the configured window"
     assert {"TckrSymb", "OfficialResultsDate", "ResultsPurpose"} <= set(calendar.columns)
     assert calendar["TckrSymb"].astype(str).str.strip().ne("").all()
-    assert calendar["OfficialResultsDate"].astype(str).str.match(r"^\\d{4}-\\d{2}-\\d{2}$").all()
+    assert calendar["OfficialResultsDate"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}$").all()
 
     mainboard_session = requests.Session()
     mainboard_session.headers.update(MAINBOARD_HEADERS)
