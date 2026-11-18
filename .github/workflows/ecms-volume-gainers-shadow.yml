@@ -50,7 +50,7 @@ jobs:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
           elif event == "workflow_dispatch":
               current = now.time().replace(tzinfo=None)
-              if time(17, 0) <= current < time(23, 59, 59) + timedelta(seconds=1):
+              if current >= time(17, 0):
                   mode, reason = "eod", "MANUAL_TIME_ROUTED_EOD"
               elif current < time(8, 0):
                   mode, reason = "eod-reuse", "MANUAL_EOD_SNAPSHOT_REUSE"
