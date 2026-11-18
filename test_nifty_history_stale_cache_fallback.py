@@ -20,7 +20,8 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
     def _patched_cache_and_provider(self, root, provider):
         return (
             patch.object(vg, "DATA_CACHE_DIR", str(root)),
-            patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")),
+            patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "market_index" / "nifty50_index_history.csv")),
+            patch.object(vg.sector_data, "load_nifty50_index_history_from_archive", side_effect=RuntimeError("official archive unavailable")),
             patch.object(vg, "fetch_nifty_index_history", **provider),
         )
 
@@ -84,6 +85,29 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
         self.assertTrue(pd.isna(result.loc[0, "NiftyReturn20D"]))
         self.assertTrue(pd.isna(result.loc[0, "RelativeStrengthNifty"]))
         self.assertEqual(result.loc[0, "RSNiftyClassification"], "Insufficient Data")
+
+
+    def test_official_nse_archive_is_primary_and_persisted_outside_bhavcopy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = pd.Timestamp("2026-11-17")
+            dates = pd.bdate_range(end=target, periods=60)
+            official = pd.DataFrame({
+                "Date": dates,
+                "NiftyClose": [24000.0 + i for i in range(len(dates))],
+            })
+            p1, p2, p3 = self._patched_cache_and_provider(
+                root, {"side_effect": AssertionError("Yahoo must not be called when official NSE data is valid")}
+            )
+            with p1, p2, p3, patch.object(
+                vg.sector_data, "load_nifty50_index_history_from_archive", return_value=official
+            ):
+                result = vg.load_nifty_index_history(target)
+            self.assertEqual(len(result), 60)
+            self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
+            cache = root / "market_index" / "nifty50_index_history.csv"
+            self.assertTrue(cache.exists())
+            self.assertFalse((root / "nifty50_index_history.csv").exists())
 
 
 if __name__ == "__main__":
