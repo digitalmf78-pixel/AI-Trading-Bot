@@ -284,3 +284,14 @@ def test_liquidity_pre_news_artifact_and_delivery_stage_labels_are_unambiguous()
     assert '_append_stage(delivery_audit, "DELIVERY_30D_AB", "DeliveryFilterStatus")' in source
     assert '_append_stage(delivery_audit, "DELIVERY_5D", "DeliveryFilterStatus")' not in source
     assert "complete 30-calendar-day Category A OR B union" in source
+
+
+
+def test_track2_observer_receives_full_mainboard_before_results_universe_gate():
+    source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
+    mainboard_snapshot = source.index("track2_mainboard_candidates = current.copy(deep=True)")
+    results_gate = source.index("STEP 1C: OFFICIAL NSE FINANCIAL-RESULTS UNIVERSE")
+    results_filter = source.index("apply_official_results_universe_filter(")
+    track2_call = source.index("build_track2_full_mainboard_report(")
+    assert mainboard_snapshot < results_gate < results_filter < track2_call
+    assert "Track 2 observer BEFORE Track 1 is narrowed" in source
