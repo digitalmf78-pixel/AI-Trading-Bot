@@ -46,9 +46,9 @@ def test_results_universe_uses_only_official_financial_results_and_assigns_three
         frame, date(2026, 11, 18), session=source, lookahead_months=3
     )
 
-    assert set(filtered["TckrSymb"]) == {"NOW", "NEXT", "FAR"}
+    assert set(filtered["TckrSymb"]) == {"OLD", "NOW", "NEXT", "FAR"}
     assert list(filtered["ResultsPriority"]) == [
-        "P1_WITHIN_1_MONTH", "P2_WITHIN_2_MONTHS", "P3_WITHIN_3_MONTHS"
+        "P0_LAST_MONTH_REQUIRES_VERIFIED_FILING", "P1_WITHIN_1_MONTH", "P2_WITHIN_2_MONTHS", "P3_WITHIN_3_MONTHS"
     ]
     assert summary["last_month_companies"] == 1
     assert summary["this_month_companies"] == 1
@@ -56,8 +56,9 @@ def test_results_universe_uses_only_official_financial_results_and_assigns_three
     assert summary["priority_p1_companies"] == 1
     assert summary["priority_p2_companies"] == 1
     assert summary["priority_p3_companies"] == 1
-    assert summary["results_universe_companies_3m"] == 3
-    assert set(audit.loc[audit["ResultsUniverseStatus"].str.startswith("PASS"), "TckrSymb"]) == {"NOW", "NEXT", "FAR"}
+    assert summary["results_universe_companies_3m"] == 4
+    assert summary["last_month_results_candidates_requiring_filing"] == 1
+    assert set(audit.loc[audit["ResultsUniverseStatus"].str.startswith("PASS"), "TckrSymb"]) == {"OLD", "NOW", "NEXT", "FAR"}
 
 
 def test_results_universe_does_not_include_unknown_symbols():
