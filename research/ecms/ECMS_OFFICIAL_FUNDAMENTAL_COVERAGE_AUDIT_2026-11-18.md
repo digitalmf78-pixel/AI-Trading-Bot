@@ -179,3 +179,32 @@ Do not switch the production fundamental source/gate until:
 - `volume_gainers_eod_summary.json`
 
 No production code or main-branch files were modified by this audit.
+
+
+## Addendum — live cohort blocker and overnight EOD recovery (18-Nov-2026)
+
+### Why a fresh 18-Nov Top-25 was not available
+
+- Scheduled EOD workflow Run #533 started at **01:28 IST on 18-Nov**, after its intended 17:01 IST slot on 17-Nov.
+- The Python scheduler gate compared the current clock minutes (01:28) with the expected EOD clock (17:00) as if both were on the same calendar date. It therefore returned `SKIPPED / NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT`.
+- The EOD snapshot marker was not created, so the prior EOD state did not advance.
+- Morning Run #541 then correctly failed closed: cached EOD page snapshot date was `2026-11-16`, while the latest completed NSE session was `2026-11-17`.
+- The later successful PR-validation Run #540 did not execute a scan; route/EOD/Morning were skipped for the pull-request event. It is not a current Top-25 source.
+- Therefore the 13-Nov / 23-equity cohort remains the last complete artifact available for this audit. Do not label it as the current 18-Nov cohort.
+
+### Isolated recovery fix prepared
+
+Draft PR #151: https://github.com/digitalmf78-pixel/AI-Trading-Bot/pull/151
+
+- Branch: `fix/ecms-overnight-eod-recovery-2026-11-18`
+- Change: allow scheduled EOD events delayed past midnight only before the next Morning window (before 09:15 IST).
+- The existing `run_eod()` page-session-date guard remains mandatory: the fetched NSE page date must equal the latest completed NSE session or the run fails closed before saving the snapshot.
+- Morning's narrow timing gate remains unchanged.
+- Regression test added for the observed 18-Nov 01:28 IST case.
+- **PR is draft and must not be merged until CI completes and the change is reviewed.** No production change has been merged.
+
+### Official filing lookup recovery note
+
+The seven missing NSE metadata rows are lookup gaps, not proof that no exchange filing exists. A direct NSE Archives announcement search surfaced an Aryaman Financial Services consolidated/standalone results announcement for the quarter ended 30-Sep-2026, approved 14-Nov-2026: https://nsearchives.nseindia.com/corporate/DALALSTCOM_16112026141955_Announcement.pdf . However, that announcement is not yet reconciled to an exact Integrated Filing XBRL record in the captured metadata ledger. It must remain a discovery lead, not a verified XBRL metric source.
+
+No BSE fallback crawl for all seven unresolved symbols has been completed yet. The audit must not claim 23/23 official filing coverage until exact issuer identity, filing URL, period, audit label, basis and revision metadata are matched from NSE or BSE.
