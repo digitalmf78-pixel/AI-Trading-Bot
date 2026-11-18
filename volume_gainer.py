@@ -85,7 +85,7 @@ NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
 HISTORY_DAYS = 200  # retain enough EOD sessions for verified 100D/200D resistance
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
 BHAVCOPY_404_CACHE_DAYS = 2
-NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
+NIFTY_HISTORY_CACHE = os.path.join("data", "cache", "market_index", "nifty50_index_history.csv")
 NIFTY_HISTORY_MIN_BARS = 50
 NIFTY_HISTORY_LOOKBACK_DAYS = 140
 YAHOO_NIFTY_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
@@ -726,7 +726,7 @@ def load_nifty_index_history(latest_date):
     WAIT_FOR_DATA unless it is aligned to the requested date.
     """
     print("\nSTEP 12: Loading Nifty 50 history and checking cache...")
-    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(NIFTY_HISTORY_CACHE), exist_ok=True)
 
     cached = pd.DataFrame(columns=["Date", "NiftyClose"])
     if os.path.exists(NIFTY_HISTORY_CACHE):
@@ -750,6 +750,35 @@ def load_nifty_index_history(latest_date):
     if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS and not cached_asof.empty and cached_asof["Date"].max() == target:
         print(f"[NIFTY][CACHE_HIT] rows={len(cached_asof)} asof={target.date()}")
         return cached_asof.tail(260).reset_index(drop=True)
+
+    # Prefer exact-date official NSE index archives. This cache is outside
+    # data/bhavcopy, so the repair never writes to or rewrites price history.
+    try:
+        official = sector_data.load_nifty50_index_history_from_archive(
+            target, min_bars=NIFTY_HISTORY_MIN_BARS
+        )
+        official["Date"] = pd.to_datetime(official["Date"], errors="coerce")
+        official["NiftyClose"] = pd.to_numeric(official["NiftyClose"], errors="coerce")
+        official = official.dropna(subset=["Date", "NiftyClose"]).drop_duplicates(
+            subset=["Date"], keep="last"
+        ).sort_values("Date").reset_index(drop=True)
+        if (
+            len(official) >= NIFTY_HISTORY_MIN_BARS
+            and not official.empty
+            and official["Date"].max().normalize() == target
+        ):
+            official.to_csv(NIFTY_HISTORY_CACHE, index=False, date_format="%Y-%m-%d")
+            print(
+                f"[NIFTY][OFFICIAL_NSE_ARCHIVE_CACHE_UPDATED] "
+                f"rows={len(official)} through={target.date()}"
+            )
+            return official.tail(260).reset_index(drop=True)
+        raise RuntimeError("official archive did not provide 50 closes ending on the exact EOD date")
+    except Exception as exc:
+        print(
+            f"[NIFTY][OFFICIAL_NSE_ARCHIVE_UNAVAILABLE] "
+            f"{type(exc).__name__}: {exc}; trying the existing Yahoo fallback."
+        )
 
     fetch_start = (target - pd.Timedelta(days=NIFTY_HISTORY_LOOKBACK_DAYS)).date()
     if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
