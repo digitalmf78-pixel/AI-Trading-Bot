@@ -22,7 +22,7 @@ NSE_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Referer": NSE_EVENT_PAGE,
 }
-RESULT_PATTERN = re.compile(r"financial\\s*results?|quarterly\\s*results?|audited\\s+results?|unaudited\\s+results?", re.I)
+RESULT_PATTERN = re.compile(r"financial\s*results?|quarterly\s*results?|audited\s+results?|unaudited\s+results?", re.I)
 CANCEL_PATTERN = re.compile(r"cancelled|canceled|withdrawn|meeting stands cancelled", re.I)
 
 
@@ -47,7 +47,7 @@ def _parse_date(value: object) -> date | None:
     raw = str(value or "").strip()
     if not raw:
         return None
-    dayfirst = not bool(re.match(r"^\\d{4}-\\d{2}-\\d{2}$", raw))
+    dayfirst = not bool(re.match(r"^\d{4}-\d{2}-\d{2}$", raw))
     stamp = pd.to_datetime(raw, errors="coerce", dayfirst=dayfirst)
     if pd.isna(stamp):
         return None
@@ -72,8 +72,6 @@ def _payload_rows(response: requests.Response) -> list[dict]:
         raise ValueError("NSE event calendar returned non-JSON data")
     if any(not isinstance(row, dict) for row in rows):
         raise ValueError("NSE event calendar contains non-object rows")
-    if not rows:
-        raise ValueError("NSE event calendar returned an empty row set")
     return rows
 
 
@@ -140,12 +138,10 @@ def collect_official_results_calendar(as_of_date: date, session=None,
             "ResultsCalendarAsOf": as_of_date.isoformat(),
         })
 
-    if not rows:
-        raise ResultsCalendarUnavailable(
-            "WAIT_FOR_DATA: NSE event calendar contained no verifiable Financial Results rows "
-            f"for {window_start} through {window_end}"
-        )
-    frame = pd.DataFrame(rows)
+    frame = pd.DataFrame(rows, columns=[
+        "TckrSymb", "OfficialResultsDate", "ResultsPurpose", "ResultsDetails",
+        "ResultsSource", "ResultsSourceType", "ResultsSourceURL", "ResultsCalendarAsOf",
+    ])
     frame = frame.drop_duplicates(
         subset=["TckrSymb", "OfficialResultsDate", "ResultsPurpose", "ResultsDetails"],
         keep="last",
