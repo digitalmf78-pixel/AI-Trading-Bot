@@ -9,70 +9,23 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
-import json
 import re
 
 import pandas as pd
-import requests
-
-NSE_EVENT_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar"
-NSE_EVENT_CALENDAR_URL = "https://www.nseindia.com/api/event-calendar"
-NSE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Referer": NSE_EVENT_PAGE,
-}
+from strategies.ecms.information import (
+    NSE_EVENT_CALENDAR_URL,
+    NSE_EVENT_PAGE,
+    _as_date as _parse_date,
+    _nse_session,
+    _payload_rows as _nse_payload_rows,
+    _pick as _nse_pick,
+)
 RESULT_PATTERN = re.compile(r"financial\s*results?|quarterly\s*results?|audited\s+results?|unaudited\s+results?", re.I)
 CANCEL_PATTERN = re.compile(r"cancelled|canceled|withdrawn|meeting stands cancelled", re.I)
 
 
 class ResultsCalendarUnavailable(RuntimeError):
     """Raised when the official NSE results calendar cannot be verified."""
-
-
-def _norm_key(value: object) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
-
-
-def _pick(row: dict, *names: str) -> str:
-    mapped = {_norm_key(key): value for key, value in row.items()}
-    for name in names:
-        value = mapped.get(_norm_key(name))
-        if value is not None and str(value).strip().lower() not in {"", "nan", "none", "-"}:
-            return str(value).strip()
-    return ""
-
-
-def _parse_date(value: object) -> date | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    dayfirst = not bool(re.match(r"^\d{4}-\d{2}-\d{2}$", raw))
-    stamp = pd.to_datetime(raw, errors="coerce", dayfirst=dayfirst)
-    if pd.isna(stamp):
-        return None
-    if stamp.tzinfo is not None:
-        return stamp.tz_convert("Asia/Kolkata").date()
-    return stamp.date()
-
-
-def _payload_rows(response: requests.Response) -> list[dict]:
-    try:
-        payload = response.json()
-    except (ValueError, json.JSONDecodeError):
-        payload = None
-    if isinstance(payload, list):
-        rows = payload
-    elif isinstance(payload, dict):
-        rows = next((payload.get(key) for key in ("data", "records", "result")
-                     if isinstance(payload.get(key), list)), None)
-        if rows is None:
-            raise ValueError("NSE event calendar JSON has no recognized data array")
-    else:
-        raise ValueError("NSE event calendar returned non-JSON data")
-    if any(not isinstance(row, dict) for row in rows):
-        raise ValueError("NSE event calendar contains non-object rows")
-    return rows
 
 
 def _month_bounds(year: int, month: int) -> tuple[date, date]:
@@ -101,11 +54,11 @@ def collect_official_results_calendar(as_of_date: date, session=None,
     start_year, start_month = _month_shift(as_of_date.year, as_of_date.month, -1)
     window_start = date(start_year, start_month, 1)
     window_end = _add_months(as_of_date, int(lookahead_months))
-    client = session or requests.Session()
-    client.headers.update(NSE_HEADERS)
     try:
-        landing = client.get(NSE_EVENT_PAGE, timeout=(5, 15))
-        landing.raise_for_status()
+        # Reuse the production NSE cookie/session and payload parser from
+        # strategies/ecms/information.py instead of maintaining duplicate
+        # headers, cookies, and response-shape assumptions.
+        client = _nse_session(session, NSE_EVENT_PAGE)
         response = client.get(
             NSE_EVENT_CALENDAR_URL,
             params={
@@ -116,7 +69,7 @@ def collect_official_results_calendar(as_of_date: date, session=None,
             timeout=(5, 25),
         )
         response.raise_for_status()
-        raw_rows = _payload_rows(response)
+        raw_rows = _nse_payload_rows(response)
     except Exception as exc:
         raise ResultsCalendarUnavailable(
             f"WAIT_FOR_DATA: official NSE financial-results calendar unavailable: {type(exc).__name__}: {exc}"
@@ -125,10 +78,10 @@ def collect_official_results_calendar(as_of_date: date, session=None,
     rows = []
     schema_rows = 0
     for item in raw_rows:
-        symbol = _pick(item, "symbol", "tradingSymbol", "SYMBOL", "BD_SYMBOL").upper()
-        event_date_raw = _pick(item, "date", "eventDate", "event_date", "meetingDate", "meeting_date")
-        purpose = _pick(item, "purpose", "eventType", "category")
-        details = _pick(item, "details", "description", "subject")
+        symbol = str(_nse_pick(item, "symbol", "tradingSymbol", "SYMBOL", "BD_SYMBOL")).strip().upper()
+        event_date_raw = _nse_pick(item, "date", "eventDate", "event_date", "meetingDate", "meeting_date")
+        purpose = str(_nse_pick(item, "purpose", "eventType", "category")).strip()
+        details = str(_nse_pick(item, "details", "description", "subject")).strip()
         if symbol and event_date_raw and purpose:
             schema_rows += 1
         event_date = _parse_date(event_date_raw)
