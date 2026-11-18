@@ -58,7 +58,7 @@ def _period_month_key(value):
     text = str(value or "").strip()
     if not text:
         return None
-    fy = re.search(r"FY\\s*(20\\d{2})\\s*(?:->|to|[-–])\\s*FY?\\s*(20\\d{2})", text, re.I)
+    fy = re.search(r"FY\s*(20\d{2})\s*(?:->|to|[-–])\s*FY?\s*(20\d{2})", text, re.I)
     if fy:
         return (int(fy.group(2)), 3)
     parsed = pd.to_datetime(text, errors="coerce")
