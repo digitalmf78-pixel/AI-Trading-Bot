@@ -10,15 +10,18 @@ on:
       - main
     paths:
       - ".github/workflows/delivery_60_valuation_watchlist.yml"
-  schedule:
-    # 17:30 UTC = 23:00 IST, Monday-Friday, after the NSE cash-market session.
-    - cron: "30 17 * * 1-5"
+  workflow_run:
+    # Wait for the NSE V8 EOD run to finish and save the latest Bhavcopy cache.
+    workflows: ["NSE Data Test"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   build-watchlist:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
