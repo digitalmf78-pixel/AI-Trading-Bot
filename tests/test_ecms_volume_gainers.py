@@ -703,6 +703,32 @@ def test_backup_eod_skips_duplicate_when_current_session_cache_is_valid(tmp_path
     assert '"reason": "BACKUP_SKIPPED_EOD_ALREADY_CACHED"' in output
 
 
+def test_scheduled_eod_delayed_past_midnight_recovers_before_morning(monkeypatch, capsys):
+    import sys
+    from datetime import datetime as real_datetime, date
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 18, 1, 28, tzinfo=tz)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+    monkeypatch.setattr(scanner, "expected_scan_time", lambda day, mode: "17:00")
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda day: [])
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 17))
+    monkeypatch.setattr(scanner, "run_eod", lambda: {"status": "PASS"})
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "eod"])
+
+    scanner.main()
+    output = capsys.readouterr().out
+    assert "ECMS_SCHEDULED_EOD_OVERNIGHT_RECOVERY=ENABLED" in output
+    assert '"status": "SUCCESS"' in output
+    assert '"reason": "SCAN_COMPLETED"' in output
+
+
 def test_scheduled_eod_before_official_slot_still_skips(monkeypatch, capsys):
     import sys
     from datetime import datetime as real_datetime
