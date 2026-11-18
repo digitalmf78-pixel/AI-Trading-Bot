@@ -181,6 +181,55 @@ def test_rvol_classification_retains_high_low_and_missing_delivery_candidates(tm
 
 
 
+
+def test_candidate_screen_keeps_rvol_informational_and_waits_on_missing_required_context(tmp_path, monkeypatch):
+    import pandas as pd
+    import volume_gainer as scanner
+
+    monkeypatch.chdir(tmp_path)
+    common = {
+        "DeliveryFilterStatus": "PASS_GE_60_PERCENT",
+        "SetupType": "Breakout",
+        "TrendClassification": "Bullish",
+        "CLV": 0.82,
+        "PriceVolumeRelationship": "Strong Bullish",
+        "SRSupport": 100.0,
+        "SRResistance": 120.0,
+        "BreakoutStatus": "Breakout",
+        "PullbackStatus": "No Pullback",
+        "PriceChangePct": 3.0,
+        "LowVolumeDays5D": 0,
+    }
+    frame = pd.DataFrame([
+        {
+            **common, "TckrSymb": "RVOL_WAIT",
+            "RVOLStatus": "WAIT_FOR_DATA", "RVOL": pd.NA,
+            "RelativeStrengthNifty": 2.0,
+        },
+        {
+            **common, "TckrSymb": "RS_WAIT",
+            "RVOLStatus": "PASS", "RVOL": 2.1,
+            "RelativeStrengthNifty": pd.NA,
+        },
+        {
+            **common, "TckrSymb": "SETUP_REJECT",
+            "SetupType": "No Clear Setup",
+            "RVOLStatus": "PASS", "RVOL": 2.1,
+            "RelativeStrengthNifty": pd.NA,
+        },
+    ])
+
+    result = scanner.select_top20_analysis_candidates(frame, "2026-11-17")
+    indexed = result.set_index("TckrSymb")
+
+    assert indexed.loc["RVOL_WAIT", "CandidateScreenStatus"] == "PASS"
+    assert "RVOL_CLASSIFICATION_WAIT_FOR_DATA_NOT_A_REJECTION_GATE" in indexed.loc["RVOL_WAIT", "CandidateScreenWarnings"]
+    assert indexed.loc["RS_WAIT", "CandidateScreenStatus"] == "WAIT_FOR_DATA"
+    assert "RELATIVE_STRENGTH_WAIT_FOR_DATA" in indexed.loc["RS_WAIT", "CandidateScreenReasons"]
+    assert indexed.loc["SETUP_REJECT", "CandidateScreenStatus"] == "REJECT"
+    assert "NO_CONFIRMED_BREAKOUT_OR_PULLBACK_SETUP" in indexed.loc["SETUP_REJECT", "CandidateScreenReasons"]
+
+
 def test_accumulation_and_vcp_observations_run_before_liquidity_without_gating():
     source = (ROOT / "volume_gainer.py").read_text(encoding="utf-8")
     delivery = source.index("STEP 4: DELIVERY A/B ELIGIBILITY — BUILD THE COMPLETE A OR B UNION FIRST.")
