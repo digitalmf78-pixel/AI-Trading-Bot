@@ -62,6 +62,9 @@ jobs:
           test_track2_full_mainboard.py test_track2_data_quality_diagnostics.py test_sanitize_public_artifacts.py test_rvol_strategy_backtest.py test_t1_t2_data_readiness.py test_signal_log.py test_signal_shadow_store.py test_signal_cohort_assembly.py test_signal_history_persistence.py test_signal_outcome_tracker.py test_signal_shadow_run.py test_experimental_observation_labels.py test_rsi_informational_only.py
           test_news_catalyst_parser.py test_upcoming_corporate_events.py test_bottom_detection.py test_delivery_consistency.py
 
+      - name: Live NSE results calendar and Mainboard matching smoke test
+        run: python -m pytest -q test_nse_results_universe_live.py
+
       - name: Run V8 regression script
         run: python -u test_v8_regression.py
 
