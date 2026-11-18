@@ -47,3 +47,57 @@ One concrete ECMS mapping gap was found: **Operating Cash Flow (`OperatingCashFl
 ## Explicit non-goals
 
 This audit does not change the existing seven-metric fundamental gate, thresholds, candidate inclusion, production data, scheduled workflows, cache, Telegram, NSE V8, or trading behavior. It does not authorize use of third-party values as official data.
+
+## Issuer sample comparison — FY 2025-26 (public-page evidence)
+
+**Retrieval date:** 2026-11-18. **Important limitation:** The connected environment did not execute Bharat-SM-Data's private Moneycontrol/Tickertape API calls. The values below are publicly surfaced Moneycontrol pages and Tickertape screeners, used as *provider-page proxies* to test whether the same labels can be reconciled to official annual reports. They are not represented as raw outputs from the ECMS adapter. The exact adapter-level live capture remains outstanding.
+
+### 1) INFOSYS
+
+| Metric | Public provider-page observation | Official company evidence | Reconciliation |
+|---|---:|---:|---|
+| Revenue | Moneycontrol FY26 ₹1,78,650 cr | Consolidated FY26 revenue ₹1,78,650 cr; FY25 ₹1,62,990 cr; growth 9.6% | Value agrees; annual period and consolidated basis agree in the official report |
+| Profit | Moneycontrol FY26 net profit ₹29,474 cr | Consolidated net profit ₹29,474 cr; owner-attributable profit ₹29,440 cr; FY25 owner-attributable ₹26,713 cr | Headline net profit agrees; for profit-growth use a consistently defined PAT row. Owner-attributable growth is about 10.2% |
+| Revenue growth | Adapter's Moneycontrol helper calculates from annual revenue columns | Official consolidated growth 9.6% | Same result if the row and FY pair are identical |
+| Profit growth | Adapter helper uses a positive prior-year base | Owner-attributable PAT ₹29,440 cr vs ₹26,713 cr | About 10.2%; provider helper's row choice must be confirmed before accepting |
+| ROE | Moneycontrol 31.70%; Tickertape screener 31.07% | Annual-report headline ROE 31.6% | Close, but Tickertape is not exact; formula/basis need explicit confirmation |
+| ROCE | Moneycontrol 40.23%; Tickertape 39.63% | No directly comparable consolidated ROCE figure located in the reviewed annual-report ratio table | Unverified |
+| Debt/Equity | Moneycontrol 0.00; Tickertape screener 0.00 | Official consolidated ratio 0.1; report says debt represents only lease liabilities | Not an exact match; definition/rounding/basis discrepancy |
+| Interest coverage | Moneycontrol 112.02x | Official consolidated ratio 97.1x; report says this is primarily lease interest | Material difference; do not accept provider value without formula reconciliation |
+| Operating cash flow | No mapped adapter value | Official AGM material reports consolidated operating cash flow ₹35,824 cr for FY26 | Adapter currently cannot return this metric because OperatingCashFlowINR is unmapped |
+
+### 2) HDFC BANK
+
+| Metric | Public provider-page observation | Official company evidence | Reconciliation |
+|---|---:|---:|---|
+| Revenue | Moneycontrol FY26 ₹3,48,615 cr | Annual report FY26 net revenues ₹1,91,218.6 cr | Different revenue concepts/rows; not comparable without a bank-specific mapping |
+| Profit | Moneycontrol FY26 ₹79,219 cr | Annual report FY26 PAT ₹74,671.3 cr | Mismatch; source row and basis unresolved |
+| ROE | Moneycontrol 12.97%; Tickertape screener 13.26% | Annual report FY26 ROE 14.3% | Does not reconcile; likely formula/period/basis differences remain unresolved |
+| ROCE | Tickertape screener 5.62% | No comparable conventional ROCE accepted for a bank in this audit | Do not use industrial ROCE gate on banks without a separately designed bank-specific metric |
+| Debt/Equity | Tickertape screener 0.00 | Annual report discloses borrowings ₹4,89,394.6 cr and shareholders' funds ₹5,62,900.91 cr | Generic D/E is not a sound bank solvency measure; 0.00 must not be interpreted as zero borrowings |
+| Interest coverage | No comparable verified provider/official pair captured | Bank interest expense/income are core operating flows | Generic industrial interest-coverage formula is unsuitable without bank-specific definition |
+| Operating cash flow | No mapped adapter value | Bank cash-flow statement exists, but operating cash flow is heavily affected by deposits/advances | Do not apply a non-financial-company OCF threshold to banks |
+
+**Bank-specific conclusion:** HDFC Bank is a deliberate sector edge case, not a clean validation issuer for generic industrial Revenue Growth / ROCE / Debt-to-Equity / Interest Coverage / Operating Cash Flow. Keep bank-specific ratios and definitions separate; do not coerce the bank into industrial formulas.
+
+### 3) RELIANCE INDUSTRIES
+
+| Metric | Public provider-page observation | Official company evidence | Reconciliation |
+|---|---:|---:|---|
+| Revenue | Moneycontrol FY26 ₹10,57,035 cr | Consolidated FY26 Revenue from Operations ₹10,75,675 cr; Value of Sales & Services ₹11,75,919 cr | Provider page's revenue row does not match either official headline row; row definition must be identified |
+| Profit | Moneycontrol FY26 PAT ₹95,610 cr | Consolidated PAT before share of associates/JVs ₹95,610 cr; profit for year after share of associates/JVs ₹95,754 cr | Exact match to PAT-before-associates row; do not confuse it with profit for year |
+| Revenue growth | Not accepted from provider page until revenue row is identified | Official Revenue from Operations grew from ₹9,80,136 cr to ₹10,75,675 cr (about 9.75%) | Provider growth remains unverified |
+| Profit growth | Not accepted until PAT row is confirmed | PAT-before-associates ₹95,610 cr vs ₹80,787 cr; profit-for-year ₹95,754 cr vs ₹81,309 cr | Different valid profit rows yield different growth; label must specify which row |
+| ROE | Moneycontrol 8.93%; Tickertape page not conclusively issuer-period matched | Reviewed official standalone ratio is 8.5%; consolidated ROE still needs exact same-basis confirmation | Not comparable yet; basis is unresolved |
+| ROCE | No exact same-basis provider/official pair captured | Standalone report's ROCE is 20.7%; formula is explicitly defined in the report | Must not compare to a consolidated provider ratio or substitute a generic formula |
+| Debt/Equity | Moneycontrol 0.41 | Official standalone ratio 0.41 | Numeric match, but it does not validate the adapter's consolidated call; confirm basis before use |
+| Interest coverage | No exact same-basis provider/official pair captured | Official integrated report states interest coverage rose to 8.83x in FY26 from 5.59x in FY25 | Provider observation still required and formula must be aligned |
+| Operating cash flow | No mapped adapter value | Official consolidated net cash flow from operating activities ₹1,92,113 cr; FY25 ₹1,78,703 cr | Official line and INR-crore scale identified; adapter mapping remains absent |
+
+### What this sample proves — and what it does not
+
+1. Public Moneycontrol/Tickertape values can look plausible while differing from official values or using different line definitions. Infosys interest coverage and debt/equity, HDFC Bank ROE/revenue/profit, and Reliance revenue illustrate why label-only acceptance is unsafe.
+2. A matching number does not prove the correct basis. Reliance Moneycontrol D/E 0.41 matches the official **standalone** ratio, while the adapter explicitly requests **consolidated** Moneycontrol statements.
+3. HDFC Bank must not be used to validate industrial-company formulas. Its revenue, leverage and cash-flow concepts need a bank-specific schema.
+4. The seven-metric data gate must remain closed for any field without a verified issuer, FY/period, basis, unit and formula.
+5. **No raw private-API table capture has yet been made.** Before changing adapter logic, the next controlled run must capture the actual Bharat-SM-Data frames for these three symbols, both providers separately, with source URL, retrieval timestamp, raw row label, ordered period columns, selected value and unit. Duplicate exact Tickertape hits must be flagged as ambiguous.
