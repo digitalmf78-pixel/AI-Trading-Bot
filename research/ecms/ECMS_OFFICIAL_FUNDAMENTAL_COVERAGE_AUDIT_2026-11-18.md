@@ -247,3 +247,91 @@ This pass searched the last complete 23-stock cohort for newer results for the q
 - The 23-stock historical cohort remains the scope; it is not a newly generated current Top-25.
 - Continue fail-closed. Keep every stock at WAIT_FOR_DATA until all applicable metrics and provenance are reconciled.
 - Research only: no production code, workflows, cache, thresholds or NSE V8 files were changed.
+
+
+## Addendum 2 — expanded Q2 FY27 filing recovery and interim trend check (18-Nov-2026)
+
+### Scope
+This pass searched the historical 23-symbol Run #335 cohort for Q2 FY27 (quarter ended 30-Sep-2026) filings. It does not represent a newly refreshed ECMS Top-25. Q2 unaudited data is used for current operating-trend context only; it is not substituted for the seven annual/TTM fundamental definitions.
+
+### Filing evidence recovered
+
+| Symbol | Q2 FY27 evidence | Evidence level |
+|---|---|---|
+| RPSGVENT | NSE Integrated Filing IndAS XBRL, consolidated, approved 05-Nov-2026; quarter and H1 data plus balance sheet and cash-flow sections | Primary NSE XBRL |
+| BELRISE | NSE Archives result/press release; consolidated Q2 revenue ₹2,746.38 Cr, adjusted PAT ₹166.25 Cr (₹ Mn converted to Cr); board outcome confirms unaudited standalone and consolidated results | Primary NSE |
+| TVSSCS | NSE Archives board outcome and results PDF; standalone + consolidated unaudited Q2/H1 with limited review; consolidated Q2 revenue ₹3,687.15 Cr, PAT ₹36.51 Cr | Primary NSE |
+| PRICOLLTD | NSE Integrated Filing IndAS XBRL, consolidated and standalone originals, unaudited, approved 04-Nov-2026; full P&L, balance sheet and cash-flow sections | Primary NSE XBRL |
+| CLCIND | NSE Integrated Filing IndAS XBRL, standalone, unaudited, approved 02-Nov-2026; full P&L, balance sheet and cash-flow sections | Primary NSE XBRL |
+| TVSSRICHAK | NSE Archives board outcome confirms standalone + consolidated unaudited Q2/H1 results and limited-review reports, approved 14-Nov-2026 | Primary NSE |
+| VIPCLOTHNG | NSE Archives newspaper extract and investor presentation; standalone Q2/H1 results, approved 13-Nov-2026 | Primary NSE |
+| DSSL | NSE Archives Q2/H1 FY27 results press release; standalone + consolidated results; consolidated Q2 revenue ₹551.36 Cr and PAT ₹29.81 Cr | Primary NSE |
+| DEEPAKFERT | NSE Archives Q2 FY27 results update; consolidated Q2 revenue ₹3,334 Cr and PAT ₹394 Cr | Primary NSE |
+| UGROCAP | NSE Archives board outcome with consolidated Q2/H1 financial results; financial-services entity | Primary NSE |
+| YATRA | Company investor-relations financial summary reports Q2 FY27 unaudited results; Q2 revenue ₹213.60 Cr and loss ₹2.353 Cr | Primary issuer website |
+| ORCHPHARMA | NSE Archives board outcome and Annexure-I results/limited-review PDF, approved 14-Nov-2026 | Primary NSE |
+| BOROLTD | Q2/H1 FY27 standalone + consolidated financial results and limited-review content recovered from filing mirror; exact issuer identity and period visible | Filing mirror; exchange-original URL still to be pinned |
+| KAYNES | NSE Archives Q2 FY27 press release; consolidated Q2 revenue ₹952.5 Cr, PAT ₹39.8 Cr; H1 revenue ₹1,898.7 Cr, PAT ₹85.2 Cr | Primary NSE |
+| GALLANTT | BSE filing listing confirms unaudited results for 30-Sep-2026; consolidated Q2 revenue ₹1,145.89 Cr and PAT ₹60.51 Cr | BSE listing/secondary mirror; exact original PDF still to be pinned |
+| INDRAMEDCO | Q2 FY27 results recovered from filing mirror; quarter revenue ₹412.85 Cr, H1 revenue ₹819.00 Cr | Filing mirror; exchange-original URL still to be pinned |
+| ARYAMAN | NSE Archives newspaper extract contains consolidated and standalone Q2/H1 results; consolidated total income ₹36.14 Cr, standalone PAT ₹5.49 Cr; financial-services business | Primary NSE newspaper extract |
+| HINDADH | BSE filing mirror reproduces board outcome, limited review report, standalone/consolidated results, balance sheet and cash-flow sections; approved 14-Nov-2026 | Filing mirror of BSE submission; exchange-original URL still to be pinned |
+| PBMPOLY | BSE announcement listing and extracted filing data report unaudited standalone/consolidated Q2/H1 and limited-review reports; Q2 consolidated revenue ₹47.74 Cr and PAT ₹3.04 Cr | BSE filing aggregator/mirror; original PDF not yet independently pinned |
+| KJMCFIN | BSE filing record discovered for Q2/H1 unaudited standalone/consolidated results; financial-services business; reported Q2 consolidated PAT ₹7.52 Cr in filing extraction | BSE filing extraction; original PDF and all facts still to be pinned |
+| MUKESHB | BSE filing extraction reports unaudited standalone/consolidated Q2/H1 results with balance sheet, cash flow and limited review; large one-quarter jump in financial income/profit; subsidiary review scope caveat | BSE filing extraction; original PDF still to be pinned |
+| SONAL | NSE Archives newspaper extract confirms Q2/H1 unaudited results approved 13-Nov-2026; standalone Q2 revenue ₹41.46 Cr and PAT ₹0.203 Cr in extracted result | Primary NSE newspaper extract; results statement URL still to be pinned |
+
+**Coverage result:** Q2 result evidence or a specific filing lead was found for all 23 historical cohort symbols. This is not the same as 23/23 direct exchange-XBRL verification: for BOROLTD, INDRAMEDCO, HINDADH, PBMPOLY, KJMCFIN, MUKESHB and GALLANTT, the exact exchange-original document/XBRL record still needs to be pinned and checked directly. The evidence register above deliberately separates primary exchange/issuer records from filing mirrors and aggregators.
+
+### Specific XBRL facts independently read
+
+**PRICOLLTD — consolidated, INR lakh, Q2 FY27**
+- Filing identity: NSE symbol PRICOLLTD, ISIN INE726V01018; original, unaudited, quarter ended 30-Sep-2026; board approval 04-Nov-2026.
+- Revenue from operations: ₹1,35,632 lakh (Q2); ₹2,46,176 lakh H1.
+- Finance costs: ₹970 lakh Q2; ₹1,722 lakh H1.
+- Depreciation/amortisation: ₹3,391 lakh Q2; ₹6,575 lakh H1.
+- PAT: ₹8,521 lakh Q2; ₹15,223 lakh H1.
+- H1 operating cash flow: ₹7,183 lakh.
+- 30-Sep-2026 total equity: ₹1,40,616 lakh; borrowings: ₹8,222 lakh non-current + ₹42,858 lakh current; lease liabilities separately disclosed.
+- This is a directly inspectable XBRL record, but the final seven-metric TTM calculation still needs prior-year same-basis comparative facts and a declared formula.
+
+**CLCIND — standalone, INR lakh, Q2 FY27**
+- Filing identity: CLC Industries Limited, NSE symbol CLCIND, ISIN INE376C01038; original, unaudited, quarter ended 30-Sep-2026; board approval 02-Nov-2026.
+- Revenue from operations: ₹6,774.53 lakh Q2; ₹9,816.70 lakh H1.
+- PAT: ₹85.15 lakh Q2; ₹133.06 lakh H1.
+- Finance costs: ₹101.20 lakh Q2; ₹230.88 lakh H1.
+- Depreciation/amortisation: ₹86.89 lakh Q2; ₹175.77 lakh H1.
+- H1 operating cash flow: **negative ₹1,187.03 lakh**.
+- 30-Sep-2026 equity: ₹257.62 lakh; borrowings: ₹5,066.08 lakh non-current + ₹3,225.40 lakh current. Lease liabilities are separately disclosed/limited in the captured XBRL.
+- A raw borrowings/equity ratio from these fields is about **32.2x** before lease treatment. This does not reconcile with the older provider candidate D/E 55.96x. Do not use either value as final D/E until the exact debt definition and filing basis are reconciled.
+- Equity is unusually small relative to borrowings; this requires a manual review and should not be hidden by a provider-derived ratio.
+
+**TVSSCS — consolidated, INR crore, Q2 FY27**
+- NSE board outcome confirms unaudited standalone and consolidated results with limited-review reports.
+- Q2 revenue ₹3,687.15 Cr vs ₹2,662.63 Cr (+38.5%); Q2 PAT ₹36.51 Cr vs ₹16.31 Cr (+123.9%).
+- H1 revenue ₹7,022.37 Cr vs ₹5,254.94 Cr (+33.6%); H1 PAT ₹58.99 Cr vs ₹87.47 Cr (-32.6%). Prior-year H1 includes a large share-of-profit/exceptional context; do not infer sustainable growth from the PAT percentage alone.
+- Consolidated H1 operating cash flow ₹233.99 Cr vs ₹341.90 Cr in prior H1.
+- The filing has both consolidated and standalone cash-flow statements; do not mix their facts.
+
+### Interim trend flags (not a fundamental rating)
+
+- **Positive Q2 revenue/PAT momentum:** BELRISE, TVSSCS, PRICOLLTD, DSSL, DEEPAKFERT, BOROLTD, ORCHPHARMA, PBMPOLY, ARYAMAN (financial services), KJMCFIN (financial services), UGROCAP (financial services).
+- **Mixed or deteriorating profit despite revenue:** KAYNES (Q2 PAT sharply lower YoY), GALLANTT (PAT lower YoY), VIPCLOTHNG (PAT lower YoY), SONAL (PAT lower YoY), YATRA (Q2 loss and revenue down YoY), SAPPL (Q2 loss and revenue down YoY).
+- **Special handling:** MUKESHB's large financial-services income/PAT jump needs source-level composition and subsidiary-scope review; CLCIND has negative H1 OCF and a very high raw debt/equity relationship; TVSSCS H1 PAT comparison is distorted by prior-year associate/exceptional items; UGROCAP, ARYAMAN, KJMCFIN and MUKESHB require financial-sector policy rather than industrial ROCE/D/E/interest-coverage rules.
+
+### What remains before the seven fundamentals can be marked complete
+
+1. Pin exact exchange-original PDF/XBRL URLs for the seven filing-mirror/aggregator cases above; confirm ISIN/security identity, original/revised status and consolidated/standalone.
+2. Extract FY25, FY26 and H1 FY27 same-basis source facts for each stock. Compute TTM where possible as FY26 + H1 FY27 − H1 FY26; avoid mixing standalone and consolidated facts.
+3. Use a single declared formula set:
+   - Revenue Growth: latest audited FY26 vs FY25 annual revenue (and separately show H1 FY27 YoY trend).
+   - Profit Growth: latest audited FY26 vs FY25 PAT, with exceptional items and minority interest treatment documented (and separately show H1 FY27 YoY trend).
+   - ROE: TTM PAT attributable to owners / average opening and closing equity.
+   - ROCE: TTM EBIT / average capital employed, with financial-sector entities marked N/A under a separate policy.
+   - Debt/Equity: same-date interest-bearing borrowings / same-date equity, leases explicitly included or excluded by policy.
+   - Interest Coverage: TTM EBIT / TTM finance cost, with sector-specific exclusions.
+   - OCF: latest audited FY26 operating cash flow; show H1 FY27 interim OCF separately and do not annualise it without a stated method.
+4. Reconcile the central verifier and dedicated Debt/Equity audit status contract. Do not promote any stock to strict PASS until all seven applicable metrics have primary-source facts, matching periods/basis/units and independently reproduced calculations.
+
+### Current safe decision
+This pass materially improves filing discovery, but it does **not** complete the seven-metric source reconciliation for 23/23 companies. Keep all 23 at WAIT_FOR_DATA; no strict fundamental PASS or FAIL is assigned. No production code, workflow, cache, threshold or NSE V8 file was changed.
