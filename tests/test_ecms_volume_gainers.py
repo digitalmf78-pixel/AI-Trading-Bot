@@ -370,7 +370,6 @@ def test_manual_observation_uses_preserved_eod_reference_after_morning_consumes_
     snapshot.to_csv(observation, index=False)
     monkeypatch.setattr(scanner, "STATE_DIR", state_dir)
     monkeypatch.setattr(scanner, "STATE_FILE", active)
-    monkeypatch.setattr(scanner, "MANUAL_OBSERVATION_EOD_FILE", observation)
     monkeypatch.setattr(scanner, "CONSUMED_EOD_MARKER_FILE", consumed)
     monkeypatch.setattr(scanner, "MORNING_STATE_FILE", state_dir / "morning.csv")
     monkeypatch.setenv("GITHUB_RUN_ID", "morning-test-run")
