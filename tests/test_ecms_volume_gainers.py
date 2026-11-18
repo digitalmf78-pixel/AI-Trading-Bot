@@ -1234,7 +1234,7 @@ def test_main_persists_explicit_skipped_execution_status(tmp_path, monkeypatch):
     assert saved["expected_time_ist"] == "09:20"
 
 
-def test_manual_auto_mode_after_market_close_runs_eod(monkeypatch):
+def test_manual_auto_mode_resolves_eod_only_from_1700(monkeypatch):
     import sys
     from datetime import datetime as real_datetime
     import strategies.ecms.volume_gainers as scanner
@@ -1242,24 +1242,23 @@ def test_manual_auto_mode_after_market_close_runs_eod(monkeypatch):
     class FixedDateTime:
         @classmethod
         def now(cls, tz=None):
-            return real_datetime(2026, 11, 17, 15, 31, tzinfo=tz)
+            return real_datetime(2026, 11, 17, 17, 1, tzinfo=tz)
 
     calls = []
     monkeypatch.setattr(scanner, "datetime", FixedDateTime)
-    monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
-    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda _day: [])
-    monkeypatch.setattr(scanner, "run_eod", lambda: calls.append("eod") or {})
-    monkeypatch.setattr(scanner, "run_morning", lambda: calls.append("morning") or {})
-    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: {"mode": mode})
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda day: [])
+    monkeypatch.setattr(scanner, "run_eod", lambda: calls.append("eod") or {"status": "PASS"})
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda *args, **kwargs: None)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
-    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "auto"])
+    monkeypatch.setattr(sys, "argv", ["volume_gainers", "--mode", "auto"])
 
     scanner.main()
 
     assert calls == ["eod"]
 
 
-def test_manual_auto_mode_before_market_close_is_skipped(monkeypatch):
+def test_manual_auto_mode_resolves_observation_for_midday(monkeypatch):
     import sys
     from datetime import datetime as real_datetime
     import strategies.ecms.volume_gainers as scanner
@@ -1267,52 +1266,35 @@ def test_manual_auto_mode_before_market_close_is_skipped(monkeypatch):
     class FixedDateTime:
         @classmethod
         def now(cls, tz=None):
-            return real_datetime(2026, 11, 17, 15, 29, tzinfo=tz)
+            return real_datetime(2026, 11, 17, 14, 30, tzinfo=tz)
 
     calls = []
-    statuses = []
     monkeypatch.setattr(scanner, "datetime", FixedDateTime)
-    monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
-    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda _day: [])
-    monkeypatch.setattr(scanner, "run_eod", lambda: calls.append("eod") or {})
-    monkeypatch.setattr(scanner, "run_morning", lambda: calls.append("morning") or {})
-    monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda day: [])
+    monkeypatch.setattr(scanner, "run_morning", lambda: calls.append("observation") or {"status": "PASS"})
+    monkeypatch.setattr(scanner, "_write_execution_status", lambda *args, **kwargs: None)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
-    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "auto"])
+    monkeypatch.setattr(sys, "argv", ["volume_gainers", "--mode", "auto"])
 
     scanner.main()
 
-    assert calls == []
-    assert statuses == [("auto", "SKIPPED", "OUTSIDE_ECMS_SCAN_WINDOW")]
+    assert calls == ["observation"]
+    assert scanner.os.environ["ECMS_SCAN_SLOT"] == "MANUAL_OBSERVATION"
 
 
-
-def test_manual_auto_mode_resolves_eod_snapshot_reuse_until_0759():
+def test_manual_time_slot_boundaries():
     from datetime import datetime as real_datetime
     import strategies.ecms.volume_gainers as scanner
 
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 7, 59)) == "eod-reuse"
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 0, 0)) == "eod-reuse"
-
-
-def test_manual_auto_mode_resolves_morning_from_0915_to_1159():
-    from datetime import datetime as real_datetime
-    import strategies.ecms.volume_gainers as scanner
-
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 15)) == "morning"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 19)) == "manual-observation"
     assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 20)) == "morning"
     assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 11, 59)) == "morning"
-
-
-def test_manual_auto_mode_skips_locked_and_intraday_windows():
-    from datetime import datetime as real_datetime
-    import strategies.ecms.volume_gainers as scanner
-
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 8, 0)) is None
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 9, 14)) is None
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 12, 0)) is None
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 15, 29)) is None
-    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 15, 30)) == "eod"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 12, 0)) == "manual-observation"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 16, 59)) == "manual-observation"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 17, 0)) == "eod"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 23, 59)) == "eod"
+    assert scanner._resolve_manual_scan_mode(real_datetime(2026, 11, 17, 0, 0)) == "manual-observation"
 
 
 
