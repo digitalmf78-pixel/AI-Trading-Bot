@@ -1407,3 +1407,19 @@ def test_reuse_previous_eod_snapshot_rejects_wrong_date(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
     assert scanner._reuse_previous_eod_snapshot() is None
     assert statuses[0][1:] == ("WAIT_FOR_DATA", "EOD_SNAPSHOT_DATE_MISMATCH_FOR_REUSE")
+
+
+
+def test_secondary_fundamental_period_alignment_flags_stale_periods_without_value_mismatch():
+    from strategies.ecms.volume_gainers import _secondary_period_alignment_status
+
+    assert _secondary_period_alignment_status("2026-03-31", "Mar 2026") == "PERIOD_ALIGNED"
+    assert _secondary_period_alignment_status("2026-03-31", "Mar 2017") == "PERIOD_MISMATCH"
+    assert _secondary_period_alignment_status("Mar 2026", "FY2016->FY2017") == "PERIOD_MISMATCH"
+
+
+def test_secondary_fundamental_period_alignment_never_assumes_unknown_periods_match():
+    from strategies.ecms.volume_gainers import _secondary_period_alignment_status
+
+    assert _secondary_period_alignment_status("2026-03-31", "") == "PERIOD_NOT_CONFIRMED"
+    assert _secondary_period_alignment_status("unknown", "Mar 2026") == "PERIOD_NOT_CONFIRMED"
