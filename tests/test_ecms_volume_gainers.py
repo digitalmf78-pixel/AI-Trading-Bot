@@ -353,6 +353,33 @@ def test_eod_snapshot_is_atomically_saved_with_current_run_marker(tmp_path, monk
 
 
 
+def test_manual_observation_uses_only_a_date_matched_eod_reference(tmp_path):
+    import strategies.ecms.volume_gainers as scanner
+
+    missing = tmp_path / "missing.csv"
+    empty, status = scanner._load_manual_observation_reference(missing, "2026-11-17")
+    assert empty.empty
+    assert status == "NO_MATCHING_EOD_REFERENCE_FRESH_OBSERVATION_ONLY"
+
+    stale = tmp_path / "stale.csv"
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "EODDate": "2026-11-16",
+        "SnapshotType": "EOD", "SnapshotStatus": "VALID",
+    }]).to_csv(stale, index=False)
+    empty, status = scanner._load_manual_observation_reference(stale, "2026-11-17")
+    assert empty.empty
+    assert status.startswith("STALE_EOD_REFERENCE_2026-11-16")
+
+    current = tmp_path / "current.csv"
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "EODDate": "2026-11-17",
+        "SnapshotType": "EOD", "SnapshotStatus": "VALID",
+    }]).to_csv(current, index=False)
+    loaded, status = scanner._load_manual_observation_reference(current, "2026-11-17")
+    assert loaded["TckrSymb"].tolist() == ["AAA"]
+    assert status == "MATCHED_PREVIOUS_EOD_REFERENCE"
+
+
 def test_manual_observation_uses_preserved_eod_reference_after_morning_consumes_active_file(tmp_path, monkeypatch):
     from datetime import date
     import strategies.ecms.volume_gainers as scanner
