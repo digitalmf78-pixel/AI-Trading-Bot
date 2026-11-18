@@ -207,6 +207,7 @@ jobs:
       - name: Run EOD page research
         id: eod-research
         env:
+          ECMS_EOD_BACKUP_TRIGGER: ${{ github.event.schedule == '15 12 * * 1-5' }}
           PYTHONUNBUFFERED: "1"
           V8_AUTO_FETCH_FUNDAMENTALS: "true"
           V8_FREE_FUNDAMENTAL_SOURCES: "true"
