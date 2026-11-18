@@ -27,7 +27,6 @@ NSE_PAGE = "https://www.nseindia.in/market-data/volume-gainers-spurts"
 NSE_API = "https://www.nseindia.in/api/live-analysis-volume-gainers"
 STATE_DIR = Path("data/cache/ecms")
 STATE_FILE = STATE_DIR / "volume_gainers_previous_eod.csv"
-MANUAL_OBSERVATION_EOD_FILE = STATE_DIR / "volume_gainers_manual_observation_eod_reference.csv"
 CONSUMED_EOD_MARKER_FILE = STATE_DIR / "volume_gainers_previous_eod_consumed.json"
 MORNING_STATE_FILE = STATE_DIR / "volume_gainers_same_day_morning.csv"
 REQUEST_TIMEOUT = (8, 20)
@@ -1055,11 +1054,10 @@ def _save_eod_snapshot(frame, eod_date):
     # Keep a separate read-only copy for midday Manual Observation. The normal
     # Morning lifecycle consumes and deletes STATE_FILE; observation must still
     # be able to read the same completed EOD reference without resurrecting it.
-    observation_temporary = MANUAL_OBSERVATION_EOD_FILE.with_name(
-        MANUAL_OBSERVATION_EOD_FILE.name + ".tmp"
-    )
+    observation_file = STATE_DIR / "volume_gainers_manual_observation_eod_reference.csv"
+    observation_temporary = observation_file.with_name(observation_file.name + ".tmp")
     state.to_csv(observation_temporary, index=False)
-    observation_temporary.replace(MANUAL_OBSERVATION_EOD_FILE)
+    observation_temporary.replace(observation_file)
     marker = {
         "snapshot_type": "EOD", "snapshot_status": "VALID",
         "eod_date": eod_date.isoformat(),
@@ -1412,8 +1410,9 @@ def _confirmation_status(eod_pass, present, morning_pass):
 
 def _morning_reference_file(manual_observation=False):
     """Use the preserved EOD copy for observations after Morning consumes active state."""
-    if manual_observation and MANUAL_OBSERVATION_EOD_FILE.is_file():
-        return MANUAL_OBSERVATION_EOD_FILE
+    observation_file = STATE_DIR / "volume_gainers_manual_observation_eod_reference.csv"
+    if manual_observation and observation_file.is_file():
+        return observation_file
     return STATE_FILE
 
 
