@@ -359,6 +359,84 @@ def _download_daily_index_file(session: requests.Session, day: pd.Timestamp) -> 
     return pd.DataFrame()
 
 
+
+def load_nifty50_index_history_from_archive(
+    asof_date: Any,
+    min_bars: int = 50,
+    max_calendar_days: int = 110,
+) -> pd.DataFrame:
+    """Build exact-date Nifty 50 closes from official NSE daily archives.
+
+    Reuses official all-indices CSVs cached under data/cache/sector_index_daily.
+    Never substitutes another date/index or a synthetic close. Requires at least
+    min_bars distinct official sessions including the exact requested EOD.
+    """
+    asof = pd.to_datetime(asof_date, errors="coerce")
+    if pd.isna(asof):
+        raise ValueError(f"Invalid Nifty 50 as-of date: {asof_date!r}")
+    asof = pd.Timestamp(asof).normalize()
+    if isinstance(min_bars, bool) or int(min_bars) < 1:
+        raise ValueError("min_bars must be a positive integer")
+    if isinstance(max_calendar_days, bool) or int(max_calendar_days) < 1:
+        raise ValueError("max_calendar_days must be a positive integer")
+
+    session = requests.Session()
+    closes: dict[pd.Timestamp, float] = {}
+    for offset in range(int(max_calendar_days)):
+        day = asof - pd.Timedelta(days=offset)
+        try:
+            if not is_trading_session(day.date()):
+                continue
+        except CalendarCoverageError as exc:
+            raise RuntimeError(f"WAIT_FOR_DATA: official NSE calendar coverage unavailable: {exc}") from exc
+
+        frame = _download_daily_index_file(session, day)
+        if frame is None or frame.empty:
+            continue
+        columns = {str(column).strip().casefold(): column for column in frame.columns}
+        name_col = next((columns[key] for key in ("index name", "index_name", "index") if key in columns), None)
+        date_col = next((columns[key] for key in ("index date", "index_date", "date") if key in columns), None)
+        close_col = next((columns[key] for key in (
+            "closing index value", "close index value", "closing value",
+            "close value", "closing", "close",
+        ) if key in columns), None)
+        if name_col is None or date_col is None or close_col is None:
+            print(f"[NIFTY][NSE_ARCHIVE] WAIT_FOR_DATA schema date={day.date()} columns={list(frame.columns)}")
+            continue
+
+        for _, record in frame.iterrows():
+            if _normalise_index_name(record.get(name_col, "")) != "NIFTY 50":
+                continue
+            record_date = pd.to_datetime(record.get(date_col), errors="coerce", dayfirst=True)
+            close = pd.to_numeric(record.get(close_col), errors="coerce")
+            if pd.isna(record_date) or pd.isna(close) or float(close) <= 0:
+                continue
+            record_date = pd.Timestamp(record_date).normalize()
+            if record_date != day.normalize() or record_date > asof:
+                continue
+            value = float(close)
+            if value == float("inf") or value == float("-inf"):
+                continue
+            closes[record_date] = value
+
+        if len(closes) >= int(min_bars) and asof in closes:
+            break
+        time.sleep(0.08)
+
+    history = pd.DataFrame(
+        [{"Date": day, "NiftyClose": close} for day, close in sorted(closes.items())],
+        columns=["Date", "NiftyClose"],
+    )
+    if len(history) < int(min_bars) or history.empty or pd.Timestamp(history.iloc[-1]["Date"]).normalize() != asof:
+        latest = pd.Timestamp(history["Date"].max()).date() if not history.empty else "NONE"
+        raise RuntimeError(
+            f"WAIT_FOR_DATA: official NSE Nifty 50 archive has {len(history)}/{int(min_bars)} "
+            f"distinct closes through {latest}; exact EOD {asof.date()} is required."
+        )
+    return history.tail(260).reset_index(drop=True)
+
+
+
 def _history_from_nse_archive(session: requests.Session, asof: pd.Timestamp) -> tuple[list[dict[str, Any]], int]:
     """Fetch 45 prior weekdays of official NSE index closes; retain exact-date rows only."""
     index_lookup = {

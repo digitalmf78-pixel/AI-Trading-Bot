@@ -54,6 +54,7 @@ from v8_layers_14_41 import (
 )
 import sector_data
 from main_board_filter import apply_official_main_board_filter
+from nse_results_universe import apply_official_results_universe_filter, write_results_universe_reports
 from bottom_detection import write_bottom_detection_report
 from sector_data import refresh_sector_inputs
 from news_catalyst import (
@@ -85,7 +86,7 @@ NSE_BASE_URL = "https://nsearchives.nseindia.com/content/cm/"
 HISTORY_DAYS = 200  # retain enough EOD sessions for verified 100D/200D resistance
 DATA_CACHE_DIR = os.path.join("data", "bhavcopy")
 BHAVCOPY_404_CACHE_DAYS = 2
-NIFTY_HISTORY_CACHE = os.path.join(DATA_CACHE_DIR, "nifty50_index_history.csv")
+NIFTY_HISTORY_CACHE = os.path.join("data", "cache", "market_index", "nifty50_index_history.csv")
 NIFTY_HISTORY_MIN_BARS = 50
 NIFTY_HISTORY_LOOKBACK_DAYS = 140
 YAHOO_NIFTY_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
@@ -726,7 +727,7 @@ def load_nifty_index_history(latest_date):
     WAIT_FOR_DATA unless it is aligned to the requested date.
     """
     print("\nSTEP 12: Loading Nifty 50 history and checking cache...")
-    os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(NIFTY_HISTORY_CACHE), exist_ok=True)
 
     cached = pd.DataFrame(columns=["Date", "NiftyClose"])
     if os.path.exists(NIFTY_HISTORY_CACHE):
@@ -750,6 +751,35 @@ def load_nifty_index_history(latest_date):
     if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS and not cached_asof.empty and cached_asof["Date"].max() == target:
         print(f"[NIFTY][CACHE_HIT] rows={len(cached_asof)} asof={target.date()}")
         return cached_asof.tail(260).reset_index(drop=True)
+
+    # Prefer exact-date official NSE index archives. This cache is outside
+    # data/bhavcopy, so the repair never writes to or rewrites price history.
+    try:
+        official = sector_data.load_nifty50_index_history_from_archive(
+            target, min_bars=NIFTY_HISTORY_MIN_BARS
+        )
+        official["Date"] = pd.to_datetime(official["Date"], errors="coerce")
+        official["NiftyClose"] = pd.to_numeric(official["NiftyClose"], errors="coerce")
+        official = official.dropna(subset=["Date", "NiftyClose"]).drop_duplicates(
+            subset=["Date"], keep="last"
+        ).sort_values("Date").reset_index(drop=True)
+        if (
+            len(official) >= NIFTY_HISTORY_MIN_BARS
+            and not official.empty
+            and official["Date"].max().normalize() == target
+        ):
+            official.to_csv(NIFTY_HISTORY_CACHE, index=False, date_format="%Y-%m-%d")
+            print(
+                f"[NIFTY][OFFICIAL_NSE_ARCHIVE_CACHE_UPDATED] "
+                f"rows={len(official)} through={target.date()}"
+            )
+            return official.tail(260).reset_index(drop=True)
+        raise RuntimeError("official archive did not provide 50 closes ending on the exact EOD date")
+    except Exception as exc:
+        print(
+            f"[NIFTY][OFFICIAL_NSE_ARCHIVE_UNAVAILABLE] "
+            f"{type(exc).__name__}: {exc}; trying the existing Yahoo fallback."
+        )
 
     fetch_start = (target - pd.Timedelta(days=NIFTY_HISTORY_LOOKBACK_DAYS)).date()
     if len(cached_asof) >= NIFTY_HISTORY_MIN_BARS:
@@ -2918,11 +2948,16 @@ def select_top20_analysis_candidates(result, eod_date):
         support = pd.to_numeric(pd.Series([row.get("SRSupport")]), errors="coerce").iloc[0]
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
-        # Defensive audit check: the mandatory delivery gate must already have passed.
+        # Defensive audit check: Delivery remains mandatory; distinguish missing data from a measured failure.
         if delivery not in {"PASS_GE_60_PERCENT", "PASS_A_OR_B"}:
-            reasons.append("DELIVERY_A_OR_B_MINIMUM_FIVE_QUALIFYING_COUNT_NOT_MET_OR_DATA_MISSING")
+            if "WAIT" in delivery or delivery in {"", "NAN", "NONE"}:
+                reasons.append("DELIVERY_A_OR_B_WAIT_FOR_DATA")
+            else:
+                reasons.append("DELIVERY_A_OR_B_MINIMUM_FIVE_QUALIFYING_COUNT_NOT_MET")
+
+        # RVOL is a classification only. Missing/low RVOL must never become a candidate rejection gate.
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
-            reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
+            warnings.append("RVOL_CLASSIFICATION_WAIT_FOR_DATA_NOT_A_REJECTION_GATE")
         if setup not in {"Breakout", "Pullback"}:
             reasons.append("NO_CONFIRMED_BREAKOUT_OR_PULLBACK_SETUP")
         if "Bullish" not in trend:
@@ -2949,7 +2984,19 @@ def select_top20_analysis_candidates(result, eod_date):
             if pullback not in {"Pullback", "Strong Pullback"}:
                 reasons.append("PULLBACK_NOT_CONFIRMED")
 
-        selected = len(reasons) == 0
+        wait_reasons = {
+            "DELIVERY_A_OR_B_WAIT_FOR_DATA",
+            "RELATIVE_STRENGTH_WAIT_FOR_DATA",
+            "SUPPORT_RESISTANCE_WAIT_FOR_DATA",
+        }
+        hard_reasons = [reason for reason in reasons if reason not in wait_reasons]
+        if hard_reasons:
+            screen_status = "REJECT"
+        elif reasons:
+            screen_status = "WAIT_FOR_DATA"
+        else:
+            screen_status = "PASS"
+        selected = screen_status == "PASS"
         audit_rows.append({
             "EODDate": str(eod_date),
             "TckrSymb": symbol,
@@ -2965,7 +3012,7 @@ def select_top20_analysis_candidates(result, eod_date):
             "RelativeStrengthNifty": rs,
             "SRSupport": support,
             "SRResistance": resistance,
-            "CandidateScreenStatus": "PASS" if selected else "REJECT",
+            "CandidateScreenStatus": screen_status,
             "CandidateScreenReasons": "PASS_CORE_TECHNICAL_SCREEN" if selected else ";".join(reasons),
             "CandidateScreenWarnings": ";".join(warnings) if warnings else "NONE",
         })
@@ -3413,11 +3460,45 @@ def main():
             "outputs/v8_main_board_universe_audit.csv", index=False
         )
 
-    print(f"Current verified Main Board symbols: {len(current)}")
-    # Immutable Track 2 input: official Mainboard cohort before Delivery A/B.
-    # Track 2 writes isolated research artifacts and never mutates Track 1.
+    # Snapshot the complete official Mainboard/Bhavcopy cohort for the independent
+    # Track 2 observer BEFORE Track 1 is narrowed by the announced-results gate.
+    # This preserves full-Mainboard research coverage even when Results has no matches.
     track2_mainboard_candidates = current.copy(deep=True)
 
+    # --------------------------------------------------------
+    # STEP 1C: OFFICIAL NSE FINANCIAL-RESULTS UNIVERSE (NEXT 3 CALENDAR MONTHS)
+    # --------------------------------------------------------
+    # This changes only the symbols entering the existing scanner pipeline.
+    # Bhavcopy, Delivery cache, universe cache, workflow schedule and all
+    # downstream eligibility thresholds/order remain untouched.
+    results_universe_audit = pd.DataFrame()
+    results_summary = {}
+    if current.empty:
+        results_universe_audit = pd.DataFrame(columns=[
+            "TckrSymb", "ResultsUniverseStatus", "OfficialResultsDate", "ResultsCalendarSource"
+        ])
+    else:
+        try:
+            current, results_universe_audit, results_summary = apply_official_results_universe_filter(
+                current, eod_date, session=session, lookahead_months=3
+            )
+            write_results_universe_reports(results_universe_audit, results_summary, eod_date)
+        except Exception as results_exc:
+            print(f"[RESULTS UNIVERSE] WAIT_FOR_DATA: official NSE results calendar not verified; scanner input set to empty: {type(results_exc).__name__}: {results_exc}")
+            results_universe_audit = pd.DataFrame({
+                "TckrSymb": current["TckrSymb"].astype(str).str.strip().str.upper(),
+                "ResultsUniverseStatus": "WAIT_FOR_DATA_OFFICIAL_NSE_CALENDAR_UNAVAILABLE",
+                "OfficialResultsDate": "",
+                "ResultsCalendarSource": "NSE_OFFICIAL_EVENT_CALENDAR",
+            })
+            os.makedirs("outputs", exist_ok=True)
+            results_universe_audit.to_csv(
+                f"outputs/v8_results_universe_audit_{pd.Timestamp(eod_date).strftime('%Y%m%d')}.csv",
+                index=False,
+            )
+            current = current.iloc[0:0].copy()
+
+    print(f"[RESULTS UNIVERSE] Scanner input after official announced-results 3-calendar-month window: {len(current)}")
     # --------------------------------------------------------
     # STEP 3: LOAD HISTORY AND PREPARE THE PRIOR-20-SESSION VOLUME BASELINE.
     # Do not calculate RVOL for the Mainboard universe here. RVOL calculation

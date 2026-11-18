@@ -13,14 +13,16 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             "Date": pd.to_datetime(dates),
             "NiftyClose": [22000.0 + i for i in range(len(dates))],
         })
-        path = root / "nifty50_index_history.csv"
+        path = root / "market_index" / "nifty50_index_history.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(path, index=False, date_format="%Y-%m-%d")
         return frame
 
     def _patched_cache_and_provider(self, root, provider):
         return (
             patch.object(vg, "DATA_CACHE_DIR", str(root)),
-            patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "nifty50_index_history.csv")),
+            patch.object(vg, "NIFTY_HISTORY_CACHE", str(root / "market_index" / "nifty50_index_history.csv")),
+            patch.object(vg.sector_data, "load_nifty50_index_history_from_archive", side_effect=RuntimeError("official archive unavailable")),
             patch.object(vg, "fetch_nifty_index_history", **provider),
         )
 
@@ -29,14 +31,14 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-08-01", periods=60)
             original = self._cache(root, dates)
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"side_effect": TimeoutError("provider down")}
             )
-            with p1, p2, p3:
+            with p1, p2, p3, p4:
                 result = vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
             self.assertEqual(len(result), 60)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), dates.max().normalize())
-            self.assertEqual(len(pd.read_csv(root / "nifty50_index_history.csv")), len(original))
+            self.assertEqual(len(pd.read_csv(root / "market_index" / "nifty50_index_history.csv")), len(original))
 
     def test_exact_date_refresh_replaces_stale_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -45,13 +47,13 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             self._cache(root, dates)
             target = pd.Timestamp("2026-11-08")
             downloaded = pd.DataFrame({"Date": [target], "NiftyClose": [24500.0]})
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"return_value": downloaded}
             )
-            with p1, p2, p3:
+            with p1, p2, p3, p4:
                 result = vg.load_nifty_index_history(target)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
-            cached = pd.read_csv(root / "nifty50_index_history.csv")
+            cached = pd.read_csv(root / "market_index" / "nifty50_index_history.csv")
             self.assertEqual(pd.to_datetime(cached["Date"]).max().normalize(), target.normalize())
 
     def test_insufficient_cache_and_provider_failure_still_fails_closed(self):
@@ -59,10 +61,10 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             root = Path(tmp)
             dates = pd.bdate_range("2026-10-01", periods=10)
             self._cache(root, dates)
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"side_effect": TimeoutError("provider down")}
             )
-            with p1, p2, p3:
+            with p1, p2, p3, p4:
                 with self.assertRaisesRegex(RuntimeError, "only 10 valid closes"):
                     vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
 
@@ -84,6 +86,29 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
         self.assertTrue(pd.isna(result.loc[0, "NiftyReturn20D"]))
         self.assertTrue(pd.isna(result.loc[0, "RelativeStrengthNifty"]))
         self.assertEqual(result.loc[0, "RSNiftyClassification"], "Insufficient Data")
+
+
+    def test_official_nse_archive_is_primary_and_persisted_outside_bhavcopy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = pd.Timestamp("2026-11-17")
+            dates = pd.bdate_range(end=target, periods=60)
+            official = pd.DataFrame({
+                "Date": dates,
+                "NiftyClose": [24000.0 + i for i in range(len(dates))],
+            })
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
+                root, {"side_effect": AssertionError("Yahoo must not be called when official NSE data is valid")}
+            )
+            with p1, p2, p3, p4, patch.object(
+                vg.sector_data, "load_nifty50_index_history_from_archive", return_value=official
+            ):
+                result = vg.load_nifty_index_history(target)
+            self.assertEqual(len(result), 60)
+            self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
+            cache = root / "market_index" / "nifty50_index_history.csv"
+            self.assertTrue(cache.exists())
+            self.assertFalse((root / "nifty50_index_history.csv").exists())
 
 
 if __name__ == "__main__":
