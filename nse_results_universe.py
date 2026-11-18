@@ -210,14 +210,12 @@ def apply_official_results_universe_filter(frame: pd.DataFrame, as_of_date: date
     return filtered, audit, summary
 
 
-def write_results_universe_reports(audit: pd.DataFrame, calendar: pd.DataFrame,
-                                   summary: dict, eod_date: date) -> None:
+def write_results_universe_reports(audit: pd.DataFrame, summary: dict, eod_date: date) -> None:
     """Write diagnostics to outputs only; never writes to any cache directory."""
     output = Path("outputs")
     output.mkdir(parents=True, exist_ok=True)
     stamp = eod_date.strftime("%Y%m%d")
     audit.to_csv(output / f"v8_results_universe_audit_{stamp}.csv", index=False)
-    calendar.to_csv(output / f"v8_official_results_calendar_{stamp}.csv", index=False)
     pd.DataFrame([summary]).to_csv(output / f"v8_results_universe_monthly_counts_{stamp}.csv", index=False)
     print(
         "[RESULTS UNIVERSE] "
