@@ -1741,8 +1741,10 @@ def _is_valid_cached_eod_for_session(expected_date):
             and dates == {expected_date.isoformat()}
             and symbols.ne("").all()
             and not symbols.str.upper().duplicated().any()
-            and snapshot.get("SnapshotType", pd.Series(dtype=str)).astype(str).eq("EOD").all()
-            and snapshot.get("SnapshotStatus", pd.Series(dtype=str)).astype(str).eq("VALID").all()
+            and "SnapshotType" in snapshot.columns
+            and snapshot["SnapshotType"].astype(str).eq("EOD").all()
+            and "SnapshotStatus" in snapshot.columns
+            and snapshot["SnapshotStatus"].astype(str).eq("VALID").all()
         )
         if not valid:
             return False
