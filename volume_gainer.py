@@ -3461,7 +3461,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # STEP 1C: OFFICIAL NSE FINANCIAL-RESULTS UNIVERSE (NEXT 90 DAYS)
+    # STEP 1C: OFFICIAL NSE FINANCIAL-RESULTS UNIVERSE (NEXT 3 CALENDAR MONTHS)
     # --------------------------------------------------------
     # This changes only the symbols entering the existing scanner pipeline.
     # Bhavcopy, Delivery cache, universe cache, workflow schedule and all
@@ -3475,7 +3475,7 @@ def main():
     else:
         try:
             current, results_universe_audit, results_summary = apply_official_results_universe_filter(
-                current, eod_date, session=session, lookahead_days=90
+                current, eod_date, session=session, lookahead_months=3
             )
             write_results_universe_reports(results_universe_audit, results_summary, eod_date)
         except Exception as results_exc:
@@ -3493,7 +3493,7 @@ def main():
             )
             current = current.iloc[0:0].copy()
 
-    print(f"[RESULTS UNIVERSE] Scanner input after official announced-results window: {len(current)}")
+    print(f"[RESULTS UNIVERSE] Scanner input after official announced-results 3-calendar-month window: {len(current)}")
     # Immutable Track 2 input: Mainboard symbols that passed the official
     # announced-results universe; the existing Delivery A/B flow starts next.
     track2_mainboard_candidates = current.copy(deep=True)
