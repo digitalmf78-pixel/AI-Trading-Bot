@@ -5,11 +5,6 @@ name: 5-Day Delivery Above 60% Watchlist (Reuse V8 Cache)
 # A stock passes only when Delivery % is >=60.00% on EACH of 5 valid sessions.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/delivery_60_valuation_watchlist.yml"
   workflow_run:
     # Wait for the NSE V8 EOD run to finish and save the latest Bhavcopy cache.
     workflows: ["NSE Data Test"]
