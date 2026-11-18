@@ -1,7 +1,7 @@
 name: ECMS NSE VOLUME GAINERS - AUTO ROUTED SCANS
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -52,10 +52,10 @@ jobs:
               current = now.time().replace(tzinfo=None)
               if current >= time(17, 0):
                   mode, reason = "eod", "MANUAL_TIME_ROUTED_EOD"
-              elif current < time(8, 0):
-                  mode, reason = "eod-reuse", "MANUAL_EOD_SNAPSHOT_REUSE"
               elif time(9, 20) <= current < time(12, 0):
                   mode, reason = "morning", "MANUAL_TIME_ROUTED_MORNING"
+              else:
+                  mode, reason = "manual-observation", "MANUAL_OBSERVATION_OUTSIDE_MORNING_EOD_SLOTS"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"mode={mode}\nreason={reason}\n")
           summary = (
@@ -76,7 +76,7 @@ jobs:
                       print(f"ECMS skip Telegram HTTP {response.status}")
           PY
   validate:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    if: ${{ always() && (github.event_name == 'push' || github.event_name == 'pull_request') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -174,6 +174,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_manual_observation_eod_reference.csv
             data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/news/
@@ -264,6 +265,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_manual_observation_eod_reference.csv
             data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/news/
@@ -419,7 +421,7 @@ jobs:
           PY
   morning:
     needs: route
-    if: needs.route.outputs.mode == 'morning'
+    if: needs.route.outputs.mode == 'morning' || needs.route.outputs.mode == 'manual-observation'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -494,6 +496,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_manual_observation_eod_reference.csv
             data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/news/
@@ -521,7 +524,7 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-      - name: Run 09:20 morning fundamental reassessment
+      - name: Run ECMS Morning or Manual Observation assessment
         env:
           PYTHONUNBUFFERED: "1"
           V8_AUTO_FETCH_FUNDAMENTALS: "true"
@@ -530,7 +533,8 @@ jobs:
           FREE_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
-        run: python -m strategies.ecms.volume_gainers --mode morning
+          ECMS_SCAN_SLOT: ${{ needs.route.outputs.mode == 'manual-observation' && 'MANUAL_OBSERVATION' || 'MORNING' }}
+        run: python -m strategies.ecms.volume_gainers --mode ${{ needs.route.outputs.mode == 'manual-observation' && 'manual-observation' || 'morning' }}
       - name: Fail scheduled Morning job when scan did not complete
         if: github.event_name == 'schedule'
         shell: bash
@@ -551,7 +555,7 @@ jobs:
           PY
       - name: Validate current-run same-day Morning snapshot before saving cache
         id: morning-snapshot-check
-        if: always()
+        if: always() && needs.route.outputs.mode == 'morning'
         shell: bash
         run: |
           python - <<'PY'
@@ -604,6 +608,7 @@ jobs:
         with:
           path: |
             data/cache/ecms/volume_gainers_previous_eod.csv
+            data/cache/ecms/volume_gainers_manual_observation_eod_reference.csv
             data/cache/ecms/volume_gainers_previous_eod_consumed.json
             data/cache/ecms/volume_gainers_same_day_morning.csv
             data/cache/ecms/news/
@@ -620,25 +625,27 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ecms-volume-gainers-morning-${{ github.run_id }}
+          name: ecms-volume-gainers-${{ needs.route.outputs.mode }}-${{ github.run_id }}
           path: |
             outputs/ecms/volume_gainers_morning_*
+            outputs/ecms/volume_gainers_manual_observation_*
             outputs/ecms/fundamental_*.csv
             outputs/ecms/fundamental_metric_verification*.csv
             outputs/ecms/fundamental_filing_metadata_summary.csv
             outputs/ecms/xbrl_ephemeral/
           if-no-files-found: warn
           retention-days: 30
-      - name: Send separate ECMS 09:20 morning Telegram report
+      - name: Send ECMS Morning or Manual Observation Telegram report
         if: always()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           JOB_STATUS: ${{ job.status }}
+          ECMS_MODE: ${{ needs.route.outputs.mode == 'manual-observation' && 'MANUAL OBSERVATION' || 'MORNING' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SUMMARY_PATH: outputs/ecms/volume_gainers_morning_summary.json
-          RESEARCH_PATH: outputs/ecms/volume_gainers_morning_recheck.csv
-          PAGE_CSV_PATH: outputs/ecms/volume_gainers_morning_nse_page.csv
+          SUMMARY_PATH: ${{ needs.route.outputs.mode == 'manual-observation' && 'outputs/ecms/volume_gainers_manual_observation_summary.json' || 'outputs/ecms/volume_gainers_morning_summary.json' }}
+          RESEARCH_PATH: ${{ needs.route.outputs.mode == 'manual-observation' && 'outputs/ecms/volume_gainers_manual_observation_recheck.csv' || 'outputs/ecms/volume_gainers_morning_recheck.csv' }}
+          PAGE_CSV_PATH: ${{ needs.route.outputs.mode == 'manual-observation' && 'outputs/ecms/volume_gainers_manual_observation_nse_page.csv' || 'outputs/ecms/volume_gainers_morning_nse_page.csv' }}
           EXECUTION_STATUS_PATH: outputs/ecms/ecms_execution_status.json
         run: |
           python - <<'PY'
@@ -649,7 +656,7 @@ jobs:
           if not token or not chat_id:
               print("ECMS Telegram skipped: Telegram secrets are not configured.")
               raise SystemExit(0)
-          lines = ["🌅 ECMS 09:20 MORNING FUNDAMENTAL RECHECK", f"Status: {os.getenv('JOB_STATUS','unknown').upper()}"]
+          lines = [f"🔎 ECMS {os.getenv('ECMS_MODE', 'MORNING')} FUNDAMENTAL + INFORMATION RECHECK", f"Status: {os.getenv('JOB_STATUS','unknown').upper()}"]
           status_path = Path(os.getenv("EXECUTION_STATUS_PATH", ""))
           if status_path.is_file():
               try:
