@@ -8,7 +8,7 @@ on:
   schedule:
     - cron: "31 11 * * *" # 17:01 IST regular-session EOD
     - cron: "51 3 * * *"  # 09:21 IST regular-session Morning
-    - cron: "15 12 * * *" # 17:45 IST EOD backup trigger
+    - cron: "15 12 * * 1-5" # 17:45 IST weekday EOD backup trigger
 permissions:
   contents: read
 concurrency:
@@ -47,7 +47,7 @@ jobs:
                   mode, reason = "eod", "SCHEDULED_EOD_1701_IST"
               elif schedule == "51 3 * * *":
                   mode, reason = "morning", "SCHEDULED_MORNING_0921_IST"
-              elif schedule == "15 12 * * *":
+              elif schedule == "15 12 * * 1-5":
                   mode, reason = "eod", "SCHEDULED_EOD_BACKUP_1745_IST"
               else:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
