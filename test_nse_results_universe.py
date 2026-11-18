@@ -30,7 +30,7 @@ class FakeSession:
         return FakeResponse(self.rows)
 
 
-def test_results_universe_uses_only_official_financial_results_and_next_90_days():
+def test_results_universe_uses_only_official_financial_results_and_assigns_three_month_priorities():
     rows = [
         {"symbol": "OLD", "date": "20-Oct-2026", "purpose": "Financial Results", "details": "Q2"},
         {"symbol": "NOW", "date": "25-Nov-2026", "purpose": "Financial Results", "details": "Q2"},
@@ -43,14 +43,20 @@ def test_results_universe_uses_only_official_financial_results_and_next_90_days(
     frame = pd.DataFrame({"TckrSymb": ["OLD", "NOW", "NEXT", "FAR", "OTHER", "CANCEL", "NO_DATE"]})
 
     filtered, audit, summary = ru.apply_official_results_universe_filter(
-        frame, date(2026, 11, 18), session=source, lookahead_days=90
+        frame, date(2026, 11, 18), session=source, lookahead_months=3
     )
 
     assert set(filtered["TckrSymb"]) == {"NOW", "NEXT", "FAR"}
+    assert list(filtered["ResultsPriority"]) == [
+        "P1_WITHIN_1_MONTH", "P2_WITHIN_2_MONTHS", "P3_WITHIN_3_MONTHS"
+    ]
     assert summary["last_month_companies"] == 1
     assert summary["this_month_companies"] == 1
     assert summary["next_month_companies"] == 1
-    assert summary["results_universe_companies_90d"] == 3
+    assert summary["priority_p1_companies"] == 1
+    assert summary["priority_p2_companies"] == 1
+    assert summary["priority_p3_companies"] == 1
+    assert summary["results_universe_companies_3m"] == 3
     assert set(audit.loc[audit["ResultsUniverseStatus"].str.startswith("PASS"), "TckrSymb"]) == {"NOW", "NEXT", "FAR"}
 
 
@@ -63,7 +69,7 @@ def test_results_universe_does_not_include_unknown_symbols():
         frame, date(2026, 11, 18), session=source
     )
     assert filtered.empty
-    assert summary["results_universe_companies_90d"] == 0
+    assert summary["results_universe_companies_3m"] == 0
     assert audit.iloc[0]["ResultsUniverseStatus"].startswith("EXCLUDED")
 
 
@@ -74,7 +80,7 @@ def test_empty_official_calendar_is_a_valid_zero_candidate_universe():
         frame, date(2026, 11, 18), session=source
     )
     assert filtered.empty
-    assert summary["results_universe_companies_90d"] == 0
+    assert summary["results_universe_companies_3m"] == 0
 
 
 def test_unavailable_official_source_fails_closed():
