@@ -84,7 +84,7 @@ def test_compilation_includes_exact_debt_equity_audit_as_its_own_source_row():
     assert audit["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
     assert audit["MetricValue"] == 0.5
     assert audit["SourceURL"] == "https://nsearchives.nseindia.com/example.xml"
-    assert "data/cache/ecms_debt_equity_xbrl/example.xml" in audit["ObservationNotes"]
+    assert audit["EvidenceFilePath"] == "data/cache/ecms_debt_equity_xbrl/example.xml"
 
 
 def test_compilation_flags_mismatch_only_when_period_basis_and_unit_align():
