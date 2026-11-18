@@ -2947,11 +2947,16 @@ def select_top20_analysis_candidates(result, eod_date):
         support = pd.to_numeric(pd.Series([row.get("SRSupport")]), errors="coerce").iloc[0]
         resistance = pd.to_numeric(pd.Series([row.get("SRResistance")]), errors="coerce").iloc[0]
 
-        # Defensive audit check: the mandatory delivery gate must already have passed.
+        # Defensive audit check: Delivery remains mandatory; distinguish missing data from a measured failure.
         if delivery not in {"PASS_GE_60_PERCENT", "PASS_A_OR_B"}:
-            reasons.append("DELIVERY_A_OR_B_MINIMUM_FIVE_QUALIFYING_COUNT_NOT_MET_OR_DATA_MISSING")
+            if "WAIT" in delivery or delivery in {"", "NAN", "NONE"}:
+                reasons.append("DELIVERY_A_OR_B_WAIT_FOR_DATA")
+            else:
+                reasons.append("DELIVERY_A_OR_B_MINIMUM_FIVE_QUALIFYING_COUNT_NOT_MET")
+
+        # RVOL is a classification only. Missing/low RVOL must never become a candidate rejection gate.
         if rvol_status != "PASS" or pd.isna(rvol) or rvol <= 0:
-            reasons.append("RVOL_20_SESSION_BASELINE_NOT_VALID")
+            warnings.append("RVOL_CLASSIFICATION_WAIT_FOR_DATA_NOT_A_REJECTION_GATE")
         if setup not in {"Breakout", "Pullback"}:
             reasons.append("NO_CONFIRMED_BREAKOUT_OR_PULLBACK_SETUP")
         if "Bullish" not in trend:
@@ -2978,7 +2983,19 @@ def select_top20_analysis_candidates(result, eod_date):
             if pullback not in {"Pullback", "Strong Pullback"}:
                 reasons.append("PULLBACK_NOT_CONFIRMED")
 
-        selected = len(reasons) == 0
+        wait_reasons = {
+            "DELIVERY_A_OR_B_WAIT_FOR_DATA",
+            "RELATIVE_STRENGTH_WAIT_FOR_DATA",
+            "SUPPORT_RESISTANCE_WAIT_FOR_DATA",
+        }
+        hard_reasons = [reason for reason in reasons if reason not in wait_reasons]
+        if hard_reasons:
+            screen_status = "REJECT"
+        elif reasons:
+            screen_status = "WAIT_FOR_DATA"
+        else:
+            screen_status = "PASS"
+        selected = screen_status == "PASS"
         audit_rows.append({
             "EODDate": str(eod_date),
             "TckrSymb": symbol,
@@ -2994,7 +3011,7 @@ def select_top20_analysis_candidates(result, eod_date):
             "RelativeStrengthNifty": rs,
             "SRSupport": support,
             "SRResistance": resistance,
-            "CandidateScreenStatus": "PASS" if selected else "REJECT",
+            "CandidateScreenStatus": screen_status,
             "CandidateScreenReasons": "PASS_CORE_TECHNICAL_SCREEN" if selected else ";".join(reasons),
             "CandidateScreenWarnings": ";".join(warnings) if warnings else "NONE",
         })
