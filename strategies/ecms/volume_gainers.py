@@ -1402,6 +1402,9 @@ def _confirmation_status(eod_pass, present, morning_pass):
 
 
 def run_morning():
+    scan_slot = os.getenv('ECMS_SCAN_SLOT', 'MORNING').strip().upper()
+    manual_observation = scan_slot == 'MANUAL_OBSERVATION'
+    output_prefix = 'volume_gainers_manual_observation' if manual_observation else 'volume_gainers_morning'
     today = datetime.now(IST).date()
     if not is_trading_session(today):
         raise RuntimeError(f"WAIT_FOR_DATA: {today} is not an official NSE equity trading session")
@@ -1436,10 +1439,12 @@ def run_morning():
     mainboard,board_source=load_official_mainboard_symbols()
     morning_page_captured_at = datetime.now(IST).isoformat()
     page_download = _build_nse_page_download(
-        live_page, mainboard, "MORNING", today.isoformat(), morning_page_captured_at, board_source
+        live_page, mainboard, scan_slot, today.isoformat(), morning_page_captured_at, board_source
     )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    page_download.to_csv(OUTPUT_DIR/"volume_gainers_morning_nse_page.csv", index=False)
+    page_download["ScanSlot"] = scan_slot
+    page_download["ScanCapturedAtIST"] = morning_page_captured_at
+    page_download.to_csv(OUTPUT_DIR/f"{output_prefix}_nse_page.csv", index=False)
     live=live_page[live_page["TckrSymb"].isin(mainboard)].copy()
     if live.empty:
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
@@ -1460,11 +1465,14 @@ def run_morning():
         morning_assessed["FundamentalShortlistStatus"]="WAIT_FOR_DATA"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     morning_assessed, morning_news, morning_events, morning_deals, morning_corporate_actions = attach_information(morning_assessed, today)
-    _save_same_day_morning_snapshot(morning_assessed, today)
-    morning_news.to_csv(OUTPUT_DIR/"volume_gainers_morning_news.csv", index=False)
-    morning_events.to_csv(OUTPUT_DIR/"volume_gainers_morning_upcoming_events.csv", index=False)
-    morning_deals.to_csv(OUTPUT_DIR/"volume_gainers_morning_bulk_block_deals.csv", index=False)
-    morning_corporate_actions.to_csv(OUTPUT_DIR/"volume_gainers_morning_corporate_actions.csv", index=False)
+    morning_assessed["ScanSlot"] = scan_slot
+    morning_assessed["ScanCapturedAtIST"] = morning_page_captured_at
+    if not manual_observation:
+        _save_same_day_morning_snapshot(morning_assessed, today)
+    morning_news.to_csv(OUTPUT_DIR/f"{output_prefix}_news.csv", index=False)
+    morning_events.to_csv(OUTPUT_DIR/f"{output_prefix}_upcoming_events.csv", index=False)
+    morning_deals.to_csv(OUTPUT_DIR/f"{output_prefix}_bulk_block_deals.csv", index=False)
+    morning_corporate_actions.to_csv(OUTPUT_DIR/f"{output_prefix}_corporate_actions.csv", index=False)
     morning_assessed["MorningStrongFundamentalStatus"] = (
         _strong_fundamental_mask(morning_assessed).map({True:"MORNING_FUNDAMENTAL_PASS",False:"MORNING_NOT_FUNDAMENTAL_PASS"})
     )
@@ -1578,10 +1586,12 @@ def run_morning():
             "NOT_ON_CURRENT_PAGE" if not present else "PARTIAL_LIVE_DATA"})
     report=pd.DataFrame(rows)
     OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
-    report.to_csv(OUTPUT_DIR/"volume_gainers_morning_recheck.csv",index=False)
+    report["ScanSlot"] = scan_slot
+    report["ScanCapturedAtIST"] = morning_page_captured_at
+    report.to_csv(OUTPUT_DIR/f"{output_prefix}_recheck.csv",index=False)
     # Preserve the original EOD snapshot; only the fundamental workspace cache
     # is enriched by the morning assessment.
-    summary={"status":"PASS","scan_date_ist":today.isoformat(),
+    summary={"status":"PASS","scan_slot":scan_slot,"scan_date_ist":today.isoformat(),
       "data_as_of_date_ist":expected_eod,
       "morning_time_ist":datetime.now(IST).isoformat(),
       "morning_rvol_data_found":int(pd.to_numeric(morning_assessed.get("RVOL", pd.Series(index=morning_assessed.index)), errors="coerce").notna().sum()),
@@ -1617,7 +1627,8 @@ def run_morning():
       "morning_new_entries":int(report["MorningStatus"].eq("NEW_MORNING_ENTRY").sum()),
       "eod_fundamental_pass_repeats":int(report["FundamentalConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
       "eod_morning_page_repeats":int(report["PagePresenceDoubleConfirmed"].sum()),
-       "same_day_morning_snapshot_saved":MORNING_STATE_FILE.exists(),
+       "same_day_morning_snapshot_saved":(MORNING_STATE_FILE.exists() if not manual_observation else False),
+      "manual_observation_saved":manual_observation,
       "eod_only_not_on_morning_page":int(report["MorningStatus"].eq("EOD_ONLY_NOT_ON_MORNING_PAGE").sum()),
       "double_confirmed":int(report["FundamentalConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
       "fundamental_double_confirmed":int(report["FundamentalConfirmationStatus"].eq("DOUBLE_CONFIRMED_EOD_MORNING").sum()),
@@ -1629,8 +1640,8 @@ def run_morning():
       "note":"Every eligible 09:20 page candidate receives fundamental assessment. Verified complete FAIL may invoke the fundamental rejection rule; WAIT/PARTIAL continues through other research. Page repeat/new/disappeared labels are independent of fundamental status. ConfirmationStatus is a legacy alias for FundamentalConfirmationStatus, not an overall stock decision."}
     # The comparison report and same-day Morning snapshot are now persisted.
     # Only now consume the previous EOD reference; failures above leave it intact.
-    summary["previous_eod_reference_consumed"] = _consume_previous_eod_snapshot(expected_eod)
-    (OUTPUT_DIR/"volume_gainers_morning_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
+    summary["previous_eod_reference_consumed"] = (False if manual_observation else _consume_previous_eod_snapshot(expected_eod))
+    (OUTPUT_DIR/f"{output_prefix}_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def _write_execution_status(mode, status, reason="", **details):
     """Persist an explicit run outcome so skipped scans cannot be mistaken for completed scans."""
@@ -1761,18 +1772,16 @@ def _is_valid_cached_eod_for_session(expected_date):
 def _resolve_manual_scan_mode(now):
     """Resolve one-click manual scans using the ECMS IST operating windows."""
     current = now.time().replace(tzinfo=None)
-    if current >= time(15, 30):
+    if current >= time(17, 0):
         return "eod"
-    if current < time(8, 0):
-        return "eod-reuse"
-    if time(9, 15) <= current < time(12, 0):
+    if time(9, 20) <= current < time(12, 0):
         return "morning"
-    return None
+    return "manual-observation"
 
 
 def main():
     parser=argparse.ArgumentParser(description="ECMS NSE Volume Gainers scanner")
-    parser.add_argument("--mode",choices=("auto","eod","eod-reuse","morning"),required=True)
+    parser.add_argument("--mode",choices=("auto","eod","eod-reuse","morning","manual-observation"),required=True)
     args=parser.parse_args()
     now = datetime.now(IST)
     if args.mode == "auto" and os.getenv("GITHUB_EVENT_NAME", "").lower() == "workflow_dispatch":
@@ -1806,6 +1815,8 @@ def main():
         return
     if args.mode == "eod-reuse":
         return _reuse_previous_eod_snapshot()
+    if args.mode == "manual-observation":
+        os.environ["ECMS_SCAN_SLOT"] = "MANUAL_OBSERVATION"
     # Scheduled runs must match the calendar's session-specific scan slot.
     # Manual dispatch is intentionally allowed at any time on a trading date.
     if os.getenv("GITHUB_EVENT_NAME", "").lower() == "schedule":
