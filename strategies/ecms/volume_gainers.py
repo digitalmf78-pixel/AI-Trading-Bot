@@ -48,6 +48,32 @@ ALIASES = {
 }
 def _key(value):
     return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+def _period_month_key(value):
+    """Normalize comparable financial-period labels to (year, month).
+
+    FY2016->FY2017 is treated as the year ended March 2017. Unknown labels
+    remain unknown; they are never assumed to align.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    fy = re.search(r"FY\s*(20\d{2})\s*(?:->|to|[-–])\s*FY?\s*(20\d{2})", text, re.I)
+    if fy:
+        return (int(fy.group(2)), 3)
+    parsed = pd.to_datetime(text, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return (int(parsed.year), int(parsed.month))
+
+
+def _secondary_period_alignment_status(primary_period, secondary_period):
+    """Classify period comparability without treating a period mismatch as value mismatch."""
+    primary = _period_month_key(primary_period)
+    secondary = _period_month_key(secondary_period)
+    if primary is None or secondary is None:
+        return "PERIOD_NOT_CONFIRMED"
+    return "PERIOD_ALIGNED" if primary == secondary else "PERIOD_MISMATCH"
 def _find_records(payload):
     if isinstance(payload, list):
         rows = [x for x in payload if isinstance(x, dict)]
@@ -665,19 +691,27 @@ def assess_page_fundamentals(candidates, eod_date):
                         "SecondaryValue": item.get("value", ""),
                         "SecondaryPeriod": item.get("period", ""),
                         "SecondarySourceURL": item.get("source_url", ""),
-                        "ReconciliationStatus": "NOT_OFFICIALLY_VERIFIED",
+                        "PeriodAlignmentStatus": _secondary_period_alignment_status(
+                            base["YahooPeriod"], item.get("period", "")
+                        ),
+                        "ReconciliationStatus": (
+                            "PERIOD_MISMATCH_NOT_COMPARABLE"
+                            if _secondary_period_alignment_status(base["YahooPeriod"], item.get("period", "")) == "PERIOD_MISMATCH"
+                            else "NOT_OFFICIALLY_VERIFIED"
+                        ),
                     })
             else:
                 comparison_rows.append({
                     **base, "SecondarySource": "", "SecondaryValue": "",
                     "SecondaryPeriod": "", "SecondarySourceURL": "",
+                    "PeriodAlignmentStatus": "NO_SECONDARY_OBSERVATION",
                     "ReconciliationStatus": "NO_SECONDARY_OBSERVATION",
                 })
     pd.DataFrame(comparison_rows, columns=[
         "TckrSymb", "MetricName", "YahooValue", "YahooSource", "YahooPeriod",
         "YahooCalculationBasis", "SecondarySource", "SecondaryValue",
         "SecondaryPeriod", "SecondarySourceURL", "ComparisonStatus",
-        "ReconciliationStatus",
+        "PeriodAlignmentStatus", "ReconciliationStatus",
     ]).to_csv(ecms_output_dir / "fundamental_source_comparison_ecms.csv", index=False)
     candidate_filings.to_csv(ecms_output_dir / "fundamental_filings_ecms.csv", index=False)
     candidate_evidence.to_csv(ecms_output_dir / "fundamental_evidence_ecms.csv", index=False)
