@@ -6,9 +6,8 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "31 11 * * *" # 17:01 IST regular-session EOD
-    - cron: "51 3 * * *"  # 09:21 IST regular-session Morning
-    - cron: "15 12 * * 1-5" # 17:45 IST weekday EOD backup trigger
+    - cron: "50 3 * * *"  # 09:20 IST regular-session Morning
+    - cron: "30 11 * * *" # 17:00 IST regular-session EOD
 permissions:
   contents: read
 concurrency:
@@ -43,12 +42,10 @@ jobs:
           now = datetime.now(ZoneInfo("Asia/Kolkata"))
           mode, reason = "skip", "OUTSIDE_ECMS_SCAN_WINDOW"
           if event == "schedule":
-              if schedule == "31 11 * * *":
-                  mode, reason = "eod", "SCHEDULED_EOD_1701_IST"
-              elif schedule == "51 3 * * *":
-                  mode, reason = "morning", "SCHEDULED_MORNING_0921_IST"
-              elif schedule == "15 12 * * 1-5":
-                  mode, reason = "eod", "SCHEDULED_EOD_BACKUP_1745_IST"
+              if schedule == "30 11 * * *":
+                  mode, reason = "eod", "SCHEDULED_EOD_1700_IST"
+              elif schedule == "50 3 * * *":
+                  mode, reason = "morning", "SCHEDULED_MORNING_0920_IST"
               else:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
           elif event == "workflow_dispatch":
