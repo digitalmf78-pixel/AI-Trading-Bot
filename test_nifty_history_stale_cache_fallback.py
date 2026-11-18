@@ -13,7 +13,8 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             "Date": pd.to_datetime(dates),
             "NiftyClose": [22000.0 + i for i in range(len(dates))],
         })
-        path = root / "nifty50_index_history.csv"
+        path = root / "market_index" / "nifty50_index_history.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(path, index=False, date_format="%Y-%m-%d")
         return frame
 
@@ -37,7 +38,7 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
                 result = vg.load_nifty_index_history(pd.Timestamp("2026-11-08"))
             self.assertEqual(len(result), 60)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), dates.max().normalize())
-            self.assertEqual(len(pd.read_csv(root / "nifty50_index_history.csv")), len(original))
+            self.assertEqual(len(pd.read_csv(root / "market_index" / "nifty50_index_history.csv")), len(original))
 
     def test_exact_date_refresh_replaces_stale_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -46,10 +47,10 @@ class NiftyHistoryStaleCacheFallbackTests(unittest.TestCase):
             self._cache(root, dates)
             target = pd.Timestamp("2026-11-08")
             downloaded = pd.DataFrame({"Date": [target], "NiftyClose": [24500.0]})
-            p1, p2, p3 = self._patched_cache_and_provider(
+            p1, p2, p3, p4 = self._patched_cache_and_provider(
                 root, {"return_value": downloaded}
             )
-            with p1, p2, p3:
+            with p1, p2, p3, p4:
                 result = vg.load_nifty_index_history(target)
             self.assertEqual(pd.to_datetime(result["Date"]).max().normalize(), target.normalize())
             cached = pd.read_csv(root / "nifty50_index_history.csv")
