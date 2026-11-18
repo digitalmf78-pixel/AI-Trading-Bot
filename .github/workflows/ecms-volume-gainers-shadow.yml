@@ -96,8 +96,8 @@ jobs:
           pip install -r requirements.txt
       - name: Compile and test
         run: |
-          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/debt_equity_xbrl_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py strategies/ecms/filing_metadata_audit.py
-          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_gemini_research.py tests/test_ecms_secondary_source_periods.py test_fundamental_data_provider.py
+          python -m py_compile strategies/ecms/volume_gainers.py strategies/ecms/information.py strategies/ecms/free_fundamental_sources.py strategies/ecms/fundamental_source_compilation.py strategies/ecms/debt_equity_xbrl_audit.py strategies/ecms/ratio_xbrl_discovery_audit.py strategies/ecms/filing_metadata_audit.py strategies/ecms/historical_pe_observation.py
+          python -m pytest -q tests/test_ecms_volume_gainers.py tests/test_ecms_information.py tests/test_ecms_fundamental_research.py tests/test_ecms_eod.py tests/test_ecms_free_fundamental_sources.py tests/test_ecms_fundamental_source_compilation.py tests/test_ecms_debt_equity_xbrl_audit.py tests/test_ecms_ratio_xbrl_discovery_audit.py tests/test_ecms_filing_metadata_audit.py tests/test_ecms_gemini_research.py tests/test_ecms_secondary_source_periods.py tests/test_ecms_historical_pe_observation.py test_fundamental_data_provider.py
 
   eod:
     needs: route
