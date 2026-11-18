@@ -3460,6 +3460,11 @@ def main():
             "outputs/v8_main_board_universe_audit.csv", index=False
         )
 
+    # Snapshot the complete official Mainboard/Bhavcopy cohort for the independent
+    # Track 2 observer BEFORE Track 1 is narrowed by the announced-results gate.
+    # This preserves full-Mainboard research coverage even when Results has no matches.
+    track2_mainboard_candidates = current.copy(deep=True)
+
     # --------------------------------------------------------
     # STEP 1C: OFFICIAL NSE FINANCIAL-RESULTS UNIVERSE (NEXT 3 CALENDAR MONTHS)
     # --------------------------------------------------------
@@ -3494,10 +3499,6 @@ def main():
             current = current.iloc[0:0].copy()
 
     print(f"[RESULTS UNIVERSE] Scanner input after official announced-results 3-calendar-month window: {len(current)}")
-    # Immutable Track 2 input: Mainboard symbols that passed the official
-    # announced-results universe; the existing Delivery A/B flow starts next.
-    track2_mainboard_candidates = current.copy(deep=True)
-
     # --------------------------------------------------------
     # STEP 3: LOAD HISTORY AND PREPARE THE PRIOR-20-SESSION VOLUME BASELINE.
     # Do not calculate RVOL for the Mainboard universe here. RVOL calculation
