@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse, json, os, re, shutil
 from email.utils import parsedate_to_datetime
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -1418,9 +1418,14 @@ def run_morning():
         raise RuntimeError("WAIT_FOR_DATA: cached snapshot is not tagged as EOD")
     if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
         raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
-    expected_eod = expected_latest_completed_session().isoformat()
+    expected_eod_session = expected_latest_completed_session()
+    if manual_observation and expected_eod_session == today:
+        expected_eod_session = today - timedelta(days=1)
+        while not is_trading_session(expected_eod_session):
+            expected_eod_session -= timedelta(days=1)
+    expected_eod = expected_eod_session.isoformat()
     stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
-    if CONSUMED_EOD_MARKER_FILE.exists():
+    if CONSUMED_EOD_MARKER_FILE.exists() and not manual_observation:
         try:
             consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
             consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
@@ -1450,7 +1455,7 @@ def run_morning():
         raise RuntimeError("WAIT_FOR_DATA: no eligible Main Board candidates on 09:20 Volume Gainers page")
     # Morning RVOL is based on the latest completed Bhavcopy session. It is
     # explicitly labelled as prior-session context, never as partial intraday RVOL.
-    live = attach_page_rvol(live, expected_latest_completed_session())
+    live = attach_page_rvol(live, expected_eod_session)
     # Record the page-capture time before fundamental and information enrichment.
     live["MorningPageCapturedAtIST"] = morning_page_captured_at
 
