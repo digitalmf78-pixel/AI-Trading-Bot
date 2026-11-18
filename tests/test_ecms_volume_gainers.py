@@ -648,6 +648,51 @@ def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
         is_trading_session(date(2027, 1, 1))
 
 
+def test_scheduled_eod_backup_allowed_after_official_slot(monkeypatch, capsys):
+    import sys
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 18, 17, 45, tzinfo=tz)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+    monkeypatch.setattr(scanner, "expected_scan_time", lambda day, mode: "17:00")
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda day: [])
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(scanner, "run_eod", lambda: {"status": "PASS"})
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "eod"])
+    scanner.main()
+    output = capsys.readouterr().out
+    assert '"status": "SUCCESS"' in output
+    assert '"reason": "SCAN_COMPLETED"' in output
+
+
+def test_scheduled_eod_before_official_slot_still_skips(monkeypatch, capsys):
+    import sys
+    from datetime import datetime as real_datetime
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 18, 16, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+    monkeypatch.setattr(scanner, "expected_scan_time", lambda day, mode: "17:00")
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda day: [])
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "eod"])
+    scanner.main()
+    output = capsys.readouterr().out
+    assert '"status": "SKIPPED"' in output
+    assert '"reason": "NOT_OFFICIAL_NSE_SESSION_SCAN_SLOT"' in output
+
+
 def test_main_skips_special_session_scan_at_regular_clock_time(monkeypatch, capsys):
     import sys
     from datetime import datetime as real_datetime
