@@ -32,7 +32,7 @@ OUTPUT_COLUMNS = [
     "TckrSymb", "MetricName", "MetricValue", "Source", "SourceURL",
     "FinancialPeriodEnd", "PublicationDate", "CalculationBasis", "Unit",
     "SourceStatus", "VerificationStatus", "MismatchStatus", "MismatchReason",
-    "ObservationNotes",
+    "ObservationNotes", "EvidenceFilePath",
 ]
 
 
@@ -114,6 +114,7 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
             "MetricValue": verified_value,
             "Source": "NSE_OFFICIAL_XBRL_AUDIT",
             "SourceURL": str(item.get("OfficialFilingURL", "") or "").strip(),
+            "EvidenceFilePath": str(item.get("EvidenceFilePath", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
             "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
             "CalculationBasis": str(item.get("MetricCalculationBasis", "") or "").strip(),
@@ -153,7 +154,7 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
             "VerificationStatus": status,
             "MismatchStatus": "MISMATCH" if "MISMATCH" in status else "NOT_ASSESSED",
             "MismatchReason": str(item.get("DebtToEquityAuditReason", "") or "").strip(),
-            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity audit; diagnostic status preserved. Local evidence path: " + str(item.get("EvidenceFilePath", "") or "").strip(),
+            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity audit; diagnostic status preserved",
         })
     return rows
 
