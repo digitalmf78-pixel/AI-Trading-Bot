@@ -671,6 +671,38 @@ def test_scheduled_eod_backup_allowed_after_official_slot(monkeypatch, capsys):
     assert '"reason": "SCAN_COMPLETED"' in output
 
 
+def test_backup_eod_skips_duplicate_when_current_session_cache_is_valid(tmp_path, monkeypatch, capsys):
+    import sys
+    from datetime import datetime as real_datetime, date
+    import strategies.ecms.volume_gainers as scanner
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 18, 17, 45, tzinfo=tz)
+
+    state = tmp_path / "volume_gainers_previous_eod.csv"
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "EODDate": "2026-11-18",
+        "SnapshotType": "EOD", "SnapshotStatus": "VALID",
+    }]).to_csv(state, index=False)
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    monkeypatch.setattr(scanner, "STATE_FILE", state)
+    monkeypatch.setattr(scanner, "CONSUMED_EOD_MARKER_FILE", tmp_path / "consumed.json")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+    monkeypatch.setenv("ECMS_EOD_BACKUP_TRIGGER", "true")
+    monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 18))
+    monkeypatch.setattr(scanner, "expected_scan_time", lambda day, mode: "17:00")
+    monkeypatch.setattr(scanner, "calendar_coverage_warnings", lambda day: [])
+    monkeypatch.setattr(scanner, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(scanner, "run_eod", lambda: (_ for _ in ()).throw(AssertionError("duplicate EOD must not scan")))
+    monkeypatch.setattr(sys, "argv", ["ecms-volume-gainers", "--mode", "eod"])
+    scanner.main()
+    output = capsys.readouterr().out
+    assert '"status": "SUCCESS"' in output
+    assert '"reason": "BACKUP_SKIPPED_EOD_ALREADY_CACHED"' in output
+
+
 def test_scheduled_eod_before_official_slot_still_skips(monkeypatch, capsys):
     import sys
     from datetime import datetime as real_datetime
