@@ -380,7 +380,7 @@ def _clear_unaligned_yahoo_cached_metrics(cached, candidate_symbols):
     symbols = {str(symbol).strip().upper() for symbol in candidate_symbols}
     metric_names = (
         "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
     )
     metadata_fields = (
         "MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
@@ -445,8 +445,8 @@ def _clear_unaligned_yahoo_cached_metrics(cached, candidate_symbols):
                 reason = "METRIC_PERIOD_DIFFERS_FROM_ROW_PERIOD"
             elif not str(url_map.get(metric, "") or "").strip():
                 reason = "SOURCE_URL_MISSING"
-            elif metric == "OperatingCashFlowINR" and str(currency_map.get(metric, "") or "").strip().upper() != "INR":
-                reason = "OPERATING_CASH_FLOW_CURRENCY_NOT_CONFIRMED_INR"
+            elif metric in {"OperatingCashFlowINR", "FreeCashFlowINR"} and str(currency_map.get(metric, "") or "").strip().upper() != "INR":
+                reason = "CASH_FLOW_CURRENCY_NOT_CONFIRMED_INR"
 
             if reason:
                 rejected[metric] = {
