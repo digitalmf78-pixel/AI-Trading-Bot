@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
+OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "SourceEvidenceID", "SourceURL", "SourceRequestParameters", "SourceRetrievedAtUTC", "SourceHTTPStatus", "SourceContentType", "SourcePayloadBytes", "SourcePayloadSHA256", "SourceRecordCount", "SourcePage", "SourcePageSize", "CaptureCoverageStatus", "CaptureLimitations", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
 NSE_HOSTS = {"nsearchives.nseindia.com", "nsearchives.nseindia.in", "www.nseindia.com", "nseindia.com"}
 
 def _value(row, names):
@@ -26,6 +26,30 @@ def _label_status(value, accepted):
     normalized = " ".join(str(value or "").strip().lower().replace("_", " ").replace("-", " ").split())
     if not normalized: return "MISSING"
     return "EXPLICIT_LABEL_CAPTURED" if normalized in accepted else "UNRECOGNIZED_LABEL"
+
+def _nse_capture_evidence(response, params, payload, items):
+    """Record bounded response evidence; never infer pagination completeness."""
+    from datetime import datetime, timezone
+    import json
+    body = getattr(response, "content", None)
+    if not isinstance(body, bytes):
+        body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
+    digest = hashlib.sha256(body).hexdigest() if body else ""
+    page, size = int(params.get("page", 0)), int(params.get("size", 0))
+    total_pages = payload.get("totalPages", payload.get("total_pages")) if isinstance(payload, dict) else None
+    try: total_pages = int(total_pages) if total_pages is not None else None
+    except (TypeError, ValueError): total_pages = None
+    if total_pages == 1 and page == 0:
+        coverage, limits = "PAGINATION_COMPLETE_EXPLICIT_SINGLE_PAGE", ""
+    elif total_pages is not None and total_pages > 1:
+        coverage, limits = "PARTIAL_PAGINATION_PAGE_ONLY", f"ONLY_PAGE_{page}_OF_{total_pages}_CAPTURED"
+    elif size and len(items) >= size:
+        coverage, limits = "PAGE_LIMIT_REACHED_PAGINATION_UNKNOWN", "PAGE_SIZE_REACHED; TOTAL_PAGE_COUNT_NOT_CONFIRMED"
+    else:
+        coverage, limits = "PAGINATION_NOT_EXPOSED_SINGLE_PAGE_ONLY", "ONE_PAGE_CAPTURED; SOURCE_TOTAL_PAGES_NOT_CONFIRMED"
+    identity = json.dumps({"url": NSE_RESULTS_API, "params": params, "payload_sha256": digest}, sort_keys=True, separators=(",", ":"))
+    headers = getattr(response, "headers", {}) or {}
+    return {"SourceEvidenceID": "nse-ifiling-" + hashlib.sha256(identity.encode()).hexdigest()[:20], "SourceURL": NSE_RESULTS_API, "SourceRequestParameters": json.dumps(params, sort_keys=True, separators=(",", ":")), "SourceRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "SourceHTTPStatus": str(getattr(response, "status_code", "") or "UNKNOWN"), "SourceContentType": str(headers.get("Content-Type", ""))[:160], "SourcePayloadBytes": len(body), "SourcePayloadSHA256": digest, "SourceRecordCount": len(items), "SourcePage": page, "SourcePageSize": size, "CaptureCoverageStatus": coverage, "CaptureLimitations": limits}
 
 def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
     """Keep XBRL, Details, audit and basis as separate explicit source fields.
@@ -58,7 +82,7 @@ def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
         if audit_status != "EXPLICIT_LABEL_CAPTURED": warnings.append("AUDIT_LABEL_MISSING_OR_UNRECOGNIZED")
         if basis_status != "EXPLICIT_LABEL_CAPTURED": warnings.append("REPORTING_BASIS_MISSING_OR_UNRECOGNIZED")
         rows.append({"TckrSymb": _value(row, ("TckrSymb", "symbol")).upper(), "FinancialPeriodEnd": _value(row, ("FinancialPeriodEnd", "qe_Date")), "PublicationDate": _value(row, ("PublicationDate", "creation_Date", "broadcast_Date")), "RevisedDate": _value(row, ("RevisedDate", "revised_Date")), "SequenceId": _value(row, ("SequenceId", "seq_Id")), "TypeOfSubmission": _value(row, ("TypeOfSubmission", "type_Sub")), "XBRLURL": xbrl, "XBRLURLStatus": "PASS" if xbrl_ok else "BLOCKED", "DetailsURL": details, "DetailsURLStatus": "PASS" if details_ok else "BLOCKED", "AuditedLabel": audited, "AuditStatus": audit_status, "ConsolidationLabel": consolidation, "ConsolidationStatus": basis_status, "FilingMetadataStatus": "EXPLICIT_METADATA_CAPTURED" if metadata_ok else "METADATA_INCOMPLETE",
-            "NSELookupStatus": _value(row, ("FilingMetadataStatus",)) or "LOOKUP_STATUS_NOT_PROVIDED", "VerificationStatus": "NOT_VERIFIED", "VerificationWarning": ";".join(warnings) if warnings else "Metadata only; Remarks/formula and XBRL reconciliation are still required"})
+            "NSELookupStatus": _value(row, ("FilingMetadataStatus",)) or "LOOKUP_STATUS_NOT_PROVIDED", **{column: row.get(column, "") for column in OUTPUT_COLUMNS if column.startswith("Source") or column.startswith("Capture")}, "VerificationStatus": "NOT_VERIFIED", "VerificationWarning": ";".join(warnings) if warnings else "Metadata only; Remarks/formula and XBRL reconciliation are still required"})
     result = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     if not result.empty and {"TckrSymb", "FinancialPeriodEnd"}.issubset(result.columns):
         # Original/revised submissions are distinct filing variants when
@@ -324,6 +348,7 @@ def fetch_ecms_candidate_filing_metadata(
                 items = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
             else:
                 items = []
+            capture_evidence = _nse_capture_evidence(response, params, payload, items)
 
             eligible = []
             for item in items:
@@ -346,6 +371,7 @@ def fetch_ecms_candidate_filing_metadata(
                     "FilingMetadataStatus": "NO_ELIGIBLE_NSE_FILING",
                     "VerificationStatus": "NOT_VERIFIED",
                     "VerificationWarning": "No exact symbol filing with a valid period and publication date on/before cutoff was returned",
+                    **capture_evidence,
                 })
                 continue
 
@@ -369,6 +395,7 @@ def fetch_ecms_candidate_filing_metadata(
                     "FilingMetadataStatus": "RAW_LATEST_PERIOD_NSE_API_ROW" if requested_period is None else "RAW_EXACT_NSE_API_ROW",
                     "VerificationStatus": "NOT_VERIFIED",
                     "VerificationWarning": "NSE filing metadata only; audit basis, revision choice, Remarks/formula and XBRL facts still require reconciliation",
+                    **capture_evidence,
                 })
         except Exception as exc:
             output.append({
@@ -377,5 +404,16 @@ def fetch_ecms_candidate_filing_metadata(
                 "FilingMetadataStatus": "NSE_API_LOOKUP_ERROR",
                 "VerificationStatus": "NOT_VERIFIED",
                 "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:240]}",
+                "SourceURL": NSE_RESULTS_API,
+                "SourceRequestParameters": __import__("json").dumps(params, sort_keys=True, separators=(",", ":")),
+                "SourceRetrievedAtUTC": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                "SourceHTTPStatus": str(getattr(getattr(exc, "response", None), "status_code", "") or "UNKNOWN"),
+                "SourcePayloadBytes": 0,
+                "SourcePayloadSHA256": "",
+                "SourceRecordCount": 0,
+                "SourcePage": int(params.get("page", 0)),
+                "SourcePageSize": int(params.get("size", 0)),
+                "CaptureCoverageStatus": "SOURCE_CAPTURE_FAILED",
+                "CaptureLimitations": f"{type(exc).__name__}:{str(exc)[:180]}",
             })
     return pd.DataFrame(output)

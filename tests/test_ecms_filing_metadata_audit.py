@@ -427,3 +427,45 @@ def test_details_fetch_does_not_retry_non_transient_http_error():
     assert session.calls == 1
     assert out["RemarksStatus"] == "FETCH_OR_PARSE_ERROR:HTTPError"
     assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_nse_api_capture_records_response_hash_and_unknown_pagination():
+    import hashlib
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_candidate_filing_metadata
+    body = b'{"data":[{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC.xml"}]}'
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        content = body
+        def raise_for_status(self): pass
+        def json(self): return {"data": [{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC.xml"}]}
+    class Session:
+        def __init__(self): self.headers = {}
+        def get(self, *_args, **_kwargs): return Response()
+    row = fetch_ecms_candidate_filing_metadata(pd.DataFrame([{"TckrSymb":"ABC"}]), "2026-11-15", session=Session()).iloc[0]
+    assert row["SourceHTTPStatus"] == "200"
+    assert '"symbol":"ABC"' in row["SourceRequestParameters"]
+    assert row["SourceContentType"] == "application/json"
+    assert row["SourcePayloadBytes"] == len(body)
+    assert row["SourcePayloadSHA256"] == hashlib.sha256(body).hexdigest()
+    assert row["SourceRecordCount"] == 1
+    assert row["CaptureCoverageStatus"] == "PAGINATION_NOT_EXPOSED_SINGLE_PAGE_ONLY"
+    assert "TOTAL_PAGES_NOT_CONFIRMED" in row["CaptureLimitations"]
+    assert row["SourceEvidenceID"].startswith("nse-ifiling-")
+    assert row["SourceRetrievedAtUTC"].endswith("+00:00")
+
+
+def test_nse_api_capture_marks_explicit_multi_page_payload_as_partial():
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_candidate_filing_metadata
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        content = b'{"totalPages":2,"data":[{"symbol":"ABC"}]}'
+        def raise_for_status(self): pass
+        def json(self): return {"totalPages":2,"data":[{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC.xml"}]}
+    class Session:
+        def __init__(self): self.headers = {}
+        def get(self, *_args, **_kwargs): return Response()
+    row = fetch_ecms_candidate_filing_metadata(pd.DataFrame([{"TckrSymb":"ABC"}]), "2026-11-15", session=Session()).iloc[0]
+    assert row["CaptureCoverageStatus"] == "PARTIAL_PAGINATION_PAGE_ONLY"
+    assert row["CaptureLimitations"] == "ONLY_PAGE_0_OF_2_CAPTURED"

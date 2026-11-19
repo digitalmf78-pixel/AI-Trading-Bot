@@ -73,3 +73,8 @@ The current target strategy and phase order are defined in [ECMS README — Appr
 ## Manual NSE page CSV delivery
 
 Both Morning and EOD runs export the complete row set returned by the NSE Volume Gainers page to a separate CSV and attach it to the respective Telegram report using a document upload. The export labels official Main Board eligibility without removing non-eligible page rows. This is for manual comparison during scanner validation; it does not alter the scanner's eligible research universe or the two-scan lifecycle. “Complete page” means all rows returned by the NSE page, not every NSE-listed security.
+
+
+## REA-inspired source evidence discipline
+
+ECMS uses an evidence-first method for official-source research; REA itself is not a runtime dependency. Each API/document capture should retain exact source, non-secret request scope, UTC retrieval time, HTTP/content metadata, byte count, SHA-256 digest, pagination/coverage state and limitations. Observations, derived calculations, inferences and unknowns remain separate. Partial/truncated/failed captures cannot prove absence, and captures may be compared only when issuer, period, filing variant and reporting basis align. See [ECMS README — REA-inspired evidence-first source audit](README.md#rea-inspired-evidence-first-source-audit-ecms-only).
