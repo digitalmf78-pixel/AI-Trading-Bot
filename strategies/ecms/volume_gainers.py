@@ -410,10 +410,25 @@ def assess_page_fundamentals(candidates, eod_date):
     # Keep only explicit audit/basis labels and validated official XML URLs;
     # API presence alone never upgrades a filing to verified.
     try:
-        filing_lookup_candidates = candidates[["TckrSymb"]].copy()
+        filing_lookup_candidates = candidate_metrics[
+            [column for column in ("TckrSymb", "FinancialPeriodEnd")
+             if column in candidate_metrics.columns]
+        ].copy()
+        if "TckrSymb" not in filing_lookup_candidates.columns:
+            filing_lookup_candidates = candidates[["TckrSymb"]].copy()
         filing_lookup_candidates["TckrSymb"] = (
             filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
         )
+        filing_lookup_candidates = filing_lookup_candidates.drop_duplicates(
+            subset=["TckrSymb"], keep="first"
+        )
+        represented_lookup_symbols = set(filing_lookup_candidates["TckrSymb"])
+        missing_lookup_symbols = candidate_symbols - represented_lookup_symbols
+        if missing_lookup_symbols:
+            filing_lookup_candidates = pd.concat([
+                filing_lookup_candidates,
+                pd.DataFrame([{"TckrSymb": symbol} for symbol in sorted(missing_lookup_symbols)]),
+            ], ignore_index=True, sort=False)
         filing_metadata_source = fetch_ecms_candidate_filing_metadata(
             filing_lookup_candidates, eod_date.isoformat()
         )
