@@ -164,7 +164,7 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
     # Keep stale cache rows for future safe reuse, but exclude them from this
     # run's audit inputs and all candidate-facing artifact snapshots.
     assert set(pd.read_csv(workspace_metrics)["TckrSymb"]) == {"AAA", "OLD"}
-    assert not (tmp_path / "data/inputs/production_metrics.csv").exists()
+    # Candidate-facing production_metrics.csv is an isolated report snapshot;\n    # verify it contains only current candidate rows, while the persistent workspace\n    # cache retains historical rows for reuse.\n    assert set(pd.read_csv(tmp_path / "data/inputs/production_metrics.csv")["TckrSymb"]) == {"AAA"}
     assert result.iloc[0]["FundamentalShortlistStatus"] == "YAHOO_RESEARCH_PARTIAL"
     assert result.iloc[0]["FundamentalPassStatus"] == "NOT_A_PASS_YAHOO_RESEARCH_ONLY"
     assert result.iloc[0]["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_MISSING_METRICS"
