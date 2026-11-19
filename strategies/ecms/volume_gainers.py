@@ -394,6 +394,13 @@ def _clear_unaligned_yahoo_cached_metrics(cached, candidate_symbols):
     for metric in metric_names:
         if metric in result.columns:
             result[metric] = pd.to_numeric(result[metric], errors="coerce").astype("Float64")
+    for field in ("ECMSYahooMetricEligibilityJSON", "ECMSYahooRejectedMetricsJSON"):
+        if field not in result.columns:
+            result[field] = "{}"
+        else:
+            result[field] = result[field].astype("object")
+    if "ECMSYahooAlignedMetricCount" not in result.columns:
+        result["ECMSYahooAlignedMetricCount"] = 0
 
     for index, row in result[
         result["TckrSymb"].astype(str).str.strip().str.upper().isin(symbols)
