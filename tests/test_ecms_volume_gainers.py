@@ -1534,3 +1534,52 @@ def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
     assert q1["FundamentalQuarterAge"] == 2
     assert q1["FundamentalFreshnessStatus"] == "2Q_OLD"
     assert q1["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_QUARTER"
+
+
+
+def test_clear_non_yahoo_cached_metrics_handles_float_columns_and_preserves_yahoo():
+    from strategies.ecms.volume_gainers import _clear_non_yahoo_cached_metrics
+
+    cached = pd.DataFrame([{
+        "TckrSymb": "AAA",
+        "RevenueGrowthPct": 12.5,
+        "ProfitGrowthPct": 8.0,
+        "ROEPercent": 14.0,
+        "ROCEPercent": 16.0,
+        "DebtToEquity": 0.4,
+        "InterestCoverage": 4.2,
+        "OperatingCashFlowINR": 1000000.0,
+        "MetricSourcesJSON": json.dumps({
+            "RevenueGrowthPct": "Yahoo Finance via yfinance",
+            "ProfitGrowthPct": "Old provider",
+        }),
+        "MetricSourceURLsJSON": json.dumps({
+            "RevenueGrowthPct": "https://finance.yahoo.com/",
+            "ProfitGrowthPct": "https://old.example/",
+        }),
+        "MetricSourcePeriodsJSON": "{}",
+        "MetricCalculationBasesJSON": "{}",
+        "MetricSourceCurrenciesJSON": "{}",
+    }])
+    result = _clear_non_yahoo_cached_metrics(cached, {"AAA"}).iloc[0]
+
+    assert result["RevenueGrowthPct"] == 12.5
+    assert pd.isna(result["ProfitGrowthPct"])
+    assert result["MetricSourcesJSON"] == json.dumps(
+        {"RevenueGrowthPct": "Yahoo Finance via yfinance"}, sort_keys=True
+    )
+    assert "ProfitGrowthPct" not in json.loads(result["MetricSourceURLsJSON"])
+    assert pd.api.types.is_float_dtype(
+        _clear_non_yahoo_cached_metrics(cached, {"AAA"})["ProfitGrowthPct"].dtype
+    )
+
+
+def test_clear_non_yahoo_cached_metrics_leaves_other_symbols_untouched():
+    from strategies.ecms.volume_gainers import _clear_non_yahoo_cached_metrics
+
+    cached = pd.DataFrame([{
+        "TckrSymb": "BBB", "RevenueGrowthPct": 10.0,
+        "MetricSourcesJSON": "{}",
+    }])
+    result = _clear_non_yahoo_cached_metrics(cached, {"AAA"})
+    assert result.loc[0, "RevenueGrowthPct"] == 10.0
