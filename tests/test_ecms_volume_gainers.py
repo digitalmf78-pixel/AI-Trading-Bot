@@ -1584,3 +1584,69 @@ def test_clear_non_yahoo_cached_metrics_leaves_other_symbols_untouched():
     }])
     result = _clear_non_yahoo_cached_metrics(cached, {"AAA"})
     assert result.loc[0, "RevenueGrowthPct"] == 10.0
+
+
+
+def test_ecms_clears_unaligned_yahoo_metrics_but_keeps_aligned_same_period_values():
+    import json
+    from strategies.ecms.volume_gainers import _clear_unaligned_yahoo_cached_metrics
+
+    metrics = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ]
+    row = {
+        "TckrSymb": "AAA",
+        "MetricPeriodAlignmentStatus": "VERIFIED",
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+        "FinancialPeriodEnd": "2026-03-31",
+        "MetricSourcesJSON": json.dumps({m: "Yahoo Finance via yfinance" for m in metrics}),
+        "MetricSourceURLsJSON": json.dumps({m: "https://finance.yahoo.com/quote/AAA.NS/financials/" for m in metrics}),
+        "MetricSourcePeriodsJSON": json.dumps({m: "2026-03-31" for m in metrics}),
+        "MetricCalculationBasesJSON": json.dumps({
+            **{m: "ANNUAL_ALIGNED_STATEMENTS" for m in metrics},
+            "ProfitGrowthPct": "UNALIGNED_PROVIDER_SNAPSHOT",
+        }),
+        "MetricSourceCurrenciesJSON": json.dumps({"OperatingCashFlowINR": "INR"}),
+        **{m: float(i + 1) for i, m in enumerate(metrics)},
+    }
+    result = _clear_unaligned_yahoo_cached_metrics(pd.DataFrame([row]), {"AAA"}).iloc[0]
+
+    assert result["RevenueGrowthPct"] == 1.0
+    assert pd.isna(result["ProfitGrowthPct"])
+    assert result["OperatingCashFlowINR"] == 7.0
+    eligibility = json.loads(result["ECMSYahooMetricEligibilityJSON"])
+    rejected = json.loads(result["ECMSYahooRejectedMetricsJSON"])
+    assert eligibility["ProfitGrowthPct"] == "YAHOO_STATEMENT_BASIS_UNALIGNED"
+    assert rejected["ProfitGrowthPct"]["value"] == 2.0
+    assert "ProfitGrowthPct" not in json.loads(result["MetricSourcesJSON"])
+    assert result["ECMSYahooAlignedMetricCount"] == 6
+
+
+def test_ecms_rejects_yahoo_metric_with_period_mismatch_or_unknown_ocf_currency():
+    import json
+    from strategies.ecms.volume_gainers import _clear_unaligned_yahoo_cached_metrics
+
+    metrics = ["RevenueGrowthPct", "OperatingCashFlowINR"]
+    row = {
+        "TckrSymb": "BBB",
+        "MetricPeriodAlignmentStatus": "VERIFIED",
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+        "FinancialPeriodEnd": "2026-03-31",
+        "MetricSourcesJSON": json.dumps({m: "Yahoo Finance via yfinance" for m in metrics}),
+        "MetricSourceURLsJSON": json.dumps({m: "https://finance.yahoo.com/" for m in metrics}),
+        "MetricSourcePeriodsJSON": json.dumps({
+            "RevenueGrowthPct": "2025-03-31",
+            "OperatingCashFlowINR": "2026-03-31",
+        }),
+        "MetricCalculationBasesJSON": json.dumps({m: "ANNUAL_ALIGNED_STATEMENTS" for m in metrics}),
+        "MetricSourceCurrenciesJSON": "{}",
+        "RevenueGrowthPct": 12.0,
+        "OperatingCashFlowINR": 500.0,
+    }
+    result = _clear_unaligned_yahoo_cached_metrics(pd.DataFrame([row]), {"BBB"}).iloc[0]
+    assert pd.isna(result["RevenueGrowthPct"])
+    assert pd.isna(result["OperatingCashFlowINR"])
+    eligibility = json.loads(result["ECMSYahooMetricEligibilityJSON"])
+    assert eligibility["RevenueGrowthPct"] == "METRIC_PERIOD_DIFFERS_FROM_ROW_PERIOD"
+    assert eligibility["OperatingCashFlowINR"] == "OPERATING_CASH_FLOW_CURRENCY_NOT_CONFIRMED_INR"
