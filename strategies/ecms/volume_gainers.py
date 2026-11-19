@@ -409,7 +409,7 @@ def assess_page_fundamentals(candidates, eod_date):
                 ):
                     source = str(source_map.get(metric, "") or "").strip().lower()
                     if "yahoo finance via yfinance" not in source:
-                        cached.at[index, metric] = ""
+                        cached.at[index, metric] = pd.NA
                         source_map.pop(metric, None)
                         for metadata in metadata_maps.values():
                             metadata.pop(metric, None)
