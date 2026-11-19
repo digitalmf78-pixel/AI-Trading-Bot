@@ -169,6 +169,18 @@ jobs:
           echo "CACHE_HIT=${{ steps.shared-cache.outputs.cache-hit }}"
           echo "CACHE_PRIMARY_KEY=${{ steps.shared-cache.outputs.cache-primary-key }}"
           echo "CACHE_MATCHED_KEY=${{ steps.shared-cache.outputs.cache-matched-key }}"
+      - name: Restore ECMS-owned Bhavcopy backfill cache
+        id: ecms-bhavcopy-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/bhavcopy/
+          key: ecms-bhavcopy-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ecms-bhavcopy-${{ github.ref_name }}-
+      - name: Report ECMS Bhavcopy cache restore result
+        run: |
+          echo "ECMS_BHAVCOPY_CACHE_HIT=${{ steps.ecms-bhavcopy-cache.outputs.cache-hit }}"
+          echo "ECMS_BHAVCOPY_CACHE_MATCHED_KEY=${{ steps.ecms-bhavcopy-cache.outputs.cache-matched-key }}"
       - name: Restore ECMS-only Volume Gainers state and fundamental cache
         uses: actions/cache/restore@v4
         with:
@@ -272,6 +284,12 @@ jobs:
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
           key: ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.scan_session_date }}-${{ github.run_id }}
+      - name: Save ECMS Bhavcopy backfill cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/bhavcopy/
+          key: ecms-bhavcopy-${{ github.ref_name }}-${{ github.run_id }}
       - name: Save independent ECMS fundamental cache
         if: always()
         uses: actions/cache/save@v4
@@ -491,6 +509,18 @@ jobs:
           echo "ECMS_SHARED_NSE_CACHE_HIT=${{ steps.shared-cache.outputs.cache-hit }}"
           echo "ECMS_SHARED_NSE_CACHE_PRIMARY_KEY=${{ steps.shared-cache.outputs.cache-primary-key }}"
           echo "ECMS_SHARED_NSE_CACHE_MATCHED_KEY=${{ steps.shared-cache.outputs.cache-matched-key }}"
+      - name: Restore ECMS-owned Bhavcopy backfill cache
+        id: ecms-bhavcopy-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/bhavcopy/
+          key: ecms-bhavcopy-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ecms-bhavcopy-${{ github.ref_name }}-
+      - name: Report ECMS Bhavcopy cache restore result
+        run: |
+          echo "ECMS_BHAVCOPY_CACHE_HIT=${{ steps.ecms-bhavcopy-cache.outputs.cache-hit }}"
+          echo "ECMS_BHAVCOPY_CACHE_MATCHED_KEY=${{ steps.ecms-bhavcopy-cache.outputs.cache-matched-key }}"
       - name: Restore previous EOD page universe and ECMS fundamental cache
         uses: actions/cache/restore@v4
         with:
