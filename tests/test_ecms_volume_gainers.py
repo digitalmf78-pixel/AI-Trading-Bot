@@ -1604,7 +1604,7 @@ def test_ecms_clears_unaligned_yahoo_metrics_but_keeps_aligned_same_period_value
 
     metrics = [
         "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
     ]
     row = {
         "TckrSymb": "AAA",
@@ -1617,14 +1617,18 @@ def test_ecms_clears_unaligned_yahoo_metrics_but_keeps_aligned_same_period_value
         "MetricCalculationBasesJSON": json.dumps({
             **{m: "ANNUAL_ALIGNED_STATEMENTS" for m in metrics},
             "ProfitGrowthPct": "UNALIGNED_PROVIDER_SNAPSHOT",
+            "FreeCashFlowINR": "UNALIGNED_PROVIDER_SNAPSHOT",
         }),
-        "MetricSourceCurrenciesJSON": json.dumps({"OperatingCashFlowINR": "INR"}),
+        "MetricSourceCurrenciesJSON": json.dumps({
+            "OperatingCashFlowINR": "INR", "FreeCashFlowINR": "INR",
+        }),
         **{m: float(i + 1) for i, m in enumerate(metrics)},
     }
     result = _clear_unaligned_yahoo_cached_metrics(pd.DataFrame([row]), {"AAA"}).iloc[0]
 
     assert result["RevenueGrowthPct"] == 1.0
     assert pd.isna(result["ProfitGrowthPct"])
+    assert pd.isna(result["FreeCashFlowINR"])
     assert result["OperatingCashFlowINR"] == 7.0
     eligibility = json.loads(result["ECMSYahooMetricEligibilityJSON"])
     rejected = json.loads(result["ECMSYahooRejectedMetricsJSON"])
