@@ -484,6 +484,12 @@ def assess_page_fundamentals(candidates, eod_date):
     if "TckrSymb" not in metrics.columns:
         raise RuntimeError("ECMS fundamental cache has no TckrSymb column")
     metrics["TckrSymb"] = metrics["TckrSymb"].astype(str).str.strip().str.upper()
+    for metric_name in (
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ):
+        if metric_name not in metrics.columns:
+            metrics[metric_name] = pd.NA
     duplicate_symbols = set(metrics.loc[metrics["TckrSymb"].duplicated(keep=False), "TckrSymb"])
     metrics_unique = metrics.drop_duplicates("TckrSymb", keep="first").copy()
 
