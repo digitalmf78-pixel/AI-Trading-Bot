@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import time
+import zipfile
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
@@ -62,6 +64,88 @@ def _read_valid_bhavcopy(path: Path, expected: date) -> pd.DataFrame:
         raise ValueError(f"{expected} is not an official NSE equity session")
     return frame
 
+def _download_official_bhavcopy(day: date, path: Path,
+                              session: requests.Session | None = None) -> pd.DataFrame:
+    """Download and validate one official NSE CM Bhavcopy into the ECMS cache."""
+    date_token = day.strftime("%Y%m%d")
+    url = (
+        "https://nsearchives.nseindia.com/content/cm/"
+        f"BhavCopy_NSE_CM_0_0_0_{date_token}_F_0000.csv.zip"
+    )
+    client = session or requests.Session()
+    client.headers.update(HEADERS)
+    response = client.get(url, timeout=(8, 30))
+    if response.status_code == 404:
+        raise RuntimeError(f"NSE archive has no Bhavcopy for {day} (HTTP 404)")
+    response.raise_for_status()
+    try:
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            csv_names = sorted(
+                name for name in archive.namelist()
+                if name.lower().endswith(".csv") and not name.startswith("__MACOSX/")
+            )
+            if len(csv_names) != 1:
+                raise ValueError(
+                    f"Expected exactly one CSV in NSE archive; found {len(csv_names)}"
+                )
+            with archive.open(csv_names[0]) as handle:
+                frame = pd.read_csv(handle)
+    except (zipfile.BadZipFile, pd.errors.ParserError, OSError) as exc:
+        raise RuntimeError(f"Invalid NSE Bhavcopy ZIP for {day}: {exc}") from exc
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".download.tmp")
+    try:
+        frame.to_csv(temporary, index=False)
+        _read_valid_bhavcopy(temporary, day)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print(
+        f"[ECMS_BHAVCOPY] downloaded and validated {day}; "
+        f"rows={len(frame)}; source={url}"
+    )
+    return frame
+
+
+def ensure_bhavcopy_history(latest: date, count: int = LOOKBACK_SESSIONS,
+                            bhavcopy_dir: Path = BHAVCOPY_DIR) -> list[date]:
+    """Backfill missing latest + prior official sessions before calculating ECMS RVOL."""
+    required_days: list[date] = []
+    cursor = latest
+    while len(required_days) < count + 1:
+        if is_trading_session(cursor):
+            required_days.append(cursor)
+        cursor -= timedelta(days=1)
+
+    bhavcopy_dir.mkdir(parents=True, exist_ok=True)
+    client = requests.Session()
+    client.headers.update(HEADERS)
+    downloaded: list[date] = []
+    for day in reversed(required_days):
+        path = bhavcopy_dir / f"bhavcopy_{day:%Y%m%d}.csv"
+        if path.is_file():
+            try:
+                _read_valid_bhavcopy(path, day)
+                continue
+            except Exception as exc:
+                print(f"[ECMS_BHAVCOPY] replacing invalid cache {path.name}: {exc}")
+        try:
+            _download_official_bhavcopy(day, path, session=client)
+            downloaded.append(day)
+        except Exception as exc:
+            raise RuntimeError(
+                f"WAIT_FOR_DATA: unable to backfill official NSE Bhavcopy for {day}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+    print(
+        f"[ECMS_BHAVCOPY] history ready: {len(required_days)} official sessions; "
+        f"downloaded={len(downloaded)}; latest={latest}"
+    )
+    return downloaded
+
+
 def expected_latest_completed_session(now: datetime | None = None) -> date:
     """Most recent NSE session whose cash-market EOD data should be complete."""
     local_now = now.astimezone(IST) if now and now.tzinfo else (now.replace(tzinfo=IST) if now else datetime.now(IST))
@@ -73,8 +157,10 @@ def expected_latest_completed_session(now: datetime | None = None) -> date:
     return day
 
 def discover_latest_session(bhavcopy_dir: Path = BHAVCOPY_DIR) -> tuple[date, Path]:
-    if not bhavcopy_dir.exists():
-        raise FileNotFoundError("Bhavcopy cache directory is missing")
+    expected_day = expected_latest_completed_session()
+    # ECMS must not depend on whether the separate NSE V8 workflow ran or
+    # whether its shared cache contains the latest completed session.
+    ensure_bhavcopy_history(expected_day, LOOKBACK_SESSIONS, bhavcopy_dir)
     valid = []
     errors = []
     for path in bhavcopy_dir.glob("bhavcopy_????????.csv"):
@@ -92,7 +178,6 @@ def discover_latest_session(bhavcopy_dir: Path = BHAVCOPY_DIR) -> tuple[date, Pa
     if not valid:
         raise RuntimeError("WAIT_FOR_DATA: no valid latest complete Bhavcopy session; " + "; ".join(errors[:5]))
     latest_day, latest_path = max(valid, key=lambda item: item[0])
-    expected_day = expected_latest_completed_session()
     if latest_day != expected_day:
         raise RuntimeError(
             f"WAIT_FOR_DATA: latest cached Bhavcopy is {latest_day}; "

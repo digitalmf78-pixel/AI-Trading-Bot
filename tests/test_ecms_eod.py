@@ -160,3 +160,61 @@ def test_expected_latest_completed_session_rolls_weekend_and_holiday_forward(mon
         datetime(2026, 11, 17, 9, 20, tzinfo=ist)
     ) == date(2026, 11, 13)
 
+
+
+def test_ecms_bhavcopy_backfill_downloads_only_missing_official_sessions(tmp_path, monkeypatch):
+    from datetime import timedelta
+    import strategies.ecms.eod as ecms_eod
+
+    monkeypatch.setattr(ecms_eod, "is_trading_session", lambda day: day.weekday() < 5)
+    latest = date(2026, 11, 19)
+    required = []
+    cursor = latest
+    while len(required) < 21:
+        if cursor.weekday() < 5:
+            required.append(cursor)
+        cursor -= timedelta(days=1)
+
+    for day in required[1:]:
+        frame = pd.DataFrame({
+            "TckrSymb": [f"S{i}" for i in range(500)],
+            "SctySrs": ["EQ"] * 500,
+            "TtlTradgVol": [100] * 500,
+            "ClsPric": [100] * 500,
+            "BizDt": [day.isoformat()] * 500,
+        })
+        frame.to_csv(tmp_path / f"bhavcopy_{day:%Y%m%d}.csv", index=False)
+
+    downloaded = []
+
+    def fake_download(day, path, session=None):
+        downloaded.append(day)
+        frame = pd.DataFrame({
+            "TckrSymb": [f"S{i}" for i in range(500)],
+            "SctySrs": ["EQ"] * 500,
+            "TtlTradgVol": [100] * 500,
+            "ClsPric": [100] * 500,
+            "BizDt": [day.isoformat()] * 500,
+        })
+        frame.to_csv(path, index=False)
+        return frame
+
+    monkeypatch.setattr(ecms_eod, "_download_official_bhavcopy", fake_download)
+    result = ecms_eod.ensure_bhavcopy_history(latest, count=20, bhavcopy_dir=tmp_path)
+
+    assert result == [latest]
+    assert downloaded == [latest]
+    assert len(list(tmp_path.glob("bhavcopy_????????.csv"))) == 21
+
+
+def test_ecms_bhavcopy_backfill_fails_closed_when_nse_archive_unavailable(tmp_path, monkeypatch):
+    import strategies.ecms.eod as ecms_eod
+
+    monkeypatch.setattr(ecms_eod, "is_trading_session", lambda day: True)
+    monkeypatch.setattr(
+        ecms_eod, "_download_official_bhavcopy",
+        lambda day, path, session=None: (_ for _ in ()).throw(RuntimeError("HTTP 503")),
+    )
+
+    with pytest.raises(RuntimeError, match="WAIT_FOR_DATA.*HTTP 503"):
+        ecms_eod.ensure_bhavcopy_history(date(2026, 11, 19), count=0, bhavcopy_dir=tmp_path)
