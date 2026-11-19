@@ -654,6 +654,12 @@ jobs:
             data/cache/ecms/corporate_actions/
             data/cache/ecms/universe/
           key: ecms-vg-state-v2-${{ github.ref_name }}-${{ steps.ecms-session.outputs.scan_session_date }}-${{ github.run_id }}
+      - name: Save ECMS Bhavcopy backfill cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/bhavcopy/
+          key: ecms-bhavcopy-${{ github.ref_name }}-${{ github.run_id }}
       - name: Save independent ECMS fundamental cache
         if: always()
         uses: actions/cache/save@v4
