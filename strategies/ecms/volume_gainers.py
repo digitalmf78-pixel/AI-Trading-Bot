@@ -1036,6 +1036,12 @@ def assess_page_fundamentals(candidates, eod_date):
     freshness.index.name = "TckrSymb"
     freshness = freshness.reset_index()
     assessed = assessed.merge(freshness, on="TckrSymb", how="left", validate="one_to_one")
+    missing_metric_mask = pd.to_numeric(
+        assessed.get("FundamentalMetricsMissingCount", 0), errors="coerce"
+    ).fillna(7).gt(0)
+    assessed.loc[missing_metric_mask, "FundamentalRecheckRecommendation"] = (
+        "MANUAL_RECHECK_NOW_MISSING_METRICS"
+    )
 
     provider_diagnostics = workspace / "outputs" / "v8_fundamental_provider_diagnostics.csv"
     if provider_diagnostics.exists():
