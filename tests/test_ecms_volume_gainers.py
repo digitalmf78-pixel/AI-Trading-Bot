@@ -664,7 +664,7 @@ def test_same_day_morning_snapshot_rejects_wrong_date_and_bad_symbols(tmp_path, 
     assert scanner._load_same_day_morning_snapshot(date(2026, 11, 16)).empty
 
 
-def test_morning_rejects_consumed_eod_resurrected_by_actions_cache(tmp_path, monkeypatch):
+def test_morning_ignores_consumed_resurrected_eod_cache_and_starts_fresh_scan(tmp_path, monkeypatch):
     import json
     from datetime import date
     import pytest
@@ -684,10 +684,15 @@ def test_morning_rejects_consumed_eod_resurrected_by_actions_cache(tmp_path, mon
     }))
     monkeypatch.setattr(scanner, "STATE_FILE", eod_state)
     monkeypatch.setattr(scanner, "CONSUMED_EOD_MARKER_FILE", consumed_marker)
+    monkeypatch.setattr(scanner, "MORNING_STATE_FILE", state_dir / "volume_gainers_same_day_morning.csv")
     monkeypatch.setattr(scanner, "is_trading_session", lambda _day: True)
     monkeypatch.setattr(scanner, "expected_latest_completed_session", lambda: date(2026, 11, 13))
 
-    with pytest.raises(RuntimeError, match="already consumed"):
+    def prove_live_scan_reached():
+        raise RuntimeError("LIVE_NSE_SCAN_REACHED")
+
+    monkeypatch.setattr(scanner, "fetch_volume_gainers", prove_live_scan_reached)
+    with pytest.raises(RuntimeError, match="LIVE_NSE_SCAN_REACHED"):
         scanner.run_morning()
 
 def test_nse_calendar_special_weekend_session_and_unknown_year_fail_closed():
