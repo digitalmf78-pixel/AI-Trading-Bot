@@ -36,7 +36,7 @@ def test_attach_page_rvol_keeps_nse_page_universe_when_bhavcopy_is_unavailable(m
     assert result["RVOLDataStatus"].str.startswith("WAIT_FOR_DATA").all()
 
 
-def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_path, monkeypatch):
+def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monkeypatch):
     import sys
     import types
     from pathlib import Path
@@ -52,13 +52,10 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
 
     def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None, force_retry_incomplete=False, free_source_audit_metrics=None):
         assert enabled is True
-        assert callable(free_source_fetcher)
-        # Preserve provider cooldown so cached incomplete rows are not refetched every scan.
-        assert force_retry_incomplete is False
-        assert free_source_audit_metrics == [
-            "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-            "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
-        ]
+        assert free_source_fetcher is None
+        assert force_retry_incomplete is True
+        assert free_source_audit_metrics is None
+        assert __import__("os").environ["V8_FREE_FUNDAMENTAL_SOURCES"] == "false"
         assert set(candidates["TckrSymb"]) == {"AAA"}
         path = Path(metrics_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +154,9 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     # run's audit inputs and all candidate-facing artifact snapshots.
     assert set(pd.read_csv(workspace_metrics)["TckrSymb"]) == {"AAA", "OLD"}
     assert not (tmp_path / "data/inputs/production_metrics.csv").exists()
-    assert result.iloc[0]["FundamentalShortlistStatus"] == "PASS"
+    assert result.iloc[0]["FundamentalShortlistStatus"] == "YAHOO_RESEARCH_PARTIAL"
+    assert result.iloc[0]["FundamentalPassStatus"] == "NOT_A_PASS_YAHOO_RESEARCH_ONLY"
+    assert result.iloc[0]["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_PERIOD_UNKNOWN"
     out = tmp_path / "outputs/ecms"
     assert set(pd.read_csv(out / "fundamental_metrics_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
@@ -1496,3 +1495,41 @@ def test_ecms_filing_selector_waits_when_consolidated_filing_missing():
     assert result.loc[0, "PublicationDateStatus"] == "UNVERIFIED"
     assert result.loc[0, "ECMSOfficialFilingBasisStatus"] == "WAIT_CONSOLIDATED_AUDITED_FILING"
     assert diagnostics.iloc[0]["Status"] == "CONSOLIDATED_AUDITED_FILING_NOT_FOUND"
+
+
+
+def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
+    from strategies.ecms.volume_gainers import _ecms_yahoo_period_freshness
+
+    def row(period):
+        metrics = {
+            "RevenueGrowthPct": 12,
+            "ProfitGrowthPct": 8,
+            "ROEPercent": 14,
+            "ROCEPercent": 16,
+            "DebtToEquity": 0.4,
+            "InterestCoverage": 4.2,
+            "OperatingCashFlowINR": 1000000,
+        }
+        return {
+            **metrics,
+            "MetricSourcesJSON": __import__("json").dumps({
+                name: "Yahoo Finance via yfinance" for name in metrics
+            }),
+            "MetricSourcePeriodsJSON": __import__("json").dumps({
+                name: period for name in metrics
+            }),
+        }
+
+    asof = __import__("datetime").date(2026, 11, 19)
+    q2 = _ecms_yahoo_period_freshness(row("2026-09-30"), asof)
+    assert q2["FundamentalPeriodLabel"] == "Q2 FY27 (Sep-2026)"
+    assert q2["FundamentalQuarterAge"] == 1
+    assert q2["FundamentalFreshnessStatus"] == "1Q_OLD"
+    assert q2["FundamentalRecheckRecommendation"] == "RECHECK_BEFORE_STOCK_SELECTION"
+
+    q1 = _ecms_yahoo_period_freshness(row("2026-06-30"), asof)
+    assert q1["FundamentalPeriodLabel"] == "Q1 FY27 (Jun-2026)"
+    assert q1["FundamentalQuarterAge"] == 2
+    assert q1["FundamentalFreshnessStatus"] == "2Q_OLD"
+    assert q1["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_QUARTER"
