@@ -921,7 +921,7 @@ def assess_page_fundamentals(candidates, eod_date):
     # other research layer; PASS still requires balanced downstream review.
     fundamental_pass = assessed["FundamentalShortlistStatus"].astype(str).str.upper().eq("PASS")
     assessed["FundamentalPassStatus"] = fundamental_pass.map({
-        True: "FUNDAMENTAL_PASS", False: "NOT_FUNDAMENTAL_PASS"
+        True: "FUNDAMENTAL_PASS", False: "NOT_A_PASS_YAHOO_RESEARCH_ONLY"
     })
     decision_fields = pd.DataFrame(
         assessed["FundamentalShortlistStatus"].map(_fundamental_decision_fields).tolist(),
