@@ -1428,3 +1428,45 @@ def test_ecms_morning_bhavcopy_preflight_backfills_full_history(monkeypatch):
     downloaded = scanner.ensure_ecms_bhavcopy_for_session(date(2026, 11, 18))
     assert captured == {"session_date": date(2026, 11, 18), "count": 20}
     assert downloaded == [date(2026, 11, 18)]
+
+def test_ecms_filing_selector_prefers_latest_consolidated_audited_not_standalone():
+    from strategies.ecms.consolidated_filing_selection import apply_consolidated_audited_filing_selection
+
+    metrics = pd.DataFrame([{
+        "TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31",
+        "OfficialFilingURL": "old-standalone-url", "PublicationDate": "2026-05-01",
+        "PublicationDateStatus": "VERIFIED",
+    }])
+    filings = pd.DataFrame([
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-01",
+         "PublicationDateStatus": "VERIFIED", "FilingDescription": "ABC Consolidated Audited Original",
+         "OfficialFilingURL": "https://nsearchives.nseindia.in/corporate/xbrl/consolidated-original.xml"},
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-06-30",
+         "PublicationDateStatus": "VERIFIED", "FilingDescription": "ABC Consolidated Audited Revision",
+         "OfficialFilingURL": "https://nsearchives.nseindia.in/corporate/xbrl/consolidated-revision.xml"},
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-06-30",
+         "PublicationDateStatus": "VERIFIED", "FilingDescription": "ABC Standalone Audited Revision",
+         "OfficialFilingURL": "https://nsearchives.nseindia.in/corporate/xbrl/standalone-revision.xml"},
+    ])
+    result, diagnostics = apply_consolidated_audited_filing_selection(metrics, filings)
+    assert result.loc[0, "OfficialFilingURL"].endswith("consolidated-revision.xml")
+    assert result.loc[0, "PublicationDateStatus"] == "VERIFIED"
+    assert result.loc[0, "ECMSOfficialFilingBasisStatus"] == "CONSOLIDATED_AUDITED_SELECTED"
+    assert diagnostics.iloc[0]["Status"] == "CONSOLIDATED_AUDITED_SELECTED"
+
+
+def test_ecms_filing_selector_waits_when_consolidated_filing_missing():
+    from strategies.ecms.consolidated_filing_selection import apply_consolidated_audited_filing_selection
+
+    metrics = pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31",
+                            "OfficialFilingURL": "standalone-wrong"}])
+    filings = pd.DataFrame([{
+        "TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-01",
+        "PublicationDateStatus": "VERIFIED", "FilingDescription": "ABC Standalone Audited Original",
+        "OfficialFilingURL": "https://nsearchives.nseindia.in/corporate/xbrl/standalone.xml",
+    }])
+    result, diagnostics = apply_consolidated_audited_filing_selection(metrics, filings)
+    assert result.loc[0, "OfficialFilingURL"] == ""
+    assert result.loc[0, "PublicationDateStatus"] == "UNVERIFIED"
+    assert result.loc[0, "ECMSOfficialFilingBasisStatus"] == "WAIT_CONSOLIDATED_AUDITED_FILING"
+    assert diagnostics.iloc[0]["Status"] == "CONSOLIDATED_AUDITED_FILING_NOT_FOUND"

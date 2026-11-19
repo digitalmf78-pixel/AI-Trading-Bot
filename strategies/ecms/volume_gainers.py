@@ -16,6 +16,7 @@ from strategies.ecms.eod import (
 from fundamental_metric_verification import run_audit as run_fundamental_xbrl_audit
 from fundamental_shortlist import build_fundamental_shortlist
 from strategies.ecms.fundamental_source_compilation import build_fundamental_source_compilation
+from strategies.ecms.consolidated_filing_selection import apply_consolidated_audited_filing_selection
 from strategies.ecms.debt_equity_xbrl_audit import AUDIT_COLUMNS as DEBT_EQUITY_AUDIT_COLUMNS, audit_ecms_debt_to_equity
 from strategies.ecms.ratio_xbrl_discovery_audit import OUTPUT_COLUMNS as RATIO_XBRL_DISCOVERY_COLUMNS, discover_ecms_ratio_xbrl_facts
 from strategies.ecms.filing_metadata_audit import OUTPUT_COLUMNS as FILING_METADATA_AUDIT_COLUMNS, audit_ecms_filing_metadata, fetch_ecms_candidate_filing_metadata, fetch_ecms_details_remarks
@@ -407,6 +408,14 @@ def assess_page_fundamentals(candidates, eod_date):
     audit_filings_path = audit_input_dir / "official_filings.csv"
     if len(candidate_filings.columns):
         candidate_filings.to_csv(audit_filings_path, index=False)
+    # ECMS independently aligns Yahoo-derived provider metrics to consolidated audited filings.
+    candidate_metrics, consolidated_selection_diagnostics = apply_consolidated_audited_filing_selection(
+        candidate_metrics, candidate_filings
+    )
+    candidate_metrics.to_csv(audit_metrics_path, index=False)
+    consolidated_selection_diagnostics.to_csv(
+        ecms_output_dir / "fundamental_consolidated_filing_selection.csv", index=False
+    )
 
     candidate_evidence = (
         pd.read_csv(workspace_evidence, keep_default_na=False)
