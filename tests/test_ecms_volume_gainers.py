@@ -156,7 +156,7 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
     assert not (tmp_path / "data/inputs/production_metrics.csv").exists()
     assert result.iloc[0]["FundamentalShortlistStatus"] == "YAHOO_RESEARCH_PARTIAL"
     assert result.iloc[0]["FundamentalPassStatus"] == "NOT_A_PASS_YAHOO_RESEARCH_ONLY"
-    assert result.iloc[0]["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_PERIOD_UNKNOWN"
+    assert result.iloc[0]["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_MISSING_METRICS"
     out = tmp_path / "outputs/ecms"
     assert set(pd.read_csv(out / "fundamental_metrics_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
