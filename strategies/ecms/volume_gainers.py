@@ -236,6 +236,22 @@ def _ecms_free_source_evidence(row):
     })
 
 
+def _build_exact_period_filing_lookup_candidates(candidates, metrics):
+    """Pair each current page symbol with its own cached metric period for NSE filing lookup."""
+    symbols = candidates[["TckrSymb"]].copy()
+    symbols["TckrSymb"] = symbols["TckrSymb"].astype(str).str.strip().str.upper()
+    if metrics is None or "TckrSymb" not in metrics.columns:
+        periods = pd.DataFrame(columns=["TckrSymb", "FinancialPeriodEnd"])
+    elif "FinancialPeriodEnd" in metrics.columns:
+        periods = metrics[["TckrSymb", "FinancialPeriodEnd"]].copy()
+        periods["TckrSymb"] = periods["TckrSymb"].astype(str).str.strip().str.upper()
+        periods = periods.drop_duplicates("TckrSymb", keep="first")
+    else:
+        periods = metrics[["TckrSymb"]].drop_duplicates().copy()
+        periods["FinancialPeriodEnd"] = ""
+    return symbols.merge(periods, on="TckrSymb", how="left", validate="one_to_one")
+
+
 def assess_page_fundamentals(candidates, eod_date):
     """Collect and verify fundamentals for Volume Gainers candidates only.
 
@@ -512,13 +528,12 @@ def assess_page_fundamentals(candidates, eod_date):
     # The current shared cache may not contain these fields; that is reported
     # as incomplete and never promotes any metric to verified.
     try:
-        # Discover filings by symbol even when the fundamental cache has no
-        # FinancialPeriodEnd. The NSE API's period_ended=all response is filtered
-        # locally to the latest eligible period at/before the ECMS as-of date.
-        # Standalone/consolidated and original/revised variants remain separate.
-        filing_lookup_candidates = candidates[["TckrSymb"]].copy()
-        filing_lookup_candidates["TckrSymb"] = (
-            filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
+        # Filing metadata must match the exact financial period of the metric
+        # being verified. Selecting the latest NSE filing (for example, Sep-2026)
+        # while auditing Mar-2026 annual metrics creates a false period mismatch.
+        # Missing metric periods are explicitly blocked by the ECMS lookup helper.
+        filing_lookup_candidates = _build_exact_period_filing_lookup_candidates(
+            candidates, metrics_unique
         )
         filing_metadata_source = fetch_ecms_candidate_filing_metadata(
             filing_lookup_candidates, eod_date.isoformat()
