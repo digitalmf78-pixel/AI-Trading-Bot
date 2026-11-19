@@ -1664,4 +1664,4 @@ def test_ecms_rejects_yahoo_metric_with_period_mismatch_or_unknown_ocf_currency(
     assert pd.isna(result["OperatingCashFlowINR"])
     eligibility = json.loads(result["ECMSYahooMetricEligibilityJSON"])
     assert eligibility["RevenueGrowthPct"] == "METRIC_PERIOD_DIFFERS_FROM_ROW_PERIOD"
-    assert eligibility["OperatingCashFlowINR"] == "OPERATING_CASH_FLOW_CURRENCY_NOT_CONFIRMED_INR"
+    assert eligibility["OperatingCashFlowINR"] == "CASH_FLOW_CURRENCY_NOT_CONFIRMED_INR"
