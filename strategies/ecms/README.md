@@ -220,3 +220,46 @@ Until the scanner is fully validated, every successful Morning and EOD scan also
 - Morning: `outputs/ecms/volume_gainers_morning_nse_page.csv`
 
 The CSV preserves every returned page row, including rows outside the official Main Board universe, and explicitly labels `MainBoardEligible` and `PageUniverseStatus`. It also records scan mode/date, page capture time and NSE page source. The scanner's research universe remains the eligible Main Board subset; the downloadable page CSV is a manual comparison aid and does not change stock selection. The page currently labels its table Top 25, so “complete” means all rows returned by that NSE page response, not the entire NSE-listed universe.
+
+
+## REA-inspired evidence-first source audit (ECMS only)
+
+ECMS adopts selected **methods** from the REA reverse-engineering project. REA itself is not installed, invoked, or required by ECMS. This design is usable through GitHub Actions and ChatGPT-assisted repository review; it does not require the user to own a PC/laptop or run Node.js locally.
+
+### Evidence workflow
+
+1. **Observe** — record the exact official source URL, non-secret request parameters, retrieval timestamp, HTTP status, content type, response size and source identity. Never record cookies, authorization headers, session tokens or credentials.
+2. **Capture** — retain a SHA-256 digest of exact response bytes. Where permitted and useful, retain bounded raw response/XML as an ECMS-owned artifact/cache item; do not replace raw evidence with only parsed values.
+3. **Inspect** — parse response structure, filing metadata, XBRL taxonomy/concepts, contexts, dimensions, units, decimals, periods and issuer identifiers. Preserve parser diagnostics and unsupported fields.
+4. **Normalize** — normalize once at the owning ECMS source adapter. Preserve original source values and normalized values separately; downstream consumers must not independently reinterpret raw payloads.
+5. **Compare** — compare captures only when issuer, endpoint/request scope, financial period, filing variant and reporting basis align. Preserve added/removed/changed fields and exact evidence IDs/hashes on both sides.
+6. **Assess** — keep observations, derived calculations, inferences and unknowns distinct. A candidate endpoint/tag is not proof of a supported metric; a captured value is not a verified metric.
+7. **Report** — publish coverage, pagination status, limitations, failed attempts and per-field provenance beside each metric result.
+
+### Required source-evidence envelope
+
+Every official API response or filing document used by ECMS should carry, where available: `SourceEvidenceID`; exchange and exact URL/endpoint; non-secret request parameters; UTC retrieval time; HTTP status and content type; payload byte count and SHA-256 digest; page number, requested size, reported total pages/records and capture coverage; symbol/ISIN; financial period, publication date and revision/sequence; audited/unaudited label; standalone/consolidated basis; XBRL taxonomy/schema; parser version/status/limitations; and metric fact, contextRef, dimensions, unitRef, decimals/scale, raw value and formula provenance.
+
+Missing metadata remains unknown. Do not synthesize filing URLs, infer a missing page, assume a short page is final, or equate a missing response with an empty result.
+
+### Coverage and comparison rules
+
+- `PAGINATION_COMPLETE_EXPLICIT_SINGLE_PAGE` is allowed only when the source explicitly reports one page. A page below its requested size is not proof that no later page exists.
+- `PARTIAL_PAGINATION_PAGE_ONLY`, `PAGE_LIMIT_REACHED_PAGINATION_UNKNOWN`, `PAGINATION_NOT_EXPOSED_SINGLE_PAGE_ONLY` and `SOURCE_CAPTURE_FAILED` are not complete source coverage.
+- A truncated, failed, blocked, malformed or partially paginated capture cannot prove that a filing/fact is absent.
+- Compare only exact matching issuer + period + filing variant + basis. If alignment or capture coverage is unknown, comparison is `UNKNOWN`/`WAIT_FOR_DATA`, not `UNCHANGED`.
+- Keep raw response hashes and parser diagnostics so a changed API response can be distinguished from a changed parser or normalization.
+- Preserve partial facts, but do not promote them to `OFFICIAL_XBRL_VERIFIED` unless independent metric formula, context, unit, period and basis checks pass.
+
+### REA concepts deliberately not imported
+
+ECMS will not depend on REA's Node.js runtime, CDP browser attachment, local browser debugging port, MCP server or third-party reverse-engineering runtime. Static endpoint candidates and browser observations may guide research, but only repeatable official-source responses and filing evidence can support ECMS. No access-control bypass, login automation, paid-source scraping or credential capture is permitted.
+
+### Mobile-first operating method
+
+- The user reviews reports and approves scope in ChatGPT on mobile.
+- Repository changes are made on an isolated ECMS branch through GitHub; CI tests run in GitHub Actions.
+- Official-source observations and audit artifacts are inspected here in chat; no local terminal, Node.js installation or laptop is required.
+- Keep the exact two Morning/EOD scans and all existing cache/report semantics unchanged unless separately approved.
+
+**Initial implementation:** NSE Integrated Filing lookup records response-level capture metadata and an explicit pagination-coverage state in `fundamental_filing_metadata_audit.csv`. This is provenance evidence only; it does not verify any fundamental metric and does not change `WAIT_FOR_DATA` policy. BSE automated capture remains a separate research item until its public endpoint and response contract are verified.
