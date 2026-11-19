@@ -1538,6 +1538,7 @@ def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
 
 
 def test_clear_non_yahoo_cached_metrics_handles_float_columns_and_preserves_yahoo():
+    import json
     from strategies.ecms.volume_gainers import _clear_non_yahoo_cached_metrics
 
     cached = pd.DataFrame([{
