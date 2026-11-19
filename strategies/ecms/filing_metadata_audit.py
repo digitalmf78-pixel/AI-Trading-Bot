@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "SourceEvidenceID", "SourceURL", "SourceRetrievedAtUTC", "SourceHTTPStatus", "SourceContentType", "SourcePayloadBytes", "SourcePayloadSHA256", "SourceRecordCount", "SourcePage", "SourcePageSize", "CaptureCoverageStatus", "CaptureLimitations", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
+OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "SourceEvidenceID", "SourceURL", "SourceRequestParameters", "SourceRetrievedAtUTC", "SourceHTTPStatus", "SourceContentType", "SourcePayloadBytes", "SourcePayloadSHA256", "SourceRecordCount", "SourcePage", "SourcePageSize", "CaptureCoverageStatus", "CaptureLimitations", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
 NSE_HOSTS = {"nsearchives.nseindia.com", "nsearchives.nseindia.in", "www.nseindia.com", "nseindia.com"}
 
 def _value(row, names):
@@ -49,7 +49,7 @@ def _nse_capture_evidence(response, params, payload, items):
         coverage, limits = "PAGINATION_NOT_EXPOSED_SINGLE_PAGE_ONLY", "ONE_PAGE_CAPTURED; SOURCE_TOTAL_PAGES_NOT_CONFIRMED"
     identity = json.dumps({"url": NSE_RESULTS_API, "params": params, "payload_sha256": digest}, sort_keys=True, separators=(",", ":"))
     headers = getattr(response, "headers", {}) or {}
-    return {"SourceEvidenceID": "nse-ifiling-" + hashlib.sha256(identity.encode()).hexdigest()[:20], "SourceURL": NSE_RESULTS_API, "SourceRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "SourceHTTPStatus": str(getattr(response, "status_code", "") or "UNKNOWN"), "SourceContentType": str(headers.get("Content-Type", ""))[:160], "SourcePayloadBytes": len(body), "SourcePayloadSHA256": digest, "SourceRecordCount": len(items), "SourcePage": page, "SourcePageSize": size, "CaptureCoverageStatus": coverage, "CaptureLimitations": limits}
+    return {"SourceEvidenceID": "nse-ifiling-" + hashlib.sha256(identity.encode()).hexdigest()[:20], "SourceURL": NSE_RESULTS_API, "SourceRequestParameters": json.dumps(params, sort_keys=True, separators=(",", ":")), "SourceRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "SourceHTTPStatus": str(getattr(response, "status_code", "") or "UNKNOWN"), "SourceContentType": str(headers.get("Content-Type", ""))[:160], "SourcePayloadBytes": len(body), "SourcePayloadSHA256": digest, "SourceRecordCount": len(items), "SourcePage": page, "SourcePageSize": size, "CaptureCoverageStatus": coverage, "CaptureLimitations": limits}
 
 def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
     """Keep XBRL, Details, audit and basis as separate explicit source fields.
@@ -405,6 +405,7 @@ def fetch_ecms_candidate_filing_metadata(
                 "VerificationStatus": "NOT_VERIFIED",
                 "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:240]}",
                 "SourceURL": NSE_RESULTS_API,
+                "SourceRequestParameters": __import__("json").dumps(params, sort_keys=True, separators=(",", ":")),
                 "SourceRetrievedAtUTC": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                 "SourceHTTPStatus": str(getattr(getattr(exc, "response", None), "status_code", "") or "UNKNOWN"),
                 "SourcePayloadBytes": 0,
