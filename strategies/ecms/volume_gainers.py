@@ -2259,7 +2259,7 @@ def main():
         os.environ["ECMS_SCAN_SLOT"] = "MANUAL_OBSERVATION"
     # Scheduled runs must match the calendar's session-specific scan slot.
     # Manual dispatch is intentionally allowed at any time on a trading date.
-    if os.getenv("GITHUB_EVENT_NAME", "").lower() == "schedule":
+    if os.getenv("GITHUB_EVENT_NAME", "").lower() == "schedule" and args.mode != "manual-observation":
         try:
             expected_time = expected_scan_time(today, args.mode)
         except CalendarCoverageError as exc:
