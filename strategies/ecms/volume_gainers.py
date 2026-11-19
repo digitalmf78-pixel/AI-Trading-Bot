@@ -1029,6 +1029,10 @@ def assess_page_fundamentals(candidates, eod_date):
             ]
             audit = audit_match.iloc[0].to_dict() if not audit_match.empty else {}
             verification_status = str(audit.get("VerificationStatus", "NOT_VERIFIED") or "NOT_VERIFIED").upper()
+            xbrl_verification_tag = (
+                "XBRL_VERIFIED" if verification_status == "OFFICIAL_XBRL_VERIFIED"
+                else "XBRL_NOT_VERIFIED"
+            )
             verified += int(verification_status == "OFFICIAL_XBRL_VERIFIED")
             mismatch += int(verification_status == "PROVIDER_VALUE_MISMATCH")
             reconciliation += int(verification_status == "DERIVED_RECONCILIATION_REQUIRED")
@@ -1050,6 +1054,7 @@ def assess_page_fundamentals(candidates, eod_date):
                 "OfficialFilingSource": audit.get("Source", "NOT_FOUND"),
                 "OfficialFilingURL": audit.get("SourceURL", ""),
                 "VerificationStatus": verification_status,
+                "XBRLVerificationTag": xbrl_verification_tag,
                 "MismatchReason": audit.get("MismatchReason", ""),
             })
         metric_summary_rows.append({
