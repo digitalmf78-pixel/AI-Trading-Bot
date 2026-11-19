@@ -330,9 +330,14 @@ def _clear_non_yahoo_cached_metrics(cached, candidate_symbols):
         "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
     )
     metadata_fields = (
-        "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
+        "MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
         "MetricCalculationBasesJSON", "MetricSourceCurrenciesJSON",
     )
+    for field in metadata_fields:
+        if field not in result.columns:
+            result[field] = "{}"
+        else:
+            result[field] = result[field].astype("object")
     for metric in metric_names:
         if metric in result.columns:
             # CSV inference may produce float64 when a column contains only
