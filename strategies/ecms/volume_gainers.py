@@ -1465,35 +1465,54 @@ def run_morning():
                 f"reference_status={manual_reference_status}"
             )
     else:
-        if not reference_file.exists():
-            raise RuntimeError("WAIT_FOR_DATA: previous EOD Volume Gainers snapshot missing from ECMS state cache")
-        previous = pd.read_csv(reference_file, dtype={"TckrSymb": str})
-        if previous.empty or "TckrSymb" not in previous:
-            raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot empty or invalid")
-        previous["TckrSymb"] = previous["TckrSymb"].astype(str).str.strip().str.upper()
-        if previous["TckrSymb"].eq("").any() or previous["TckrSymb"].duplicated().any():
-            raise RuntimeError("WAIT_FOR_DATA: previous EOD snapshot has blank or duplicate symbols")
-        if "SnapshotType" in previous and not previous["SnapshotType"].astype(str).eq("EOD").all():
-            raise RuntimeError("WAIT_FOR_DATA: cached snapshot is not tagged as EOD")
-        if "SnapshotStatus" in previous and not previous["SnapshotStatus"].astype(str).eq("VALID").all():
-            raise RuntimeError("WAIT_FOR_DATA: cached EOD snapshot is not marked VALID")
-        stored_dates = set(previous.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
-        if CONSUMED_EOD_MARKER_FILE.exists():
+        # EOD is a comparison baseline, never a prerequisite for Morning.
+        # Missing, stale or invalid cache means independent scan without comparison.
+        previous = pd.DataFrame(columns=["TckrSymb"])
+        manual_reference_status = "NO_MATCHING_EOD_REFERENCE_FRESH_MORNING_SCAN"
+        if reference_file.is_file():
             try:
-                consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
-                consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
+                candidate = pd.read_csv(reference_file, dtype={"TckrSymb": str})
+                if candidate.empty or "TckrSymb" not in candidate.columns:
+                    manual_reference_status = "EMPTY_OR_INVALID_EOD_REFERENCE_FRESH_MORNING_SCAN"
+                else:
+                    candidate["TckrSymb"] = candidate["TckrSymb"].astype(str).str.strip().str.upper()
+                    stored_dates = set(candidate.get("EODDate", pd.Series(dtype=str)).dropna().astype(str))
+                    valid_symbols = (
+                        not candidate["TckrSymb"].eq("").any()
+                        and not candidate["TckrSymb"].duplicated().any()
+                    )
+                    valid_tags = (
+                        ("SnapshotType" not in candidate or candidate["SnapshotType"].astype(str).eq("EOD").all())
+                        and ("SnapshotStatus" not in candidate or candidate["SnapshotStatus"].astype(str).eq("VALID").all())
+                    )
+                    consumed_through = ""
+                    if CONSUMED_EOD_MARKER_FILE.is_file():
+                        try:
+                            consumed_marker = json.loads(CONSUMED_EOD_MARKER_FILE.read_text(encoding="utf-8"))
+                            consumed_through = str(consumed_marker.get("consumed_eod_date", ""))
+                        except Exception:
+                            consumed_through = "INVALID_MARKER"
+                    not_consumed = not (
+                        consumed_through and consumed_through != "INVALID_MARKER"
+                        and stored_dates and max(stored_dates) <= consumed_through
+                    )
+                    if valid_symbols and valid_tags and stored_dates == {expected_eod} and not_consumed:
+                        previous = candidate
+                        manual_reference_status = "MATCHED_PREVIOUS_EOD_REFERENCE"
+                    elif not not_consumed:
+                        manual_reference_status = "EOD_REFERENCE_ALREADY_CONSUMED_FRESH_MORNING_SCAN"
+                    elif stored_dates != {expected_eod}:
+                        manual_reference_status = "STALE_EOD_REFERENCE_FRESH_MORNING_SCAN"
+                    else:
+                        manual_reference_status = "INVALID_EOD_REFERENCE_FRESH_MORNING_SCAN"
             except Exception as exc:
-                raise RuntimeError(
-                    f"WAIT_FOR_DATA: consumed-EOD cache marker is unreadable: {type(exc).__name__}: {exc}"
-                ) from exc
-            if consumed_through and stored_dates and max(stored_dates) <= consumed_through:
-                raise RuntimeError(
-                    f"WAIT_FOR_DATA: cached EOD reference {sorted(stored_dates)} was already consumed "
-                    f"through {consumed_through}; refusing stale cache resurrection"
-                )
-        if stored_dates != {expected_eod}:
-            raise RuntimeError(f"WAIT_FOR_DATA: cached EOD page snapshot dates {sorted(stored_dates)} do not match latest completed NSE session {expected_eod}")
-        manual_reference_status = "NOT_APPLICABLE"
+                manual_reference_status = f"UNREADABLE_EOD_REFERENCE_FRESH_MORNING_SCAN_{type(exc).__name__}"
+        if previous.empty:
+            print(
+                "[MORNING] No valid date-matched EOD baseline; continuing with "
+                "independent NSE page scan and full ECMS assessment. "
+                f"reference_status={manual_reference_status}"
+            )
     live_page=fetch_volume_gainers()
     mainboard,board_source=load_official_mainboard_symbols()
     morning_page_captured_at = datetime.now(IST).isoformat()
@@ -1699,7 +1718,15 @@ def run_morning():
       "note":"Every eligible 09:20 page candidate receives fundamental assessment. Verified complete FAIL may invoke the fundamental rejection rule; WAIT/PARTIAL continues through other research. Page repeat/new/disappeared labels are independent of fundamental status. ConfirmationStatus is a legacy alias for FundamentalConfirmationStatus, not an overall stock decision."}
     # The comparison report and same-day Morning snapshot are now persisted.
     # Only now consume the previous EOD reference; failures above leave it intact.
-    summary["previous_eod_reference_consumed"] = (False if manual_observation else _consume_previous_eod_snapshot(expected_eod))
+    summary["previous_eod_reference_consumed"] = (
+        _consume_previous_eod_snapshot(expected_eod)
+        if (not manual_observation and not previous.empty)
+        else False
+    )
+    summary["morning_comparison_performed"] = bool(not previous.empty)
+    summary["morning_comparison_status"] = (
+        "COMPLETED" if not previous.empty else "INDEPENDENT_SCAN_NO_VALID_EOD_BASELINE"
+    )
     (OUTPUT_DIR/f"{output_prefix}_summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2)); return summary
 def _write_execution_status(mode, status, reason="", **details):
