@@ -43,7 +43,10 @@ jobs:
           mode, reason = "skip", "OUTSIDE_ECMS_SCAN_WINDOW"
           if event == "schedule":
               if schedule == "50 3 * * *":
-                  mode, reason = "morning", "SCHEDULED_MORNING_0920_IST"
+                  if now.time().replace(tzinfo=None) >= time(12, 0):
+                      mode, reason = "manual-observation", "DELAYED_MORNING_SCHEDULE_ROUTED_TO_MANUAL_OBSERVATION"
+                  else:
+                      mode, reason = "morning", "SCHEDULED_MORNING_0920_IST"
               elif schedule == "30 11 * * *":
                   mode, reason = "eod", "SCHEDULED_EOD_1700_IST"
               else:
@@ -226,7 +229,59 @@ jobs:
           V8_FUNDAMENTAL_RETRY_DAYS: "7"
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
         run: python -m strategies.ecms.volume_gainers --mode ${{ needs.route.outputs.mode == 'eod-reuse' && 'eod-reuse' || 'eod' }}
-      - name: Fail scheduled EOD job when scan did not complete
+      - name: Ensure ECMS EOD NSE page CSV exists even when scanner fails or skips
+        if: always()
+        env:
+          ECMS_MODE: ${{ needs.route.outputs.mode }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from pathlib import Path
+          import pandas as pd
+          from strategies.ecms import volume_gainers as scanner
+
+          mode = (scanner.os.getenv("ECMS_MODE") or "eod").strip().lower()
+          prefix = "manual_observation" if mode == "manual-observation" else mode
+          output = scanner.OUTPUT_DIR / f"volume_gainers_{prefix}_nse_page.csv"
+          scanner.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+          if output.is_file() and output.stat().st_size > 0:
+              print(f"ECMS_PAGE_CSV_ALREADY_EXISTS={output}")
+          else:
+              captured = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+              try:
+                  page = scanner.fetch_volume_gainers()
+                  try:
+                      mainboard, board_source = scanner.load_official_mainboard_symbols()
+                      export = scanner._build_nse_page_download(
+                          page, mainboard, mode.upper(), datetime.now(ZoneInfo("Asia/Kolkata")).date(),
+                          captured, board_source
+                      )
+                      export["FallbackExportStatus"] = "LIVE_NSE_PAGE_FALLBACK"
+                  except Exception as board_error:
+                      export = page.copy()
+                      export["FallbackExportStatus"] = "LIVE_NSE_PAGE_RAW_FALLBACK_MAINBOARD_FILTER_UNAVAILABLE"
+                      export["MainBoardLookupError"] = f"{type(board_error).__name__}: {board_error}"
+                  export["ScanMode"] = mode.upper()
+                  export["FallbackCapturedAtIST"] = captured
+                  export.to_csv(output, index=False)
+                  print(f"ECMS_FALLBACK_PAGE_CSV_CREATED={output} rows={len(export)}")
+              except Exception as exc:
+                  pd.DataFrame([{
+                      "TckrSymb": "",
+                      "FallbackExportStatus": "SOURCE_UNAVAILABLE",
+                      "FailureReason": f"{type(exc).__name__}: {exc}",
+                      "ScanMode": mode.upper(),
+                      "FallbackCapturedAtIST": captured,
+                      "SourceURL": scanner.NSE_PAGE,
+                  }]).to_csv(output, index=False)
+                  print(f"ECMS_FALLBACK_STATUS_CSV_CREATED={output}; live NSE page unavailable: {type(exc).__name__}: {exc}")
+          PY
+      - name: Report EOD scanner status without blocking CSV delivery
+        if: always()
+        run: |
+          echo "EOD scan status is informational; independent NSE page CSV export and Telegram delivery continue."
+
         if: github.event_name == 'schedule'
         shell: bash
         run: |
@@ -565,7 +620,59 @@ jobs:
           V8_FUNDAMENTAL_REFRESH_DAYS: "7"
           ECMS_SCAN_SLOT: ${{ needs.route.outputs.mode == 'manual-observation' && 'MANUAL_OBSERVATION' || 'MORNING' }}
         run: python -m strategies.ecms.volume_gainers --mode ${{ needs.route.outputs.mode == 'manual-observation' && 'manual-observation' || 'morning' }}
-      - name: Fail scheduled Morning job when scan did not complete
+      - name: Ensure ECMS MORNING NSE page CSV exists even when scanner fails or skips
+        if: always()
+        env:
+          ECMS_MODE: ${{ needs.route.outputs.mode }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from pathlib import Path
+          import pandas as pd
+          from strategies.ecms import volume_gainers as scanner
+
+          mode = (scanner.os.getenv("ECMS_MODE") or "morning").strip().lower()
+          prefix = "manual_observation" if mode == "manual-observation" else mode
+          output = scanner.OUTPUT_DIR / f"volume_gainers_{prefix}_nse_page.csv"
+          scanner.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+          if output.is_file() and output.stat().st_size > 0:
+              print(f"ECMS_PAGE_CSV_ALREADY_EXISTS={output}")
+          else:
+              captured = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+              try:
+                  page = scanner.fetch_volume_gainers()
+                  try:
+                      mainboard, board_source = scanner.load_official_mainboard_symbols()
+                      export = scanner._build_nse_page_download(
+                          page, mainboard, mode.upper(), datetime.now(ZoneInfo("Asia/Kolkata")).date(),
+                          captured, board_source
+                      )
+                      export["FallbackExportStatus"] = "LIVE_NSE_PAGE_FALLBACK"
+                  except Exception as board_error:
+                      export = page.copy()
+                      export["FallbackExportStatus"] = "LIVE_NSE_PAGE_RAW_FALLBACK_MAINBOARD_FILTER_UNAVAILABLE"
+                      export["MainBoardLookupError"] = f"{type(board_error).__name__}: {board_error}"
+                  export["ScanMode"] = mode.upper()
+                  export["FallbackCapturedAtIST"] = captured
+                  export.to_csv(output, index=False)
+                  print(f"ECMS_FALLBACK_PAGE_CSV_CREATED={output} rows={len(export)}")
+              except Exception as exc:
+                  pd.DataFrame([{
+                      "TckrSymb": "",
+                      "FallbackExportStatus": "SOURCE_UNAVAILABLE",
+                      "FailureReason": f"{type(exc).__name__}: {exc}",
+                      "ScanMode": mode.upper(),
+                      "FallbackCapturedAtIST": captured,
+                      "SourceURL": scanner.NSE_PAGE,
+                  }]).to_csv(output, index=False)
+                  print(f"ECMS_FALLBACK_STATUS_CSV_CREATED={output}; live NSE page unavailable: {type(exc).__name__}: {exc}")
+          PY
+      - name: Report Morning scanner status without blocking CSV delivery
+        if: always()
+        run: |
+          echo "Morning scan status is informational; independent NSE page CSV export and Telegram delivery continue."
+
         if: github.event_name == 'schedule'
         shell: bash
         run: |
