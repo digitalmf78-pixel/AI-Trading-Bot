@@ -405,6 +405,71 @@ def assess_page_fundamentals(candidates, eod_date):
         candidate_filings = candidate_filings[
             candidate_filings["TckrSymb"].isin(candidate_symbols)
         ].copy()
+    # Refresh the ECMS candidate filing register from the official NSE
+    # Integrated Filing API BEFORE consolidated selection and XBRL verification.
+    # Keep only explicit audit/basis labels and validated official XML URLs;
+    # API presence alone never upgrades a filing to verified.
+    try:
+        filing_lookup_candidates = candidates[["TckrSymb"]].copy()
+        filing_lookup_candidates["TckrSymb"] = (
+            filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
+        )
+        filing_metadata_source = fetch_ecms_candidate_filing_metadata(
+            filing_lookup_candidates, eod_date.isoformat()
+        )
+        filing_metadata_audit = audit_ecms_filing_metadata(filing_metadata_source)
+    except Exception as exc:
+        filing_metadata_source = pd.DataFrame()
+        filing_metadata_audit = pd.DataFrame(columns=FILING_METADATA_AUDIT_COLUMNS)
+        pd.DataFrame([{
+            "Status": "ECMS_NSE_FILING_LOOKUP_ERROR",
+            "Reason": f"{type(exc).__name__}: {str(exc)[:350]}",
+        }]).to_csv(ecms_output_dir / "fundamental_nse_filing_lookup_error.csv", index=False)
+
+    if not filing_metadata_audit.empty:
+        api_rows = filing_metadata_audit.copy()
+        api_rows["TckrSymb"] = api_rows["TckrSymb"].astype(str).str.strip().str.upper()
+        api_rows["PublicationDate"] = pd.to_datetime(
+            api_rows.get("PublicationDate", ""), errors="coerce"
+        )
+        api_rows["PublicationDateStatus"] = [
+            "VERIFIED" if (
+                pd.notna(row.get("PublicationDate"))
+                and row.get("PublicationDate").date() <= eod_date
+                and str(row.get("XBRLURLStatus", "")) == "PASS"
+                and str(row.get("AuditStatus", "")) == "EXPLICIT_LABEL_CAPTURED"
+                and str(row.get("ConsolidationStatus", "")) == "EXPLICIT_LABEL_CAPTURED"
+            ) else "BLOCKED"
+            for _, row in api_rows.iterrows()
+        ]
+        api_rows["OfficialFilingURL"] = api_rows.get("XBRLURL", "")
+        api_rows["FilingDescription"] = (
+            api_rows.get("ConsolidationLabel", "").astype(str).str.strip()
+            + " "
+            + api_rows.get("AuditedLabel", "").astype(str).str.strip()
+        ).str.strip()
+        api_rows = api_rows[
+            api_rows["TckrSymb"].isin(candidate_symbols)
+            & api_rows["PublicationDateStatus"].eq("VERIFIED")
+            & api_rows["FilingDescription"].str.upper().str.contains("CONSOLIDATED", regex=False)
+            & api_rows["FilingDescription"].str.upper().str.contains("AUDITED", regex=False)
+        ].copy()
+        if not api_rows.empty:
+            # Preserve source traceability alongside the legacy register fields.
+            api_rows["OfficialFilingSource"] = "NSE Integrated Filing API (ECMS candidate refresh)"
+            candidate_filings = pd.concat(
+                [candidate_filings, api_rows], ignore_index=True, sort=False
+            )
+            candidate_filings["TckrSymb"] = (
+                candidate_filings["TckrSymb"].astype(str).str.strip().str.upper()
+            )
+            if "OfficialFilingURL" in candidate_filings.columns:
+                candidate_filings = candidate_filings.drop_duplicates(
+                    subset=["TckrSymb", "FinancialPeriodEnd", "OfficialFilingURL"],
+                    keep="last",
+                )
+            candidate_filings.to_csv(workspace_filings, index=False)
+
     audit_filings_path = audit_input_dir / "official_filings.csv"
     if len(candidate_filings.columns):
         candidate_filings.to_csv(audit_filings_path, index=False)
@@ -600,14 +665,6 @@ def assess_page_fundamentals(candidates, eod_date):
         # FinancialPeriodEnd. The NSE API's period_ended=all response is filtered
         # locally to the latest eligible period at/before the ECMS as-of date.
         # Standalone/consolidated and original/revised variants remain separate.
-        filing_lookup_candidates = candidates[["TckrSymb"]].copy()
-        filing_lookup_candidates["TckrSymb"] = (
-            filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
-        )
-        filing_metadata_source = fetch_ecms_candidate_filing_metadata(
-            filing_lookup_candidates, eod_date.isoformat()
-        )
-        filing_metadata_audit = audit_ecms_filing_metadata(filing_metadata_source)
         filing_metadata_audit = fetch_ecms_details_remarks(filing_metadata_audit)
     except Exception as exc:
         filing_metadata_audit = pd.DataFrame([{
