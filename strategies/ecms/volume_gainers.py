@@ -319,6 +319,49 @@ def _ecms_free_source_evidence(row):
     })
 
 
+def _clear_non_yahoo_cached_metrics(cached, candidate_symbols):
+    """Clear non-Yahoo metric values without changing numeric column dtypes."""
+    result = cached.copy()
+    if "TckrSymb" not in result.columns:
+        return result
+    symbols = {str(symbol).strip().upper() for symbol in candidate_symbols}
+    metric_names = (
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    )
+    metadata_fields = (
+        "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
+        "MetricCalculationBasesJSON", "MetricSourceCurrenciesJSON",
+    )
+    for metric in metric_names:
+        if metric in result.columns:
+            # CSV inference may produce float64 when a column contains only
+            # numbers. Use nullable numeric NA rather than assigning "".
+            result[metric] = pd.to_numeric(result[metric], errors="coerce").astype("Float64")
+    for index, cached_row in result[result["TckrSymb"].astype(str).str.strip().str.upper().isin(symbols)].iterrows():
+        def parse_mapping(field):
+            try:
+                parsed = json.loads(str(cached_row.get(field, "{}") or "{}"))
+            except (TypeError, ValueError):
+                parsed = {}
+            return parsed if isinstance(parsed, dict) else {}
+
+        source_map = parse_mapping("MetricSourcesJSON")
+        metadata_maps = {field: parse_mapping(field) for field in metadata_fields}
+        for metric in metric_names:
+            source = str(source_map.get(metric, "") or "").strip().lower()
+            if "yahoo finance via yfinance" not in source:
+                if metric in result.columns:
+                    result.at[index, metric] = pd.NA
+                source_map.pop(metric, None)
+                for metadata in metadata_maps.values():
+                    metadata.pop(metric, None)
+        result.at[index, "MetricSourcesJSON"] = json.dumps(source_map, sort_keys=True)
+        for field, metadata in metadata_maps.items():
+            result.at[index, field] = json.dumps(metadata, sort_keys=True)
+    return result
+
+
 def assess_page_fundamentals(candidates, eod_date):
     """Collect and verify fundamentals for Volume Gainers candidates only.
 
@@ -384,39 +427,8 @@ def assess_page_fundamentals(candidates, eod_date):
     os.environ["V8_FREE_FUNDAMENTAL_SOURCES"] = "false"
     if workspace_metrics.exists() and workspace_metrics.stat().st_size > 0:
         cached = pd.read_csv(workspace_metrics, keep_default_na=False)
-        if "TckrSymb" in cached.columns:
-            cached["TckrSymb"] = cached["TckrSymb"].astype(str).str.strip().str.upper()
-            for index, cached_row in cached[cached["TckrSymb"].isin(candidate_symbols)].iterrows():
-                try:
-                    source_map = json.loads(str(cached_row.get("MetricSourcesJSON", "{}") or "{}"))
-                except (TypeError, ValueError):
-                    source_map = {}
-                source_map = source_map if isinstance(source_map, dict) else {}
-                metadata_fields = (
-                    "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
-                    "MetricCalculationBasesJSON", "MetricSourceCurrenciesJSON",
-                )
-                metadata_maps = {}
-                for field in metadata_fields:
-                    try:
-                        parsed = json.loads(str(cached_row.get(field, "{}") or "{}"))
-                    except (TypeError, ValueError):
-                        parsed = {}
-                    metadata_maps[field] = parsed if isinstance(parsed, dict) else {}
-                for metric in (
-                    "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-                    "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
-                ):
-                    source = str(source_map.get(metric, "") or "").strip().lower()
-                    if "yahoo finance via yfinance" not in source:
-                        cached.at[index, metric] = ""
-                        source_map.pop(metric, None)
-                        for metadata in metadata_maps.values():
-                            metadata.pop(metric, None)
-                cached.at[index, "MetricSourcesJSON"] = json.dumps(source_map, sort_keys=True)
-                for field, metadata in metadata_maps.items():
-                    cached.at[index, field] = json.dumps(metadata, sort_keys=True)
-            cached.to_csv(workspace_metrics, index=False)
+        cached = _clear_non_yahoo_cached_metrics(cached, candidate_symbols)
+        cached.to_csv(workspace_metrics, index=False)
     try:
         # Relative paths used by the collector resolve only inside the ECMS workspace.
         os.chdir(workspace)
