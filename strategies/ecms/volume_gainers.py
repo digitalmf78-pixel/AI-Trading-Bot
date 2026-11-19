@@ -160,7 +160,11 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
     current_fy = asof.year + (1 if asof.month >= 4 else 0)
     current_quarter = ((asof.month - 4) % 12) // 3 + 1
     age = (current_fy * 4 + current_quarter) - (fiscal_year * 4 + quarter)
-    result["FundamentalPeriodLabel"] = f"Q{quarter} FY{str(fiscal_year)[-2:]} ({period.strftime('%b-%Y')})"
+    calculation_basis = str(metric_row.get("MetricCalculationBasis", "") or "").upper()
+    if "ANNUAL" in calculation_basis and period.month == 3:
+        result["FundamentalPeriodLabel"] = f"FY{str(fiscal_year)[-2:]} ANNUAL ({period.strftime('%b-%Y')})"
+    else:
+        result["FundamentalPeriodLabel"] = f"Q{quarter} FY{str(fiscal_year)[-2:]} ({period.strftime('%b-%Y')})"
     result["FundamentalQuarterAge"] = int(age)
     if age < 0:
         result["FundamentalFreshnessStatus"] = "FUTURE_PERIOD_CHECK_REQUIRED"
