@@ -427,3 +427,26 @@ def test_details_fetch_does_not_retry_non_transient_http_error():
     assert session.calls == 1
     assert out["RemarksStatus"] == "FETCH_OR_PARSE_ERROR:HTTPError"
     assert out["VerificationStatus"] == "NOT_VERIFIED"
+
+
+def test_candidate_lookup_blocks_missing_exact_metric_period_instead_of_using_latest():
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_candidate_filing_metadata
+
+    class Response:
+        def raise_for_status(self): pass
+
+    class Session:
+        def __init__(self): self.headers = {}; self.calls = []
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return Response()
+
+    session = Session()
+    result = fetch_ecms_candidate_filing_metadata(
+        pd.DataFrame([{"TckrSymb": "ABC", "FinancialPeriodEnd": ""}]),
+        "2026-11-19", session=session,
+    )
+    assert result.iloc[0]["FilingMetadataStatus"] == "NO_ELIGIBLE_FILING_PERIOD"
+    assert result.iloc[0]["VerificationStatus"] == "NOT_VERIFIED"
+    # Only the NSE homepage warm-up is allowed; no unscoped latest-period API call.
+    assert len(session.calls) == 1
