@@ -1519,6 +1519,7 @@ def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
             "MetricSourcePeriodsJSON": __import__("json").dumps({
                 name: period for name in metrics
             }),
+            "MetricCalculationBasis": "QUARTERLY_TTM_ALIGNED_STATEMENTS",
         }
 
     asof = __import__("datetime").date(2026, 11, 19)
