@@ -105,6 +105,78 @@ def _metric_value_provenance(metric_row, metric_name):
         "ValueUnit": unit,
     }
 
+def _ecms_yahoo_period_freshness(metric_row, asof_date):
+    """Label Yahoo's reported period and recommend when a human should recheck it."""
+    metric_names = (
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    )
+    try:
+        sources = json.loads(str(metric_row.get("MetricSourcesJSON", "{}") or "{}"))
+        periods = json.loads(str(metric_row.get("MetricSourcePeriodsJSON", "{}") or "{}"))
+        sources = sources if isinstance(sources, dict) else {}
+        periods = periods if isinstance(periods, dict) else {}
+    except (TypeError, ValueError):
+        sources, periods = {}, {}
+
+    populated = []
+    non_yahoo = []
+    for metric in metric_names:
+        value = pd.to_numeric(pd.Series([metric_row.get(metric)]), errors="coerce").iloc[0]
+        if pd.isna(value):
+            continue
+        source = str(sources.get(metric, "") or "").strip().lower()
+        if "yahoo finance via yfinance" not in source:
+            non_yahoo.append(metric)
+            continue
+        period = pd.to_datetime(periods.get(metric, ""), errors="coerce")
+        if pd.notna(period):
+            populated.append(period.date())
+
+    unique_periods = sorted(set(populated))
+    asof = pd.to_datetime(asof_date, errors="coerce")
+    result = {
+        "FundamentalPeriodLabel": "PERIOD_UNKNOWN",
+        "FundamentalQuarterAge": "",
+        "FundamentalFreshnessStatus": "PERIOD_UNKNOWN",
+        "FundamentalRecheckRecommendation": "MANUAL_RECHECK_NOW_PERIOD_UNKNOWN",
+    }
+    if non_yahoo:
+        result["FundamentalFreshnessStatus"] = "NON_YAHOO_VALUE_BLOCKED"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_NON_YAHOO_SOURCE"
+        return result
+    if len(unique_periods) > 1:
+        result["FundamentalPeriodLabel"] = "MIXED_PERIODS"
+        result["FundamentalFreshnessStatus"] = "MIXED_METRIC_PERIODS"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_MIXED_PERIODS"
+        return result
+    if not unique_periods or pd.isna(asof):
+        return result
+
+    period = pd.Timestamp(unique_periods[0])
+    asof = pd.Timestamp(asof)
+    fiscal_year = period.year + (1 if period.month >= 4 else 0)
+    quarter = ((period.month - 4) % 12) // 3 + 1
+    current_fy = asof.year + (1 if asof.month >= 4 else 0)
+    current_quarter = ((asof.month - 4) % 12) // 3 + 1
+    age = (current_fy * 4 + current_quarter) - (fiscal_year * 4 + quarter)
+    result["FundamentalPeriodLabel"] = f"Q{quarter} FY{str(fiscal_year)[-2:]} ({period.strftime('%b-%Y')})"
+    result["FundamentalQuarterAge"] = int(age)
+    if age < 0:
+        result["FundamentalFreshnessStatus"] = "FUTURE_PERIOD_CHECK_REQUIRED"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_FUTURE_PERIOD"
+    elif age == 0:
+        result["FundamentalFreshnessStatus"] = "CURRENT_FISCAL_QUARTER"
+        result["FundamentalRecheckRecommendation"] = "LATEST_YAHOO_DATA_MANUAL_CONFIRM_BEFORE_SELECTION"
+    elif age == 1:
+        result["FundamentalFreshnessStatus"] = "1Q_OLD"
+        result["FundamentalRecheckRecommendation"] = "RECHECK_BEFORE_STOCK_SELECTION"
+    else:
+        result["FundamentalFreshnessStatus"] = f"{age}Q_OLD"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_STALE_QUARTER"
+    return result
+
+
 def _volume_number(value):
     """Parse NSE quantity values, including compact Indian lakh/crore display units."""
     if value is None:
@@ -288,33 +360,48 @@ def assess_page_fundamentals(candidates, eod_date):
     ephemeral_root.mkdir(parents=True, exist_ok=True)
 
     previous_free_budget = os.environ.get("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN")
+    previous_free_enabled = os.environ.get("V8_FREE_FUNDAMENTAL_SOURCES")
     try:
         configured_budget = int(previous_free_budget or "10")
     except (TypeError, ValueError):
         configured_budget = 10
-    # The shared provider has a per-run secondary-source budget. Raise it only
-    # inside this ECMS process to at least the current page size, so no current
-    # Volume Gainers candidate is deferred solely because the page grew.
     os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] = str(
         max(0, configured_budget, len(candidate_symbols))
     )
+    # ECMS uses Yahoo Finance only. Remove previously cached values whose
+    # metric-level provenance is not Yahoo before asking the existing collector
+    # to fill missing fields. This mutation is confined to the ECMS workspace.
+    os.environ["V8_FREE_FUNDAMENTAL_SOURCES"] = "false"
+    if workspace_metrics.exists() and workspace_metrics.stat().st_size > 0:
+        cached = pd.read_csv(workspace_metrics, keep_default_na=False)
+        if "TckrSymb" in cached.columns:
+            cached["TckrSymb"] = cached["TckrSymb"].astype(str).str.strip().str.upper()
+            for index, cached_row in cached[cached["TckrSymb"].isin(candidate_symbols)].iterrows():
+                try:
+                    source_map = json.loads(str(cached_row.get("MetricSourcesJSON", "{}") or "{}"))
+                except (TypeError, ValueError):
+                    source_map = {}
+                source_map = source_map if isinstance(source_map, dict) else {}
+                for metric in (
+                    "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+                    "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+                ):
+                    source = str(source_map.get(metric, "") or "").strip().lower()
+                    if "yahoo finance via yfinance" not in source:
+                        cached.at[index, metric] = ""
+                        source_map.pop(metric, None)
+                cached.at[index, "MetricSourcesJSON"] = json.dumps(source_map, sort_keys=True)
+            cached.to_csv(workspace_metrics, index=False)
     try:
-        # Relative paths used by the production collector now resolve beneath
-        # data/cache/ecms/fundamental_workspace, not production data/inputs/outputs.
+        # Relative paths used by the collector resolve only inside the ECMS workspace.
         os.chdir(workspace)
         from fundamental_data_provider import collect_missing_fundamentals
-        from strategies.ecms.free_fundamental_sources import fetch_ecms_free_fundamental_sources
         collect_missing_fundamentals(
             candidates,
             metrics_path=Path("data/inputs/fundamental_metrics.csv"),
             enabled=True,
             asof_date=eod_date,
-            free_source_fetcher=fetch_ecms_free_fundamental_sources,
-            force_retry_incomplete=False,
-            free_source_audit_metrics=[
-                "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
-                "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
-            ],
+            force_retry_incomplete=True,
         )
     except Exception as exc:
         failed = candidates.copy()
@@ -345,6 +432,10 @@ def assess_page_fundamentals(candidates, eod_date):
             os.environ.pop("FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN", None)
         else:
             os.environ["FREE_FUNDAMENTAL_MAX_SYMBOLS_PER_RUN"] = previous_free_budget
+        if previous_free_enabled is None:
+            os.environ.pop("V8_FREE_FUNDAMENTAL_SOURCES", None)
+        else:
+            os.environ["V8_FREE_FUNDAMENTAL_SOURCES"] = previous_free_enabled
 
     if not workspace_metrics.exists():
         raise RuntimeError("Fundamental provider completed without creating its ECMS metrics cache")
@@ -762,10 +853,26 @@ def assess_page_fundamentals(candidates, eod_date):
     joined = candidates.merge(metrics_unique, on="TckrSymb", how="left", suffixes=("", "_fundamental"))
     assessed = build_fundamental_shortlist(
         joined, eod_date.isoformat(), write=False,
-        metric_verification=candidate_verification,
+        metric_verification=None,
         require_explicit_thresholds=True,
         thresholds_path=THRESHOLDS_PATH.resolve(),
     )
+    # Yahoo is the sole ECMS fundamental source. These are research-coverage
+    # labels, not audited PASS/FAIL decisions or official filing verification.
+    yahoo_counts = assessed[[metric for metric in (
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    )]].apply(pd.to_numeric, errors="coerce").notna().sum(axis=1)
+    assessed["FundamentalShortlistStatus"] = yahoo_counts.map(
+        lambda count: "YAHOO_RESEARCH_READY" if count == 7
+        else "YAHOO_RESEARCH_PARTIAL" if count > 0 else "YAHOO_DATA_MISSING"
+    )
+    assessed["FundamentalShortlistReason"] = yahoo_counts.map(
+        lambda count: f"YAHOO_FINANCE_ONLY_METRICS_AVAILABLE={count}/7; MANUAL_FILING_CHECK_REQUIRED"
+    )
+    assessed["FundamentalAssessmentStatus"] = assessed["FundamentalShortlistStatus"]
+    assessed["FundamentalAssessmentReason"] = assessed["FundamentalShortlistReason"]
+    assessed["FundamentalPassStatus"] = "NOT_A_PASS_YAHOO_RESEARCH_ONLY"
     expected_symbols = candidates["TckrSymb"].astype(str).str.strip().str.upper().tolist()
     actual_symbols = assessed["TckrSymb"].astype(str).str.strip().str.upper().tolist()
     if len(actual_symbols) != len(expected_symbols) or set(actual_symbols) != set(expected_symbols) or len(actual_symbols) != len(set(actual_symbols)):
@@ -922,6 +1029,13 @@ def assess_page_fundamentals(candidates, eod_date):
     )
     metric_summary = pd.DataFrame(metric_summary_rows)
     assessed = assessed.merge(metric_summary, on="TckrSymb", how="left", validate="one_to_one")
+    freshness = pd.DataFrame(
+        [_ecms_yahoo_period_freshness(row, eod_date) for _, row in metrics_by_symbol.iterrows()],
+        index=metrics_by_symbol.index,
+    )
+    freshness.index.name = "TckrSymb"
+    freshness = freshness.reset_index()
+    assessed = assessed.merge(freshness, on="TckrSymb", how="left", validate="one_to_one")
 
     provider_diagnostics = workspace / "outputs" / "v8_fundamental_provider_diagnostics.csv"
     if provider_diagnostics.exists():
