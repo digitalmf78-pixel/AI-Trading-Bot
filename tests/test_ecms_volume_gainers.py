@@ -61,8 +61,19 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
         path.parent.mkdir(parents=True, exist_ok=True)
         # Simulate a persistent ECMS workspace containing an older symbol
         # that is not on the current Volume Gainers page.
+        import json
         pd.DataFrame([
-            {"TckrSymb": "AAA", "RevenueGrowthPct": 20},
+            {
+                "TckrSymb": "AAA", "RevenueGrowthPct": 20,
+                "MetricPeriodAlignmentStatus": "VERIFIED",
+                "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+                "FinancialPeriodEnd": "2026-03-31",
+                "MetricSourcesJSON": json.dumps({"RevenueGrowthPct": "Yahoo Finance via yfinance"}),
+                "MetricSourceURLsJSON": json.dumps({"RevenueGrowthPct": "https://finance.yahoo.com/quote/AAA.NS/financials/"}),
+                "MetricSourcePeriodsJSON": json.dumps({"RevenueGrowthPct": "2026-03-31"}),
+                "MetricCalculationBasesJSON": json.dumps({"RevenueGrowthPct": "ANNUAL_ALIGNED_STATEMENTS"}),
+                "MetricSourceCurrenciesJSON": "{}",
+            },
             {"TckrSymb": "OLD", "RevenueGrowthPct": 99},
         ]).to_csv(path, index=False)
         filings = Path("outputs/v8_official_financial_results_filings.csv")
