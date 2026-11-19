@@ -576,16 +576,25 @@ jobs:
               with report_path.open("r", encoding="utf-8-sig", newline="") as handle:
                   report_rows = list(csv.DictReader(handle))
               summary = json.loads(summary_path.read_text(encoding="utf-8"))
-              consumed = json.loads(consumed_path.read_text(encoding="utf-8"))
               symbols = [str(row.get("TckrSymb", "")).strip().upper() for row in rows]
               dates = {str(row.get("MorningDate", "")).strip() for row in rows}
-              comparison_complete = (
-                  bool(report_rows)
-                  and summary.get("previous_eod_reference_consumed") is True
-                  and consumed.get("status") == "CONSUMED"
-                  and consumed.get("consumed_eod_date") == summary.get("data_as_of_date_ist")
-                  and not eod_path.exists()
-              )
+              if int(summary.get("previous_eod_symbols", 0) or 0) > 0:
+                  consumed = json.loads(consumed_path.read_text(encoding="utf-8"))
+                  comparison_complete = (
+                      bool(report_rows)
+                      and summary.get("previous_eod_reference_consumed") is True
+                      and consumed.get("status") == "CONSUMED"
+                      and consumed.get("consumed_eod_date") == summary.get("data_as_of_date_ist")
+                      and not eod_path.exists()
+                      and summary.get("morning_comparison_status") == "COMPLETED"
+                  )
+              else:
+                  comparison_complete = (
+                      bool(report_rows)
+                      and summary.get("previous_eod_reference_consumed") is False
+                      and summary.get("morning_comparison_performed") is False
+                      and summary.get("morning_comparison_status") == "INDEPENDENT_SCAN_NO_VALID_EOD_BASELINE"
+                  )
               valid = (
                   bool(rows)
                   and all(symbols)
