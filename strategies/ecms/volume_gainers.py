@@ -576,6 +576,19 @@ def assess_page_fundamentals(candidates, eod_date):
                 if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0
                 else pd.DataFrame()
             )
+            # The workspace may have been seeded from a shared evidence index
+            # containing placeholder rows without an archived XML file or hash.
+            # Keep only durable evidence records in this XBRL ledger; otherwise
+            # an empty AAA placeholder survives beside the newly archived AAA
+            # filing and makes the ledger appear to contain duplicate evidence.
+            if not prior_ledger.empty:
+                required_identity = {"EvidenceFilePath", "EvidenceSHA256"}
+                if required_identity.issubset(prior_ledger.columns):
+                    valid_path = prior_ledger["EvidenceFilePath"].astype(str).str.strip().ne("")
+                    valid_hash = prior_ledger["EvidenceSHA256"].astype(str).str.strip().ne("")
+                    prior_ledger = prior_ledger[valid_path & valid_hash].copy()
+                else:
+                    prior_ledger = pd.DataFrame(columns=prior_ledger.columns)
             merged_ledger = pd.concat(
                 [prior_ledger, pd.DataFrame(persisted_rows)], ignore_index=True, sort=False
             )
