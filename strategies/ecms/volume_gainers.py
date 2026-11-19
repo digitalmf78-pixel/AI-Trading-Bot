@@ -385,6 +385,17 @@ def assess_page_fundamentals(candidates, eod_date):
     if workspace_metrics.exists() and workspace_metrics.stat().st_size > 0:
         cached = pd.read_csv(workspace_metrics, keep_default_na=False)
         if "TckrSymb" in cached.columns:
+            # Pre-create missing columns to avoid future pandas .at assignment
+            # behavior changes when the cached schema is incomplete.
+            required_cache_fields = (
+                "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+                "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+                "MetricSourcesJSON", "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
+                "MetricCalculationBasesJSON", "MetricSourceCurrenciesJSON",
+            )
+            for field in required_cache_fields:
+                if field not in cached.columns:
+                    cached[field] = pd.NA
             cached["TckrSymb"] = cached["TckrSymb"].astype(str).str.strip().str.upper()
             for index, cached_row in cached[cached["TckrSymb"].isin(candidate_symbols)].iterrows():
                 try:
