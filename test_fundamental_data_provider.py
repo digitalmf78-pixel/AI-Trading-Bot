@@ -53,6 +53,14 @@ def test_fetches_each_unique_delivery_candidate_and_writes_diagnostics(tmp_path,
     assert round(float(aaa["DebtToEquity"]), 2) == 0.45
     assert round(float(aaa["ROCEPercent"]), 2) == 20.0
     assert round(float(aaa["InterestCoverage"]), 2) == 8.0
+    assert round(float(aaa["OperatingCashFlowINR"]), 2) == 1000.0
+    metric_sources = json.loads(aaa["MetricSourcesJSON"])
+    expected_yahoo_metrics = {
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    }
+    assert expected_yahoo_metrics.issubset(metric_sources)
+    assert all(metric_sources[name] == "Yahoo Finance via yfinance" for name in expected_yahoo_metrics)
 
 
 def test_manual_values_are_not_overwritten(tmp_path, monkeypatch):
