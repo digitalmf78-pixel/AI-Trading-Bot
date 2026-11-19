@@ -1412,3 +1412,29 @@ def test_reuse_previous_eod_snapshot_rejects_wrong_date(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
     assert scanner._reuse_previous_eod_snapshot() is None
     assert statuses[0][1:] == ("WAIT_FOR_DATA", "EOD_SNAPSHOT_DATE_MISMATCH_FOR_REUSE")
+
+
+def test_filing_lookup_candidates_use_each_symbols_exact_metric_period():
+    from strategies.ecms.volume_gainers import _build_exact_period_filing_lookup_candidates
+
+    candidates = pd.DataFrame({"TckrSymb": ["ABC", "XYZ"]})
+    metrics = pd.DataFrame({
+        "TckrSymb": ["ABC", "XYZ"],
+        "FinancialPeriodEnd": ["2026-03-31", "2026-06-30"],
+    })
+    result = _build_exact_period_filing_lookup_candidates(candidates, metrics)
+    assert result.to_dict("records") == [
+        {"TckrSymb": "ABC", "FinancialPeriodEnd": "2026-03-31"},
+        {"TckrSymb": "XYZ", "FinancialPeriodEnd": "2026-06-30"},
+    ]
+
+
+def test_filing_lookup_candidates_keep_missing_metric_period_explicitly_blocked():
+    from strategies.ecms.volume_gainers import _build_exact_period_filing_lookup_candidates
+
+    result = _build_exact_period_filing_lookup_candidates(
+        pd.DataFrame({"TckrSymb": ["ABC"]}),
+        pd.DataFrame({"TckrSymb": ["ABC"], "FinancialPeriodEnd": [pd.NA]}),
+    )
+    assert len(result) == 1
+    assert pd.isna(result.iloc[0]["FinancialPeriodEnd"])

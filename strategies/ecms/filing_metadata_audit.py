@@ -284,7 +284,19 @@ def fetch_ecms_candidate_filing_metadata(
     output = []
     for _, candidate in candidates.iterrows():
         symbol = str(candidate.get("TckrSymb", "") or "").strip().upper()
+        period_constraint_supplied = "FinancialPeriodEnd" in candidates.columns
         requested_period = _parse_nse_date(candidate.get("FinancialPeriodEnd"))
+        if period_constraint_supplied and requested_period is None:
+            raw_period = candidate.get("FinancialPeriodEnd", "")
+            raw_period_text = "" if pd.isna(raw_period) else str(raw_period)
+            output.append({
+                "TckrSymb": symbol,
+                "FinancialPeriodEnd": raw_period_text,
+                "FilingMetadataStatus": "NO_ELIGIBLE_FILING_PERIOD",
+                "VerificationStatus": "NOT_VERIFIED",
+                "VerificationWarning": "Exact metric financial period is missing or invalid; latest-period fallback is blocked",
+            })
+            continue
         if not symbol:
             output.append({
                 "TckrSymb": symbol,
