@@ -102,6 +102,24 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
             "MetricName": "RevenueGrowthPct",
             "MetricValueVerificationStatus": "OFFICIAL_XBRL_VERIFIED",
         }])
+        # Simulate the verifier's fresh XML output and generated-evidence manifest.
+        from pathlib import Path
+        import hashlib
+        evidence_xml = Path(kwargs["repo_root"]) / "data/cache/xbrl_samples/fresh.xml"
+        evidence_xml.parent.mkdir(parents=True, exist_ok=True)
+        evidence_xml.write_text("<xbrl>official evidence</xbrl>", encoding="utf-8")
+        digest = hashlib.sha256(evidence_xml.read_bytes()).hexdigest()
+        generated = pd.DataFrame([{
+            "TckrSymb": "AAA",
+            "MetricName": "RevenueGrowthPct",
+            "FinancialPeriodEnd": "2026-03-31",
+            "OfficialFilingURL": "https://nsearchives.nseindia.com/corporate/xbrl/fresh.xml",
+            "XbrlFactTag": "RevenueFromOperations",
+            "EvidenceFilePath": "data/cache/xbrl_samples/fresh.xml",
+            "EvidenceSHA256": digest,
+            "VerificationMethod": "DIRECT_FACT",
+        }])
+        generated.to_csv(Path(kwargs["output_dir"]) / "v8_fundamental_generated_evidence.csv", index=False)
         return verification, pd.DataFrame(), pd.DataFrame()
 
     monkeypatch.setattr(scanner, "run_fundamental_xbrl_audit", fake_audit)
@@ -144,6 +162,14 @@ def test_fundamental_collection_uses_ecms_workspace_not_production_cache(tmp_pat
     assert set(pd.read_csv(out / "fundamental_metrics_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_evidence_ecms.csv")["TckrSymb"]) == {"AAA"}
+    persisted_ledger = pd.read_csv(
+        tmp_path / "data/cache/ecms/fundamental_workspace/data/inputs/fundamental_metric_verification_evidence.csv"
+    )
+    assert len(persisted_ledger) == 1
+    assert persisted_ledger.iloc[0]["EvidenceFilePath"].startswith(
+        "data/cache/ecms/fundamental_workspace/xbrl_evidence/"
+    )
+    assert (tmp_path / persisted_ledger.iloc[0]["EvidenceFilePath"]).is_file()
     assert set(pd.read_csv(out / "fundamental_provider_diagnostics.csv")["TckrSymb"]) == {"AAA"}
     debt_equity_report = pd.read_csv(out / "fundamental_debt_equity_xbrl_audit.csv")
     assert debt_equity_report.iloc[0]["TckrSymb"] == "AAA"

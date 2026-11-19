@@ -405,6 +405,86 @@ def assess_page_fundamentals(candidates, eod_date):
         candidate_filings = candidate_filings[
             candidate_filings["TckrSymb"].isin(candidate_symbols)
         ].copy()
+    # Refresh the ECMS candidate filing register from the official NSE
+    # Integrated Filing API BEFORE consolidated selection and XBRL verification.
+    # Keep only explicit audit/basis labels and validated official XML URLs;
+    # API presence alone never upgrades a filing to verified.
+    try:
+        filing_lookup_candidates = candidate_metrics[
+            [column for column in ("TckrSymb", "FinancialPeriodEnd")
+             if column in candidate_metrics.columns]
+        ].copy()
+        if "TckrSymb" not in filing_lookup_candidates.columns:
+            filing_lookup_candidates = candidates[["TckrSymb"]].copy()
+        filing_lookup_candidates["TckrSymb"] = (
+            filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
+        )
+        filing_lookup_candidates = filing_lookup_candidates.drop_duplicates(
+            subset=["TckrSymb"], keep="first"
+        )
+        represented_lookup_symbols = set(filing_lookup_candidates["TckrSymb"])
+        missing_lookup_symbols = candidate_symbols - represented_lookup_symbols
+        if missing_lookup_symbols:
+            filing_lookup_candidates = pd.concat([
+                filing_lookup_candidates,
+                pd.DataFrame([{"TckrSymb": symbol} for symbol in sorted(missing_lookup_symbols)]),
+            ], ignore_index=True, sort=False)
+        filing_metadata_source = fetch_ecms_candidate_filing_metadata(
+            filing_lookup_candidates, eod_date.isoformat()
+        )
+        filing_metadata_audit = audit_ecms_filing_metadata(filing_metadata_source)
+    except Exception as exc:
+        filing_metadata_source = pd.DataFrame()
+        filing_metadata_audit = pd.DataFrame(columns=FILING_METADATA_AUDIT_COLUMNS)
+        pd.DataFrame([{
+            "Status": "ECMS_NSE_FILING_LOOKUP_ERROR",
+            "Reason": f"{type(exc).__name__}: {str(exc)[:350]}",
+        }]).to_csv(ecms_output_dir / "fundamental_nse_filing_lookup_error.csv", index=False)
+
+    if not filing_metadata_audit.empty:
+        api_rows = filing_metadata_audit.copy()
+        api_rows["TckrSymb"] = api_rows["TckrSymb"].astype(str).str.strip().str.upper()
+        api_rows["PublicationDate"] = pd.to_datetime(
+            api_rows.get("PublicationDate", ""), errors="coerce"
+        )
+        api_rows["PublicationDateStatus"] = [
+            "VERIFIED" if (
+                pd.notna(row.get("PublicationDate"))
+                and row.get("PublicationDate").date() <= eod_date
+                and str(row.get("XBRLURLStatus", "")) == "PASS"
+                and str(row.get("AuditStatus", "")) == "EXPLICIT_LABEL_CAPTURED"
+                and str(row.get("ConsolidationStatus", "")) == "EXPLICIT_LABEL_CAPTURED"
+            ) else "BLOCKED"
+            for _, row in api_rows.iterrows()
+        ]
+        api_rows["OfficialFilingURL"] = api_rows.get("XBRLURL", "")
+        api_rows["FilingDescription"] = (
+            api_rows.get("ConsolidationLabel", "").astype(str).str.strip()
+            + " "
+            + api_rows.get("AuditedLabel", "").astype(str).str.strip()
+        ).str.strip()
+        api_rows = api_rows[
+            api_rows["TckrSymb"].isin(candidate_symbols)
+            & api_rows["PublicationDateStatus"].eq("VERIFIED")
+            & api_rows["FilingDescription"].str.upper().str.contains("CONSOLIDATED", regex=False)
+            & api_rows["AuditedLabel"].astype(str).str.strip().str.casefold().eq("audited")
+        ].copy()
+        if not api_rows.empty:
+            # Preserve source traceability alongside the legacy register fields.
+            api_rows["OfficialFilingSource"] = "NSE Integrated Filing API (ECMS candidate refresh)"
+            candidate_filings = pd.concat(
+                [candidate_filings, api_rows], ignore_index=True, sort=False
+            )
+            candidate_filings["TckrSymb"] = (
+                candidate_filings["TckrSymb"].astype(str).str.strip().str.upper()
+            )
+            if "OfficialFilingURL" in candidate_filings.columns:
+                candidate_filings = candidate_filings.drop_duplicates(
+                    subset=["TckrSymb", "FinancialPeriodEnd", "OfficialFilingURL"],
+                    keep="last",
+                )
+            candidate_filings.to_csv(workspace_filings, index=False)
+
     audit_filings_path = audit_input_dir / "official_filings.csv"
     if len(candidate_filings.columns):
         candidate_filings.to_csv(audit_filings_path, index=False)
@@ -447,6 +527,81 @@ def assess_page_fundamentals(candidates, eod_date):
             "Status": "XBRL_AUDIT_WAIT_FOR_DATA",
             "Reason": f"{type(exc).__name__}: {str(exc)[:500]}",
         }]).to_csv(ecms_output_dir / "fundamental_xbrl_audit_error.csv", index=False)
+
+
+    # Persist newly generated official XBRL evidence into the ECMS-owned ledger.
+    # The verifier writes generated XML under the per-run ephemeral root; without
+    # this copy, those evidence files disappear after the workflow and are fetched
+    # again on the next scan. Never write to the shared V8 evidence/cache paths.
+    generated_evidence_path = ecms_output_dir / "v8_fundamental_generated_evidence.csv"
+    if generated_evidence_path.is_file() and generated_evidence_path.stat().st_size > 0:
+        generated_evidence = pd.read_csv(generated_evidence_path, keep_default_na=False)
+        if "TckrSymb" in generated_evidence.columns:
+            generated_evidence["TckrSymb"] = (
+                generated_evidence["TckrSymb"].astype(str).str.strip().str.upper()
+            )
+            generated_evidence = generated_evidence[
+                generated_evidence["TckrSymb"].isin(candidate_symbols)
+            ].copy()
+        persisted_rows = []
+        evidence_store = workspace / "xbrl_evidence"
+        evidence_store.mkdir(parents=True, exist_ok=True)
+        import hashlib
+        for _, evidence_row in generated_evidence.iterrows():
+            item = evidence_row.to_dict()
+            raw_path = str(item.get("EvidenceFilePath", "") or "").strip()
+            if not raw_path:
+                continue
+            source_path = (ephemeral_root / raw_path).resolve()
+            try:
+                source_path.relative_to(ephemeral_root.resolve())
+            except ValueError:
+                continue
+            if not source_path.is_file():
+                continue
+            digest = str(item.get("EvidenceSHA256", "") or "").strip()
+            if not digest:
+                digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+                item["EvidenceSHA256"] = digest
+            suffix = source_path.suffix or ".xml"
+            filename = f"{digest[:24]}{suffix}"
+            destination_path = evidence_store / filename
+            if not destination_path.exists():
+                shutil.copy2(source_path, destination_path)
+            item["EvidenceFilePath"] = str(destination_path.relative_to(repo_root))
+            persisted_rows.append(item)
+        if persisted_rows:
+            prior_ledger = (
+                pd.read_csv(workspace_evidence, keep_default_na=False)
+                if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0
+                else pd.DataFrame()
+            )
+            merged_ledger = pd.concat(
+                [prior_ledger, pd.DataFrame(persisted_rows)], ignore_index=True, sort=False
+            )
+            if "TckrSymb" in merged_ledger.columns:
+                merged_ledger["TckrSymb"] = (
+                    merged_ledger["TckrSymb"].astype(str).str.strip().str.upper()
+                )
+            dedupe_columns = [
+                column for column in (
+                    "TckrSymb", "MetricName", "FinancialPeriodEnd",
+                    "OfficialFilingURL", "XbrlFactTag", "EvidenceSHA256",
+                    "VerificationMethod",
+                ) if column in merged_ledger.columns
+            ]
+            if dedupe_columns:
+                merged_ledger = merged_ledger.drop_duplicates(
+                    subset=dedupe_columns, keep="last"
+                )
+            temporary_ledger = workspace_evidence.with_suffix(".csv.tmp")
+            merged_ledger.to_csv(temporary_ledger, index=False)
+            temporary_ledger.replace(workspace_evidence)
+            candidate_evidence = merged_ledger[
+                merged_ledger["TckrSymb"].isin(candidate_symbols)
+            ].copy() if "TckrSymb" in merged_ledger.columns else merged_ledger.copy()
+            if len(candidate_evidence.columns):
+                candidate_evidence.to_csv(audit_evidence_path, index=False)
 
     candidate_verification = verification[
         verification["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
@@ -525,14 +680,6 @@ def assess_page_fundamentals(candidates, eod_date):
         # FinancialPeriodEnd. The NSE API's period_ended=all response is filtered
         # locally to the latest eligible period at/before the ECMS as-of date.
         # Standalone/consolidated and original/revised variants remain separate.
-        filing_lookup_candidates = candidates[["TckrSymb"]].copy()
-        filing_lookup_candidates["TckrSymb"] = (
-            filing_lookup_candidates["TckrSymb"].astype(str).str.strip().str.upper()
-        )
-        filing_metadata_source = fetch_ecms_candidate_filing_metadata(
-            filing_lookup_candidates, eod_date.isoformat()
-        )
-        filing_metadata_audit = audit_ecms_filing_metadata(filing_metadata_source)
         filing_metadata_audit = fetch_ecms_details_remarks(filing_metadata_audit)
     except Exception as exc:
         filing_metadata_audit = pd.DataFrame([{
