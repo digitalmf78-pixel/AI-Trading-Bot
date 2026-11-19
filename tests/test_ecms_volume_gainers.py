@@ -61,8 +61,19 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
         path.parent.mkdir(parents=True, exist_ok=True)
         # Simulate a persistent ECMS workspace containing an older symbol
         # that is not on the current Volume Gainers page.
+        import json
         pd.DataFrame([
-            {"TckrSymb": "AAA", "RevenueGrowthPct": 20},
+            {
+                "TckrSymb": "AAA", "RevenueGrowthPct": 20,
+                "MetricPeriodAlignmentStatus": "VERIFIED",
+                "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+                "FinancialPeriodEnd": "2026-03-31",
+                "MetricSourcesJSON": json.dumps({"RevenueGrowthPct": "Yahoo Finance via yfinance"}),
+                "MetricSourceURLsJSON": json.dumps({"RevenueGrowthPct": "https://finance.yahoo.com/quote/AAA.NS/financials/"}),
+                "MetricSourcePeriodsJSON": json.dumps({"RevenueGrowthPct": "2026-03-31"}),
+                "MetricCalculationBasesJSON": json.dumps({"RevenueGrowthPct": "ANNUAL_ALIGNED_STATEMENTS"}),
+                "MetricSourceCurrenciesJSON": "{}",
+            },
             {"TckrSymb": "OLD", "RevenueGrowthPct": 99},
         ]).to_csv(path, index=False)
         filings = Path("outputs/v8_official_financial_results_filings.csv")
@@ -1534,3 +1545,123 @@ def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
     assert q1["FundamentalQuarterAge"] == 2
     assert q1["FundamentalFreshnessStatus"] == "2Q_OLD"
     assert q1["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_QUARTER"
+
+
+
+def test_clear_non_yahoo_cached_metrics_handles_float_columns_and_preserves_yahoo():
+    import json
+    from strategies.ecms.volume_gainers import _clear_non_yahoo_cached_metrics
+
+    cached = pd.DataFrame([{
+        "TckrSymb": "AAA",
+        "RevenueGrowthPct": 12.5,
+        "ProfitGrowthPct": 8.0,
+        "ROEPercent": 14.0,
+        "ROCEPercent": 16.0,
+        "DebtToEquity": 0.4,
+        "InterestCoverage": 4.2,
+        "OperatingCashFlowINR": 1000000.0,
+        "MetricSourcesJSON": json.dumps({
+            "RevenueGrowthPct": "Yahoo Finance via yfinance",
+            "ProfitGrowthPct": "Old provider",
+        }),
+        "MetricSourceURLsJSON": json.dumps({
+            "RevenueGrowthPct": "https://finance.yahoo.com/",
+            "ProfitGrowthPct": "https://old.example/",
+        }),
+        "MetricSourcePeriodsJSON": "{}",
+        "MetricCalculationBasesJSON": "{}",
+        "MetricSourceCurrenciesJSON": "{}",
+    }])
+    result = _clear_non_yahoo_cached_metrics(cached, {"AAA"}).iloc[0]
+
+    assert result["RevenueGrowthPct"] == 12.5
+    assert pd.isna(result["ProfitGrowthPct"])
+    assert result["MetricSourcesJSON"] == json.dumps(
+        {"RevenueGrowthPct": "Yahoo Finance via yfinance"}, sort_keys=True
+    )
+    assert "ProfitGrowthPct" not in json.loads(result["MetricSourceURLsJSON"])
+    assert pd.api.types.is_float_dtype(
+        _clear_non_yahoo_cached_metrics(cached, {"AAA"})["ProfitGrowthPct"].dtype
+    )
+
+
+def test_clear_non_yahoo_cached_metrics_leaves_other_symbols_untouched():
+    from strategies.ecms.volume_gainers import _clear_non_yahoo_cached_metrics
+
+    cached = pd.DataFrame([{
+        "TckrSymb": "BBB", "RevenueGrowthPct": 10.0,
+        "MetricSourcesJSON": "{}",
+    }])
+    result = _clear_non_yahoo_cached_metrics(cached, {"AAA"})
+    assert result.loc[0, "RevenueGrowthPct"] == 10.0
+
+
+
+def test_ecms_clears_unaligned_yahoo_metrics_but_keeps_aligned_same_period_values():
+    import json
+    from strategies.ecms.volume_gainers import _clear_unaligned_yahoo_cached_metrics
+
+    metrics = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR", "FreeCashFlowINR",
+    ]
+    row = {
+        "TckrSymb": "AAA",
+        "MetricPeriodAlignmentStatus": "VERIFIED",
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+        "FinancialPeriodEnd": "2026-03-31",
+        "MetricSourcesJSON": json.dumps({m: "Yahoo Finance via yfinance" for m in metrics}),
+        "MetricSourceURLsJSON": json.dumps({m: "https://finance.yahoo.com/quote/AAA.NS/financials/" for m in metrics}),
+        "MetricSourcePeriodsJSON": json.dumps({m: "2026-03-31" for m in metrics}),
+        "MetricCalculationBasesJSON": json.dumps({
+            **{m: "ANNUAL_ALIGNED_STATEMENTS" for m in metrics},
+            "ProfitGrowthPct": "UNALIGNED_PROVIDER_SNAPSHOT",
+            "FreeCashFlowINR": "UNALIGNED_PROVIDER_SNAPSHOT",
+        }),
+        "MetricSourceCurrenciesJSON": json.dumps({
+            "OperatingCashFlowINR": "INR", "FreeCashFlowINR": "INR",
+        }),
+        **{m: float(i + 1) for i, m in enumerate(metrics)},
+    }
+    result = _clear_unaligned_yahoo_cached_metrics(pd.DataFrame([row]), {"AAA"}).iloc[0]
+
+    assert result["RevenueGrowthPct"] == 1.0
+    assert pd.isna(result["ProfitGrowthPct"])
+    assert pd.isna(result["FreeCashFlowINR"])
+    assert result["OperatingCashFlowINR"] == 7.0
+    eligibility = json.loads(result["ECMSYahooMetricEligibilityJSON"])
+    rejected = json.loads(result["ECMSYahooRejectedMetricsJSON"])
+    assert eligibility["ProfitGrowthPct"] == "YAHOO_STATEMENT_BASIS_UNALIGNED"
+    assert rejected["ProfitGrowthPct"]["value"] == 2.0
+    assert "ProfitGrowthPct" not in json.loads(result["MetricSourcesJSON"])
+    assert result["ECMSYahooAlignedMetricCount"] == 6
+
+
+def test_ecms_rejects_yahoo_metric_with_period_mismatch_or_unknown_ocf_currency():
+    import json
+    from strategies.ecms.volume_gainers import _clear_unaligned_yahoo_cached_metrics
+
+    metrics = ["RevenueGrowthPct", "OperatingCashFlowINR"]
+    row = {
+        "TckrSymb": "BBB",
+        "MetricPeriodAlignmentStatus": "VERIFIED",
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+        "FinancialPeriodEnd": "2026-03-31",
+        "MetricSourcesJSON": json.dumps({m: "Yahoo Finance via yfinance" for m in metrics}),
+        "MetricSourceURLsJSON": json.dumps({m: "https://finance.yahoo.com/" for m in metrics}),
+        "MetricSourcePeriodsJSON": json.dumps({
+            "RevenueGrowthPct": "2025-03-31",
+            "OperatingCashFlowINR": "2026-03-31",
+        }),
+        "MetricCalculationBasesJSON": json.dumps({m: "ANNUAL_ALIGNED_STATEMENTS" for m in metrics}),
+        "MetricSourceCurrenciesJSON": "{}",
+        "RevenueGrowthPct": 12.0,
+        "OperatingCashFlowINR": 500.0,
+    }
+    result = _clear_unaligned_yahoo_cached_metrics(pd.DataFrame([row]), {"BBB"}).iloc[0]
+    assert pd.isna(result["RevenueGrowthPct"])
+    assert pd.isna(result["OperatingCashFlowINR"])
+    eligibility = json.loads(result["ECMSYahooMetricEligibilityJSON"])
+    assert eligibility["RevenueGrowthPct"] == "METRIC_PERIOD_DIFFERS_FROM_ROW_PERIOD"
+    assert eligibility["OperatingCashFlowINR"] == "CASH_FLOW_CURRENCY_NOT_CONFIRMED_INR"
