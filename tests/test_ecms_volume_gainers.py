@@ -49,6 +49,13 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
     monkeypatch.setattr(scanner, "FILINGS_PATH", Path("outputs/production_filings.csv"))
     monkeypatch.setattr(scanner, "EVIDENCE_PATH", Path("data/inputs/production_evidence.csv"))
     monkeypatch.setattr(scanner, "THRESHOLDS_PATH", Path("data/inputs/thresholds.json"))
+    # A non-Yahoo cached metric must be cleared safely inside the ECMS-only
+    # workspace before yfinance is asked to refill it.
+    scanner.METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{
+        "TckrSymb": "AAA", "RevenueGrowthPct": 77.0,
+        "MetricSourcesJSON": "{}",
+    }]).to_csv(scanner.METRICS_PATH, index=False)
 
     def fake_collect(candidates, metrics_path, enabled, asof_date, free_source_fetcher=None, force_retry_incomplete=False, free_source_audit_metrics=None):
         assert enabled is True
@@ -58,6 +65,10 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
         assert __import__("os").environ["V8_FREE_FUNDAMENTAL_SOURCES"] == "false"
         assert set(candidates["TckrSymb"]) == {"AAA"}
         path = Path(metrics_path)
+        # The ECMS cache scrub must clear non-Yahoo values without assigning
+        # an empty string into a numeric pandas column (the old EOD crash).
+        scrubbed = pd.read_csv(path, keep_default_na=False).set_index("TckrSymb")
+        assert pd.isna(pd.to_numeric(pd.Series([scrubbed.loc["AAA", "RevenueGrowthPct"]]), errors="coerce").iloc[0])
         path.parent.mkdir(parents=True, exist_ok=True)
         # Simulate a persistent ECMS workspace containing an older symbol
         # that is not on the current Volume Gainers page.
@@ -158,6 +169,9 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
     assert result.iloc[0]["FundamentalPassStatus"] == "NOT_A_PASS_YAHOO_RESEARCH_ONLY"
     assert result.iloc[0]["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_MISSING_METRICS"
     out = tmp_path / "outputs/ecms"
+    metric_coverage = pd.read_csv(out / "fundamental_metric_coverage_by_stock.csv")
+    assert len(metric_coverage) == 7
+    assert metric_coverage["XBRLVerificationTag"].eq("XBRL_NOT_VERIFIED").all()
     assert set(pd.read_csv(out / "fundamental_metrics_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_evidence_ecms.csv")["TckrSymb"]) == {"AAA"}
