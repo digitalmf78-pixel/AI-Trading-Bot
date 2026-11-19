@@ -171,7 +171,9 @@ def test_fundamental_collection_uses_yahoo_only_in_ecms_workspace(tmp_path, monk
     out = tmp_path / "outputs/ecms"
     metric_coverage = pd.read_csv(out / "fundamental_metric_coverage_by_stock.csv")
     assert len(metric_coverage) == 7
-    assert metric_coverage["XBRLVerificationTag"].eq("XBRL_NOT_VERIFIED").all()
+    tags = metric_coverage.set_index("MetricName")["XBRLVerificationTag"]
+    assert tags["RevenueGrowthPct"] == "XBRL_VERIFIED"
+    assert tags.drop("RevenueGrowthPct").eq("XBRL_NOT_VERIFIED").all()
     assert set(pd.read_csv(out / "fundamental_metrics_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_filings_ecms.csv")["TckrSymb"]) == {"AAA"}
     assert set(pd.read_csv(out / "fundamental_evidence_ecms.csv")["TckrSymb"]) == {"AAA"}
