@@ -448,6 +448,75 @@ def assess_page_fundamentals(candidates, eod_date):
             "Reason": f"{type(exc).__name__}: {str(exc)[:500]}",
         }]).to_csv(ecms_output_dir / "fundamental_xbrl_audit_error.csv", index=False)
 
+
+    # Persist newly generated official XBRL evidence into the ECMS-owned ledger.
+    # The verifier writes generated XML under the per-run ephemeral root; without
+    # this copy, those evidence files disappear after the workflow and are fetched
+    # again on the next scan. Never write to the shared V8 evidence/cache paths.
+    generated_evidence_path = ecms_output_dir / "v8_fundamental_generated_evidence.csv"
+    if generated_evidence_path.is_file() and generated_evidence_path.stat().st_size > 0:
+        generated_evidence = pd.read_csv(generated_evidence_path, keep_default_na=False)
+        if "TckrSymb" in generated_evidence.columns:
+            generated_evidence["TckrSymb"] = (
+                generated_evidence["TckrSymb"].astype(str).str.strip().str.upper()
+            )
+            generated_evidence = generated_evidence[
+                generated_evidence["TckrSymb"].isin(candidate_symbols)
+            ].copy()
+        persisted_rows = []
+        evidence_store = workspace / "xbrl_evidence"
+        evidence_store.mkdir(parents=True, exist_ok=True)
+        for _, evidence_row in generated_evidence.iterrows():
+            item = evidence_row.to_dict()
+            raw_path = str(item.get("EvidenceFilePath", "") or "").strip()
+            if raw_path:
+                source_path = (ephemeral_root / raw_path).resolve()
+                try:
+                    source_path.relative_to(ephemeral_root.resolve())
+                except ValueError:
+                    source_path = None
+                if source_path is not None and source_path.is_file():
+                    digest = str(item.get("EvidenceSHA256", "") or "").strip()
+                    suffix = source_path.suffix or ".xml"
+                    filename = f"{digest[:24] if digest else source_path.stem}{suffix}"
+                    destination_path = evidence_store / filename
+                    if not destination_path.exists():
+                        shutil.copy2(source_path, destination_path)
+                    item["EvidenceFilePath"] = str(destination_path.relative_to(repo_root))
+            persisted_rows.append(item)
+        if persisted_rows:
+            prior_ledger = (
+                pd.read_csv(workspace_evidence, keep_default_na=False)
+                if workspace_evidence.exists() and workspace_evidence.stat().st_size > 0
+                else pd.DataFrame()
+            )
+            merged_ledger = pd.concat(
+                [prior_ledger, pd.DataFrame(persisted_rows)], ignore_index=True, sort=False
+            )
+            if "TckrSymb" in merged_ledger.columns:
+                merged_ledger["TckrSymb"] = (
+                    merged_ledger["TckrSymb"].astype(str).str.strip().str.upper()
+                )
+            dedupe_columns = [
+                column for column in (
+                    "TckrSymb", "MetricName", "FinancialPeriodEnd",
+                    "OfficialFilingURL", "XbrlFactTag", "EvidenceSHA256",
+                    "VerificationMethod",
+                ) if column in merged_ledger.columns
+            ]
+            if dedupe_columns:
+                merged_ledger = merged_ledger.drop_duplicates(
+                    subset=dedupe_columns, keep="last"
+                )
+            temporary_ledger = workspace_evidence.with_suffix(".csv.tmp")
+            merged_ledger.to_csv(temporary_ledger, index=False)
+            temporary_ledger.replace(workspace_evidence)
+            candidate_evidence = merged_ledger[
+                merged_ledger["TckrSymb"].isin(candidate_symbols)
+            ].copy() if "TckrSymb" in merged_ledger.columns else merged_ledger.copy()
+            if len(candidate_evidence.columns):
+                candidate_evidence.to_csv(audit_evidence_path, index=False)
+
     candidate_verification = verification[
         verification["TckrSymb"].astype(str).str.upper().isin(candidate_symbols)
     ] if "TckrSymb" in verification.columns else verification.iloc[0:0]
