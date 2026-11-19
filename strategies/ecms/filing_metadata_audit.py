@@ -404,5 +404,15 @@ def fetch_ecms_candidate_filing_metadata(
                 "FilingMetadataStatus": "NSE_API_LOOKUP_ERROR",
                 "VerificationStatus": "NOT_VERIFIED",
                 "VerificationWarning": f"{type(exc).__name__}: {str(exc)[:240]}",
+                "SourceURL": NSE_RESULTS_API,
+                "SourceRetrievedAtUTC": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                "SourceHTTPStatus": str(getattr(getattr(exc, "response", None), "status_code", "") or "UNKNOWN"),
+                "SourcePayloadBytes": 0,
+                "SourcePayloadSHA256": "",
+                "SourceRecordCount": 0,
+                "SourcePage": int(params.get("page", 0)),
+                "SourcePageSize": int(params.get("size", 0)),
+                "CaptureCoverageStatus": "SOURCE_CAPTURE_FAILED",
+                "CaptureLimitations": f"{type(exc).__name__}:{str(exc)[:180]}",
             })
     return pd.DataFrame(output)
