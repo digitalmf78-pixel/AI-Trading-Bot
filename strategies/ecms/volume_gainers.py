@@ -382,6 +382,17 @@ def assess_page_fundamentals(candidates, eod_date):
                 except (TypeError, ValueError):
                     source_map = {}
                 source_map = source_map if isinstance(source_map, dict) else {}
+                metadata_fields = (
+                    "MetricSourceURLsJSON", "MetricSourcePeriodsJSON",
+                    "MetricCalculationBasesJSON", "MetricSourceCurrenciesJSON",
+                )
+                metadata_maps = {}
+                for field in metadata_fields:
+                    try:
+                        parsed = json.loads(str(cached_row.get(field, "{}") or "{}"))
+                    except (TypeError, ValueError):
+                        parsed = {}
+                    metadata_maps[field] = parsed if isinstance(parsed, dict) else {}
                 for metric in (
                     "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
                     "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
@@ -390,7 +401,11 @@ def assess_page_fundamentals(candidates, eod_date):
                     if "yahoo finance via yfinance" not in source:
                         cached.at[index, metric] = ""
                         source_map.pop(metric, None)
+                        for metadata in metadata_maps.values():
+                            metadata.pop(metric, None)
                 cached.at[index, "MetricSourcesJSON"] = json.dumps(source_map, sort_keys=True)
+                for field, metadata in metadata_maps.items():
+                    cached.at[index, field] = json.dumps(metadata, sort_keys=True)
             cached.to_csv(workspace_metrics, index=False)
     try:
         # Relative paths used by the collector resolve only inside the ECMS workspace.
