@@ -1412,3 +1412,19 @@ def test_reuse_previous_eod_snapshot_rejects_wrong_date(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner, "_write_execution_status", lambda mode, status, reason, **kw: statuses.append((mode, status, reason)))
     assert scanner._reuse_previous_eod_snapshot() is None
     assert statuses[0][1:] == ("WAIT_FOR_DATA", "EOD_SNAPSHOT_DATE_MISMATCH_FOR_REUSE")
+
+
+def test_ecms_morning_bhavcopy_preflight_backfills_full_history(monkeypatch):
+    import strategies.ecms.volume_gainers as scanner
+    from datetime import date
+
+    captured = {}
+    def fake_ensure(session_date, count):
+        captured["session_date"] = session_date
+        captured["count"] = count
+        return [session_date]
+
+    monkeypatch.setattr(scanner, "ensure_bhavcopy_history", fake_ensure)
+    downloaded = scanner.ensure_ecms_bhavcopy_for_session(date(2026, 11, 18))
+    assert captured == {"session_date": date(2026, 11, 18), "count": 20}
+    assert downloaded == [date(2026, 11, 18)]
