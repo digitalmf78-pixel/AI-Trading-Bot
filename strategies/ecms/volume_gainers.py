@@ -466,23 +466,29 @@ def assess_page_fundamentals(candidates, eod_date):
         persisted_rows = []
         evidence_store = workspace / "xbrl_evidence"
         evidence_store.mkdir(parents=True, exist_ok=True)
+        import hashlib
         for _, evidence_row in generated_evidence.iterrows():
             item = evidence_row.to_dict()
             raw_path = str(item.get("EvidenceFilePath", "") or "").strip()
-            if raw_path:
-                source_path = (ephemeral_root / raw_path).resolve()
-                try:
-                    source_path.relative_to(ephemeral_root.resolve())
-                except ValueError:
-                    source_path = None
-                if source_path is not None and source_path.is_file():
-                    digest = str(item.get("EvidenceSHA256", "") or "").strip()
-                    suffix = source_path.suffix or ".xml"
-                    filename = f"{digest[:24] if digest else source_path.stem}{suffix}"
-                    destination_path = evidence_store / filename
-                    if not destination_path.exists():
-                        shutil.copy2(source_path, destination_path)
-                    item["EvidenceFilePath"] = str(destination_path.relative_to(repo_root))
+            if not raw_path:
+                continue
+            source_path = (ephemeral_root / raw_path).resolve()
+            try:
+                source_path.relative_to(ephemeral_root.resolve())
+            except ValueError:
+                continue
+            if not source_path.is_file():
+                continue
+            digest = str(item.get("EvidenceSHA256", "") or "").strip()
+            if not digest:
+                digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+                item["EvidenceSHA256"] = digest
+            suffix = source_path.suffix or ".xml"
+            filename = f"{digest[:24]}{suffix}"
+            destination_path = evidence_store / filename
+            if not destination_path.exists():
+                shutil.copy2(source_path, destination_path)
+            item["EvidenceFilePath"] = str(destination_path.relative_to(repo_root))
             persisted_rows.append(item)
         if persisted_rows:
             prior_ledger = (
