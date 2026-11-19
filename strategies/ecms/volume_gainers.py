@@ -166,6 +166,12 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
     else:
         result["FundamentalPeriodLabel"] = f"Q{quarter} FY{str(fiscal_year)[-2:]} ({period.strftime('%b-%Y')})"
     result["FundamentalQuarterAge"] = int(age)
+    if calculation_basis not in {
+        "QUARTERLY_TTM_ALIGNED_STATEMENTS", "ANNUAL_ALIGNED_STATEMENTS",
+    }:
+        result["FundamentalFreshnessStatus"] = "YAHOO_PERIOD_ALIGNMENT_UNVERIFIED"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_PERIOD_ALIGNMENT"
+        return result
     if age < 0:
         result["FundamentalFreshnessStatus"] = "FUTURE_PERIOD_CHECK_REQUIRED"
         result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_FUTURE_PERIOD"
