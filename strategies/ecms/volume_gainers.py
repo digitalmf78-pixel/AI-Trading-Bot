@@ -467,7 +467,7 @@ def assess_page_fundamentals(candidates, eod_date):
             api_rows["TckrSymb"].isin(candidate_symbols)
             & api_rows["PublicationDateStatus"].eq("VERIFIED")
             & api_rows["FilingDescription"].str.upper().str.contains("CONSOLIDATED", regex=False)
-            & api_rows["FilingDescription"].str.upper().str.contains("AUDITED", regex=False)
+            & api_rows["AuditedLabel"].astype(str).str.strip().str.casefold().eq("audited")
         ].copy()
         if not api_rows.empty:
             # Preserve source traceability alongside the legacy register fields.
