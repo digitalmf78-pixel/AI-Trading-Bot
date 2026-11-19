@@ -919,7 +919,17 @@ def assess_page_fundamentals(candidates, eod_date):
         assessed[column] = decision_fields[column]
 
     # Publish current-page candidate snapshots, not the full persistent cache
-    # or filing register. The workspace itself remains intact for later reuse.
+    # or filing register. Include the period-age labels in the primary metrics CSV.
+    freshness_columns = [
+        "FundamentalPeriodLabel", "FundamentalQuarterAge",
+        "FundamentalFreshnessStatus", "FundamentalRecheckRecommendation",
+    ]
+    freshness_rows = [
+        _ecms_yahoo_period_freshness(row, eod_date)
+        for _, row in candidate_metrics.iterrows()
+    ]
+    for column in freshness_columns:
+        candidate_metrics[column] = [item.get(column, "") for item in freshness_rows]
     candidate_metrics.to_csv(ecms_output_dir / "fundamental_metrics_ecms.csv", index=False)
     comparison_rows = []
     comparison_metrics = [
@@ -1048,12 +1058,7 @@ def assess_page_fundamentals(candidates, eod_date):
     )
     metric_summary = pd.DataFrame(metric_summary_rows)
     assessed = assessed.merge(metric_summary, on="TckrSymb", how="left", validate="one_to_one")
-    freshness = pd.DataFrame(
-        [_ecms_yahoo_period_freshness(row, eod_date) for _, row in metrics_by_symbol.iterrows()],
-        index=metrics_by_symbol.index,
-    )
-    freshness.index.name = "TckrSymb"
-    freshness = freshness.reset_index()
+    freshness = candidate_metrics[["TckrSymb"] + freshness_columns].copy()
     assessed = assessed.merge(freshness, on="TckrSymb", how="left", validate="one_to_one")
     missing_metric_mask = pd.to_numeric(
         assessed.get("FundamentalMetricsMissingCount", 0), errors="coerce"
