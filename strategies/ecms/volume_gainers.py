@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 from strategies.ecms.eod import (
     IST, HEADERS, OUTPUT_DIR, METRICS_PATH, THRESHOLDS_PATH, FILINGS_PATH, EVIDENCE_PATH,
-    expected_latest_completed_session,
+    expected_latest_completed_session, ensure_bhavcopy_history, LOOKBACK_SESSIONS,
     collect_catalysts, load_official_mainboard_symbols,
     discover_latest_session, load_prior_sessions, _read_valid_bhavcopy, calculate_rvol,
 )
@@ -766,6 +766,16 @@ def assess_page_fundamentals(candidates, eod_date):
         diagnostics.to_csv(ecms_output_dir / "fundamental_provider_diagnostics.csv", index=False)
     return assessed
 
+def ensure_ecms_bhavcopy_for_session(session_date):
+    """Ensure the complete latest + 20 prior NSE CM Bhavcopies exist for every ECMS scan."""
+    downloaded = ensure_bhavcopy_history(session_date, LOOKBACK_SESSIONS)
+    print(
+        f"[ECMS_BHAVCOPY] scan preflight complete; session={session_date}; "
+        f"downloaded_sessions={len(downloaded)}; full_history_sessions={LOOKBACK_SESSIONS + 1}"
+    )
+    return downloaded
+
+
 def attach_page_rvol(candidates, eod_date):
     """Attach the repository's 20-session Bhavcopy RVOL without changing page membership."""
     result = candidates.copy()
@@ -1453,6 +1463,9 @@ def run_morning():
         expected_eod_session = today - timedelta(days=1)
         while not is_trading_session(expected_eod_session):
             expected_eod_session -= timedelta(days=1)
+    # Morning/manual ECMS runs must backfill the latest completed session and
+    # the full prior-session history themselves; never depend on NSE V8 cache runs.
+    ensure_ecms_bhavcopy_for_session(expected_eod_session)
     expected_eod = expected_eod_session.isoformat()
     if manual_observation:
         previous, manual_reference_status = _load_manual_observation_reference(
