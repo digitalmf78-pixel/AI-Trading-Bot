@@ -444,6 +444,7 @@ def test_nse_api_capture_records_response_hash_and_unknown_pagination():
         def get(self, *_args, **_kwargs): return Response()
     row = fetch_ecms_candidate_filing_metadata(pd.DataFrame([{"TckrSymb":"ABC"}]), "2026-11-15", session=Session()).iloc[0]
     assert row["SourceHTTPStatus"] == "200"
+    assert '"symbol":"ABC"' in row["SourceRequestParameters"]
     assert row["SourceContentType"] == "application/json"
     assert row["SourcePayloadBytes"] == len(body)
     assert row["SourcePayloadSHA256"] == hashlib.sha256(body).hexdigest()
