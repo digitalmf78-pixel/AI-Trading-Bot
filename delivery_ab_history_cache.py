@@ -14,7 +14,7 @@ import pandas as pd
 
 CACHE_PATH = Path("data/cache/delivery/ab_qualified_delivery_history.csv")
 REQUIRED_RAW = {"SYMBOL", "SERIES", "DATE1", "DELIV_QTY", "DELIV_PER"}
-A_PASS = "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+A_PASS = "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
 B_PASS = "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
 
 
