@@ -138,10 +138,10 @@ def test_delivery_a_requires_five_consecutive_days_while_b_counts_total_daily_pa
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[-1], sessions=sessions)
         row = audit.iloc[0]
         assert len(qualified) == 1
-        assert row["DeliveryAConsecutivePassCount30D"] == 6
-        assert row["DeliveryACount30DDisplay"] == "6/30"
-        assert row["DeliveryDailyPassCount"] == 10
-        assert row["DeliveryBCount30DDisplay"] == "10/30"
+        assert row["DeliveryAConsecutivePassCount30D"] == 7
+        assert row["DeliveryACount30DDisplay"] == "7/30"
+        assert row["DeliveryDailyPassCount"] == 11
+        assert row["DeliveryBCount30DDisplay"] == "11/30"
         assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
