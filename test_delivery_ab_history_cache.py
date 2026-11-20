@@ -19,21 +19,21 @@ def _audit():
     return pd.DataFrame([
         {
             "TckrSymb": "AAA", "SctySrs": "EQ",
-            "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+            "DeliveryCategoryAStatus": "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5",
             "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
             "DeliverySessions": 8, "DeliveryACount30DDisplay": "5/30",
             "DeliveryBCount30DDisplay": "4/30",
         },
         {
             "TckrSymb": "BBB", "SctySrs": "EQ",
-            "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+            "DeliveryCategoryAStatus": "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5",
             "DeliveryCategoryBStatus": "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5",
             "DeliverySessions": 8, "DeliveryACount30DDisplay": "6/30",
             "DeliveryBCount30DDisplay": "7/30",
         },
         {
             "TckrSymb": "CCC", "SctySrs": "EQ",
-            "DeliveryCategoryAStatus": "FILTERED_OUT_ROLLING_5D_AVG_LT_5",
+            "DeliveryCategoryAStatus": "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5",
             "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
             "DeliverySessions": 8, "DeliveryACount30DDisplay": "2/30",
             "DeliveryBCount30DDisplay": "3/30",
