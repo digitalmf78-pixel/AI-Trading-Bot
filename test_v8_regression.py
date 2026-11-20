@@ -170,9 +170,9 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
                     for day, value in zip(dates, [50.0, 55.0, 59.99, 60.0, 60.0])]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
-        assert len(qualified) == 0  # Average is below 60%; both categories fail.
+        assert len(qualified) == 0  # Fewer than five consecutive qualifying days; B also has fewer than five qualifying days.
         assert audit.iloc[0]["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions[:4])
         assert qualified.empty
