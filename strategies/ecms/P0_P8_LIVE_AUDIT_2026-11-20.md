@@ -4,6 +4,20 @@
 **Artifact:** `ecms-volume-gainers-morning-44676678821`  
 **Scope:** ECMS only. NSE V8 production workflow, code, providers, thresholds, caches and selection remain untouched. No historical backtesting.
 
+
+## Governing data-source rule (P0 contract; mandatory for P1 onward)
+
+This rule is fixed for ECMS and must be applied consistently in P1 and all downstream reports:
+
+1. **Yahoo Finance via yfinance is the only fundamental data-collection provider.** Collect the seven agreed metrics from Yahoo Finance. Prefer the latest available quarterly values; if quarterly values are unavailable, use the latest available annual values and label them explicitly as `ANNUAL`. If neither is available, show `MISSING`. Never estimate, fabricate, or silently substitute another provider's value.
+2. **NSE and BSE are verification-only sources.** Use official NSE/BSE filings and XBRL to verify Yahoo-sourced values, including reporting period, consolidated/standalone basis, audited/unaudited status, units, and calculation basis. NSE/BSE must not silently become alternate fundamental data providers.
+3. **Keep collection and verification separate.** Yahoo data can be shown for research even when official verification is unavailable, but must remain explicitly unverified. Do not hide it, overwrite it with an unrelated source, or call it officially verified without matching evidence.
+4. **Show freshness and period labels clearly.** Every metric must retain its own source period and basis. Label quarterly age as old (for example, `1Q_OLD`, `2Q_OLD`); label annual fallback as `ANNUAL`; missing values as `MISSING`. Never label an annual FY value as a current quarter.
+5. **Verification outcomes remain distinct:** `OFFICIAL_VERIFIED`, `OFFICIAL_MISMATCH`, `OFFICIAL_NOT_AVAILABLE`, and `MANUAL_RECHECK_REQUIRED`. Research availability is separately labelled (for example, `YAHOO_RESEARCH_READY` or `YAHOO_RESEARCH_PARTIAL`). A Yahoo value alone never creates a fundamental PASS.
+6. **No third-party fundamental fallback** (including Screener.in or other providers). Do not change shared provider code used by NSE V8; implement this policy only in ECMS-owned code, adapters, outputs, and tests.
+
+P0 governance check: every ECMS report/cache row must preserve Yahoo source provenance and its own period/basis, while NSE/BSE verification status is stored independently. Any missing, stale, mismatched, or unverified value remains visible with an explicit label and cannot be silently promoted to verified.
+
 ## Run facts
 
 - Manual trigger at 10:16:59 IST; router selected `MORNING` / `MANUAL_TIME_ROUTED_MORNING`.
