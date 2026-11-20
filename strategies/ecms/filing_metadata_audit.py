@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "SourceEvidenceID", "SourceURL", "SourceRequestParameters", "SourceRetrievedAtUTC", "SourceHTTPStatus", "SourceContentType", "SourcePayloadBytes", "SourcePayloadSHA256", "SourceRecordCount", "SourcePage", "SourcePageSize", "CaptureCoverageStatus", "CaptureLimitations", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
+OUTPUT_COLUMNS = ["TckrSymb", "FinancialPeriodEnd", "PublicationDate", "RevisedDate", "SequenceId", "TypeOfSubmission", "XBRLURL", "XBRLURLStatus", "DetailsURL", "DetailsURLStatus", "AuditedLabel", "AuditStatus", "ConsolidationLabel", "ConsolidationStatus", "FilingMetadataStatus", "NSELookupStatus", "SourceEvidenceID", "SourceURL", "SourceRequestParameters", "SourceRetrievedAtUTC", "SourceHTTPStatus", "SourceContentType", "SourcePayloadBytes", "SourcePayloadSHA256", "SourceRecordCount", "SourcePage", "SourcePageSize", "CaptureCoverageStatus", "CaptureLimitations", "SourcePayloadEvidencePath", "SourcePayloadStoredBytes", "SourcePayloadTruncated", "RemarksText", "RemarksStatus", "RemarksEvidenceSHA256", "RemarksContentType", "VerificationStatus", "VerificationWarning"]
 NSE_HOSTS = {"nsearchives.nseindia.com", "nsearchives.nseindia.in", "www.nseindia.com", "nseindia.com"}
 
 def _value(row, names):
@@ -27,7 +27,7 @@ def _label_status(value, accepted):
     if not normalized: return "MISSING"
     return "EXPLICIT_LABEL_CAPTURED" if normalized in accepted else "UNRECOGNIZED_LABEL"
 
-def _nse_capture_evidence(response, params, payload, items):
+def _nse_capture_evidence(response, params, payload, items, evidence_dir=None, max_payload_bytes=2_000_000):
     """Record bounded response evidence; never infer pagination completeness."""
     from datetime import datetime, timezone
     import json
@@ -48,8 +48,27 @@ def _nse_capture_evidence(response, params, payload, items):
     else:
         coverage, limits = "PAGINATION_NOT_EXPOSED_SINGLE_PAGE_ONLY", "ONE_PAGE_CAPTURED; SOURCE_TOTAL_PAGES_NOT_CONFIRMED"
     identity = json.dumps({"url": NSE_RESULTS_API, "params": params, "payload_sha256": digest}, sort_keys=True, separators=(",", ":"))
+    evidence_id = "nse-ifiling-" + hashlib.sha256(identity.encode()).hexdigest()[:20]
+    evidence_path = ""
+    stored_bytes = 0
+    truncated = False
+    if evidence_dir is not None:
+        from pathlib import Path
+        target_dir = Path(evidence_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        cap = max(0, int(max_payload_bytes))
+        captured = body[:cap]
+        truncated = len(captured) < len(body)
+        suffix = ".response.bin" if truncated else ".json"
+        target = target_dir / f"{evidence_id}{suffix}"
+        target.write_bytes(captured)
+        stored_bytes = len(captured)
+        try:
+            evidence_path = str(target.relative_to(target_dir.parent))
+        except ValueError:
+            evidence_path = str(target)
     headers = getattr(response, "headers", {}) or {}
-    return {"SourceEvidenceID": "nse-ifiling-" + hashlib.sha256(identity.encode()).hexdigest()[:20], "SourceURL": NSE_RESULTS_API, "SourceRequestParameters": json.dumps(params, sort_keys=True, separators=(",", ":")), "SourceRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "SourceHTTPStatus": str(getattr(response, "status_code", "") or "UNKNOWN"), "SourceContentType": str(headers.get("Content-Type", ""))[:160], "SourcePayloadBytes": len(body), "SourcePayloadSHA256": digest, "SourceRecordCount": len(items), "SourcePage": page, "SourcePageSize": size, "CaptureCoverageStatus": coverage, "CaptureLimitations": limits}
+    return {"SourceEvidenceID": evidence_id, "SourceURL": NSE_RESULTS_API, "SourceRequestParameters": json.dumps(params, sort_keys=True, separators=(",", ":")), "SourceRetrievedAtUTC": datetime.now(timezone.utc).isoformat(), "SourceHTTPStatus": str(getattr(response, "status_code", "") or "UNKNOWN"), "SourceContentType": str(headers.get("Content-Type", ""))[:160], "SourcePayloadBytes": len(body), "SourcePayloadSHA256": digest, "SourcePayloadEvidencePath": evidence_path, "SourcePayloadStoredBytes": stored_bytes, "SourcePayloadTruncated": truncated, "SourceRecordCount": len(items), "SourcePage": page, "SourcePageSize": size, "CaptureCoverageStatus": coverage, "CaptureLimitations": limits}
 
 def audit_ecms_filing_metadata(filings: pd.DataFrame) -> pd.DataFrame:
     """Keep XBRL, Details, audit and basis as separate explicit source fields.
@@ -280,6 +299,8 @@ def fetch_ecms_candidate_filing_metadata(
     asof_date,
     session=None,
     timeout=35,
+    evidence_dir=None,
+    max_payload_bytes=2_000_000,
 ) -> pd.DataFrame:
     """Discover the latest eligible NSE Integrated Financial filing per symbol.
 
@@ -348,7 +369,7 @@ def fetch_ecms_candidate_filing_metadata(
                 items = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
             else:
                 items = []
-            capture_evidence = _nse_capture_evidence(response, params, payload, items)
+            capture_evidence = _nse_capture_evidence(response, params, payload, items, evidence_dir=evidence_dir, max_payload_bytes=max_payload_bytes)
 
             eligible = []
             for item in items:
@@ -410,6 +431,9 @@ def fetch_ecms_candidate_filing_metadata(
                 "SourceHTTPStatus": str(getattr(getattr(exc, "response", None), "status_code", "") or "UNKNOWN"),
                 "SourcePayloadBytes": 0,
                 "SourcePayloadSHA256": "",
+                "SourcePayloadEvidencePath": "",
+                "SourcePayloadStoredBytes": 0,
+                "SourcePayloadTruncated": False,
                 "SourceRecordCount": 0,
                 "SourcePage": int(params.get("page", 0)),
                 "SourcePageSize": int(params.get("size", 0)),
