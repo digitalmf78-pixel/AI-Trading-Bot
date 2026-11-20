@@ -39,11 +39,11 @@ An ECMS-only correction was committed on the isolated branch `fix/ecms-p1-free-s
 - Do not manufacture an observation or change the shared provider.
 - Add regression tests for missing and explicit-disabled statuses.
 
-This correction is isolated and is **not merged to main**. It must pass ECMS CI before any review/merge.
+Validation: ECMS CI passed on the branch (164 tests passed, including the new missing/disabled-status regression tests). The correction is isolated and is **not merged to main**.
 
 ## Ordered next work
 
-1. Finish P1: validate the isolated NA-status fix; investigate why all metrics still use FY 2026-03-31 and why quarterly cash-flow periods are unavailable for most symbols; keep stale/unverified rows in WAIT.
+1. Continue P1: investigate why all seven metrics still carry FY 2026-03-31 (3Q_OLD) and why quarterly cash-flow periods are unavailable for most symbols. The provider diagnostics show 15/17 with no quarterly cash-flow periods, and most rows fall back to annual metrics with reason QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED. Keep stale/unverified rows in WAIT; do not change the shared provider or force a PASS.
 2. Complete P0's EOD comparison and next-session cache/snapshot proof.
 3. Implement P2 in an ECMS-only research layer: official daily OHLCV and delivery evidence, explicit session alignment and source/coverage ledger; preserve the U-Turn 20-session pre-result OHLC requirements.
 4. Then P3, P4 source coverage, P5 surveillance, P6 technical context, P7 balanced labels, and P8 live shadow review in order.
