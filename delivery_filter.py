@@ -176,8 +176,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Classify Category A/B over all valid reports in the 30-calendar-day window.
 
-    Category A: at least five qualifying trailing five-session averages >=60%.
-    Category B: at least five individual daily reports with Delivery >=60%.
+    Category A: at least five consecutive valid NSE sessions each with daily Delivery >=60%.
+    Category B: at least five individual qualifying daily reports (not necessarily consecutive).
     Compact A/B n/30 columns are display-only; no eligibility changes.
     Each candidate needs at least five valid distinct report dates; otherwise
     both categories remain WAIT_FOR_DATA. Exactly 60.00% passes.
@@ -298,11 +298,20 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         count = len(values)
         avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
-        # Category A: count every trailing five-valid-session average in the 30-calendar-day
-        # window that reaches the >=60% threshold. Missing symbol observations are not
-        # fabricated; rolling windows are formed from this symbol's valid distinct reports.
-        rolling_5d = pd.Series(values, dtype="float64").rolling(window=5, min_periods=5).mean()
-        rolling_5d_pass_count = int(rolling_5d.ge(threshold).sum())
+        # Category A: longest uninterrupted run of symbol-specific valid NSE
+        # sessions with daily Delivery >=60%. A missing symbol observation or a
+        # sub-threshold day breaks the run. Category B counts all qualifying days.
+        longest_consecutive_pass_count = 0
+        current_consecutive_pass_count = 0
+        for delivery_value in values:
+            if delivery_value >= threshold:
+                current_consecutive_pass_count += 1
+                longest_consecutive_pass_count = max(
+                    longest_consecutive_pass_count, current_consecutive_pass_count
+                )
+            else:
+                current_consecutive_pass_count = 0
+        rolling_5d_pass_count = longest_consecutive_pass_count
         daily_min = min(values) if count >= 5 else float("nan")
         daily_max = max(values) if count >= 5 else float("nan")
         coverage_pct = (count / expected_sessions * 100.0) if expected_sessions else float("nan")
@@ -311,13 +320,13 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             a_count_status = b_count_status = "WAIT_FOR_DATA"
         else:
             # Production A/B eligibility uses the user-confirmed minimum-five rule:
-            # A passes when at least five trailing five-valid-session averages reach 60%;
-            # B passes when at least five individual valid sessions reach 60%.
+            # A passes when the longest consecutive >=60% daily-delivery streak is at least five;
+            # B passes when at least five individual valid sessions reach 60%, consecutive or not.
             a_count_status = "PASS" if rolling_5d_pass_count >= 5 else "FAIL"
             b_count_status = "PASS" if daily_pass_count >= 5 else "FAIL"
             category_a = (
-                "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
-                if a_count_status == "PASS" else "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+                "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
+                if a_count_status == "PASS" else "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
             )
             category_b = (
                 "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
@@ -339,7 +348,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliveryExpectedSessions30D": expected_sessions,
             "DeliveryCoveragePct": coverage_pct,
             "DeliveryDailyPassCount": daily_pass_count,
-            "DeliveryACount30DDisplay": f"{rolling_5d_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
+            "DeliveryACount30DDisplay": f"{longest_consecutive_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
+            "DeliveryAConsecutivePassCount30D": longest_consecutive_pass_count,
             "DeliveryBCount30DDisplay": f"{daily_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
             "DeliveryARolling5DPassCount30D": rolling_5d_pass_count,
             "DeliveryACount30DStatus": a_count_status,
@@ -371,12 +381,12 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     audit_path = AUDIT_DIR / f"delivery_dual_category_audit_{asof.strftime('%Y%m%d')}.csv"
     audit.to_csv(audit_path, index=False)
-    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"].copy()
+    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
     category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
     category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_rolling5d_60_count5.csv", index=False)
     category_b.to_csv(AUDIT_DIR / "v8_delivery_category_b_daily60_count5.csv", index=False)
     audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
-    print(f"[DELIVERY] 30D Category A rolling 5-session averages >= {threshold:.2f}% at least 5 times: {len(category_a)}")
+    print(f"[DELIVERY] 30D Category A consecutive daily Delivery >= {threshold:.2f}% streak at least 5 sessions: {len(category_a)}")
     print(f"[DELIVERY] 30D Category B daily Delivery >= {threshold:.2f}% at least 5 days: {len(category_b)}")
     print(f"[DELIVERY] WAIT_FOR_DATA (<5 candidate sessions): {(audit['DeliveryStatus'].astype(str).str.startswith('WAIT_FOR_DATA')).sum()}")
     print(f"[DELIVERY] 30D dual-category audit saved: {audit_path}")
