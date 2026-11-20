@@ -288,18 +288,22 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         candidate[series_col].astype(str).str.strip().str.upper()
         if series_col in candidate.columns else "EQ"
     )
-    report_dates = [day.isoformat() for day, _ in reports]
+    valid_report_dates = {day.isoformat() for day, _ in reports}
     latest_valid_report_date = reports[-1][0].isoformat()
-    asof_report_available = asof.isoformat() in report_dates
     report_age_days = (asof - reports[-1][0]).days
     window_stale = report_age_days > MAX_REPORT_AGE_DAYS
     window_start = asof - timedelta(days=29)
-    # Coverage denominator is the number of official NSE equity sessions in
-    # the 30-calendar-day window, including special sessions (e.g. Muhurat).
-    expected_sessions = sum(
-        1 for offset in range(30)
+    # Use every official NSE session as the sequence. An unavailable whole-market
+    # report remains a missing slot and breaks Category A's consecutive streak.
+    expected_session_dates = [
+        asof - timedelta(days=offset)
+        for offset in range(30)
         if is_trading_session(asof - timedelta(days=offset))
-    )
+    ]
+    expected_session_dates.sort()
+    report_dates = [day.isoformat() for day in expected_session_dates]
+    expected_sessions = len(report_dates)
+    asof_report_available = asof.isoformat() in valid_report_dates
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
