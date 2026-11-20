@@ -1582,6 +1582,44 @@ def test_yahoo_annual_fallback_is_labeled_annual_and_keeps_age():
     assert result["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_ANNUAL"
 
 
+
+def test_yahoo_freshness_blocks_mixed_metric_calculation_bases():
+    from strategies.ecms.volume_gainers import _ecms_yahoo_period_freshness
+
+    names = [
+        "RevenueGrowthPct", "ProfitGrowthPct", "ROEPercent", "ROCEPercent",
+        "DebtToEquity", "InterestCoverage", "OperatingCashFlowINR",
+    ]
+    row = {
+        name: 10 for name in names
+    }
+    row["MetricSourcesJSON"] = __import__("json").dumps({
+        name: "Yahoo Finance via yfinance" for name in names
+    })
+    row["MetricSourcePeriodsJSON"] = __import__("json").dumps({
+        name: "2026-03-31" for name in names
+    })
+    row["MetricCalculationBasesJSON"] = __import__("json").dumps({
+        name: ("ANNUAL_ALIGNED_STATEMENTS" if index < 6 else "QUARTERLY_TTM_ALIGNED_STATEMENTS")
+        for index, name in enumerate(names)
+    })
+    result = _ecms_yahoo_period_freshness(row, __import__("datetime").date(2026, 11, 19))
+    assert result["FundamentalFreshnessStatus"] == "MIXED_METRIC_PERIODS_OR_BASES"
+
+
+def test_yahoo_freshness_marks_missing_metric_period_metadata():
+    from strategies.ecms.volume_gainers import _ecms_yahoo_period_freshness
+
+    row = {
+        "ROEPercent": 14,
+        "MetricSourcesJSON": '{"ROEPercent":"Yahoo Finance via yfinance"}',
+        "MetricSourcePeriodsJSON": "{}",
+        "MetricCalculationBasesJSON": '{"ROEPercent":"ANNUAL_ALIGNED_STATEMENTS"}',
+    }
+    result = _ecms_yahoo_period_freshness(row, __import__("datetime").date(2026, 11, 19))
+    assert result["FundamentalFreshnessStatus"] == "METRIC_PERIOD_OR_BASIS_INCOMPLETE"
+
+
 def test_ecms_free_source_evidence_normalizes_nan_status_without_claiming_data():
     from strategies.ecms.volume_gainers import _ecms_free_source_evidence
 
