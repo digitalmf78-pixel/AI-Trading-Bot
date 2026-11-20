@@ -154,8 +154,14 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
         }
         for day, frame in delivery_by_date.items()
     }
+    # Build windows from the full official market calendar, not only cached
+    # Delivery files. A missing whole-market Delivery report becomes a None slot
+    # and breaks Category A's consecutive-day run instead of being skipped.
     delivery_windows = {
-        day: delivery_window_dates(delivery_dates, day, max_calendar_days=30)
+        day: [
+            session_day for session_day in market_dates
+            if day - pd.Timedelta(days=29) <= session_day <= day
+        ]
         for day in market_dates
     }
     records = []
