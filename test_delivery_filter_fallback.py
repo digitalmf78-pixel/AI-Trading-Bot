@@ -118,7 +118,7 @@ def test_30d_category_b_needs_five_daily_delivery_passes(monkeypatch, tmp_path):
     assert row["DeliveryWindowEndDate"] == "2026-10-09"
     assert row["DeliveryARolling5DPassCount30D"] == 5
     assert row["DeliveryDailyPassCount"] == 5
-    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
+    assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert row["DeliveryMax30D"] == 62.0
     assert row["DeliveryWindowStartDate"] == "2026-09-10"
