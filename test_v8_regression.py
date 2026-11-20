@@ -157,7 +157,7 @@ def test_delivery_exactly_60_each_day_passes():
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
         assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert audit.iloc[0]["DeliveryDailyPassCount"] == 5
 
