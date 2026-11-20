@@ -52,7 +52,7 @@ def test_delivery_audit_rejects_when_both_minimum_five_counts_fail(monkeypatch, 
 
     row = audit.iloc[0]
     assert qualified.empty  # Neither category reaches five qualifying observations.
-    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
     assert row["DeliveryStatus"] == "FILTERED_OUT_LT_60_PERCENT"
     assert row["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
@@ -79,7 +79,7 @@ def test_every_day_delivery_passes_downstream_gate(monkeypatch, tmp_path):
     reports = [(day, _frame("BBB", (value,))) for day, value in zip(dates, [60, 65, 61, 70, 63])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     assert qualified["TckrSymb"].tolist() == ["BBB"]
-    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
     assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
 
@@ -118,7 +118,7 @@ def test_30d_category_b_needs_five_daily_delivery_passes(monkeypatch, tmp_path):
     assert row["DeliveryWindowEndDate"] == "2026-10-09"
     assert row["DeliveryARolling5DPassCount30D"] == 1
     assert row["DeliveryDailyPassCount"] == 5
-    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
     assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert row["DeliveryMax30D"] == 62.0
     assert row["DeliveryWindowStartDate"] == "2026-09-10"
@@ -158,7 +158,7 @@ def test_collect_all_scans_complete_30d_window_and_returns_all_valid_reports(mon
 
 
 
-def test_category_a_requires_at_least_five_qualifying_rolling_windows(monkeypatch, tmp_path):
+def test_category_a_requires_five_consecutive_qualifying_days(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
@@ -175,7 +175,7 @@ def test_category_a_requires_at_least_five_qualifying_rolling_windows(monkeypatc
     row = audit.iloc[0]
     assert row["DeliveryARolling5DPassCount30D"] >= 5
     assert row["DeliveryDailyPassCount"] == 3
-    assert row["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+    assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
 
