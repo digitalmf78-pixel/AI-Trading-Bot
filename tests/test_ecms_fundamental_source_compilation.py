@@ -66,14 +66,16 @@ def test_compilation_carries_official_nse_verification_without_upgrading_manual_
     assert bse["MetricValue"] == 0.6
 
 
-def test_manual_source_rejects_unknown_or_premium_scrape_source():
+def test_manual_source_ignores_unknown_or_premium_scrape_source():
     manual = pd.DataFrame([{
         "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 10,
         "Source": "SCREENER_PREMIUM_SCRAPE", "SourceURL": "", "FinancialPeriodEnd": "",
         "PublicationDate": "", "CalculationBasis": "", "Unit": "", "ObservationNotes": "",
     }], columns=MANUAL_COLUMNS)
-    with pytest.raises(ValueError, match="Manual Source"):
-        build_fundamental_source_compilation(pd.DataFrame([{"TckrSymb": "AAA"}]), manual_observations=manual)
+    result = build_fundamental_source_compilation(
+        pd.DataFrame([{"TckrSymb": "AAA"}]), manual_observations=manual
+    )
+    assert result.empty
 
 
 def test_empty_manual_template_has_only_expected_columns():
