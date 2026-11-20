@@ -307,14 +307,18 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             (all_delivery["SYMBOL"] == sym) & (all_delivery["SERIES"] == ser)
         ]
         by_date = {str(r["REPORT_DATE"]): float(r["DELIV_PER"]) for _, r in matches.iterrows()}
-        values = [by_date[day] for day in report_dates if day in by_date]
+        # Keep every market report date in sequence. A missing symbol row is
+        # represented as None so it breaks Category A's consecutive-day streak;
+        # it is excluded from valid-report coverage and Category B's total count.
+        values_by_report = [by_date.get(day) for day in report_dates]
+        values = [value for value in values_by_report if value is not None]
         count = len(values)
         avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
         # Category A: longest uninterrupted run of symbol-specific valid NSE
         # sessions with daily Delivery >=60%. A missing symbol observation or a
         # sub-threshold day breaks the run. Category B counts all qualifying days.
-        longest_consecutive_pass_count = _longest_consecutive_delivery_pass_count(values, threshold)
+        longest_consecutive_pass_count = _longest_consecutive_delivery_pass_count(values_by_report, threshold)
         rolling_5d_pass_count = longest_consecutive_pass_count
         daily_min = min(values) if count >= 5 else float("nan")
         daily_max = max(values) if count >= 5 else float("nan")
