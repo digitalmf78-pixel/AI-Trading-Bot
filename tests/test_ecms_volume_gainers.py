@@ -1552,3 +1552,25 @@ def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
     assert q1["FundamentalQuarterAge"] == 2
     assert q1["FundamentalFreshnessStatus"] == "2Q_OLD"
     assert q1["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_QUARTER"
+
+def test_ecms_free_source_evidence_normalizes_nan_status_without_claiming_data():
+    from strategies.ecms.volume_gainers import _ecms_free_source_evidence
+
+    result = _ecms_free_source_evidence(pd.Series({
+        "FreeSourcesAlternatesJSON": float("nan"),
+        "FreeSourcesStatus": float("nan"),
+    }))
+    assert result["ECMSFreeSourcesEvidenceStatus"] == "NO_RECORDED_FREE_SOURCE_EVIDENCE"
+    assert result["ECMSFreeSourcesObservedMetricCount"] == 0
+    assert result["ECMSFreeSourcesObservedMetrics"] == ""
+
+
+def test_ecms_free_source_evidence_preserves_explicit_disabled_status():
+    from strategies.ecms.volume_gainers import _ecms_free_source_evidence
+
+    result = _ecms_free_source_evidence(pd.Series({
+        "FreeSourcesAlternatesJSON": "",
+        "FreeSourcesStatus": "DISABLED",
+    }))
+    assert result["ECMSFreeSourcesEvidenceStatus"] == "DISABLED"
+    assert result["ECMSFreeSourcesObservedMetricCount"] == 0
