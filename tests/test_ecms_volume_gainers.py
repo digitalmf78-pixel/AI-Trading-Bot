@@ -1543,15 +1543,44 @@ def test_yahoo_fiscal_quarter_age_labels_for_manual_recheck():
     asof = __import__("datetime").date(2026, 11, 19)
     q2 = _ecms_yahoo_period_freshness(row("2026-09-30"), asof)
     assert q2["FundamentalPeriodLabel"] == "Q2 FY27 (Sep-2026)"
+    assert q2["FundamentalDataFrequency"] == "QUARTERLY"
     assert q2["FundamentalQuarterAge"] == 1
     assert q2["FundamentalFreshnessStatus"] == "1Q_OLD"
     assert q2["FundamentalRecheckRecommendation"] == "RECHECK_BEFORE_STOCK_SELECTION"
 
     q1 = _ecms_yahoo_period_freshness(row("2026-06-30"), asof)
     assert q1["FundamentalPeriodLabel"] == "Q1 FY27 (Jun-2026)"
+    assert q1["FundamentalDataFrequency"] == "QUARTERLY"
     assert q1["FundamentalQuarterAge"] == 2
     assert q1["FundamentalFreshnessStatus"] == "2Q_OLD"
     assert q1["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_QUARTER"
+
+
+def test_yahoo_annual_fallback_is_labeled_annual_and_keeps_age():
+    from strategies.ecms.volume_gainers import _ecms_yahoo_period_freshness
+
+    metrics = {
+        "RevenueGrowthPct": 12, "ProfitGrowthPct": 8, "ROEPercent": 14,
+        "ROCEPercent": 16, "DebtToEquity": 0.4, "InterestCoverage": 4.2,
+        "OperatingCashFlowINR": 1000000,
+    }
+    row = {
+        **metrics,
+        "MetricSourcesJSON": __import__("json").dumps({
+            name: "Yahoo Finance via yfinance" for name in metrics
+        }),
+        "MetricSourcePeriodsJSON": __import__("json").dumps({
+            name: "2026-03-31" for name in metrics
+        }),
+        "MetricCalculationBasis": "ANNUAL_ALIGNED_STATEMENTS",
+    }
+    result = _ecms_yahoo_period_freshness(row, __import__("datetime").date(2026, 11, 19))
+    assert result["FundamentalPeriodLabel"] == "FY26 ANNUAL (Mar-2026)"
+    assert result["FundamentalDataFrequency"] == "ANNUAL"
+    assert result["FundamentalQuarterAge"] == 3
+    assert result["FundamentalFreshnessStatus"] == "ANNUAL_3Q_OLD"
+    assert result["FundamentalRecheckRecommendation"] == "MANUAL_RECHECK_NOW_STALE_ANNUAL"
+
 
 def test_ecms_free_source_evidence_normalizes_nan_status_without_claiming_data():
     from strategies.ecms.volume_gainers import _ecms_free_source_evidence
