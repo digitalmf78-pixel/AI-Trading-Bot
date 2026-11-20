@@ -4266,15 +4266,47 @@ def main():
             [frame for frame in [auto_news, manual_news] if not frame.empty],
             ignore_index=True,
         ) if not auto_news.empty or not manual_news.empty else pd.DataFrame()
-        send_marathi_telegram(
-            result,
-            eod_date,
-            digest_news,
-            news_feed_status,
-            TELEGRAM_BOT_TOKEN,
-            TELEGRAM_CHAT_ID,
-            observation_report=observation_report,
-        )
+
+        defer_telegram = os.getenv(
+            "TELEGRAM_DEFER_TO_WORKFLOW", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if defer_telegram:
+            # Preserve the exact scanner result for the workflow's final notification
+            # step. No success-looking Telegram summary is sent while post-scan
+            # validation, backfills, persistence, and report upload are still running.
+            import json
+            from pathlib import Path
+
+            pending_dir = Path("outputs/telegram_pending")
+            pending_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "eod_date": str(eod_date),
+                "feed_status": {str(k): str(v) for k, v in (news_feed_status or {}).items()},
+                "result_json": result.to_json(orient="records", date_format="iso"),
+                "news_json": digest_news.to_json(orient="records", date_format="iso"),
+                "observation_report_json": (
+                    observation_report.to_json(orient="records", date_format="iso")
+                    if observation_report is not None else "[]"
+                ),
+            }
+            temporary = pending_dir / "payload.json.tmp"
+            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(pending_dir / "payload.json")
+            print(
+                "TELEGRAM_DEFERRED_TO_WORKFLOW=TRUE "
+                f"payload={pending_dir / 'payload.json'}"
+            )
+        else:
+            # PREMARKET keeps its existing immediate, change-only notification.
+            send_marathi_telegram(
+                result,
+                eod_date,
+                digest_news,
+                news_feed_status,
+                TELEGRAM_BOT_TOKEN,
+                TELEGRAM_CHAT_ID,
+                observation_report=observation_report,
+            )
     else:
         print("Telegram notification skipped (SEND_TELEGRAM is disabled).")
 

@@ -191,7 +191,7 @@ jobs:
         run: |
           set -e
           echo "===== PYTHON COMPILE CHECK ====="
-          python -m py_compile signal_log.py signal_outcome_tracker.py signal_history_persistence.py delivery_ab_history_cache.py track2_full_mainboard.py potential_accumulation_analysis.py vcp_observation_analysis.py delivery_quantity_analysis.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
+          python -m py_compile telegram_finalizer.py signal_log.py signal_outcome_tracker.py signal_history_persistence.py delivery_ab_history_cache.py track2_full_mainboard.py potential_accumulation_analysis.py vcp_observation_analysis.py delivery_quantity_analysis.py volume_gainer.py main_board_filter.py v8_layers_14_41.py news_catalyst.py sector_data.py delivery_filter.py nse_trading_calendar.py delivery_streak_tracker.py  liquidity_filter.py fundamental_filter.py fundamental_data_provider.py fundamental_shortlist.py fundamental_official_filings.py fundamental_metric_verification.py fii_dii_activity.py risk_controls.py sanitize_public_artifacts.py nse_xbrl_fetch.py nse_xbrl_sample_diagnostic.py nse_xbrl_financial_fact_audit.py nse_xbrl_statement_reconciliation.py nse_xbrl_ytd_cashflow_reconciliation.py nse_bhavcopy_test.py nifty500_api_test.py
 
           echo "===== SIGNAL HISTORY / FORWARD OUTCOME TESTS ====="
           python -m pytest -q test_signal_outcome_tracker.py test_signal_history_persistence.py
@@ -199,7 +199,7 @@ jobs:
           echo "===== MAIN BOARD / BHAVCOPY CACHE REUSE TESTS ====="
           python -m pytest -q test_main_board_filter.py test_bhavcopy_history_cache_reuse.py
           echo "===== DELIVERY / LIQUIDITY / FUNDAMENTAL / PIPELINE TESTS ====="
-          python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_delivery_cache_manager.py test_delivery_history_backfill.py test_delivery_ab_history_cache.py test_rsi_retest_existing_cache.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_free_fundamental_sources.py test_nse_shareholding.py test_telegram_delivery.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_audit_risk_fixes.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py test_fundamental_metric_verification.py test_fii_dii_activity.py test_sanitize_public_artifacts.py
+          python -m pytest -q test_delivery_rule.py test_delivery_filter_fallback.py test_delivery_cache_manager.py test_delivery_history_backfill.py test_delivery_ab_history_cache.py test_rsi_retest_existing_cache.py test_liquidity_filter.py test_fundamental_filter.py test_fundamental_data_provider.py test_free_fundamental_sources.py test_nse_shareholding.py test_telegram_delivery.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py test_fundamental_fail_closed.py test_top50_rvol_selection.py test_risk_controls.py test_audit_risk_fixes.py test_selection_pipeline_order.py test_fundamental_cache_persistence_workflow.py test_fundamental_metric_verification.py test_fii_dii_activity.py test_sanitize_public_artifacts.py test_telegram_finalizer.py
 
           echo "===== P2 CASH FLOW BASIS + NSE XBRL FETCH TESTS ====="
           python -m pytest -q test_nse_xbrl_fetch.py test_nse_xbrl_sample_diagnostic.py test_nse_xbrl_financial_fact_audit.py test_nse_xbrl_statement_reconciliation.py test_nse_xbrl_ytd_cashflow_reconciliation.py test_fundamental_data_provider.py test_fundamental_shortlist_and_alignment.py test_fundamental_official_filings.py
@@ -264,6 +264,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TELEGRAM: "true"
+          TELEGRAM_DEFER_TO_WORKFLOW: "true"
           RISK_CONFIG_JSON: ${{ secrets.RISK_CONFIG_JSON }}
           # Adapter uses bounded 4s connect / 8s read timeouts and disables retries.
           V8_FREE_FUNDAMENTAL_SOURCES: "true"
@@ -611,3 +612,37 @@ jobs:
             data/cache/xbrl_samples/
           if-no-files-found: warn
 
+      - name: Save NSE, delivery, and sector history caches before Telegram notification
+        if: success() && steps.nse_scan.outcome == 'success' && steps.artifact_redaction.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            data/bhavcopy/
+            data/cache/delivery/
+            data/cache/sector_index_daily/
+            data/cache/market_index/
+            data/cache/sector_constituents/
+            data/cache/sector_quote_classifications/
+            data/cache/universe/
+            data/inputs/sector_map.csv
+            data/inputs/sector_history.csv
+            data/inputs/fundamental_metrics.csv
+            data/cache/fundamental_history/
+            data/cache/telegram_premarket_news_seen.csv
+            data/cache/xbrl_samples/
+            data/cache/xbrl_period_pairs/
+            data/cache/shareholding_xbrl/
+            outputs/v8_official_financial_results_filings.csv
+          key: nse-bhavcopy-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Send final Telegram report after required workflow processing
+        if: success() && steps.nse_scan.outcome == 'success' && steps.artifact_redaction.outcome == 'success'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NEWS_SCAN_MODE: ${{ github.event_name == 'schedule' && github.event.schedule == '30 2 * * 1-5' && 'PREMARKET' || inputs.scan_mode || 'EOD' }}
+          TELEGRAM_MAX_STOCKS: ${{ vars.TELEGRAM_MAX_STOCKS || '10' }}
+          TELEGRAM_MODE: ${{ vars.TELEGRAM_MODE || 'SUMMARY' }}
+        run: |
+          set -euo pipefail
+          python -u telegram_finalizer.py
