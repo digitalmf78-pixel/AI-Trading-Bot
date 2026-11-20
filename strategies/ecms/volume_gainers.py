@@ -137,6 +137,7 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
     asof = pd.to_datetime(asof_date, errors="coerce")
     result = {
         "FundamentalPeriodLabel": "PERIOD_UNKNOWN",
+        "FundamentalDataFrequency": "UNKNOWN",
         "FundamentalQuarterAge": "",
         "FundamentalFreshnessStatus": "PERIOD_UNKNOWN",
         "FundamentalRecheckRecommendation": "MANUAL_RECHECK_NOW_PERIOD_UNKNOWN",
@@ -161,7 +162,9 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
     current_quarter = ((asof.month - 4) % 12) // 3 + 1
     age = (current_fy * 4 + current_quarter) - (fiscal_year * 4 + quarter)
     calculation_basis = str(metric_row.get("MetricCalculationBasis", "") or "").upper()
-    if "ANNUAL" in calculation_basis and period.month == 3:
+    is_annual = "ANNUAL" in calculation_basis and period.month == 3
+    result["FundamentalDataFrequency"] = "ANNUAL" if is_annual else "QUARTERLY"
+    if is_annual:
         result["FundamentalPeriodLabel"] = f"FY{str(fiscal_year)[-2:]} ANNUAL ({period.strftime('%b-%Y')})"
     else:
         result["FundamentalPeriodLabel"] = f"Q{quarter} FY{str(fiscal_year)[-2:]} ({period.strftime('%b-%Y')})"
@@ -176,14 +179,14 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
         result["FundamentalFreshnessStatus"] = "FUTURE_PERIOD_CHECK_REQUIRED"
         result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_FUTURE_PERIOD"
     elif age == 0:
-        result["FundamentalFreshnessStatus"] = "CURRENT_FISCAL_QUARTER"
-        result["FundamentalRecheckRecommendation"] = "LATEST_YAHOO_DATA_MANUAL_CONFIRM_BEFORE_SELECTION"
+        result["FundamentalFreshnessStatus"] = "ANNUAL_CURRENT_FY" if is_annual else "CURRENT_FISCAL_QUARTER"
+        result["FundamentalRecheckRecommendation"] = "LATEST_YAHOO_ANNUAL_MANUAL_CONFIRM_BEFORE_SELECTION" if is_annual else "LATEST_YAHOO_DATA_MANUAL_CONFIRM_BEFORE_SELECTION"
     elif age == 1:
         result["FundamentalFreshnessStatus"] = "1Q_OLD"
         result["FundamentalRecheckRecommendation"] = "RECHECK_BEFORE_STOCK_SELECTION"
     else:
-        result["FundamentalFreshnessStatus"] = f"{age}Q_OLD"
-        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_STALE_QUARTER"
+        result["FundamentalFreshnessStatus"] = f"ANNUAL_{age}Q_OLD" if is_annual else f"{age}Q_OLD"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_STALE_ANNUAL" if is_annual else "MANUAL_RECHECK_NOW_STALE_QUARTER"
     return result
 
 
@@ -951,7 +954,7 @@ def assess_page_fundamentals(candidates, eod_date):
     # Publish current-page candidate snapshots, not the full persistent cache
     # or filing register. Include the period-age labels in the primary metrics CSV.
     freshness_columns = [
-        "FundamentalPeriodLabel", "FundamentalQuarterAge",
+        "FundamentalPeriodLabel", "FundamentalDataFrequency", "FundamentalQuarterAge",
         "FundamentalFreshnessStatus", "FundamentalRecheckRecommendation",
     ]
     freshness_rows = [
