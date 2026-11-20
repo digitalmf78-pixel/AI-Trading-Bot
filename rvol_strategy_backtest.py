@@ -69,15 +69,15 @@ def forward_session_dates(market_dates, signal_date, horizon: int) -> list[pd.Ti
     return future if len(future) == int(horizon) else []
 
 
-def classify_delivery(values: list[float]) -> tuple[str, str]:
-    """Apply approved A/B counts over valid distinct reports in the 30-day window."""
-    if len(values) < 5 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 100 for v in values):
+def classify_delivery(values: list[float | None]) -> tuple[str, str]:
+    """Apply A/B rules; missing symbol rows break A streaks but do not count for B."""
+    valid = [float(v) for v in values if v is not None]
+    if len(valid) < 5 or any(not math.isfinite(v) or not 0 <= v <= 100 for v in valid):
         return "WAIT_FOR_DATA", "WAIT_FOR_DATA"
-    valid = [float(v) for v in values]
     longest_streak = 0
     current_streak = 0
-    for value in valid:
-        if value >= 60.0:
+    for value in values:
+        if value is not None and math.isfinite(float(value)) and float(value) >= 60.0:
             current_streak += 1
             longest_streak = max(longest_streak, current_streak)
         else:
@@ -213,22 +213,22 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             rvol = float(current_volume) / avg_volume
 
             eligible_delivery_dates = delivery_windows.get(date, [])
-            dvalues = []
+            dvalues_by_report = []
             candidate_delivery_dates = []
             for delivery_day in eligible_delivery_dates:
                 value = delivery_lookup.get(delivery_day, {}).get(symbol)
-                if value is None:
-                    continue
-                candidate_delivery_dates.append(delivery_day)
-                dvalues.append(value)
+                dvalues_by_report.append(value)
+                if value is not None:
+                    candidate_delivery_dates.append(delivery_day)
+            dvalues = [float(value) for value in dvalues_by_report if value is not None]
             if len(dvalues) < 5:
                 rejection["insufficient_delivery_history"] += 1
                 continue
-            cat_a, cat_b = classify_delivery(dvalues)
+            cat_a, cat_b = classify_delivery(dvalues_by_report)
             qualifying_a_windows = 0
             current_streak = 0
-            for delivery_value in dvalues:
-                if float(delivery_value) >= 60.0:
+            for delivery_value in dvalues_by_report:
+                if delivery_value is not None and float(delivery_value) >= 60.0:
                     current_streak += 1
                     qualifying_a_windows = max(qualifying_a_windows, current_streak)
                 else:
