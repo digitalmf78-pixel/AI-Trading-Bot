@@ -55,6 +55,19 @@ An ECMS-only correction was committed on the isolated branch `fix/ecms-p1-free-s
 
 Validation: ECMS CI passed on the branch (164 tests passed, including the new missing/disabled-status regression tests). The correction is isolated and is **not merged to main**.
 
+## P1 policy enforcement work — 2026-11-20
+
+Following the fixed P0 data-source contract, ECMS-only changes were made on this isolated branch:
+
+- Fundamental metric rows are now emitted by the ECMS source-compilation layer only when their metric-level source is exactly `Yahoo Finance via yfinance`; cached values attributed to other providers are not surfaced as research metrics.
+- Legacy manual Screener/other-provider observations are ignored. BSE manual filing rows are retained only as `BSE_OFFICIAL_FILING_VERIFICATION_EVIDENCE`, marked `OFFICIAL_VERIFICATION_EVIDENCE_PENDING` / `MANUAL_REVIEW_REQUIRED`; they cannot replace Yahoo values.
+- Legacy cached secondary-source comparison payloads are suppressed in the ECMS comparison output.
+- Both ECMS workflow jobs now set `V8_FREE_FUNDAMENTAL_SOURCES=false` explicitly. The ECMS scanner also forces this flag off inside its isolated workspace. Shared provider code was not changed.
+- Annual Yahoo fallback now has an explicit `FundamentalDataFrequency=ANNUAL` and freshness labels such as `ANNUAL_3Q_OLD`, distinct from quarterly labels. The underlying period and age remain visible; annual data is not relabelled as a current quarter.
+- Regression tests were updated for Yahoo-only source inclusion, third-party observation suppression, BSE verification-only status, and annual fallback freshness.
+
+These are code changes under validation on the isolated branch only. They have not been merged to main and do not change NSE V8.
+
 ## Ordered next work
 
 1. Continue P1: investigate why all seven metrics still carry FY 2026-03-31 (3Q_OLD) and why quarterly cash-flow periods are unavailable for most symbols. The provider diagnostics show 15/17 with no quarterly cash-flow periods, and most rows fall back to annual metrics with reason QUARTERLY_CASHFLOW_PERIODS_NOT_ALIGNED. Keep stale/unverified rows in WAIT; do not change the shared provider or force a PASS.
