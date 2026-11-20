@@ -469,3 +469,71 @@ def test_nse_api_capture_marks_explicit_multi_page_payload_as_partial():
     row = fetch_ecms_candidate_filing_metadata(pd.DataFrame([{"TckrSymb":"ABC"}]), "2026-11-15", session=Session()).iloc[0]
     assert row["CaptureCoverageStatus"] == "PARTIAL_PAGINATION_PAGE_ONLY"
     assert row["CaptureLimitations"] == "ONLY_PAGE_0_OF_2_CAPTURED"
+
+
+
+def test_nse_api_capture_persists_bounded_raw_response_bytes(tmp_path):
+    import hashlib
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_candidate_filing_metadata
+
+    body = b'{"data":[{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC.xml"}]}'
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        content = body
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data": [{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00","xbrl":"https://nsearchives.nseindia.com/xbrl/ABC.xml"}]}
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def get(self, *_args, **_kwargs): return Response()
+
+    out = fetch_ecms_candidate_filing_metadata(
+        pd.DataFrame([{"TckrSymb": "ABC"}]),
+        "2026-11-15",
+        session=Session(),
+        evidence_dir=tmp_path / "nse_filing_api_raw",
+    )
+    row = out.iloc[0]
+    assert row["SourcePayloadSHA256"] == hashlib.sha256(body).hexdigest()
+    assert row["SourcePayloadStoredBytes"] == len(body)
+    assert row["SourcePayloadTruncated"] in (False, "False")
+    saved = tmp_path / row["SourcePayloadEvidencePath"]
+    assert saved.read_bytes() == body
+
+
+def test_nse_api_capture_marks_truncated_raw_response_without_losing_full_hash(tmp_path):
+    import hashlib
+    from strategies.ecms.filing_metadata_audit import fetch_ecms_candidate_filing_metadata
+
+    body = b'{"data":[{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00"}]}'
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        content = body
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data": [{"symbol":"ABC","qe_Date":"31-Mar-2026","creation_Date":"20-May-2026 18:00:00"}]}
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def get(self, *_args, **_kwargs): return Response()
+
+    out = fetch_ecms_candidate_filing_metadata(
+        pd.DataFrame([{"TckrSymb": "ABC"}]),
+        "2026-11-15",
+        session=Session(),
+        evidence_dir=tmp_path / "nse_filing_api_raw",
+        max_payload_bytes=16,
+    )
+    row = out.iloc[0]
+    assert row["SourcePayloadSHA256"] == hashlib.sha256(body).hexdigest()
+    assert row["SourcePayloadBytes"] == len(body)
+    assert row["SourcePayloadStoredBytes"] == 16
+    assert row["SourcePayloadTruncated"] in (True, "True")
+    saved = tmp_path / row["SourcePayloadEvidencePath"]
+    assert saved.suffix == ".bin"
+    assert len(saved.read_bytes()) == 16
