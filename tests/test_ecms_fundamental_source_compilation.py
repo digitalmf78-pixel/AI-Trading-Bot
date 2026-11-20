@@ -8,7 +8,7 @@ from strategies.ecms.fundamental_source_compilation import (
 )
 
 
-def test_compilation_keeps_provider_and_free_screener_observations_separate():
+def test_compilation_rejects_screener_as_fundamental_provider():
     metrics = pd.DataFrame([{
         "TckrSymb": "AAA", "ROEPercent": 18.0,
         "MetricSourcesJSON": '{"ROEPercent":"Yahoo Finance via yfinance"}',
@@ -22,17 +22,24 @@ def test_compilation_keeps_provider_and_free_screener_observations_separate():
         "Source": "SCREENER_FREE_MANUAL", "SourceURL": "https://www.screener.in/company/AAA/",
         "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-10",
         "CalculationBasis": "CONSOLIDATED", "Unit": "PERCENT",
-        "ObservationNotes": "Manually read from free company page",
+        "ObservationNotes": "Must not be used as an alternate provider",
     }], columns=MANUAL_COLUMNS)
 
-    result = build_fundamental_source_compilation(metrics, manual_observations=manual)
-    rows = result[result["MetricName"] == "ROEPercent"]
+    with pytest.raises(ValueError, match="third-party fundamentals are prohibited"):
+        build_fundamental_source_compilation(metrics, manual_observations=manual)
 
-    assert len(rows) == 2
-    assert set(rows["Source"]) == {"Yahoo Finance via yfinance", "SCREENER_FREE_MANUAL"}
-    assert rows["VerificationStatus"].eq("NOT_OFFICIALLY_VERIFIED").all()
-    assert rows["SourceStatus"].eq("OBSERVATION_ONLY").sum() == 1
-    assert rows["SourceStatus"].eq("MANUAL_OBSERVATION_ONLY").sum() == 1
+
+def test_compilation_includes_only_yahoo_metric_values():
+    metrics = pd.DataFrame([{
+        "TckrSymb": "AAA", "ROEPercent": 18.0, "ROCEPercent": 21.0,
+        "MetricSourcesJSON": '{"ROEPercent":"Yahoo Finance via yfinance","ROCEPercent":"Other Provider"}',
+        "MetricSourcePeriodsJSON": '{"ROEPercent":"Mar 2026","ROCEPercent":"Mar 2026"}',
+        "MetricCalculationBasesJSON": '{"ROEPercent":"ANNUAL_ALIGNED_STATEMENTS","ROCEPercent":"ANNUAL_ALIGNED_STATEMENTS"}',
+        "MetricSourceCurrenciesJSON": '{"ROEPercent":"PERCENT","ROCEPercent":"PERCENT"}',
+    }])
+    result = build_fundamental_source_compilation(metrics)
+    assert result["MetricName"].tolist() == ["ROEPercent"]
+    assert result.iloc[0]["Source"] == "Yahoo Finance via yfinance"
 
 
 def test_compilation_carries_official_nse_verification_without_upgrading_manual_source():
@@ -51,10 +58,11 @@ def test_compilation_carries_official_nse_verification_without_upgrading_manual_
 
     result = build_fundamental_source_compilation(metrics, verification, manual)
     official = result[result["Source"] == "NSE_OFFICIAL_XBRL_AUDIT"].iloc[0]
-    bse = result[result["Source"] == "BSE_OFFICIAL_FILING_MANUAL"].iloc[0]
+    bse = result[result["Source"] == "BSE_OFFICIAL_FILING_VERIFICATION_EVIDENCE"].iloc[0]
 
     assert official["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
-    assert bse["VerificationStatus"] == "NOT_OFFICIALLY_VERIFIED"
+    assert bse["VerificationStatus"] == "MANUAL_REVIEW_REQUIRED"
+    assert bse["SourceStatus"] == "OFFICIAL_VERIFICATION_EVIDENCE_PENDING"
     assert bse["MetricValue"] == 0.6
 
 
