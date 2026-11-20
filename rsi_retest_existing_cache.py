@@ -144,13 +144,19 @@ def _delivery_status(symbol: str, signal_date: pd.Timestamp, delivery_by_date: d
                 "DeliveryMinimum30D_Pct": float(min(values)) if values else np.nan}
     avg = float(np.mean(values))
     minimum = float(min(values))
-    rolling = pd.Series(values, dtype="float64").rolling(window=5, min_periods=5).mean()
-    a_count = int(rolling.ge(MIN_DELIVERY_PCT).sum())
+    a_count = 0
+    current_streak = 0
+    for value in values:
+        if value >= MIN_DELIVERY_PCT:
+            current_streak += 1
+            a_count = max(a_count, current_streak)
+        else:
+            current_streak = 0
     b_count = int(sum(v >= MIN_DELIVERY_PCT for v in values))
     return {
-        "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5" if a_count >= 5 else "FILTERED_OUT_ROLLING_5D_AVG_LT_5",
+        "DeliveryCategoryAStatus": "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5" if a_count >= 5 else "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5",
         "DeliveryCategoryBStatus": "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5" if b_count >= 5 else "FILTERED_OUT_DAILY_DELIVERY_LT_5",
-        "DeliveryARolling5DPassCount30D": a_count,
+        "DeliveryAConsecutivePassCount30D": a_count,
         "DeliveryDailyPassCount": b_count,
         "DeliverySessions": count, "DeliveryAverage30D_Pct": avg, "DeliveryMinimum30D_Pct": minimum,
     }
