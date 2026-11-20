@@ -52,7 +52,7 @@ def test_delivery_audit_rejects_when_both_minimum_five_counts_fail(monkeypatch, 
 
     row = audit.iloc[0]
     assert qualified.empty  # Neither category reaches five qualifying observations.
-    assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
+    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
     assert row["DeliveryStatus"] == "FILTERED_OUT_LT_60_PERCENT"
     assert row["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
@@ -192,7 +192,7 @@ def test_delivery_display_counts_do_not_change_eligibility(monkeypatch, tmp_path
     assert row["DeliveryACount30DDisplay"] == "6/30"
     assert row["DeliveryBCount30DDisplay"] == "6/30"
     assert row["DeliveryAConsecutivePassCount30D"] == 6
-    assert row["DeliveryDailyPassCount"] == 5
+    assert row["DeliveryDailyPassCount"] == 6
     assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
 
