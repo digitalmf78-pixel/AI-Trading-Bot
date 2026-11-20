@@ -75,17 +75,17 @@ def test_news_delivery_gate_keeps_category_a_only_and_a_and_b_union():
     candidates = pd.DataFrame([
         {
             "TckrSymb": "A_ONLY",
-            "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+            "DeliveryCategoryAStatus": "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5",
             "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
         },
         {
             "TckrSymb": "A_AND_B",
-            "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+            "DeliveryCategoryAStatus": "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5",
             "DeliveryCategoryBStatus": "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5",
         },
         {
             "TckrSymb": "REJECT",
-            "DeliveryCategoryAStatus": "FILTERED_OUT_ROLLING_5D_AVG_LT_5",
+            "DeliveryCategoryAStatus": "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5",
             "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
         },
     ])
