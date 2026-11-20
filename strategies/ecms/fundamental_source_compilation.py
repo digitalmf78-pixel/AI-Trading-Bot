@@ -65,9 +65,10 @@ def _provider_rows(metrics: pd.DataFrame) -> list[dict]:
         maps = {name: _mapping(item.get(column)) for name, column in JSON_FIELDS.items()}
         for metric in METRICS:
             value = _number(item.get(metric))
-            if value is None:
-                continue
             source = str(maps["source"].get(metric, "") or "").strip()
+            # ECMS research values must come only from Yahoo Finance via yfinance.
+            if value is None or source.casefold() != "yahoo finance via yfinance":
+                continue
             rows.append({
                 "TckrSymb": symbol,
                 "MetricName": metric,
