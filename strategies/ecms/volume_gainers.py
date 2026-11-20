@@ -303,7 +303,14 @@ def _ecms_free_source_evidence(row):
         if isinstance(values, list) and values
     } if isinstance(parsed, dict) else {}
     count = len(observed)
-    existing = str(row.get("FreeSourcesStatus", "") or "").strip().upper()
+    raw_status = row.get("FreeSourcesStatus", "")
+    try:
+        status_is_missing = raw_status is None or pd.isna(raw_status)
+    except (TypeError, ValueError):
+        status_is_missing = False
+    existing = "" if status_is_missing else str(raw_status).strip().upper()
+    if existing in {"", "NAN", "NONE", "<NA>"}:
+        existing = ""
     if existing == "DATA_FOUND":
         status = "DATA_FOUND_CURRENT_ATTEMPT"
     elif count:
