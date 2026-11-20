@@ -1,8 +1,9 @@
 """Research-only Delivery A/B cohort forward-outcome backtest on cached NSE EOD data.
 
-Uses the approved 30-calendar-day Delivery rules (A: at least five qualifying
-trailing 5-valid-session averages >=60%; B: at least five daily observations
->=60%), includes the A OR B union, and treats RVOL as descriptive only.
+Uses the approved 30-calendar-day Delivery rules (A: a consecutive run of at
+least five valid sessions each >=60%; B: at least five daily observations
+>=60%, not necessarily consecutive), includes the A OR B union, and treats RVOL
+as descriptive only.
 The prior-20-session average traded-value liquidity condition remains >= INR
 1.5 crore. Forward 5/10/20-session outcomes use exact official NSE sessions.
 No network calls, no live scanner changes, no fundamental claims.
@@ -73,12 +74,16 @@ def classify_delivery(values: list[float]) -> tuple[str, str]:
     if len(values) < 5 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 100 for v in values):
         return "WAIT_FOR_DATA", "WAIT_FOR_DATA"
     valid = [float(v) for v in values]
-    qualifying_a_windows = sum(
-        sum(valid[index - 4:index + 1]) / 5.0 >= 60.0
-        for index in range(4, len(valid))
-    )
+    longest_streak = 0
+    current_streak = 0
+    for value in valid:
+        if value >= 60.0:
+            current_streak += 1
+            longest_streak = max(longest_streak, current_streak)
+        else:
+            current_streak = 0
     qualifying_b_days = sum(value >= 60.0 for value in valid)
-    a = "PASS" if qualifying_a_windows >= 5 else "REJECT"
+    a = "PASS" if longest_streak >= 5 else "REJECT"
     b = "PASS" if qualifying_b_days >= 5 else "REJECT"
     return a, b
 
@@ -220,10 +225,14 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 rejection["insufficient_delivery_history"] += 1
                 continue
             cat_a, cat_b = classify_delivery(dvalues)
-            qualifying_a_windows = sum(
-                sum(float(v) for v in dvalues[index - 4:index + 1]) / 5.0 >= 60.0
-                for index in range(4, len(dvalues))
-            )
+            qualifying_a_windows = 0
+            current_streak = 0
+            for delivery_value in dvalues:
+                if float(delivery_value) >= 60.0:
+                    current_streak += 1
+                    qualifying_a_windows = max(qualifying_a_windows, current_streak)
+                else:
+                    current_streak = 0
             qualifying_b_days = sum(float(v) >= 60.0 for v in dvalues)
             if cat_a != "PASS" and cat_b != "PASS":
                 rejection["delivery_a_and_b_reject"] += 1
@@ -242,7 +251,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 "AvgTradedValue20D_INR": avg_value, "Delivery30D_AveragePct": sum(dvalues) / len(dvalues),
                 "Delivery30D_MinPct": min(dvalues), "DeliveryCategoryA": cat_a, "DeliveryCategoryB": cat_b,
                 "DeliveryValidReportCount": len(dvalues),
-                "DeliveryQualifyingAWindows": qualifying_a_windows,
+                "DeliveryAConsecutiveStreakDays": qualifying_a_windows,
                 "DeliveryQualifyingBDays": qualifying_b_days,
                 "DeliveryCohort": delivery_cohort,
                 "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in candidate_delivery_dates),
@@ -306,7 +315,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             "DeliveryCohort": cohort, "SignalCount": int(len(group)),
             "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
             "LiquidityGate": "20 prior official sessions average traded value >= INR 1.5 crore",
-            "DeliveryGate": "30 calendar days; A = at least 5 trailing 5-valid-session averages >=60%; B = at least 5 daily reports >=60%; A OR B",
+            "DeliveryGate": "30 calendar days; A = longest consecutive daily >=60% streak is at least 5; B = at least 5 daily reports >=60% (not necessarily consecutive); A OR B",
             "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
         }
         for h in HORIZONS:
