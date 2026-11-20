@@ -114,12 +114,16 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
     try:
         sources = json.loads(str(metric_row.get("MetricSourcesJSON", "{}") or "{}"))
         periods = json.loads(str(metric_row.get("MetricSourcePeriodsJSON", "{}") or "{}"))
+        bases = json.loads(str(metric_row.get("MetricCalculationBasesJSON", "{}") or "{}"))
         sources = sources if isinstance(sources, dict) else {}
         periods = periods if isinstance(periods, dict) else {}
+        bases = bases if isinstance(bases, dict) else {}
     except (TypeError, ValueError):
-        sources, periods = {}, {}
+        sources, periods, bases = {}, {}, {}
 
     populated = []
+    populated_bases = []
+    missing_period_or_basis = []
     non_yahoo = []
     for metric in metric_names:
         value = pd.to_numeric(pd.Series([metric_row.get(metric)]), errors="coerce").iloc[0]
@@ -130,10 +134,15 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
             non_yahoo.append(metric)
             continue
         period = pd.to_datetime(periods.get(metric, ""), errors="coerce")
-        if pd.notna(period):
+        basis = str(bases.get(metric, metric_row.get("MetricCalculationBasis", "")) or "").strip().upper()
+        if pd.notna(period) and basis:
             populated.append(period.date())
+            populated_bases.append(basis)
+        else:
+            missing_period_or_basis.append(metric)
 
     unique_periods = sorted(set(populated))
+    unique_bases = sorted(set(populated_bases))
     asof = pd.to_datetime(asof_date, errors="coerce")
     result = {
         "FundamentalPeriodLabel": "PERIOD_UNKNOWN",
@@ -146,10 +155,14 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
         result["FundamentalFreshnessStatus"] = "NON_YAHOO_VALUE_BLOCKED"
         result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_NON_YAHOO_SOURCE"
         return result
-    if len(unique_periods) > 1:
-        result["FundamentalPeriodLabel"] = "MIXED_PERIODS"
-        result["FundamentalFreshnessStatus"] = "MIXED_METRIC_PERIODS"
-        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_MIXED_PERIODS"
+    if len(unique_periods) > 1 or len(unique_bases) > 1:
+        result["FundamentalPeriodLabel"] = "MIXED_PERIODS_OR_BASES"
+        result["FundamentalFreshnessStatus"] = "MIXED_METRIC_PERIODS_OR_BASES"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_MIXED_PERIODS_OR_BASES"
+        return result
+    if missing_period_or_basis:
+        result["FundamentalFreshnessStatus"] = "METRIC_PERIOD_OR_BASIS_INCOMPLETE"
+        result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_METRIC_PERIOD_METADATA"
         return result
     if not unique_periods or pd.isna(asof):
         return result
@@ -161,8 +174,8 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
     current_fy = asof.year + (1 if asof.month >= 4 else 0)
     current_quarter = ((asof.month - 4) % 12) // 3 + 1
     age = (current_fy * 4 + current_quarter) - (fiscal_year * 4 + quarter)
-    calculation_basis = str(metric_row.get("MetricCalculationBasis", "") or "").upper()
-    is_annual = "ANNUAL" in calculation_basis and period.month == 3
+    calculation_basis = unique_bases[0] if unique_bases else str(metric_row.get("MetricCalculationBasis", "") or "").upper()
+    is_annual = calculation_basis == "ANNUAL_ALIGNED_STATEMENTS" and period.month == 3
     result["FundamentalDataFrequency"] = "ANNUAL" if is_annual else "QUARTERLY"
     if is_annual:
         result["FundamentalPeriodLabel"] = f"FY{str(fiscal_year)[-2:]} ANNUAL ({period.strftime('%b-%Y')})"
@@ -182,8 +195,8 @@ def _ecms_yahoo_period_freshness(metric_row, asof_date):
         result["FundamentalFreshnessStatus"] = "ANNUAL_CURRENT_FY" if is_annual else "CURRENT_FISCAL_QUARTER"
         result["FundamentalRecheckRecommendation"] = "LATEST_YAHOO_ANNUAL_MANUAL_CONFIRM_BEFORE_SELECTION" if is_annual else "LATEST_YAHOO_DATA_MANUAL_CONFIRM_BEFORE_SELECTION"
     elif age == 1:
-        result["FundamentalFreshnessStatus"] = "1Q_OLD"
-        result["FundamentalRecheckRecommendation"] = "RECHECK_BEFORE_STOCK_SELECTION"
+        result["FundamentalFreshnessStatus"] = "ANNUAL_1Q_OLD" if is_annual else "1Q_OLD"
+        result["FundamentalRecheckRecommendation"] = "RECHECK_ANNUAL_BEFORE_STOCK_SELECTION" if is_annual else "RECHECK_BEFORE_STOCK_SELECTION"
     else:
         result["FundamentalFreshnessStatus"] = f"ANNUAL_{age}Q_OLD" if is_annual else f"{age}Q_OLD"
         result["FundamentalRecheckRecommendation"] = "MANUAL_RECHECK_NOW_STALE_ANNUAL" if is_annual else "MANUAL_RECHECK_NOW_STALE_QUARTER"
