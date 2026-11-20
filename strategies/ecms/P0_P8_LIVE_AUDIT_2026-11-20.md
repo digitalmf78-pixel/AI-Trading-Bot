@@ -64,7 +64,8 @@ Following the fixed P0 data-source contract, ECMS-only changes were made on this
 - Legacy cached secondary-source comparison payloads are suppressed in the ECMS comparison output.
 - Both ECMS workflow jobs now set `V8_FREE_FUNDAMENTAL_SOURCES=false` explicitly. The ECMS scanner also forces this flag off inside its isolated workspace. Shared provider code was not changed.
 - Annual Yahoo fallback now has an explicit `FundamentalDataFrequency=ANNUAL` and freshness labels such as `ANNUAL_3Q_OLD`, distinct from quarterly labels. The underlying period and age remain visible; annual data is not relabelled as a current quarter.
-- Regression tests were updated for Yahoo-only source inclusion, third-party observation suppression, BSE verification-only status, and annual fallback freshness.
+- Freshness now uses metric-level source periods and calculation bases. Mixed periods/bases or missing period/basis metadata are explicitly blocked rather than collapsed into a row-level label.
+- Regression tests were updated for Yahoo-only source inclusion, third-party observation suppression, BSE verification-only status, annual fallback freshness, and mixed/missing metric-level period metadata.
 
 These are code changes under validation on the isolated branch only. They have not been merged to main and do not change NSE V8.
 
