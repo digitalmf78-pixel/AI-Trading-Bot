@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -21,7 +23,6 @@ JSON_FIELDS = {
     "url": "MetricSourceURLsJSON",
     "period": "MetricSourcePeriodsJSON",
     "basis": "MetricCalculationBasesJSON",
-    "currency": "MetricSourceCurrenciesJSON",
 }
 MANUAL_COLUMNS = [
     "TckrSymb", "MetricName", "MetricValue", "Source", "SourceURL",
@@ -42,6 +43,17 @@ def _mapping(value):
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _metric_unit(metric: str) -> str:
+    """Return the financial unit; source currency is not a metric unit."""
+    if metric.endswith(("Pct", "Percent")):
+        return "PERCENT"
+    if metric in {"DebtToEquity", "InterestCoverage"}:
+        return "RATIO"
+    if metric.endswith("INR"):
+        return "INR"
+    return ""
 
 
 def _number(value):
@@ -78,7 +90,7 @@ def _provider_rows(metrics: pd.DataFrame) -> list[dict]:
                 "FinancialPeriodEnd": str(maps["period"].get(metric, "") or "").strip(),
                 "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
                 "CalculationBasis": str(maps["basis"].get(metric, item.get("MetricCalculationBasis", "")) or "").strip(),
-                "Unit": str(maps["currency"].get(metric, "PERCENT" if metric.endswith("Pct") else "RATIO" if metric in {"DebtToEquity", "InterestCoverage"} else "INR") or "").strip(),
+                "Unit": _metric_unit(metric),
                 "SourceStatus": "OBSERVATION_ONLY",
                 "VerificationStatus": "NOT_OFFICIALLY_VERIFIED",
                 "MismatchStatus": "NOT_ASSESSED",
@@ -107,7 +119,7 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
         )
         unit = str(item.get("Unit", "") or "").strip()
         if not unit:
-            unit = "PERCENT" if metric.endswith("Pct") else "RATIO" if metric in {"DebtToEquity", "InterestCoverage"} else "INR"
+            unit = _metric_unit(metric)
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
@@ -144,9 +156,9 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
             "MetricName": "DebtToEquity",
             "MetricValue": _number(item.get("OfficialDebtToEquity")),
             "Source": "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT",
-            "SourceURL": str(item.get("EvidenceFilePath", "") or "").strip(),
+            "SourceURL": str(item.get("OfficialFilingURL", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
-            "PublicationDate": "",
+            "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
             "CalculationBasis": str(item.get("ReportingBasis", "") or "").strip(),
             "Unit": "RATIO",
             "SourceStatus": "OFFICIAL_AUDIT_RESULT",
@@ -173,16 +185,44 @@ def _manual_rows(observations: pd.DataFrame) -> list[dict]:
             continue
         if source not in {"SCREENER_FREE_MANUAL", "BSE_OFFICIAL_FILING_MANUAL"}:
             raise ValueError("Manual Source must be SCREENER_FREE_MANUAL or BSE_OFFICIAL_FILING_MANUAL")
+        value = _number(item.get("MetricValue"))
+        source_url = str(item.get("SourceURL", "") or "").strip()
+        period = str(item.get("FinancialPeriodEnd", "") or "").strip()
+        publication_date = str(item.get("PublicationDate", "") or "").strip()
+        basis = str(item.get("CalculationBasis", "") or "").strip().upper()
+        unit = str(item.get("Unit", "") or "").strip().upper()
+        required = {
+            "MetricValue": value,
+            "SourceURL": source_url,
+            "FinancialPeriodEnd": period,
+            "PublicationDate": publication_date,
+            "CalculationBasis": basis,
+            "Unit": unit,
+        }
+        missing_fields = [name for name, field in required.items() if field is None or field == ""]
+        if missing_fields:
+            raise ValueError("Manual observation missing required fields: " + ", ".join(missing_fields))
+        parsed_url = urlsplit(source_url)
+        if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
+            raise ValueError("Manual observation SourceURL must be an absolute HTTPS URL")
+        try:
+            date.fromisoformat(period[:10])
+            date.fromisoformat(publication_date[:10])
+        except ValueError as exc:
+            raise ValueError("Manual observation dates must use YYYY-MM-DD") from exc
+        expected_unit = _metric_unit(metric)
+        if unit != expected_unit:
+            raise ValueError(f"Manual observation Unit for {metric} must be {expected_unit}")
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
-            "MetricValue": _number(item.get("MetricValue")),
+            "MetricValue": value,
             "Source": source,
-            "SourceURL": str(item.get("SourceURL", "") or "").strip(),
-            "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
-            "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
-            "CalculationBasis": str(item.get("CalculationBasis", "") or "").strip(),
-            "Unit": str(item.get("Unit", "") or "").strip(),
+            "SourceURL": source_url,
+            "FinancialPeriodEnd": period[:10],
+            "PublicationDate": publication_date[:10],
+            "CalculationBasis": basis,
+            "Unit": unit,
             "SourceStatus": "MANUAL_OBSERVATION_ONLY",
             "VerificationStatus": "NOT_OFFICIALLY_VERIFIED",
             "MismatchStatus": "NOT_ASSESSED",
