@@ -169,14 +169,15 @@ def test_category_a_requires_five_consecutive_qualifying_days(monkeypatch, tmp_p
         if is_trading_session(day):
             dates.append(day)
         day += timedelta(days=1)
-    values = [100.0, 59.0, 59.0, 59.0, 59.0, 100.0, 59.0, 59.0, 59.0, 59.0, 100.0, 59.0, 59.0]
+    values = [59.0, 59.0, 60.0, 61.0, 62.0, 63.0, 64.0, 65.0, 66.0, 59.0, 60.0, 60.0, 60.0]
     reports = [(d, _frame("AAA", (v,))) for d, v in zip(dates, values)]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, dates[-1], sessions=reports)
     row = audit.iloc[0]
-    assert row["DeliveryARolling5DPassCount30D"] >= 5
-    assert row["DeliveryDailyPassCount"] == 3
+    assert row["DeliveryAConsecutivePassCount30D"] == 7
+    assert row["DeliveryACount30DDisplay"] == "7/30"
+    assert row["DeliveryDailyPassCount"] == 10
     assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
-    assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
+    assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
 
 
@@ -188,9 +189,9 @@ def test_delivery_display_counts_do_not_change_eligibility(monkeypatch, tmp_path
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, [60, 61, 62, 63, 64, 65])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     row = audit.iloc[0]
-    assert row["DeliveryACount30DDisplay"] == "1/30"
-    assert row["DeliveryBCount30DDisplay"] == "5/30"
-    assert row["DeliveryARolling5DPassCount30D"] == 1
+    assert row["DeliveryACount30DDisplay"] == "6/30"
+    assert row["DeliveryBCount30DDisplay"] == "6/30"
+    assert row["DeliveryAConsecutivePassCount30D"] == 6
     assert row["DeliveryDailyPassCount"] == 5
     assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
     assert qualified["TckrSymb"].tolist() == ["AAA"]
