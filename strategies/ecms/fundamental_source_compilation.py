@@ -1,8 +1,7 @@
-"""ECMS-only compilation of metric observations from independent sources.
+"""ECMS-only compilation: Yahoo Finance collection, NSE/BSE official verification.
 
-This module does not fetch or scrape Screener.in. Free Screener and BSE observations
-may be supplied through an explicit, user-maintained CSV. Third-party observations
-never become official-XBRL verification merely by appearing in this report.
+Yahoo Finance via yfinance is the sole fundamental data provider. NSE/BSE rows
+are verification evidence only; no third-party fundamental provider is accepted.
 """
 from __future__ import annotations
 
@@ -53,7 +52,7 @@ def _number(value):
 
 
 def empty_manual_observation_template() -> pd.DataFrame:
-    """Return the header-only schema for manually captured BSE/Screener observations."""
+    """Return the schema for manually captured BSE official-filing verification evidence."""
     return pd.DataFrame(columns=MANUAL_COLUMNS)
 
 
@@ -171,23 +170,27 @@ def _manual_rows(observations: pd.DataFrame) -> list[dict]:
         source = str(item.get("Source", "") or "").strip().upper()
         if not symbol or metric not in METRICS:
             continue
-        if source not in {"SCREENER_FREE_MANUAL", "BSE_OFFICIAL_FILING_MANUAL"}:
-            raise ValueError("Manual Source must be SCREENER_FREE_MANUAL or BSE_OFFICIAL_FILING_MANUAL")
+        if source != "BSE_OFFICIAL_FILING_MANUAL":
+            raise ValueError("Manual Source must be BSE_OFFICIAL_FILING_MANUAL; third-party fundamentals are prohibited")
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
             "MetricValue": _number(item.get("MetricValue")),
-            "Source": source,
+            "Source": "BSE_OFFICIAL_FILING_VERIFICATION_EVIDENCE",
             "SourceURL": str(item.get("SourceURL", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
             "PublicationDate": str(item.get("PublicationDate", "") or "").strip(),
             "CalculationBasis": str(item.get("CalculationBasis", "") or "").strip(),
             "Unit": str(item.get("Unit", "") or "").strip(),
-            "SourceStatus": "MANUAL_OBSERVATION_ONLY",
-            "VerificationStatus": "NOT_OFFICIALLY_VERIFIED",
+            "SourceStatus": "OFFICIAL_VERIFICATION_EVIDENCE_PENDING",
+            "VerificationStatus": "MANUAL_REVIEW_REQUIRED",
             "MismatchStatus": "NOT_ASSESSED",
             "MismatchReason": "",
-            "ObservationNotes": str(item.get("ObservationNotes", "") or "").strip(),
+            "ObservationNotes": (
+                "BSE official filing evidence supplied for verification only; "
+                "does not replace or become a Yahoo fundamental value. "
+                + str(item.get("ObservationNotes", "") or "").strip()
+            ),
         })
     return rows
 
