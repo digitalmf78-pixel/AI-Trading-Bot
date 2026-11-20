@@ -52,7 +52,7 @@ def test_delivery_audit_rejects_when_both_minimum_five_counts_fail(monkeypatch, 
 
     row = audit.iloc[0]
     assert qualified.empty  # Neither category reaches five qualifying observations.
-    assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
+    assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
     assert row["DeliveryStatus"] == "FILTERED_OUT_LT_60_PERCENT"
     assert row["DeliveryFilterStatus"] == "FILTERED_OUT_LT_60_PERCENT"
@@ -79,7 +79,7 @@ def test_every_day_delivery_passes_downstream_gate(monkeypatch, tmp_path):
     reports = [(day, _frame("BBB", (value,))) for day, value in zip(dates, [60, 65, 61, 70, 63])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     assert qualified["TckrSymb"].tolist() == ["BBB"]
-    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
+    assert audit.iloc[0]["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
     assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
 
@@ -106,7 +106,7 @@ def test_30d_category_b_needs_five_daily_delivery_passes(monkeypatch, tmp_path):
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     dates = [date(2026, 10, 1), date(2026, 10, 5), date(2026, 10, 6),
              date(2026, 10, 7), date(2026, 10, 8), date(2026, 10, 9)]
-    values = [50.0, 62.0, 62.0, 62.0, 62.0, 62.0]  # six-session mean is exactly 60
+    values = [50.0, 62.0, 62.0, 62.0, 62.0, 62.0]  # five consecutive qualifying days after the 50% day
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, values)]
     _, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-09", sessions=reports)
     row = audit.iloc[0]
@@ -116,7 +116,7 @@ def test_30d_category_b_needs_five_daily_delivery_passes(monkeypatch, tmp_path):
     assert row["DeliveryMax30D"] == 62.0
     assert row["DeliveryWindowStartDate"] == "2026-09-10"
     assert row["DeliveryWindowEndDate"] == "2026-10-09"
-    assert row["DeliveryARolling5DPassCount30D"] == 1
+    assert row["DeliveryARolling5DPassCount30D"] == 5
     assert row["DeliveryDailyPassCount"] == 5
     assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
     assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
@@ -185,7 +185,7 @@ def test_delivery_display_counts_do_not_change_eligibility(monkeypatch, tmp_path
     monkeypatch.setattr(delivery_filter, "AUDIT_DIR", tmp_path / "outputs")
     candidates = pd.DataFrame([{"TckrSymb": "AAA", "SctySrs": "EQ"}])
     dates = [date(2026, 10, 15), date(2026, 10, 16), date(2026, 10, 19),
-             date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+             date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23)]
     reports = [(day, _frame("AAA", (value,))) for day, value in zip(dates, [60, 61, 62, 63, 64, 65])]
     qualified, audit = delivery_filter.apply_delivery_filter(candidates, "2026-10-23", sessions=reports)
     row = audit.iloc[0]
