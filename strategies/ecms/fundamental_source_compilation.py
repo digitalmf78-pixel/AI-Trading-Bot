@@ -101,10 +101,10 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
         # The verification audit schema stores CachedMetricValue, not a separate
         # OfficialMetricValue. Expose that value only when the audit has actually
         # verified it; never present a mismatching provider value as an NSE fact.
-        verified_value = (
-            _number(item.get("CachedMetricValue"))
-            if status == "OFFICIAL_XBRL_VERIFIED" else None
-        )
+        # Verification-only: do not copy the Yahoo cached value into an
+        # official-source MetricValue column. Status/metadata attest verification;
+        # the source value remains exclusively in the Yahoo observation row.
+        verified_value = None
         unit = str(item.get("Unit", "") or "").strip()
         if not unit:
             unit = "PERCENT" if metric.endswith("Pct") else "RATIO" if metric in {"DebtToEquity", "InterestCoverage"} else "INR"
@@ -123,8 +123,9 @@ def _verification_rows(verification: pd.DataFrame) -> list[dict]:
             "MismatchStatus": "MISMATCH" if "MISMATCH" in status else "NOT_ASSESSED",
             "MismatchReason": str(item.get("MetricValueVerificationReason", "") or "").strip(),
             "ObservationNotes": (
-                "Verified cached value is exposed only for OFFICIAL_XBRL_VERIFIED; "
-                "the audit does not export a separate raw XBRL fact value"
+                "Verification-only row; no official value exported in MetricValue. "
+                "The audit schema verifies the cached Yahoo value and does not "
+                "provide a separate raw XBRL fact value."
             ),
         })
     return rows
@@ -142,7 +143,8 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
         rows.append({
             "TckrSymb": symbol,
             "MetricName": "DebtToEquity",
-            "MetricValue": _number(item.get("OfficialDebtToEquity")),
+            # Verification-only audit; don't promote this field into the metric collection.
+            "MetricValue": None,
             "Source": "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT",
             "SourceURL": str(item.get("EvidenceFilePath", "") or "").strip(),
             "FinancialPeriodEnd": str(item.get("FinancialPeriodEnd", "") or "").strip(),
@@ -153,7 +155,7 @@ def _debt_equity_rows(audit: pd.DataFrame | None) -> list[dict]:
             "VerificationStatus": status,
             "MismatchStatus": "MISMATCH" if "MISMATCH" in status else "NOT_ASSESSED",
             "MismatchReason": str(item.get("DebtToEquityAuditReason", "") or "").strip(),
-            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity audit; diagnostic status preserved",
+            "ObservationNotes": "ECMS same-context NSE XBRL Debt/Equity verification-only audit; raw official metric is not collected here",
         })
     return rows
 
