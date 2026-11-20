@@ -29,3 +29,9 @@ def test_delivery_a_and_b_fail_below_five_qualifying_days():
 
 def test_delivery_classification_waits_when_fewer_than_five_valid_reports():
     assert classify_delivery([60, 61, 62, 63]) == ("WAIT_FOR_DATA", "WAIT_FOR_DATA")
+
+
+def test_missing_symbol_report_breaks_a_streak_but_not_b_total_count():
+    values = [60, 61, 62, None, 63, 64, 65]
+    assert _longest_consecutive_delivery_pass_count(values) == 3
+    assert classify_delivery(values) == ("REJECT", "PASS")
