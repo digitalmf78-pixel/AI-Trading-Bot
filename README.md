@@ -233,7 +233,7 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 
 ## Delivery A/B count display implementation — 12-Nov-2026
 - User reaffirmed: keep the existing production Delivery A/B eligibility logic unchanged; only expose its qualifying counts in the reports.
-- New CSV fields: `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30`. A counts qualifying trailing five-valid-session rolling averages >=60.00%; B counts individual valid sessions >=60.00%.
+- New CSV fields: `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30`. A counts the longest consecutive run of daily Delivery >=60.00%; B counts all individual valid sessions >=60.00%, consecutive or not.
 - The denominator is 30 calendar days, not 30 trading sessions. The counts are not consecutive-day streaks and do not indicate the first date a condition began.
 - Fewer than five valid candidate-specific reports, or a stale window, displays WAIT_FOR_DATA and does not become PASS. Existing A OR B eligibility, threshold and source-validation rules are unchanged.
 - CI after correcting a test fixture's non-session date: [43176941834](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941834) SUCCESS — 496 pytest passed, V8 regression and compile checks passed; one existing Pandas deprecation warning. Parser/news test run [43176941753](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941753) SUCCESS.
