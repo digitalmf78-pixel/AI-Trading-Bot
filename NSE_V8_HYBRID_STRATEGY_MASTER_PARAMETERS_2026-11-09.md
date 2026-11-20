@@ -37,11 +37,11 @@ The four separate outputs are:
 - Lookback: the 30 calendar days ending on and including the EOD as-of date.
 - Count **all** valid, distinct, candidate-specific NSE Delivery report sessions in that window, never after the as-of date. Use every available valid report up to the maximum 30-calendar-day window; do not stop at five.
 - Minimum data coverage: at least 5 valid distinct reports. Fewer means `WAIT_FOR_DATA`, never PASS/FAIL.
-- **Category A:** for each symbol, calculate each trailing five-valid-session rolling arithmetic average in the 30-calendar-day window. A rolling window is valid only when all five symbol-specific observations exist. Count rolling windows with average **>=60.00%**. A passes at **5 or more qualifying windows**; four or fewer fails.
-- **Category B:** count individual valid sessions in the same window with daily Delivery **>=60.00%**. B passes at **5 or more qualifying days**; four or fewer fails.
-- Display compactly as `A: n/30 | B: n/30`, with PASS/FAIL/WAIT status. The denominator is the 30-calendar-day lookback, not 30 expected trading reports.
+- **Category A (approved correction, 20-Nov-2026):** within the inclusive 30-calendar-day window, count the longest uninterrupted run of consecutive valid symbol-specific NSE Delivery reports where each daily Delivery is **>=60.00%**. A passes when that consecutive run is at least five sessions. A display is the streak length as `n/30` (for example, six consecutive qualifying days = `6/30`). Any sub-60% day or missing symbol observation breaks the run.
+- **Category B:** count all individual valid sessions in the same window with daily Delivery **>=60.00%**, whether consecutive or not. B passes at **5 or more qualifying days**. Display the total as `n/30` (for example, nine qualifying days = `9/30`).
+- The denominator is the 30-calendar-day lookback, not 30 expected trading reports; the maximum number of NSE sessions in the window is calendar-dependent (normally no more than 21).
 - Evaluate A and B independently. Production eligibility is **A OR B**. Preserve `A_ONLY`, `B_ONLY`, and `A_AND_B` membership/status; de-duplicate symbols.
-- If fewer than five valid reports exist, both categories remain WAIT. Stale latest reports remain WAIT under the existing freshness rule.
+- At least five valid distinct reports are required to evaluate either category. Fewer reports or a stale latest report remains WAIT_FOR_DATA.
 - Keep the original Master Specification file unchanged. This 12-Nov-2026 explicit user-approved update supersedes the previous full-window-average A and every-session B production eligibility interpretation.
 
 ### RVOL — calculate only after Delivery A/B union

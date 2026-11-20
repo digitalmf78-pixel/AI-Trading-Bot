@@ -1,8 +1,9 @@
 """Research-only Delivery A/B cohort forward-outcome backtest on cached NSE EOD data.
 
-Uses the approved 30-calendar-day Delivery rules (A: at least five qualifying
-trailing 5-valid-session averages >=60%; B: at least five daily observations
->=60%), includes the A OR B union, and treats RVOL as descriptive only.
+Uses the approved 30-calendar-day Delivery rules (A: a consecutive run of at
+least five valid sessions each >=60%; B: at least five daily observations
+>=60%, not necessarily consecutive), includes the A OR B union, and treats RVOL
+as descriptive only.
 The prior-20-session average traded-value liquidity condition remains >= INR
 1.5 crore. Forward 5/10/20-session outcomes use exact official NSE sessions.
 No network calls, no live scanner changes, no fundamental claims.
@@ -68,17 +69,21 @@ def forward_session_dates(market_dates, signal_date, horizon: int) -> list[pd.Ti
     return future if len(future) == int(horizon) else []
 
 
-def classify_delivery(values: list[float]) -> tuple[str, str]:
-    """Apply approved A/B counts over valid distinct reports in the 30-day window."""
-    if len(values) < 5 or any(not math.isfinite(float(v)) or not 0 <= float(v) <= 100 for v in values):
+def classify_delivery(values: list[float | None]) -> tuple[str, str]:
+    """Apply A/B rules; missing symbol rows break A streaks but do not count for B."""
+    valid = [float(v) for v in values if v is not None]
+    if len(valid) < 5 or any(not math.isfinite(v) or not 0 <= v <= 100 for v in valid):
         return "WAIT_FOR_DATA", "WAIT_FOR_DATA"
-    valid = [float(v) for v in values]
-    qualifying_a_windows = sum(
-        sum(valid[index - 4:index + 1]) / 5.0 >= 60.0
-        for index in range(4, len(valid))
-    )
+    longest_streak = 0
+    current_streak = 0
+    for value in values:
+        if value is not None and math.isfinite(float(value)) and float(value) >= 60.0:
+            current_streak += 1
+            longest_streak = max(longest_streak, current_streak)
+        else:
+            current_streak = 0
     qualifying_b_days = sum(value >= 60.0 for value in valid)
-    a = "PASS" if qualifying_a_windows >= 5 else "REJECT"
+    a = "PASS" if longest_streak >= 5 else "REJECT"
     b = "PASS" if qualifying_b_days >= 5 else "REJECT"
     return a, b
 
@@ -149,8 +154,14 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
         }
         for day, frame in delivery_by_date.items()
     }
+    # Build windows from the full official market calendar, not only cached
+    # Delivery files. A missing whole-market Delivery report becomes a None slot
+    # and breaks Category A's consecutive-day run instead of being skipped.
     delivery_windows = {
-        day: delivery_window_dates(delivery_dates, day, max_calendar_days=30)
+        day: [
+            session_day for session_day in market_dates
+            if day - pd.Timedelta(days=29) <= session_day <= day
+        ]
         for day in market_dates
     }
     records = []
@@ -208,22 +219,26 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             rvol = float(current_volume) / avg_volume
 
             eligible_delivery_dates = delivery_windows.get(date, [])
-            dvalues = []
+            dvalues_by_report = []
             candidate_delivery_dates = []
             for delivery_day in eligible_delivery_dates:
                 value = delivery_lookup.get(delivery_day, {}).get(symbol)
-                if value is None:
-                    continue
-                candidate_delivery_dates.append(delivery_day)
-                dvalues.append(value)
+                dvalues_by_report.append(value)
+                if value is not None:
+                    candidate_delivery_dates.append(delivery_day)
+            dvalues = [float(value) for value in dvalues_by_report if value is not None]
             if len(dvalues) < 5:
                 rejection["insufficient_delivery_history"] += 1
                 continue
-            cat_a, cat_b = classify_delivery(dvalues)
-            qualifying_a_windows = sum(
-                sum(float(v) for v in dvalues[index - 4:index + 1]) / 5.0 >= 60.0
-                for index in range(4, len(dvalues))
-            )
+            cat_a, cat_b = classify_delivery(dvalues_by_report)
+            qualifying_a_windows = 0
+            current_streak = 0
+            for delivery_value in dvalues_by_report:
+                if delivery_value is not None and float(delivery_value) >= 60.0:
+                    current_streak += 1
+                    qualifying_a_windows = max(qualifying_a_windows, current_streak)
+                else:
+                    current_streak = 0
             qualifying_b_days = sum(float(v) >= 60.0 for v in dvalues)
             if cat_a != "PASS" and cat_b != "PASS":
                 rejection["delivery_a_and_b_reject"] += 1
@@ -242,7 +257,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
                 "AvgTradedValue20D_INR": avg_value, "Delivery30D_AveragePct": sum(dvalues) / len(dvalues),
                 "Delivery30D_MinPct": min(dvalues), "DeliveryCategoryA": cat_a, "DeliveryCategoryB": cat_b,
                 "DeliveryValidReportCount": len(dvalues),
-                "DeliveryQualifyingAWindows": qualifying_a_windows,
+                "DeliveryAConsecutiveStreakDays": qualifying_a_windows,
                 "DeliveryQualifyingBDays": qualifying_b_days,
                 "DeliveryCohort": delivery_cohort,
                 "DeliverySessionDates": "|".join(d.strftime("%Y-%m-%d") for d in candidate_delivery_dates),
@@ -306,7 +321,7 @@ def run_backtest(price_dir: Path = PRICE_DIR, delivery_dir: Path = DELIVERY_DIR,
             "DeliveryCohort": cohort, "SignalCount": int(len(group)),
             "RVOLRole": "DESCRIPTIVE_ONLY_NO_HARD_GATE",
             "LiquidityGate": "20 prior official sessions average traded value >= INR 1.5 crore",
-            "DeliveryGate": "30 calendar days; A = at least 5 trailing 5-valid-session averages >=60%; B = at least 5 daily reports >=60%; A OR B",
+            "DeliveryGate": "30 calendar days; A = longest consecutive daily >=60% streak is at least 5; B = at least 5 daily reports >=60% (not necessarily consecutive); A OR B",
             "FundamentalStatus": "NOT_BACKTESTED_NO_POINT_IN_TIME_FUNDAMENTAL_HISTORY",
         }
         for h in HORIZONS:

@@ -3603,7 +3603,7 @@ def main():
             delivery_audit["DeliveryFilterStatus"] = delivery_audit.apply(
                 lambda row: "PASS_A_OR_B"
                 if (
-                    str(row.get("DeliveryCategoryAStatus", "")).upper() == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
+                    str(row.get("DeliveryCategoryAStatus", "")).upper() == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
                     or str(row.get("DeliveryCategoryBStatus", "")).upper() == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
                 )
                 else ("WAIT_FOR_DATA" if str(row.get("DeliveryCategoryAStatus", "")).upper().startswith("WAIT_FOR_DATA")
@@ -3632,7 +3632,7 @@ def main():
             # RVOL only classifies the Delivery-qualified universe; it must not
             # remove stocks at or below 1.5 or stocks whose RVOL is unavailable.
             category_a_all = delivery_audit[
-                delivery_audit["DeliveryCategoryAStatus"].eq("PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5")
+                delivery_audit["DeliveryCategoryAStatus"].eq("PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5")
             ].copy()
             category_b_all = delivery_audit[
                 delivery_audit["DeliveryCategoryBStatus"].eq("PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5")

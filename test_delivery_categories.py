@@ -26,9 +26,9 @@ def test_delivery_b_passes_after_five_daily_qualifying_reports(tmp_path, monkeyp
     row = audit.iloc[0]
     assert len(qualified) == 1
     assert row["DeliverySessions"] == 6
-    assert row["DeliveryARolling5DPassCount30D"] == 1
+    assert row["DeliveryARolling5DPassCount30D"] == 5
     assert row["DeliveryDailyPassCount"] == 5
-    assert row["CategoryAStatus"] == "FAIL"
+    assert row["CategoryAStatus"] == "PASS"
     assert row["CategoryBStatus"] == "PASS"
     assert row["AvgDelivery30D"] == 60
     assert (tmp_path / "outputs/v8_delivery_category_b_daily60_count5.csv").exists()
@@ -42,9 +42,9 @@ def test_category_b_counts_daily_sessions_not_all_sessions(tmp_path, monkeypatch
     )
     row = audit.iloc[0]
     assert len(qualified) == 1
-    assert row["DeliveryARolling5DPassCount30D"] == 2
+    assert row["DeliveryARolling5DPassCount30D"] == 6
     assert row["DeliveryDailyPassCount"] == 6
-    assert row["CategoryAStatus"] == "FAIL"
+    assert row["CategoryAStatus"] == "PASS"
     assert row["CategoryBStatus"] == "PASS"
 
 

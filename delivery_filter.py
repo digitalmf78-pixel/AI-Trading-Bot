@@ -2,10 +2,9 @@
 
 The production V8 eligibility rule uses all valid distinct NSE Delivery reports
 inside the 30-calendar-day window ending on the EOD as-of date. Category A
-counts trailing five-valid-session rolling averages >=60.00% and passes at five
-or more qualifying windows. Category B counts individual daily Delivery values
->=60.00% and passes at five or more qualifying days. The production scanner
-retains the union (A OR B). Each candidate needs at least five valid distinct
+requires a consecutive run of at least five valid sessions each with daily
+Delivery >=60.00%. Category B requires at least five daily qualifying sessions,
+not necessarily consecutive. Production eligibility remains A OR B. Each candidate needs at least five valid distinct
 reports; fewer reports or stale/unavailable data means WAIT_FOR_DATA.
 
 RVOL is not an eligibility gate for Delivery-qualified stocks. The scanner
@@ -170,14 +169,27 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
         f"valid reports={len(found)}; mode={'complete-window' if collect_all else 'early-stop'}."
     )
     return found
+
+
+def _longest_consecutive_delivery_pass_count(values: Iterable[float], threshold: float = MINIMUM_DAILY_DELIVERY) -> int:
+    """Return the longest consecutive run of daily Delivery >= threshold."""
+    longest = current = 0
+    for value in values:
+        if pd.notna(value) and float(value) >= threshold:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
 def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str = "TckrSymb",
                           series_col: str = "SctySrs", minimum_average: float = MINIMUM_AVERAGE,
                           sessions: list[tuple[date, pd.DataFrame]] | None = None,
                           http_session: requests.Session | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Classify Category A/B over all valid reports in the 30-calendar-day window.
 
-    Category A: at least five qualifying trailing five-session averages >=60%.
-    Category B: at least five individual daily reports with Delivery >=60%.
+    Category A: at least five consecutive valid NSE sessions each with daily Delivery >=60%.
+    Category B: at least five individual qualifying daily reports (not necessarily consecutive).
     Compact A/B n/30 columns are display-only; no eligibility changes.
     Each candidate needs at least five valid distinct report dates; otherwise
     both categories remain WAIT_FOR_DATA. Exactly 60.00% passes.
@@ -220,6 +232,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         audit["DeliveryBCount30DDisplay"] = "WAIT_FOR_DATA/30"
         audit["DeliveryDailyPassCount"] = 0
         audit["DeliveryARolling5DPassCount30D"] = 0
+        audit["DeliveryAConsecutivePassCount30D"] = 0
         audit["DeliveryACount30DStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryBCount30DStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryMin30D"] = float("nan")
@@ -275,18 +288,22 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         candidate[series_col].astype(str).str.strip().str.upper()
         if series_col in candidate.columns else "EQ"
     )
-    report_dates = [day.isoformat() for day, _ in reports]
+    valid_report_dates = {day.isoformat() for day, _ in reports}
     latest_valid_report_date = reports[-1][0].isoformat()
-    asof_report_available = asof.isoformat() in report_dates
     report_age_days = (asof - reports[-1][0]).days
     window_stale = report_age_days > MAX_REPORT_AGE_DAYS
     window_start = asof - timedelta(days=29)
-    # Coverage denominator is the number of official NSE equity sessions in
-    # the 30-calendar-day window, including special sessions (e.g. Muhurat).
-    expected_sessions = sum(
-        1 for offset in range(30)
+    # Use every official NSE session as the sequence. An unavailable whole-market
+    # report remains a missing slot and breaks Category A's consecutive streak.
+    expected_session_dates = [
+        asof - timedelta(days=offset)
+        for offset in range(30)
         if is_trading_session(asof - timedelta(days=offset))
-    )
+    ]
+    expected_session_dates.sort()
+    report_dates = [day.isoformat() for day in expected_session_dates]
+    expected_sessions = len(report_dates)
+    asof_report_available = asof.isoformat() in valid_report_dates
     audits = []
     for _, row in candidate.iterrows():
         sym, ser = row["_SYMBOL_KEY"], row["_SERIES_KEY"]
@@ -294,15 +311,19 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             (all_delivery["SYMBOL"] == sym) & (all_delivery["SERIES"] == ser)
         ]
         by_date = {str(r["REPORT_DATE"]): float(r["DELIV_PER"]) for _, r in matches.iterrows()}
-        values = [by_date[day] for day in report_dates if day in by_date]
+        # Keep every market report date in sequence. A missing symbol row is
+        # represented as None so it breaks Category A's consecutive-day streak;
+        # it is excluded from valid-report coverage and Category B's total count.
+        values_by_report = [by_date.get(day) for day in report_dates]
+        values = [value for value in values_by_report if value is not None]
         count = len(values)
         avg = float(sum(values) / count) if count >= 5 else float("nan")
         daily_pass_count = sum(v >= threshold for v in values)
-        # Category A: count every trailing five-valid-session average in the 30-calendar-day
-        # window that reaches the >=60% threshold. Missing symbol observations are not
-        # fabricated; rolling windows are formed from this symbol's valid distinct reports.
-        rolling_5d = pd.Series(values, dtype="float64").rolling(window=5, min_periods=5).mean()
-        rolling_5d_pass_count = int(rolling_5d.ge(threshold).sum())
+        # Category A: longest uninterrupted run of symbol-specific valid NSE
+        # sessions with daily Delivery >=60%. A missing symbol observation or a
+        # sub-threshold day breaks the run. Category B counts all qualifying days.
+        longest_consecutive_pass_count = _longest_consecutive_delivery_pass_count(values_by_report, threshold)
+        rolling_5d_pass_count = longest_consecutive_pass_count
         daily_min = min(values) if count >= 5 else float("nan")
         daily_max = max(values) if count >= 5 else float("nan")
         coverage_pct = (count / expected_sessions * 100.0) if expected_sessions else float("nan")
@@ -311,13 +332,13 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             a_count_status = b_count_status = "WAIT_FOR_DATA"
         else:
             # Production A/B eligibility uses the user-confirmed minimum-five rule:
-            # A passes when at least five trailing five-valid-session averages reach 60%;
-            # B passes when at least five individual valid sessions reach 60%.
+            # A passes when the longest consecutive >=60% daily-delivery streak is at least five;
+            # B passes when at least five individual valid sessions reach 60%, consecutive or not.
             a_count_status = "PASS" if rolling_5d_pass_count >= 5 else "FAIL"
             b_count_status = "PASS" if daily_pass_count >= 5 else "FAIL"
             category_a = (
-                "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
-                if a_count_status == "PASS" else "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+                "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
+                if a_count_status == "PASS" else "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
             )
             category_b = (
                 "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
@@ -339,7 +360,8 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
             "DeliveryExpectedSessions30D": expected_sessions,
             "DeliveryCoveragePct": coverage_pct,
             "DeliveryDailyPassCount": daily_pass_count,
-            "DeliveryACount30DDisplay": f"{rolling_5d_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
+            "DeliveryACount30DDisplay": f"{longest_consecutive_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
+            "DeliveryAConsecutivePassCount30D": longest_consecutive_pass_count,
             "DeliveryBCount30DDisplay": f"{daily_pass_count}/30" if count >= 5 and not window_stale else "WAIT_FOR_DATA/30",
             "DeliveryARolling5DPassCount30D": rolling_5d_pass_count,
             "DeliveryACount30DStatus": a_count_status,
@@ -371,12 +393,12 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     audit_path = AUDIT_DIR / f"delivery_dual_category_audit_{asof.strftime('%Y%m%d')}.csv"
     audit.to_csv(audit_path, index=False)
-    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"].copy()
+    category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
     category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
-    category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_rolling5d_60_count5.csv", index=False)
+    category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_consecutive60_count5.csv", index=False)
     category_b.to_csv(AUDIT_DIR / "v8_delivery_category_b_daily60_count5.csv", index=False)
     audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
-    print(f"[DELIVERY] 30D Category A rolling 5-session averages >= {threshold:.2f}% at least 5 times: {len(category_a)}")
+    print(f"[DELIVERY] 30D Category A consecutive daily Delivery >= {threshold:.2f}% streak at least 5 sessions: {len(category_a)}")
     print(f"[DELIVERY] 30D Category B daily Delivery >= {threshold:.2f}% at least 5 days: {len(category_b)}")
     print(f"[DELIVERY] WAIT_FOR_DATA (<5 candidate sessions): {(audit['DeliveryStatus'].astype(str).str.startswith('WAIT_FOR_DATA')).sum()}")
     print(f"[DELIVERY] 30D dual-category audit saved: {audit_path}")

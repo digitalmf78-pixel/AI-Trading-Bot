@@ -16,7 +16,7 @@ The ECMS strategy, approved P0–P8 roadmap, operating decisions and workflow co
 
 - Eligible NSE Mainboard universe (Largecap, Midcap, Smallcap; existing SME/ETF/MF exclusions).
 - Prior 20 complete sessions are loaded to prepare the average-volume baseline.
-- Delivery Category A and B are calculated independently over **all available valid distinct reports** in the 30-calendar-day window (not just the latest five); minimum five valid reports. A = at least five trailing five-valid-session rolling averages >=60.00%; B = at least five individual daily Delivery observations >=60.00%. Production eligibility remains A OR B. Reports show actual valid-session count and compact A n/30, B n/30 counts; fewer than five valid reports means WAIT_FOR_DATA.
+- Delivery Category A and B are calculated independently over **all available valid distinct reports** in the 30-calendar-day window; minimum five valid reports. A = longest uninterrupted run of consecutive valid sessions with each daily Delivery >=60.00%, passing at five or more consecutive days. B = total individual daily Delivery observations >=60.00%, whether consecutive or not, passing at five or more days. A display is the longest consecutive streak (for example 6/30); B display is the total qualifying-day count (for example 9/30). Production eligibility remains A OR B. Fewer than five valid reports means WAIT_FOR_DATA.
 - Form the complete de-duplicated A OR B union and preserve A_ONLY / B_ONLY / A_AND_B.
 - Persist `data/cache/delivery/ab_qualified_delivery_history.csv` as a separate rolling 30-calendar-day, long-form snapshot for **A OR B passing stocks only**. Each row is one validated symbol+series+report-date observation and retains Delivery Quantity, Delivery %, A/B membership and count/status metadata. All available daily observations are kept (including sub-60% days); missing quantities remain blank. The raw official NSE Delivery reports remain separate and unchanged; the 200-day Bhavcopy cache is never modified by this derived cache.
 - Calculate RVOL only for this union: >1.5 HIGH, <=1.5 LOW, invalid/missing WAIT_FOR_DATA. RVOL is classification only and never rejects a Delivery-qualified candidate.
@@ -61,7 +61,7 @@ The correctly named pre-news cohort export is `outputs/v8_liquidity_qualified_pr
 
 ## Current authoritative rule addendum
 
-The active 30-calendar-day NSE Delivery A/B screening rules, updated on 2026-11-12 to require at least five qualifying rolling-average windows for A or five qualifying daily sessions for B, using all valid reports in the window, are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). The strict five-session Delivery-only watchlist remains a separate artifact. This addendum supplements the Master Specification; it does not replace or rewrite it.
+The active 30-calendar-day NSE Delivery A/B screening rules, corrected on 2026-11-20: A requires a consecutive run of at least five daily observations >=60%; B requires at least five total qualifying daily observations (not necessarily consecutive), using all valid reports in the window, are documented in [`NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md`](NSE_V8_DELIVERY_AB_RULES_ADDENDUM_2026-11-07.md). The strict five-session Delivery-only watchlist remains a separate artifact. This addendum supplements the Master Specification; it does not replace or rewrite it.
 
 ## Current authoritative RSI rule addendum
 
@@ -74,7 +74,7 @@ The previous wording that RVOL is calculated for the full Mainboard universe is 
 
 1. Load the latest verified NSE EOD Bhavcopy and prepare the eligible NSE Mainboard universe (Largecap, Midcap and Smallcap; existing SME/ETF/MF exclusions remain).
 2. Load/reuse the prior 20 complete trading-session Bhavcopy history and prepare the average-volume baseline only. **Do not calculate RVOL for the Mainboard universe at this stage.**
-3. Apply 30-calendar-day Delivery Category A: count trailing five-valid-session rolling averages >=60.00%; A passes at 5 or more qualifying windows.
+3. Apply 30-calendar-day Delivery Category A: longest consecutive run of valid daily Delivery observations >=60.00%; A passes at 5 or more consecutive days.
 4. Apply 30-calendar-day Delivery Category B: count individual valid sessions with daily Delivery >=60.00%; B passes at 5 or more qualifying days. Fewer than five valid distinct reports means WAIT_FOR_DATA for both categories.
 5. Build the complete **A OR B** union; preserve `A_ONLY`, `B_ONLY`, and `A_AND_B` membership and de-duplicate by symbol.
 6. **Only now calculate RVOL** for every unique stock in the A/B union, using current EOD volume divided by the average volume of the previous 20 complete trading sessions (current session excluded).
@@ -225,15 +225,15 @@ A dedicated, opt-in shadow persistence workflow is the recommended future design
 - Delivery cache restored/audited at 21/21 expected reports, but persistence log reported WAIT_FOR_DATA because no validated Bhavcopy as-of date was found. Durable Delivery-cache commit is **not yet verified**; this remains open.
 - Runtime optimization findings, implementation status and next steps are tracked in [NSE V8 Hybrid Strategy Master Parameters](NSE_V8_HYBRID_STRATEGY_MASTER_PARAMETERS_2026-11-09.md), Section 11.
 
-## Delivery A/B count meaning (12-Nov-2026)
-- `A: n/30` = number of qualifying trailing five-valid-session rolling averages (each >=60.00%) in the 30-calendar-day window. A passes at **5 or more qualifying rolling windows**.
-- `B: n/30` = number of individual valid Delivery sessions with daily Delivery >=60.00% in the same 30-calendar-day window. B passes at **5 or more qualifying days**.
-- At least five valid distinct reports are required to evaluate either category; fewer means WAIT_FOR_DATA. Use all valid reports in the window, not only the latest five.
+## Delivery A/B count meaning (corrected 20-Nov-2026)
+- `A: n/30` = longest uninterrupted run of consecutive valid NSE Delivery sessions where each daily Delivery is >=60.00%. A passes at **5 or more consecutive days**; a below-60% day or missing symbol observation breaks the run.
+- `B: n/30` = total individual valid Delivery sessions with daily Delivery >=60.00% in the same 30-calendar-day window, whether consecutive or not. B passes at **5 or more qualifying days**.
+- At least five valid distinct reports are required to evaluate either category; fewer means WAIT_FOR_DATA. Use all valid reports in the window.
 - Production eligibility is A OR B. The compact denominator /30 means a 30-calendar-day lookback, not 30 expected trading sessions. The separate strict five-session watchlist is a different artifact.
 
 ## Delivery A/B count display implementation — 12-Nov-2026
 - User reaffirmed: keep the existing production Delivery A/B eligibility logic unchanged; only expose its qualifying counts in the reports.
-- New CSV fields: `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30`. A counts qualifying trailing five-valid-session rolling averages >=60.00%; B counts individual valid sessions >=60.00%.
+- New CSV fields: `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30`. A counts the longest consecutive run of daily Delivery >=60.00%; B counts all individual valid sessions >=60.00%, consecutive or not.
 - The denominator is 30 calendar days, not 30 trading sessions. The counts are not consecutive-day streaks and do not indicate the first date a condition began.
 - Fewer than five valid candidate-specific reports, or a stale window, displays WAIT_FOR_DATA and does not become PASS. Existing A OR B eligibility, threshold and source-validation rules are unchanged.
 - CI after correcting a test fixture's non-session date: [43176941834](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941834) SUCCESS — 496 pytest passed, V8 regression and compile checks passed; one existing Pandas deprecation warning. Parser/news test run [43176941753](https://github.com/digitalmf78-pixel/AI-Trading-Bot/actions/runs/43176941753) SUCCESS.
