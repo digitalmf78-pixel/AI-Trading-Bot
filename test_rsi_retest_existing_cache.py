@@ -60,7 +60,7 @@ class ExistingCacheRSITests(unittest.TestCase):
             by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": value}])
         result = _delivery_status("ABC", signal_date, by_date)
         self.assertEqual(result["DeliverySessions"], 13)
-        self.assertEqual(result["DeliveryCategoryAStatus"], "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5")
+        self.assertEqual(result["DeliveryCategoryAStatus"], "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5")
         self.assertEqual(result["DeliveryCategoryBStatus"], "FILTERED_OUT_DAILY_DELIVERY_LT_5")
 
     def test_30d_delivery_category_b_passes_at_exactly_60(self):
@@ -69,7 +69,7 @@ class ExistingCacheRSITests(unittest.TestCase):
         for day in pd.date_range("2026-10-05", periods=5, freq="5D"):
             by_date[day.normalize()] = pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": 60.0}])
         result = _delivery_status("ABC", signal_date, by_date)
-        self.assertEqual(result["DeliveryCategoryAStatus"], "FILTERED_OUT_ROLLING_5D_AVG_LT_5")
+        self.assertEqual(result["DeliveryCategoryAStatus"], "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5")
         self.assertEqual(result["DeliveryCategoryBStatus"], "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5")
 
     def test_30d_delivery_fewer_than_five_valid_symbol_reports_waits(self):
