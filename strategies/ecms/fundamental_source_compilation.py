@@ -171,7 +171,9 @@ def _manual_rows(observations: pd.DataFrame) -> list[dict]:
         if not symbol or metric not in METRICS:
             continue
         if source != "BSE_OFFICIAL_FILING_MANUAL":
-            raise ValueError("Manual Source must be BSE_OFFICIAL_FILING_MANUAL; third-party fundamentals are prohibited")
+            # Ignore legacy Screener/other-provider rows without breaking the scan.
+            # Only official BSE filing evidence is accepted here, and only for verification.
+            continue
         rows.append({
             "TckrSymb": symbol,
             "MetricName": metric,
