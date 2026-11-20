@@ -122,7 +122,7 @@ def test_sector_mapping_uses_exact_official_nse_industry_fallbacks():
         finally:
             os.chdir(old_cwd)
 
-def test_delivery_a_requires_five_rolling_windows_while_b_requires_five_daily_passes():
+def test_delivery_a_requires_five_consecutive_days_while_b_counts_total_daily_passes():
     with tempfile.TemporaryDirectory() as tmp:
         delivery.AUDIT_DIR = Path(tmp)
         dates = []
@@ -131,16 +131,19 @@ def test_delivery_a_requires_five_rolling_windows_while_b_requires_five_daily_pa
             if delivery.is_trading_session(day):
                 dates.append(day)
             day += timedelta(days=1)
-        values = [100.0, 59.0, 59.0, 59.0, 59.0, 100.0, 59.0, 59.0, 59.0, 59.0, 100.0, 59.0, 59.0]
+        # A has a six-session consecutive run; B counts eight qualifying days total.
+        values = [60.0, 61.0, 59.0, 60.0, 62.0, 63.0, 64.0, 65.0, 66.0, 60.0, 59.0, 70.0, 71.0]
         sessions = [(d, pd.DataFrame([{"SYMBOL": "ABC", "SERIES": "EQ", "DELIV_PER": v}])) for d, v in zip(dates, values)]
         candidates = pd.DataFrame([{"TckrSymb": "ABC", "SctySrs": "EQ"}])
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[-1], sessions=sessions)
         row = audit.iloc[0]
         assert len(qualified) == 1
-        assert row["DeliveryARolling5DPassCount30D"] >= 5
-        assert row["DeliveryDailyPassCount"] == 3
-        assert row["DeliveryCategoryAStatus"] == "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5"
-        assert row["DeliveryCategoryBStatus"] == "FILTERED_OUT_DAILY_DELIVERY_LT_5"
+        assert row["DeliveryAConsecutivePassCount30D"] == 6
+        assert row["DeliveryACount30DDisplay"] == "6/30"
+        assert row["DeliveryDailyPassCount"] == 10
+        assert row["DeliveryBCount30DDisplay"] == "10/30"
+        assert row["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"
+        assert row["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert row["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
 
 
@@ -154,7 +157,7 @@ def test_delivery_exactly_60_each_day_passes():
         qualified, audit = delivery.apply_delivery_filter(candidates, dates[0], sessions=sessions)
         assert len(qualified) == 1, audit.to_dict("records")
         assert audit.iloc[0]["DeliveryFilterStatus"] == "PASS_GE_60_PERCENT"
-        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
+        assert audit.iloc[0]["DeliveryCategoryAStatus"] == "FILTERED_OUT_CONSECUTIVE_DAILY_DELIVERY_LT_5"
         assert audit.iloc[0]["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"
         assert audit.iloc[0]["DeliveryDailyPassCount"] == 5
 
@@ -181,7 +184,7 @@ def test_delivery_below_60_rejects_and_incomplete_waits():
 def test_news_gate_preserves_category_a_only_candidates():
     candidates = pd.DataFrame([{
         "TckrSymb": "ABC", "AvgDelivery5D": 74.98,
-        "DeliveryCategoryAStatus": "PASS_ROLLING_5D_AVG_GE_60_AT_LEAST_5",
+        "DeliveryCategoryAStatus": "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5",
         "DeliveryCategoryBStatus": "FILTERED_OUT_DAILY_DELIVERY_LT_5",
         "DeliveryFilterStatus": "PASS_GE_60_PERCENT", "SetupType": "Breakout",
     }])
