@@ -2,9 +2,9 @@
 
 The production V8 eligibility rule uses all valid distinct NSE Delivery reports
 inside the 30-calendar-day window ending on the EOD as-of date. Category A
-counts trailing five-valid-session rolling averages >=60.00% and passes at five
-or more qualifying windows. Category B counts individual daily Delivery values
->=60.00% and passes at five or more qualifying days. The production scanner
+requires a consecutive run of at least five valid sessions each with daily
+Delivery >=60.00%. Category B requires at least five daily qualifying sessions,
+not necessarily consecutive. Production eligibility remains A OR B. The production scanner
 retains the union (A OR B). Each candidate needs at least five valid distinct
 reports; fewer reports or stale/unavailable data means WAIT_FOR_DATA.
 
@@ -170,6 +170,19 @@ def get_delivery_sessions(asof_date, required_sessions: int = 5, max_calendar_da
         f"valid reports={len(found)}; mode={'complete-window' if collect_all else 'early-stop'}."
     )
     return found
+
+
+def _longest_consecutive_delivery_pass_count(values: Iterable[float], threshold: float = MINIMUM_DAILY_DELIVERY) -> int:
+    """Return the longest consecutive run of daily Delivery >= threshold."""
+    longest = current = 0
+    for value in values:
+        if pd.notna(value) and float(value) >= threshold:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
 def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str = "TckrSymb",
                           series_col: str = "SctySrs", minimum_average: float = MINIMUM_AVERAGE,
                           sessions: list[tuple[date, pd.DataFrame]] | None = None,
@@ -301,16 +314,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         # Category A: longest uninterrupted run of symbol-specific valid NSE
         # sessions with daily Delivery >=60%. A missing symbol observation or a
         # sub-threshold day breaks the run. Category B counts all qualifying days.
-        longest_consecutive_pass_count = 0
-        current_consecutive_pass_count = 0
-        for delivery_value in values:
-            if delivery_value >= threshold:
-                current_consecutive_pass_count += 1
-                longest_consecutive_pass_count = max(
-                    longest_consecutive_pass_count, current_consecutive_pass_count
-                )
-            else:
-                current_consecutive_pass_count = 0
+        longest_consecutive_pass_count = _longest_consecutive_delivery_pass_count(values, threshold)
         rolling_5d_pass_count = longest_consecutive_pass_count
         daily_min = min(values) if count >= 5 else float("nan")
         daily_max = max(values) if count >= 5 else float("nan")
@@ -383,7 +387,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
     audit.to_csv(audit_path, index=False)
     category_a = audit[audit["DeliveryCategoryAStatus"] == "PASS_CONSECUTIVE_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
     category_b = audit[audit["DeliveryCategoryBStatus"] == "PASS_DAILY_DELIVERY_GE_60_AT_LEAST_5"].copy()
-    category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_rolling5d_60_count5.csv", index=False)
+    category_a.to_csv(AUDIT_DIR / "v8_delivery_category_a_consecutive60_count5.csv", index=False)
     category_b.to_csv(AUDIT_DIR / "v8_delivery_category_b_daily60_count5.csv", index=False)
     audit.to_csv(AUDIT_DIR / f"delivery_first_audit_{asof.strftime('%Y%m%d')}.csv", index=False)
     print(f"[DELIVERY] 30D Category A consecutive daily Delivery >= {threshold:.2f}% streak at least 5 sessions: {len(category_a)}")
