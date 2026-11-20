@@ -6,8 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "50 3 * * *"  # 09:20 IST Morning
-    - cron: "30 11 * * *" # 17:00 IST EOD
+    - cron: "50 3 * * *"  # 09:20 IST Morning primary
+    - cron: "55 3 * * *"  # 09:25 IST Morning backup trigger
+    - cron: "30 11 * * *" # 17:00 IST EOD primary
+    - cron: "35 11 * * *" # 17:05 IST EOD backup trigger
 permissions:
   contents: read
 concurrency:
@@ -42,13 +44,13 @@ jobs:
           now = datetime.now(ZoneInfo("Asia/Kolkata"))
           mode, reason = "skip", "OUTSIDE_ECMS_SCAN_WINDOW"
           if event == "schedule":
-              if schedule == "50 3 * * *":
+              if schedule in ("50 3 * * *", "55 3 * * *"):
                   if now.time().replace(tzinfo=None) >= time(12, 0):
                       mode, reason = "manual-observation", "DELAYED_MORNING_SCHEDULE_ROUTED_TO_MANUAL_OBSERVATION"
                   else:
-                      mode, reason = "morning", "SCHEDULED_MORNING_0920_IST"
-              elif schedule == "30 11 * * *":
-                  mode, reason = "eod", "SCHEDULED_EOD_1700_IST"
+                      mode, reason = "morning", ("SCHEDULED_MORNING_0920_IST" if schedule == "50 3 * * *" else "BACKUP_SCHEDULED_MORNING_0925_IST")
+              elif schedule in ("30 11 * * *", "35 11 * * *"):
+                  mode, reason = "eod", ("SCHEDULED_EOD_1700_IST" if schedule == "30 11 * * *" else "BACKUP_SCHEDULED_EOD_1705_IST")
               else:
                   reason = "UNRECOGNIZED_ECMS_SCHEDULE"
           elif event == "workflow_dispatch":
