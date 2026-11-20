@@ -982,7 +982,9 @@ def assess_page_fundamentals(candidates, eod_date):
         for metric_name in comparison_metrics:
             observed = comparison.get(metric_name, {}) if isinstance(comparison, dict) else {}
             yahoo = observed.get("YahooFinance", {}) if isinstance(observed, dict) else {}
-            secondary = observed.get("secondary_sources", []) if isinstance(observed, dict) else []
+            # ECMS no longer consumes third-party fundamental observations.
+            # Ignore any legacy secondary-source payload retained in the cache.
+            secondary = []
             base = {
                 "TckrSymb": str(metric_row.get("TckrSymb", "")).strip().upper(),
                 "MetricName": metric_name,
@@ -990,7 +992,7 @@ def assess_page_fundamentals(candidates, eod_date):
                 "YahooSource": yahoo.get("source", metadata_maps["MetricSourcesJSON"].get(metric_name, "NOT_AVAILABLE")),
                 "YahooPeriod": yahoo.get("period", metadata_maps["MetricSourcePeriodsJSON"].get(metric_name, "")),
                 "YahooCalculationBasis": yahoo.get("calculation_basis", metadata_maps["MetricCalculationBasesJSON"].get(metric_name, "")),
-                "ComparisonStatus": observed.get("comparison_status", "NO_SECONDARY_OBSERVATION") if isinstance(observed, dict) else "NO_SECONDARY_OBSERVATION",
+                "ComparisonStatus": "SECONDARY_SOURCES_DISABLED_BY_POLICY",
             }
             if isinstance(secondary, list) and secondary:
                 for item in secondary:
