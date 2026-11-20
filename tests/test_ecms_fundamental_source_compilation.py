@@ -61,6 +61,7 @@ def test_compilation_carries_official_nse_verification_without_upgrading_manual_
     bse = result[result["Source"] == "BSE_OFFICIAL_FILING_VERIFICATION_EVIDENCE"].iloc[0]
 
     assert official["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
+    assert pd.isna(official["MetricValue"])  # verification-only, never a collected metric
     assert bse["VerificationStatus"] == "MANUAL_REVIEW_REQUIRED"
     assert bse["SourceStatus"] == "OFFICIAL_VERIFICATION_EVIDENCE_PENDING"
     assert bse["MetricValue"] == 0.6
@@ -92,7 +93,7 @@ def test_compilation_includes_exact_debt_equity_audit_as_its_own_source_row():
     result = build_fundamental_source_compilation(metrics, debt_equity_audit=debt_audit)
     audit = result[result["Source"] == "NSE_OFFICIAL_XBRL_DEBT_EQUITY_AUDIT"].iloc[0]
     assert audit["VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
-    assert audit["MetricValue"] == 0.5
+    assert pd.isna(audit["MetricValue"])  # verification evidence cannot populate metric collection
 
 
 def test_compilation_flags_mismatch_only_when_period_basis_and_unit_align():
@@ -141,5 +142,5 @@ def test_verification_audit_does_not_label_mismatching_cached_value_as_official_
     assert pd.isna(audit.loc["ROEPercent", "MetricValue"])
     assert audit.loc["ROEPercent", "VerificationStatus"] == "PROVIDER_VALUE_MISMATCH"
     assert audit.loc["ROEPercent", "MismatchReason"] == "Provider growth differs from official calculation"
-    assert audit.loc["RevenueGrowthPct", "MetricValue"] == 12.0
+    assert pd.isna(audit.loc["RevenueGrowthPct", "MetricValue"])  # official status only
     assert audit.loc["RevenueGrowthPct", "VerificationStatus"] == "OFFICIAL_XBRL_VERIFIED"
