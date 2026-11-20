@@ -4,8 +4,7 @@ The production V8 eligibility rule uses all valid distinct NSE Delivery reports
 inside the 30-calendar-day window ending on the EOD as-of date. Category A
 requires a consecutive run of at least five valid sessions each with daily
 Delivery >=60.00%. Category B requires at least five daily qualifying sessions,
-not necessarily consecutive. Production eligibility remains A OR B. The production scanner
-retains the union (A OR B). Each candidate needs at least five valid distinct
+not necessarily consecutive. Production eligibility remains A OR B. Each candidate needs at least five valid distinct
 reports; fewer reports or stale/unavailable data means WAIT_FOR_DATA.
 
 RVOL is not an eligibility gate for Delivery-qualified stocks. The scanner
@@ -233,6 +232,7 @@ def apply_delivery_filter(candidates: pd.DataFrame, asof_date, symbol_col: str =
         audit["DeliveryBCount30DDisplay"] = "WAIT_FOR_DATA/30"
         audit["DeliveryDailyPassCount"] = 0
         audit["DeliveryARolling5DPassCount30D"] = 0
+        audit["DeliveryAConsecutivePassCount30D"] = 0
         audit["DeliveryACount30DStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryBCount30DStatus"] = "WAIT_FOR_DATA"
         audit["DeliveryMin30D"] = float("nan")
