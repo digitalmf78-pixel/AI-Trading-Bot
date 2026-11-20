@@ -8,7 +8,7 @@ from strategies.ecms.fundamental_source_compilation import (
 )
 
 
-def test_compilation_rejects_screener_as_fundamental_provider():
+def test_compilation_ignores_screener_as_fundamental_provider():
     metrics = pd.DataFrame([{
         "TckrSymb": "AAA", "ROEPercent": 18.0,
         "MetricSourcesJSON": '{"ROEPercent":"Yahoo Finance via yfinance"}',
@@ -19,14 +19,14 @@ def test_compilation_rejects_screener_as_fundamental_provider():
     }])
     manual = pd.DataFrame([{
         "TckrSymb": "AAA", "MetricName": "ROEPercent", "MetricValue": 17.5,
-        "Source": "BSE_OFFICIAL_FILING_MANUAL", "SourceURL": "https://www.bseindia.com/",
+        "Source": "SCREENER_FREE_MANUAL", "SourceURL": "https://www.screener.in/company/AAA/",
         "FinancialPeriodEnd": "2026-03-31", "PublicationDate": "2026-05-10",
         "CalculationBasis": "CONSOLIDATED", "Unit": "PERCENT",
         "ObservationNotes": "Must not be used as an alternate provider",
     }], columns=MANUAL_COLUMNS)
 
-    with pytest.raises(ValueError, match="third-party fundamentals are prohibited"):
-        build_fundamental_source_compilation(metrics, manual_observations=manual)
+    result = build_fundamental_source_compilation(metrics, manual_observations=manual)
+    assert result["Source"].tolist() == ["Yahoo Finance via yfinance"]
 
 
 def test_compilation_includes_only_yahoo_metric_values():
