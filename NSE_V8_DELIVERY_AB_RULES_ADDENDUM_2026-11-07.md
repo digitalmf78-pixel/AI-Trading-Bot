@@ -10,25 +10,25 @@
 - At least five valid distinct reports are required before evaluating either category. Fewer than five means `WAIT_FOR_DATA`, not PASS or FAIL.
 - Thirty calendar days is a calendar window, not an expectation of 30 trading-session reports. Always show the actual valid report count.
 
-## 2. Category A — Five-session rolling-average Delivery
+## 2. Category A — Consecutive daily Delivery strength
 - For each symbol, order all its valid distinct Delivery observations in the 30-calendar-day window chronologically.
-- Calculate each trailing five-valid-session rolling arithmetic average. A rolling window is evaluated only when all five valid symbol-specific observations exist; do not fabricate or fill missing values.
-- Count how many such rolling five-session averages are >=60.00%.
-- Category A passes only when at least 5 rolling windows meet the >=60.00% threshold. Exactly five passes; four or fewer fails.
-- Display the count compactly as `A: n/30`, where n is the number of qualifying rolling windows. The denominator denotes the maximum 30-calendar-day lookback, not a claim that 30 trading sessions exist.
+- Count the longest uninterrupted run of consecutive valid symbol-specific NSE sessions where each daily Delivery % is >=60.00%.
+- A below-60.00% day or a missing symbol observation breaks the run. Do not bridge missing sessions or fabricate values.
+- Category A passes only when the longest consecutive run is at least 5 sessions. Exactly five passes; four or fewer fails.
+- Display the longest run compactly as `A: n/30` (for example, six consecutive qualifying days = `A: 6/30`). The denominator is the 30-calendar-day lookback, not 30 expected trading sessions.
 
-## 3. Category B — Daily Delivery consistency count
-- Count all valid individual sessions in the same 30-calendar-day window where daily Delivery % is >=60.00%.
+## 3. Category B — Total qualifying daily Delivery count
+- Count all valid individual sessions in the same 30-calendar-day window where daily Delivery % is >=60.00%, whether consecutive or not.
 - Category B passes only when at least 5 valid days meet the >=60.00% threshold. Exactly five passes; four or fewer fails.
-- Display the count compactly as `B: n/30`.
+- Display the total count compactly as `B: n/30`.
 - A daily value exactly 60.00% passes.
 
 ## 4. Eligibility and output
 - Evaluate A and B independently.
-- Production eligibility is the full A OR B union. A stock passes the Delivery stage if A has at least five qualifying rolling windows OR B has at least five qualifying daily sessions. Preserve A_ONLY, B_ONLY, A_AND_B membership and de-duplicate symbols.
+- Production eligibility is the full A OR B union. A stock passes the Delivery stage if A has a consecutive >=60% streak of at least five sessions OR B has at least five qualifying daily sessions, consecutive or not. Preserve A_ONLY, B_ONLY, A_AND_B membership and de-duplicate symbols.
 - If the symbol has fewer than five valid distinct Delivery report sessions in the window, both categories remain WAIT_FOR_DATA, even if partial counts appear promising.
 - If the latest valid report is stale under the existing freshness rule, both categories remain WAIT_FOR_DATA_STALE_REPORT; stale data must not pass.
-- For every stock, report: as-of date; 30-calendar-day window start/end; valid session count; coverage where determinable; A qualifying rolling-window count/status; B qualifying daily-session count/status; average/minimum/maximum daily Delivery %; latest report date; and PASS/FAIL/WAIT reason.
+- For every stock, report: as-of date; 30-calendar-day window start/end; valid session count; coverage where determinable; A longest consecutive daily-streak count/status; B total qualifying daily-session count/status; average/minimum/maximum daily Delivery %; latest report date; and PASS/FAIL/WAIT reason.
 - The compact Telegram display is `A n/30 PASS|FAIL|WAIT | B n/30 PASS|FAIL|WAIT`.
 - These are Delivery eligibility rules, not BUY signals and not proof of institutional buyer identity.
 
@@ -41,10 +41,10 @@
 - The standalone strict five-session Delivery-only watchlist remains a separate artifact if explicitly requested. Do not confuse it with the production 30-calendar-day A/B count rules.
 
 ## 7. Change control
-This 12-Nov-2026 user-approved update supersedes the previous Category A full-window-average and Category B every-session rules for production Delivery eligibility. The original Master Specification file remains unchanged. No RVOL, liquidity, fundamentals, technical, risk, or unrelated production parameter is changed.
+This 20-Nov-2026 user-approved correction supersedes the previous rolling-average interpretation of Category A. Category B remains a total qualifying-day count. The original Master Specification file remains unchanged. No RVOL, liquidity, fundamentals, technical, risk, or unrelated production parameter is changed.
 ## 8. Display-only count implementation (2026-11-12)
 - Scanner CSV now emits `DeliveryACount30DDisplay` and `DeliveryBCount30DDisplay`, formatted as `n/30` for eligible-to-evaluate, fresh symbol-specific reports.
-- Numerators use the existing Category A qualifying rolling five-session averages and Category B qualifying individual daily observations. The denominator means 30 **calendar** days, not 30 actual trading reports.
+- Numerators use the longest consecutive qualifying daily streak for Category A and the total qualifying daily observations for Category B. The denominator means 30 **calendar** days, not 30 actual trading reports.
 - Fewer than five valid symbol reports or a stale window produces `WAIT_FOR_DATA/30`; raw count and status fields remain available for audit.
-- These fields do **not** measure a consecutive-day streak or establish the first start date of a trend. That requires a separate dated streak calculation; do not infer it from `n/30`.
+- Category A explicitly measures the longest consecutive qualifying streak; Category B measures the total qualifying days.
 - No data source, eligibility condition, cache content, or strategy threshold was changed by this display-only patch. Test execution and end-to-end report verification are separate required checks.
