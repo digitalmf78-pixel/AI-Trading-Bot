@@ -563,7 +563,9 @@ def assess_page_fundamentals(candidates, eod_date):
                 pd.DataFrame([{"TckrSymb": symbol} for symbol in sorted(missing_lookup_symbols)]),
             ], ignore_index=True, sort=False)
         filing_metadata_source = fetch_ecms_candidate_filing_metadata(
-            filing_lookup_candidates, eod_date.isoformat()
+            filing_lookup_candidates, eod_date.isoformat(),
+            evidence_dir=ecms_output_dir / "nse_filing_api_raw",
+            max_payload_bytes=2_000_000,
         )
         filing_metadata_audit = audit_ecms_filing_metadata(filing_metadata_source)
     except Exception as exc:
