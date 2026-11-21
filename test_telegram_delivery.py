@@ -344,5 +344,5 @@ def test_liquidity_passed_csv_joins_all_stock_sidecars_and_keeps_one_row_per_sto
     assert exported.loc[0, "CompanyName"] == "AAA LIMITED"
     assert exported.loc[0, "AvgDailyTradedValue20D"] == 50000000
     assert exported.loc[0, "DeliveryACount30DDisplay"] == "6/30"
-    assert "v8_upcoming_corporate_events__Headline" in exported.columns
-    assert "Order announced || Board meeting" == exported.loc[0, "v8_upcoming_corporate_events__Headline"]
+    assert "Headline" in exported.columns
+    assert "Order announced || Board meeting" == exported.loc[0, "Headline"]
