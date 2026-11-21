@@ -11,22 +11,31 @@ class FakeResponse:
         return {"ok": True, "result": {"message_id": 123}}
 
 
-def test_telegram_digest_confirms_api_delivery(monkeypatch):
+def test_telegram_digest_confirms_api_delivery(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "outputs"
+    out.mkdir()
+    pd.DataFrame([
+        {"TckrSymb":"AAA","LiquidityFilterStatus":"PASS","LiquidityTier":"STRONG","AvgDailyTradedValue20D":50000000},
+        {"TckrSymb":"BBB","LiquidityFilterStatus":"FILTERED_OUT_BELOW_MINIMUM","LiquidityTier":"WAIT_FOR_DATA"},
+    ]).to_csv(out / "v8_liquidity_first_audit.csv", index=False)
     sent = []
-    monkeypatch.setattr(news_catalyst, "build_marathi_digest", lambda *args: ["NSE V8 report", "Scan complete"])
+    monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {"AAA":"AAA INDUSTRIES LIMITED"})
     monkeypatch.setattr(news_catalyst.requests, "post", lambda url, data, timeout, files=None: (sent.append((url, data, files)) or FakeResponse()))
     monkeypatch.setenv("NEWS_SCAN_MODE", "EOD")
     news_catalyst.send_marathi_telegram(None, "2026-11-05", None, {}, "token", "chat")
     assert len(sent) == 2
     assert sent[0][1]["chat_id"] == "chat"
     assert "NSE V8" in sent[0][1]["text"]
+    assert len(sent[0][1]["text"]) < 1000
     assert sent[0][0].endswith("/sendMessage")
     assert sent[1][0].endswith("/sendDocument")
-    assert sent[1][2]["document"][0] == "v8_telegram_full_report.zip"
-    import io, zipfile
-    with zipfile.ZipFile(io.BytesIO(sent[1][2]["document"][1])) as archive:
-        audit = archive.read("v8_telegram_full_audit.txt").decode("utf-8")
-        assert "NSE V8 report" in audit
+    assert sent[1][2]["document"][0] == "v8_telegram_liquidity_passed.csv"
+    exported = pd.read_csv(out / "v8_telegram_liquidity_passed.csv")
+    assert exported["TckrSymb"].tolist() == ["AAA"]
+    assert exported.loc[0, "CompanyName"] == "AAA INDUSTRIES LIMITED"
+    assert "AvgDailyTradedValue20D" in exported.columns
 
 
 def test_telegram_missing_secrets_fails_loudly():
@@ -38,9 +47,14 @@ def test_telegram_missing_secrets_fails_loudly():
         raise AssertionError("Missing Telegram secrets must fail the scan")
 
 
-def test_telegram_retries_failed_delivery(monkeypatch):
+def test_telegram_retries_failed_delivery(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "outputs"
+    out.mkdir()
+    pd.DataFrame([{"TckrSymb":"AAA","LiquidityFilterStatus":"PASS"}]).to_csv(out / "v8_liquidity_first_audit.csv", index=False)
+    monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {})
     calls = []
-    monkeypatch.setattr(news_catalyst, "build_marathi_digest", lambda *args: ["NSE V8 report"])
     def fake_post(*args, **kwargs):
         calls.append(1)
         if len(calls) == 1:
@@ -302,3 +316,36 @@ def test_premarket_batches_more_than_five_new_catalysts_without_losing_remainder
     assert "New catalysts: 6" in sent[0]
     assert "New catalysts: 1" in sent[1]
     assert "New issuer catalyst 0" in sent[1]
+
+
+
+def test_liquidity_passed_csv_joins_all_stock_sidecars_and_keeps_one_row_per_stock(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "outputs"
+    out.mkdir()
+    pd.DataFrame([
+        {"TckrSymb":"AAA","LiquidityFilterStatus":"PASS","AvgDailyTradedValue20D":50000000},
+        {"TckrSymb":"BBB","LiquidityFilterStatus":"WAIT_FOR_DATA","AvgDailyTradedValue20D":None},
+    ]).to_csv(out / "v8_liquidity_first_audit.csv", index=False)
+    pd.DataFrame([
+        {"TckrSymb":"AAA","DeliveryACount30DStatus":"PASS","DeliveryACount30DDisplay":"6/30","RVOL":2.1},
+        {"TckrSymb":"BBB","DeliveryACount30DStatus":"WAIT_FOR_DATA","DeliveryACount30DDisplay":"0/30","RVOL":None},
+    ]).to_csv(out / "v8_delivery_dual_category_audit.csv", index=False)
+    pd.DataFrame([
+        {"TckrSymb":"AAA","Headline":"Order announced","Source":"NSE"},
+        {"TckrSymb":"AAA","Headline":"Board meeting","Source":"NSE"},
+        {"TckrSymb":"BBB","Headline":"Should not enter","Source":"NSE"},
+    ]).to_csv(out / "v8_upcoming_corporate_events.csv", index=False)
+    monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {"AAA":"AAA LIMITED"})
+    final_result = pd.DataFrame([{"TckrSymb":"AAA","CoreTechnicalScreenStatus":"PASS","EMA44SignalStatus":"ABOVE_EMA44","EODWatchlistStatus":"WATCH"}])
+    path = news_catalyst._build_liquidity_passed_csv("2026-11-21", result=final_result)
+    exported = pd.read_csv(path)
+    assert exported["TckrSymb"].tolist() == ["AAA"]
+    assert exported.loc[0, "CoreTechnicalScreenStatus"] == "PASS"
+    assert exported.loc[0, "EMA44SignalStatus"] == "ABOVE_EMA44"
+    assert exported.loc[0, "CompanyName"] == "AAA LIMITED"
+    assert exported.loc[0, "AvgDailyTradedValue20D"] == 50000000
+    assert exported.loc[0, "DeliveryACount30DDisplay"] == "6/30"
+    assert "Headline" in exported.columns
+    assert "Order announced || Board meeting" == exported.loc[0, "Headline"]
