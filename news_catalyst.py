@@ -1883,7 +1883,7 @@ def _build_liquidity_passed_csv(eod_date, observation_report=None, result=None) 
 
     names = _read_equity_master()
     base["AsOfDate"] = str(eod_date)
-    base["CompanyName"] = base["TckrSymb"].map(names).fillna("NAME_NOT_VERIFIED_IN_NSE_MASTER")
+    base["CompanyName"] = base["TckrSymb"].map(names).astype("string").fillna("NAME_NOT_VERIFIED_IN_NSE_MASTER")
     ordered = ["AsOfDate", "TckrSymb", "CompanyName"] + [
         column for column in base.columns if column not in {"AsOfDate", "TckrSymb", "CompanyName"}
     ]
