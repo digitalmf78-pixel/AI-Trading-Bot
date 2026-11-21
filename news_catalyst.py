@@ -1801,23 +1801,106 @@ def _telegram_post_with_retries(url, *, data, files=None, label="message"):
     raise RuntimeError(f"Telegram delivery failed for {label} after 3 attempts") from last_error
 
 
-def _build_telegram_report_archive(full_audit_lines: list[str]) -> bytes:
-    """Bundle the complete audit text and the complete research watchlist CSV in one document."""
-    from pathlib import Path
+def _build_liquidity_passed_csv(eod_date, observation_report=None) -> Path:
+    """Export every Liquidity-PASS stock with all available per-stock output fields."""
     output = Path("outputs")
     output.mkdir(parents=True, exist_ok=True)
-    csv_path = output / "v8_telegram_research_watchlist.csv"
-    if not csv_path.exists():
-        pd.DataFrame(columns=["AsOfDate", "TckrSymb"]).to_csv(csv_path, index=False)
-    audit_path = output / "v8_telegram_full_audit.txt"
-    audit_path.write_text("\n".join(full_audit_lines) + "\n", encoding="utf-8")
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.write(csv_path, arcname="v8_telegram_research_watchlist.csv")
-        archive.write(audit_path, arcname="v8_telegram_full_audit.txt")
-    archive_path = output / "v8_telegram_full_report.zip"
-    archive_path.write_bytes(buffer.getvalue())
-    return archive_path.read_bytes()
+    base_path = output / "v8_liquidity_first_audit.csv"
+    if base_path.is_file():
+        base = pd.read_csv(base_path)
+    elif isinstance(observation_report, pd.DataFrame) and not observation_report.empty:
+        base = observation_report.copy()
+    else:
+        raise RuntimeError("Liquidity-PASS audit is missing; refusing to send an unverified Telegram CSV.")
+
+    status_col = next((c for c in (
+        "LiquidityFilterStatus", "LiquidityFilterStatus_pipeline",
+        "LiquidityStatus", "LiquidityStatus_pipeline"
+    ) if c in base.columns), None)
+    if status_col is None or "TckrSymb" not in base.columns:
+        raise RuntimeError("Liquidity-PASS audit lacks TckrSymb or a recognized liquidity status.")
+    base["TckrSymb"] = base["TckrSymb"].fillna("").astype(str).str.strip().str.upper()
+    status = base[status_col].fillna("").astype(str).str.strip().str.upper()
+    base = base.loc[(status.eq("PASS") | status.str.startswith("PASS_")) & base["TckrSymb"].ne("")].copy()
+    base = base.drop_duplicates("TckrSymb", keep="last").reset_index(drop=True)
+    if base.empty:
+        raise RuntimeError("Liquidity audit contains zero verified PASS rows; refusing to send an empty stock CSV.")
+
+    def aggregate(frame, symbol_col):
+        frame = frame.copy()
+        frame[symbol_col] = frame[symbol_col].fillna("").astype(str).str.strip().str.upper()
+        frame = frame[frame[symbol_col].ne("")].copy()
+        records = []
+        for symbol, group in frame.groupby(symbol_col, sort=False):
+            record = {"TckrSymb": symbol}
+            for column in group.columns:
+                if column == symbol_col or str(column).startswith("Unnamed:"):
+                    continue
+                values = []
+                for value in group[column].tolist():
+                    if value is None or pd.isna(value):
+                        continue
+                    value = str(value).strip()
+                    if value and value.lower() not in {"nan", "none", "nat"} and value not in values:
+                        values.append(value)
+                if values:
+                    record[column] = values[0] if len(values) == 1 else " || ".join(values)
+            records.append(record)
+        return pd.DataFrame(records)
+
+    # The liquidity audit is always the left/base cohort. All other stock-keyed
+    # V8 CSVs are joined as sidecars; multi-row evidence is preserved in cells.
+    for report_path in sorted(output.glob("*.csv")):
+        if report_path.resolve() == base_path.resolve() or report_path.name == "v8_telegram_liquidity_passed.csv":
+            continue
+        try:
+            report = pd.read_csv(report_path)
+        except (OSError, ValueError, pd.errors.ParserError, UnicodeError) as exc:
+            print(f"[TELEGRAM CSV] Skipping unreadable sidecar {report_path.name}: {exc}")
+            continue
+        if report.empty:
+            continue
+        symbol_col = next((c for c in ("TckrSymb", "SYMBOL", "Symbol", "symbol") if c in report.columns), None)
+        if symbol_col is None:
+            continue
+        sidecar = aggregate(report, symbol_col)
+        if sidecar.empty:
+            continue
+        rename = {c: f"{report_path.stem}__{c}" for c in sidecar.columns if c != "TckrSymb" and c in base.columns}
+        sidecar = sidecar.rename(columns=rename)
+        base = base.merge(sidecar, on="TckrSymb", how="left", validate="one_to_one")
+
+    names = _read_equity_master()
+    base.insert(0, "AsOfDate", str(eod_date))
+    base.insert(2, "CompanyName", base["TckrSymb"].map(names).fillna("NAME_NOT_VERIFIED_IN_NSE_MASTER"))
+    base = base.sort_values("TckrSymb", kind="stable").reset_index(drop=True)
+    path = output / "v8_telegram_liquidity_passed.csv"
+    base.to_csv(path, index=False, encoding="utf-8-sig")
+    print(f"[TELEGRAM CSV] Exported {len(base)} Liquidity-PASS stocks, {len(base.columns)} columns: {path}")
+    return path
+
+
+def _telegram_compact_summary(result, observation_report, eod_date, csv_path):
+    rows = observation_report if isinstance(observation_report, pd.DataFrame) else pd.DataFrame()
+    if rows.empty and isinstance(result, pd.DataFrame):
+        rows = result
+    def status_count(column):
+        if column not in rows.columns:
+            return 0
+        return int(rows[column].fillna("").astype(str).str.strip().str.upper().eq("PASS").sum())
+    final = rows.get("EODWatchlistStatus", pd.Series("", index=rows.index)).fillna("").astype(str).str.upper()
+    a = rows.get("DeliveryACount30DStatus", pd.Series("", index=rows.index)).fillna("").astype(str).str.upper()
+    b = rows.get("DeliveryBCount30DStatus", pd.Series("", index=rows.index)).fillna("").astype(str).str.upper()
+    eligible = int((a.eq("PASS") | b.eq("PASS")).sum())
+    return "\n".join([
+        f"📊 NSE V8 • EOD • {eod_date}",
+        f"Liquidity PASS stocks: {len(pd.read_csv(csv_path))}",
+        f"Delivery A/B eligible: {eligible}",
+        f"Core Technical PASS: {status_count('CoreTechnicalScreenStatus') or status_count('CandidateScreenStatus')} | WATCH: {int(final.eq('WATCH').sum())} | ENTRY: {int(final.eq('ENTRY_CANDIDATE').sum())}",
+        f"Complete column-wise stock data attached: {csv_path.name}",
+        "CSV मध्ये सर्व Liquidity-PASS stocks आहेत; WAIT/REJECT नाहीत. ही research माहिती आहे; BUY शिफारस नाही."
+    ])
+
 
 
 def _premarket_telegram_lines(eod_date, news, feed_status, fresh_news):
@@ -1869,23 +1952,9 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
         _persist_premarket_seen(fingerprints)
         return
 
-    # Build the complete legacy audit first; this also writes the full watchlist CSV.
-    full_audit_lines = build_marathi_digest(result, eod_date, news, feed_status, observation_report)
-    archive_bytes = _build_telegram_report_archive(full_audit_lines)
-    mode = str(os.getenv("TELEGRAM_MODE", "SUMMARY")).strip().upper()
-    if mode not in {"SUMMARY", "FULL"}:
-        print(f"TELEGRAM_MODE_INVALID={mode!r}; using SUMMARY")
-        mode = "SUMMARY"
-    summary_lines = _telegram_summary_lines(result, eod_date, observation_report, news, "EOD")
-    if mode == "FULL":
-        # FULL keeps every final candidate eligible for the compact message; the
-        # complete, untruncated stock-by-stock audit is always in the ZIP document.
-        summary_lines = _telegram_summary_lines(result, eod_date, observation_report, news, "EOD")
-        # Explicitly label the document as the complete audit in FULL mode.
-        summary_lines.insert(1, "Mode: FULL • complete stock audit attached.")
-    message = "\n".join(summary_lines)
-    if len(message) > 3500:
-        message = message[:3497].rstrip() + "..."
+    # EOD Telegram stays short; the complete Liquidity-PASS cohort is sent as CSV.
+    csv_path = _build_liquidity_passed_csv(eod_date, observation_report)
+    message = _telegram_compact_summary(result, observation_report, eod_date, csv_path)
     _telegram_post_with_retries(
         f"{base_url}/sendMessage",
         data={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
@@ -1893,8 +1962,8 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
     )
     _telegram_post_with_retries(
         f"{base_url}/sendDocument",
-        data={"chat_id": chat_id, "caption": f"NSE V8 full audit • {eod_date}"},
-        files={"document": ("v8_telegram_full_report.zip", archive_bytes, "application/zip")},
-        label="full-report-document",
+        data={"chat_id": chat_id, "caption": f"NSE V8 Liquidity-PASS complete stock data • {eod_date}"},
+        files={"document": (csv_path.name, csv_path.read_bytes(), "text/csv")},
+        label="liquidity-passed-csv",
     )
 
