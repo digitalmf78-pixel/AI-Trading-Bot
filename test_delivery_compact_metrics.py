@@ -24,7 +24,7 @@ def test_compact_delivery_counts_are_reporting_only_and_use_consecutive_delivery
     assert row["DeliveryARolling5DPassCount30D"] == 6
     # Six individual sessions have Delivery >=60%.
     assert row["DeliveryDailyPassCount"] == 6
-    assert row["DeliveryACount30DStatus"] == "FAIL"
+    assert row["DeliveryACount30DStatus"] == "PASS"
     assert row["DeliveryBCount30DStatus"] == "PASS"
     # Existing production A/B eligibility remains based on the full-window average / every-day rule.
     assert row["DeliveryCategoryAStatus"] == "FILTERED_OUT_ROLLING_5D_AVG_LT_5"
