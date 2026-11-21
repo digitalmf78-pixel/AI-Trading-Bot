@@ -1869,9 +1869,12 @@ def _build_liquidity_passed_csv(eod_date, observation_report=None) -> Path:
         base = base.merge(sidecar, on="TckrSymb", how="left", validate="one_to_one")
 
     names = _read_equity_master()
-    base.insert(0, "AsOfDate", str(eod_date))
-    base.insert(2, "CompanyName", base["TckrSymb"].map(names).fillna("NAME_NOT_VERIFIED_IN_NSE_MASTER"))
-    base = base.sort_values("TckrSymb", kind="stable").reset_index(drop=True)
+    base["AsOfDate"] = str(eod_date)
+    base["CompanyName"] = base["TckrSymb"].map(names).fillna("NAME_NOT_VERIFIED_IN_NSE_MASTER")
+    ordered = ["AsOfDate", "TckrSymb", "CompanyName"] + [
+        column for column in base.columns if column not in {"AsOfDate", "TckrSymb", "CompanyName"}
+    ]
+    base = base[ordered].sort_values("TckrSymb", kind="stable").reset_index(drop=True)
     path = output / "v8_telegram_liquidity_passed.csv"
     base.to_csv(path, index=False, encoding="utf-8-sig")
     print(f"[TELEGRAM CSV] Exported {len(base)} Liquidity-PASS stocks, {len(base.columns)} columns: {path}")
