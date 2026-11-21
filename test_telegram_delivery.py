@@ -338,9 +338,12 @@ def test_liquidity_passed_csv_joins_all_stock_sidecars_and_keeps_one_row_per_sto
         {"TckrSymb":"BBB","Headline":"Should not enter","Source":"NSE"},
     ]).to_csv(out / "v8_upcoming_corporate_events.csv", index=False)
     monkeypatch.setattr(news_catalyst, "_read_equity_master", lambda: {"AAA":"AAA LIMITED"})
-    path = news_catalyst._build_liquidity_passed_csv("2026-11-21")
+    final_result = pd.DataFrame([{"TckrSymb":"AAA","CoreTechnicalScreenStatus":"PASS","EMA44SignalStatus":"ABOVE_EMA44","EODWatchlistStatus":"WATCH"}])
+    path = news_catalyst._build_liquidity_passed_csv("2026-11-21", result=final_result)
     exported = pd.read_csv(path)
     assert exported["TckrSymb"].tolist() == ["AAA"]
+    assert exported.loc[0, "CoreTechnicalScreenStatus"] == "PASS"
+    assert exported.loc[0, "EMA44SignalStatus"] == "ABOVE_EMA44"
     assert exported.loc[0, "CompanyName"] == "AAA LIMITED"
     assert exported.loc[0, "AvgDailyTradedValue20D"] == 50000000
     assert exported.loc[0, "DeliveryACount30DDisplay"] == "6/30"
