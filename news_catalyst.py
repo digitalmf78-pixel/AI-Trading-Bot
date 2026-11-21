@@ -1799,7 +1799,7 @@ def _telegram_post_with_retries(url, *, data, files=None, label="message"):
     raise RuntimeError(f"Telegram delivery failed for {label} after 3 attempts") from last_error
 
 
-def _build_liquidity_passed_csv(eod_date, observation_report=None) -> Path:
+def _build_liquidity_passed_csv(eod_date, observation_report=None, result=None) -> Path:
     """Export every Liquidity-PASS stock with all available per-stock output fields."""
     output = Path("outputs")
     output.mkdir(parents=True, exist_ok=True)
@@ -1845,6 +1845,19 @@ def _build_liquidity_passed_csv(eod_date, observation_report=None) -> Path:
                     record[column] = values[0] if len(values) == 1 else " || ".join(values)
             records.append(record)
         return pd.DataFrame(records)
+
+    # In-memory final/observation frames carry parameters that may not have a
+    # standalone CSV sidecar. Join both while preserving the liquidity cohort.
+    for source_name, frame in (("observation_report", observation_report), ("final_result", result)):
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            continue
+        symbol_col = next((c for c in ("TckrSymb", "SYMBOL", "Symbol", "symbol") if c in frame.columns), None)
+        if symbol_col is None:
+            continue
+        sidecar = aggregate(frame, symbol_col)
+        rename = {c: f"{source_name}__{c}" for c in sidecar.columns if c != "TckrSymb" and c in base.columns}
+        sidecar = sidecar.rename(columns=rename)
+        base = base.merge(sidecar, on="TckrSymb", how="left", validate="one_to_one")
 
     # The liquidity audit is always the left/base cohort. All other stock-keyed
     # V8 CSVs are joined as sidecars; multi-row evidence is preserved in cells.
@@ -1954,7 +1967,7 @@ def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, fe
         return
 
     # EOD Telegram stays short; the complete Liquidity-PASS cohort is sent as CSV.
-    csv_path = _build_liquidity_passed_csv(eod_date, observation_report)
+    csv_path = _build_liquidity_passed_csv(eod_date, observation_report, result)
     message = _telegram_compact_summary(result, observation_report, eod_date, csv_path)
     _telegram_post_with_retries(
         f"{base_url}/sendMessage",
