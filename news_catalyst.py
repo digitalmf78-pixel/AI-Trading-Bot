@@ -12,11 +12,9 @@ from threading import local
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
-from io import BytesIO
 import hashlib
 import os
 import re
-import zipfile
 import xml.etree.ElementTree as ET
 
 import pandas as pd
@@ -1932,7 +1930,7 @@ def _premarket_telegram_lines(eod_date, news, feed_status, fresh_news):
 
 
 def send_marathi_telegram(result: pd.DataFrame, eod_date, news: pd.DataFrame, feed_status: dict[str, str], token: str | None, chat_id: str | None, observation_report: pd.DataFrame | None = None) -> None:
-    """Send one compact summary plus one zipped full report; PREMARKET sends only unseen catalysts."""
+    """Send a compact EOD summary plus the complete Liquidity-PASS CSV; PREMARKET sends unseen catalysts."""
     if not token or not chat_id:
         raise RuntimeError("Telegram enabled but TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is missing; configure both GitHub Actions secrets.")
 
